@@ -1,0 +1,529 @@
+DuckDB Schema Summary
+
+[main.authors] rows=23
+primary_key=author_id
+- 1. author_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. display_name :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. avatar_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. bio_short :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 6. author_bio :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. primary_category_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. primary_category :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.blog_contents] rows=582
+primary_key=idea_id
+- 1. idea_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. category_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. front_matter :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. introduction :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. product_gallery :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. urunler :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. buyers_guide :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. faq :: VARCHAR :: nullable=YES :: pg=TEXT
+- 11. conclusion :: VARCHAR :: nullable=YES :: pg=TEXT
+- 12. recommendations :: VARCHAR :: nullable=YES :: pg=TEXT
+- 13. cta :: VARCHAR :: nullable=YES :: pg=TEXT
+- 14. md_full :: VARCHAR :: nullable=YES :: pg=TEXT
+- 15. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 16. hero_image_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 17. hero_alt :: VARCHAR :: nullable=YES :: pg=TEXT
+- 18. overview_updated :: VARCHAR :: nullable=YES :: pg=TEXT
+- 19. related_links_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 20. tags_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 21. faq_json :: JSON :: nullable=YES :: pg=JSONB
+- 22. buyers_guide_json :: JSON :: nullable=YES :: pg=JSONB
+
+[main.blog_posts] rows=384
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. season_phrase_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 3. blog_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. status :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 6. idea_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. author_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. date_published :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 9. hero_image_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. hero_alt :: VARCHAR :: nullable=YES :: pg=TEXT
+- 11. summary :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.blog_preflight_decisions] rows=246
+primary_key=idea_id
+- 1. idea_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. decision_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.categories] rows=20
+primary_key=slug
+- 1. slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.categories_tree] rows=19
+primary_key=slug
+- 1. slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. parent_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. sort_order :: INTEGER :: nullable=YES :: pg=INTEGER
+- 5. is_active :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 6. nav_visible :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 7. icon :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 9. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.categories_tree_new] rows=18
+- 1. slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. parent_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. sort_order :: INTEGER :: nullable=YES :: pg=INTEGER
+- 5. is_active :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 6. nav_visible :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 7. icon :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 9. updated_at :: TIMESTAMP WITH TIME ZONE :: nullable=YES :: pg=TIMESTAMPTZ
+
+[main.content_plan] rows=0
+- 1. id :: INTEGER :: nullable=YES :: pg=INTEGER
+- 2. title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. category :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. brand :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. season :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. reasoning :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. publish_date :: DATE :: nullable=YES :: pg=DATE
+- 8. risk :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 9. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.daily_trends] rows=3
+- 1. id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 2. topic :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. source :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. category :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. volume :: INTEGER :: nullable=YES :: pg=INTEGER
+- 6. locale :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. reason :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. trend_date :: DATE :: nullable=YES :: pg=DATE
+- 9. detected_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.facebook_oauth_tokens] rows=0
+primary_key=user_id
+- 1. user_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. page_access_token :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. facebook_page_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. facebook_page_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. scopes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. updated_at :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.facebook_page_tokens] rows=1
+primary_key=user_id
+- 1. user_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. fb_user_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. page_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. page_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. page_access_token :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. token_created_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. scopes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. updated_at :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.google_trends_score] rows=0
+- 1. phrase_id :: INTEGER :: nullable=YES :: pg=INTEGER
+- 2. phrase :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. trend_score :: FLOAT :: nullable=YES :: pg=REAL
+- 4. shopping_intent_score :: FLOAT :: nullable=YES :: pg=REAL
+- 5. llm_score :: FLOAT :: nullable=YES :: pg=REAL
+- 6. final_score :: FLOAT :: nullable=YES :: pg=REAL
+- 7. trend_date :: DATE :: nullable=YES :: pg=DATE
+- 8. related_keywords :: JSON :: nullable=YES :: pg=JSONB
+- 9. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.idea_products] rows=170452
+- 1. idea_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 2. parent_asin :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. source :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. is_primary :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 5. discount_pct :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 6. original_price :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 7. sale_price :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 8. item_end_date :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 9. availability_status :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. is_active :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 11. last_checked_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.idea_rules_deal] rows=150
+primary_key=idea_id
+- 1. idea_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. rules_json :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 4. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.ideas] rows=23470
+primary_key=idea_id
+- 1. idea_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. idea_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 4. category_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.instagram_oauth_pending] rows=0
+primary_key=user_id
+- 1. user_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. pages_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. scopes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. updated_at :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.instagram_oauth_tokens] rows=1
+primary_key=user_id
+- 1. user_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. page_access_token :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. instagram_business_account_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. facebook_page_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. facebook_page_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. scopes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. updated_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. instagram_username :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. meta_fb_user_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 11. selected_page_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 12. token_created_at :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.llm_decisions_log] rows=0
+- 1. id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 2. idea_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. decision_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. prompt_meta :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.product_enrichment] rows=5049
+primary_key=product_id
+- 1. product_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. ship_type :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. ship_cost_value :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 4. ship_cost_currency :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. ship_free :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 6. ship_min_eta :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 7. ship_max_eta :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 8. ship_cutoff :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 9. ship_eta_min_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 10. ship_eta_max_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 11. returns_accepted :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 12. return_window_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 13. return_shipping_payer :: VARCHAR :: nullable=YES :: pg=TEXT
+- 14. refund_method :: VARCHAR :: nullable=YES :: pg=TEXT
+- 15. return_method :: VARCHAR :: nullable=YES :: pg=TEXT
+- 16. restocking_fee_pct :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 17. condition_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 18. condition_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 19. source_json :: JSON :: nullable=YES :: pg=JSONB
+- 20. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.product_media] rows=16156
+primary_key=parent_asin, image_url, source
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. image_url :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. source :: VARCHAR :: nullable=NO :: pg=TEXT
+- 4. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.product_media_new] rows=0
+primary_key=parent_asin, image_url, source
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. image_url :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. source :: VARCHAR :: nullable=NO :: pg=TEXT
+- 4. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.product_metrics] rows=6000
+primary_key=parent_asin
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. avg_rating :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 3. n_reviews :: INTEGER :: nullable=YES :: pg=INTEGER
+
+[main.product_metrics_ebay] rows=14869
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. product_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. seller_score :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 4. feedback_pct :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 5. feedback_score :: BIGINT :: nullable=YES :: pg=BIGINT
+- 6. returns :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. eta_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 8. trust_level :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. review_rating :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 10. review_count :: BIGINT :: nullable=YES :: pg=BIGINT
+- 11. summary :: VARCHAR :: nullable=YES :: pg=TEXT
+- 12. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.product_review_summaries] rows=6000
+primary_key=parent_asin
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. review_paragraph :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. review_pros :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. review_cons :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. review_summary_short :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. review_loved :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. review_tips :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.product_text] rows=6000
+primary_key=parent_asin
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. description :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. features :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. pros_raw :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. cons_raw :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.products] rows=14774
+primary_key=parent_asin
+- 1. parent_asin :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. product_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. brand :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. price :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. category_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. source :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. external_id :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.sd_brand_categories] rows=28
+primary_key=brand_slug, category_slug
+- 1. brand_slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. category_slug :: VARCHAR :: nullable=NO :: pg=TEXT
+
+[main.sd_brands] rows=16
+primary_key=slug
+- 1. slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. primary_category_slug :: VARCHAR :: nullable=NO :: pg=TEXT
+
+[main.sd_categories] rows=4
+primary_key=slug
+- 1. slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=NO :: pg=TEXT
+
+[main.sd_decisions] rows=234
+primary_key=run_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. brand :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. sd_category_key :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. filters_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. buying_options :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. post_tag :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. title_suggest :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.sd_errors] rows=4
+- 1. run_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 2. step :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. error_msg :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.sd_item_enrichment] rows=0
+primary_key=run_id, item_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. item_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. ship_type :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. ship_cost_value :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 5. ship_cost_ccy :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. ship_free :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 7. ship_eta_min_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 8. ship_eta_max_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 9. returns_accepted :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 10. return_window_days :: INTEGER :: nullable=YES :: pg=INTEGER
+- 11. return_shipping_payer :: VARCHAR :: nullable=YES :: pg=TEXT
+- 12. refund_method :: VARCHAR :: nullable=YES :: pg=TEXT
+- 13. return_method :: VARCHAR :: nullable=YES :: pg=TEXT
+- 14. restocking_fee_pct :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 15. condition_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 16. condition_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 17. detail_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 18. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.sd_items] rows=0
+primary_key=run_id, item_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. item_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. brand :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. price_value :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 6. currency :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. raw_json :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.sd_publications] rows=232
+primary_key=run_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. idea_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. brand :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. sd_category_key :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. date_published :: DATE :: nullable=YES :: pg=DATE
+
+[main.sd_run_stats] rows=0
+primary_key=run_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. total_kept :: INTEGER :: nullable=YES :: pg=INTEGER
+- 3. max_discount :: INTEGER :: nullable=YES :: pg=INTEGER
+- 4. avg_discount :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 5. price_min :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 6. price_max :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 7. hero_image :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.sd_runs] rows=236
+primary_key=run_id
+- 1. run_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. started_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 3. llm_prompt :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. candidate_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. season_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. decision_ctx :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. llm_decision :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. status :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. notes :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.sd_seed_brands] rows=36
+primary_key=brand
+- 1. brand :: VARCHAR :: nullable=NO :: pg=TEXT
+
+[main.season_phrases] rows=379
+- 1. id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 2. season_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 3. seed :: VARCHAR :: nullable=NO :: pg=TEXT
+- 4. phrase :: VARCHAR :: nullable=NO :: pg=TEXT
+- 5. kept :: BOOLEAN :: nullable=NO :: pg=BOOLEAN
+- 6. score :: DOUBLE :: nullable=YES :: pg=DOUBLE PRECISION
+- 7. theme_hits :: INTEGER :: nullable=YES :: pg=INTEGER
+- 8. type_hits :: INTEGER :: nullable=YES :: pg=INTEGER
+- 9. drop_reason :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.seasons] rows=7
+- 1. id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 2. season_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. seeds_json :: JSON :: nullable=YES :: pg=JSONB
+- 4. theme_tokens :: JSON :: nullable=YES :: pg=JSONB
+- 5. type_tokens :: JSON :: nullable=YES :: pg=JSONB
+- 6. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 7. season_group :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. start_date :: DATE :: nullable=YES :: pg=DATE
+- 9. end_date :: DATE :: nullable=YES :: pg=DATE
+- 10. locale :: VARCHAR :: nullable=YES :: pg=TEXT
+- 11. reason :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.sources] rows=1
+primary_key=slug
+- 1. slug :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. name :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.tiktok_oauth_tokens] rows=1
+primary_key=user_id
+- 1. user_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 2. access_token :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. refresh_token :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. open_id :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. username :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. scopes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. refresh_expires_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. updated_at :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. display_name :: VARCHAR :: nullable=YES :: pg=TEXT
+
+[main.trend_feed_snapshot] rows=3
+- 1. id :: INTEGER :: nullable=YES :: pg=INTEGER
+- 2. topic :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. source :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. change_pct :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. date :: DATE :: nullable=YES :: pg=DATE
+- 6. collected_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.trend_ideas] rows=194
+primary_key=idea_id
+- 1. idea_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. trend_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 3. title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. idea_type :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. category_slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. status :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 8. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.trend_instagram_posts] rows=412
+- 1. insta_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 2. idea_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 3. image_path :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. caption_json :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.trend_publications] rows=204
+primary_key=pub_id
+- 1. pub_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. idea_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 3. published_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. published_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.trend_topics] rows=185
+primary_key=trend_id
+- 1. trend_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. trend :: VARCHAR :: nullable=NO :: pg=TEXT
+- 3. description :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. slug :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.trends_categories] rows=1426
+- 1. category_id :: INTEGER :: nullable=YES :: pg=INTEGER
+- 2. category_name :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. parent_id :: INTEGER :: nullable=YES :: pg=INTEGER
+
+[main.youtube_captions] rows=3
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. video_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 3. caption_text :: VARCHAR :: nullable=NO :: pg=TEXT
+- 4. source :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. lang :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.youtube_channels] rows=3
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. channel_handle :: VARCHAR :: nullable=YES :: pg=TEXT
+- 3. channel_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 4. channel_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. is_active :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 6. notes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. last_checked_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 8. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.youtube_trend_ideas] rows=9
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. idea_date :: DATE :: nullable=NO :: pg=DATE
+- 3. channel_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 4. video_id :: BIGINT :: nullable=YES :: pg=BIGINT
+- 5. channel_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. video_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 7. video_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 8. idea_text :: VARCHAR :: nullable=NO :: pg=TEXT
+- 9. status :: VARCHAR :: nullable=YES :: pg=TEXT
+- 10. notes :: VARCHAR :: nullable=YES :: pg=TEXT
+- 11. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 12. updated_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+
+[main.youtube_videos] rows=16
+primary_key=id
+- 1. id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 2. channel_id :: BIGINT :: nullable=NO :: pg=BIGINT
+- 3. video_id :: VARCHAR :: nullable=NO :: pg=TEXT
+- 4. video_title :: VARCHAR :: nullable=YES :: pg=TEXT
+- 5. video_url :: VARCHAR :: nullable=YES :: pg=TEXT
+- 6. published_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 7. has_captions :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 8. caption_lang :: VARCHAR :: nullable=YES :: pg=TEXT
+- 9. last_checked_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 10. created_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 11. duration_seconds :: INTEGER :: nullable=YES :: pg=INTEGER
+- 12. is_short :: BOOLEAN :: nullable=YES :: pg=BOOLEAN
+- 13. view_count :: BIGINT :: nullable=YES :: pg=BIGINT
+- 14. like_count :: BIGINT :: nullable=YES :: pg=BIGINT
+- 15. comment_count :: BIGINT :: nullable=YES :: pg=BIGINT
+- 16. stats_fetched_at :: TIMESTAMP :: nullable=YES :: pg=TIMESTAMP
+- 17. download_status :: VARCHAR :: nullable=YES :: pg=TEXT
+
+Views
+- main.v_candidate_brands
+- main.v_products

@@ -1,0 +1,261 @@
+{% extends "web/base.html" %}
+
+{% block title %}MintiStudio | Repurpose YouTube Library{% endblock %}
+
+{% block content %}
+<div class="vs-web-landing vs-youtube-library">
+  <section class="vs-web-hero vs-daily-hero vs-youtube-hero">
+    <div class="vs-daily-hero-bg vs-youtube-hero-bg"></div>
+    <div class="row g-4 align-items-center">
+      <div class="col-lg-7">
+        <div class="vs-web-label">
+          <span class="vs-web-label-dot"></span>
+          Use case
+        </div>
+        <h1 class="vs-web-hero-title">Repurpose YouTube Library</h1>
+        <div class="vs-daily-subhead">Turn your back catalog into endless shorts.</div>
+        <p class="vs-web-hero-subtitle">
+          Connect your YouTube channel, pick the videos you already own, and generate platform-ready shorts with consistent branding. Publish to TikTok, YouTube Shorts, Instagram Reels, and Facebook Reels.
+        </p>
+        <div class="vs-web-hero-actions">
+          <a class="btn btn-primary" href="#repurpose-how" data-highlight-target="#repurpose-step-1">Connect YouTube</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('bp.web_landing') }}#import">Import a video URL</a>
+        </div>
+        <div class="vs-daily-pills">
+          <span class="vs-daily-pill"><i class="bi bi-folder2-open"></i>Import library</span>
+          <span class="vs-daily-pill"><i class="bi bi-scissors"></i>Find highlights</span>
+          <span class="vs-daily-pill"><i class="bi bi-share"></i>Publish everywhere</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">The problem</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-clock"></i>You have dozens of videos but no time to repurpose them</li>
+              <li><i class="bi bi-layers"></i>Finding highlight moments takes forever</li>
+              <li><i class="bi bi-exclamation-triangle"></i>Editing for each platform is repetitive</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">The outcome</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-sparkles"></i>Turn one long video into multiple shorts</li>
+              <li><i class="bi bi-grid"></i>Consistent templates and captions in minutes</li>
+              <li><i class="bi bi-check-circle"></i>A library pipeline you can publish from anytime</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section" id="repurpose-how">
+    <div class="vs-web-section-title">How it works</div>
+    <div class="vs-daily-timeline">
+      <div class="vs-daily-step vs-glass-card is-active" id="repurpose-step-1">
+        <div class="vs-daily-step-icon"><i class="bi bi-plug"></i></div>
+        <div class="vs-daily-step-title">Connect or import</div>
+        <p>Connect your YouTube channel or paste a YouTube link to import a video.</p>
+      </div>
+      <div class="vs-daily-step vs-glass-card">
+        <div class="vs-daily-step-icon"><i class="bi bi-sparkles"></i></div>
+        <div class="vs-daily-step-title">Select moments</div>
+        <p>Choose highlights manually or let Minti suggest moments based on chapters and transcript.</p>
+      </div>
+      <div class="vs-daily-step vs-glass-card">
+        <div class="vs-daily-step-icon"><i class="bi bi-files"></i></div>
+        <div class="vs-daily-step-title">Generate variants</div>
+        <p>Create multiple short versions with captions, hooks, and platform-safe framing.</p>
+      </div>
+      <div class="vs-daily-step vs-glass-card">
+        <div class="vs-daily-step-icon"><i class="bi bi-send"></i></div>
+        <div class="vs-daily-step-title">Publish and schedule</div>
+        <p>Post or schedule to TikTok, YouTube Shorts, Instagram Reels, and Facebook Reels from one place.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="vs-web-section-title">Repurpose YouTube Library features</div>
+    <div class="vs-daily-feature-grid">
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-folder-plus"></i>
+        <div>
+          <div class="vs-daily-feature-title">Bulk import</div>
+          <p>Import multiple YouTube videos into your workspace.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-scissors"></i>
+        <div>
+          <div class="vs-daily-feature-title">Highlight selection</div>
+          <p>Cut clips fast without rebuilding the whole project.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-file-text"></i>
+        <div>
+          <div class="vs-daily-feature-title">Transcript powered</div>
+          <p>Use transcript and chapters to speed up finding moments.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-palette"></i>
+        <div>
+          <div class="vs-daily-feature-title">Brand templates</div>
+          <p>Apply consistent subtitles, logo, and title cards.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-crop"></i>
+        <div>
+          <div class="vs-daily-feature-title">Platform formatting</div>
+          <p>Auto format for 9:16 and safe zones.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-arrow-repeat"></i>
+        <div>
+          <div class="vs-daily-feature-title">Reuse pipeline</div>
+          <p>Turn your library into a long term publishing engine.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="vs-web-section-title">Your YouTube repurpose workspace</div>
+    <p class="vs-web-card-copy">Import, clip, and publish from a single library.</p>
+    <div class="vs-glass-card vs-daily-dashboard">
+      <div class="vs-daily-tabs">
+        <span class="vs-daily-tab is-active">Library</span>
+        <span class="vs-daily-tab">Clips</span>
+        <span class="vs-daily-tab">Publish</span>
+      </div>
+      <div class="vs-daily-dashboard-grid">
+        <div class="vs-daily-panel">
+          <div class="vs-daily-panel-title">Library</div>
+          <div class="vs-daily-row">
+            <span>Video title</span>
+            <span class="vs-daily-chip">Imported</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Duration</span>
+            <span class="vs-daily-chip">28:42</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Imported</span>
+            <span class="vs-daily-chip">12 videos</span>
+          </div>
+        </div>
+        <div class="vs-daily-panel">
+          <div class="vs-daily-panel-title">Clips</div>
+          <div class="vs-daily-row">
+            <span>Clip name</span>
+            <span class="vs-daily-chip">Hook #3</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Source video</span>
+            <span class="vs-daily-chip">Q2 Recap</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Length</span>
+            <span class="vs-daily-chip">0:37</span>
+          </div>
+        </div>
+        <div class="vs-daily-panel">
+          <div class="vs-daily-panel-title">Publish</div>
+          <div class="vs-daily-row">
+            <span>Platform</span>
+            <span class="vs-daily-chip">TikTok</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Scheduled time</span>
+            <span class="vs-daily-chip">Tomorrow 9am</span>
+          </div>
+          <div class="vs-daily-row">
+            <span>Status</span>
+            <span class="vs-daily-chip vs-daily-chip-success">Scheduled</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">Make your old videos work again</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-check-circle"></i>Unlock your back catalog</li>
+              <li><i class="bi bi-check-circle"></i>Post more without filming more</li>
+              <li><i class="bi bi-check-circle"></i>Keep your brand consistent everywhere</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100 vs-daily-final-cta">
+          <div class="card-body d-flex flex-column gap-3">
+            <div class="vs-daily-card-title">Ready to repurpose your YouTube library?</div>
+            <div class="vs-daily-cta-actions">
+              <a class="btn btn-primary" href="{{ quick_url }}">Connect YouTube</a>
+              <a class="btn btn-outline-secondary" href="{{ url_for('bp.web_landing') }}#demo">See a demo</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const timelineSteps = Array.from(document.querySelectorAll(".vs-daily-step"));
+  const highlightTargets = document.querySelectorAll("[data-highlight-target]");
+  function setActiveStep(step) {
+    timelineSteps.forEach((node) => node.classList.toggle("is-active", node === step));
+  }
+  if (timelineSteps.length) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting);
+        if (!visible.length) {
+          return;
+        }
+        visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        setActiveStep(visible[0].target);
+      },
+      { threshold: [0.4, 0.6, 0.8] }
+    );
+    timelineSteps.forEach((step) => observer.observe(step));
+  }
+  highlightTargets.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = document.querySelector(btn.dataset.highlightTarget);
+      if (target) {
+        setActiveStep(target);
+      }
+    });
+  });
+  if (location.hash === "#repurpose-how") {
+    const step = document.querySelector("#repurpose-step-1");
+    if (step) {
+      setActiveStep(step);
+    }
+  }
+</script>
+{% endblock %}

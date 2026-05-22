@@ -1,0 +1,204 @@
+{% extends "web/base.html" %}
+
+{% block title %}MintiStudio | Pricing{% endblock %}
+
+{% block content %}
+<div class="vs-web-landing">
+  <section class="vs-web-hero">
+    <div class="row g-4 align-items-center">
+      <div class="col-lg-7">
+        <div class="vs-web-label">
+          <span class="vs-web-label-dot"></span>
+          Pricing
+        </div>
+        <h1 class="vs-web-hero-title">Pick the plan that keeps you shipping</h1>
+        <div class="vs-web-hero-actions">
+          <a class="btn btn-primary" href="{{ quick_url }}">Create your first short</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <h2 class="vs-web-section-title mb-0">Plans</h2>
+      <div class="btn-group vs-web-billing-toggle" role="group" aria-label="Billing cycle">
+        <input type="radio" class="btn-check" name="billingCycle" id="billingMonthly" autocomplete="off" checked>
+        <label class="btn btn-outline-secondary" for="billingMonthly">Monthly</label>
+        <input type="radio" class="btn-check" name="billingCycle" id="billingYearly" autocomplete="off">
+        <label class="btn btn-outline-secondary" for="billingYearly">Yearly</label>
+      </div>
+    </div>
+    {% if plans %}
+      <div class="row g-3" id="pricing-plans">
+        {% for plan in plans %}
+          {% set tier_label = "Starter" %}
+          {% set estimate = "Estimated: ~130 shorts" %}
+          {% set monthly_price = 9 %}
+          {% if plan.plan_id == "plan_free" %}
+            {% set tier_label = "Free" %}
+            {% set estimate = "Estimated: ~130 shorts" %}
+            {% set monthly_price = 0 %}
+          {% elif plan.plan_id == "plan_10gb" %}
+            {% set tier_label = "Creator" %}
+            {% set estimate = "Estimated: ~650 shorts" %}
+            {% set monthly_price = 19 %}
+          {% elif plan.plan_id == "plan_100gb" %}
+            {% set tier_label = "Studio" %}
+            {% set estimate = "Estimated: ~6,500 shorts" %}
+            {% set monthly_price = 49 %}
+          {% endif %}
+          {% set yearly_total = 90 %}
+          {% if plan.plan_id == "plan_free" %}
+            {% set yearly_total = 0 %}
+          {% elif plan.plan_id == "plan_10gb" %}
+            {% set yearly_total = 180 %}
+          {% elif plan.plan_id == "plan_100gb" %}
+            {% set yearly_total = 450 %}
+          {% endif %}
+          {% set yearly_monthly = yearly_total / 12 %}
+          <div class="col-sm-6 col-lg-3">
+            <div class="card vs-web-price-card h-100">
+              <div class="card-body d-flex flex-column h-100">
+                <div class="vs-web-price-label">{{ tier_label }}</div>
+                <div class="vs-web-price-value">
+                  <span
+                    class="price-amount"
+                    data-monthly="{{ monthly_price }}"
+                    data-yearly="{{ yearly_total }}"
+                    data-yearly-monthly="{{ '%.2f'|format(yearly_monthly) }}"
+                    data-is-free="{{ '1' if monthly_price == 0 else '0' }}">
+                    {% if monthly_price == 0 %}
+                      Free
+                    {% else %}
+                      ${{ monthly_price }}
+                    {% endif %}
+                  </span>
+                  <span class="price-period">{% if monthly_price != 0 %}/mo{% endif %}</span>
+                </div>
+                <p class="vs-web-card-copy">{{ plan.quota_label }} storage</p>
+                <div class="vs-web-price-note">Best for: {{ tier_label }}</div>
+                <div class="vs-web-price-note price-yearly-note d-none">
+                  Billed ${{ yearly_total }} yearly ({{ '%.2f'|format(yearly_monthly) }}/mo).
+                </div>
+                <ul class="plan-bullets mt-3">
+                  <li>
+                    <i class="bi bi-check-circle"></i>
+                    <span>
+                      {{ estimate }}
+                      <span class="vs-text-muted" title="Estimate based on typical short length. Actual usage depends on video length and bitrate.">
+                        <i class="bi bi-info-circle"></i>
+                      </span>
+                    </span>
+                  </li>
+                  {% if tier_label == "Free" %}
+                    <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Basic scheduling (YouTube + Instagram)</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Watermark on exports</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 30</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+                  {% elif tier_label == "Starter" %}
+                    <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>No watermark on exports</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 200</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+                  {% elif tier_label == "Creator" %}
+                    <li><i class="bi bi-check-circle"></i><span>Starter + more storage</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+                  {% elif tier_label == "Studio" %}
+                    <li><i class="bi bi-check-circle"></i><span>Creator + more storage</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+                    <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+                  {% endif %}
+                </ul>
+                <div class="mt-auto">
+                  <a class="btn btn-primary w-100" href="{{ quick_url }}">
+                    {% if tier_label == "Free" %}
+                      Start free
+                    {% elif tier_label == "Starter" %}
+                      Upgrade to Starter
+                    {% elif tier_label == "Creator" %}
+                      Upgrade to Creator
+                    {% else %}
+                      Upgrade to Studio
+                    {% endif %}
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-info">Plans are being updated.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <div class="card vs-web-cta-card">
+      <div class="card-body d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3">
+        <div class="vs-web-cta-title">Ready to build momentum?</div>
+        <div class="vs-web-cta-actions">
+          <a class="btn btn-primary" href="{{ quick_url }}">Create your first short</a>
+          <a class="btn btn-outline-secondary" href="{{ source_url }}">Connect a source</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+  const monthlyToggle = document.getElementById("billingMonthly");
+  const yearlyToggle = document.getElementById("billingYearly");
+
+  function setBillingCycle(isYearly) {
+    const planBlocks = document.querySelectorAll("#pricing-plans .vs-web-price-card");
+    planBlocks.forEach((block) => {
+      const amountEl = block.querySelector(".price-amount");
+      const periodEl = block.querySelector(".price-period");
+      const yearlyNote = block.querySelector(".price-yearly-note");
+      if (!amountEl) {
+        return;
+      }
+      if (amountEl.dataset.isFree === "1") {
+        amountEl.textContent = "Free";
+        if (periodEl) {
+          periodEl.textContent = "";
+        }
+        if (yearlyNote) {
+          yearlyNote.classList.add("d-none");
+        }
+        return;
+      }
+      const monthly = amountEl.dataset.monthly;
+      const yearly = amountEl.dataset.yearly;
+      if (isYearly) {
+        amountEl.textContent = `$${yearly}`;
+        if (periodEl) {
+          periodEl.textContent = "/yr";
+        }
+        if (yearlyNote) {
+          yearlyNote.classList.remove("d-none");
+        }
+      } else {
+        amountEl.textContent = `$${monthly}`;
+        if (periodEl) {
+          periodEl.textContent = "/mo";
+        }
+        if (yearlyNote) {
+          yearlyNote.classList.add("d-none");
+        }
+      }
+    });
+  }
+
+  if (monthlyToggle && yearlyToggle) {
+    monthlyToggle.addEventListener("change", () => setBillingCycle(false));
+    yearlyToggle.addEventListener("change", () => setBillingCycle(true));
+  }
+  setBillingCycle(yearlyToggle && yearlyToggle.checked);
+</script>
+{% endblock %}

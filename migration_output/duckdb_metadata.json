@@ -1,0 +1,2793 @@
+[
+  {
+    "schema": "main",
+    "table": "authors",
+    "row_count": 23,
+    "columns": [
+      {
+        "column_name": "author_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "display_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "avatar_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "bio_short",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "author_bio",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "primary_category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "primary_category",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      }
+    ],
+    "primary_key": [
+      "author_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "blog_contents",
+    "row_count": 582,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "front_matter",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "introduction",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "product_gallery",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "urunler",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "buyers_guide",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "faq",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "conclusion",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "recommendations",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      },
+      {
+        "column_name": "cta",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 13
+      },
+      {
+        "column_name": "md_full",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 14
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 15
+      },
+      {
+        "column_name": "hero_image_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 16
+      },
+      {
+        "column_name": "hero_alt",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 17
+      },
+      {
+        "column_name": "overview_updated",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 18
+      },
+      {
+        "column_name": "related_links_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 19
+      },
+      {
+        "column_name": "tags_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 20
+      },
+      {
+        "column_name": "faq_json",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 21
+      },
+      {
+        "column_name": "buyers_guide_json",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 22
+      }
+    ],
+    "primary_key": [
+      "idea_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "blog_posts",
+    "row_count": 384,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "season_phrase_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "blog_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "author_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "date_published",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "hero_image_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "hero_alt",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "summary",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "blog_preflight_decisions",
+    "row_count": 246,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "decision_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      }
+    ],
+    "primary_key": [
+      "idea_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "categories",
+    "row_count": 20,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      }
+    ],
+    "primary_key": [
+      "slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "categories_tree",
+    "row_count": 19,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "parent_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "sort_order",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "is_active",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "nav_visible",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "icon",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": [
+      "slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "categories_tree_new",
+    "row_count": 18,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "parent_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "sort_order",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "is_active",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "nav_visible",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "icon",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP WITH TIME ZONE",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "content_plan",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "category",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "season",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "reasoning",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "publish_date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "risk",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "daily_trends",
+    "row_count": 3,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "topic",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "category",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "volume",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "locale",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "reason",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "trend_date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "detected_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "facebook_oauth_tokens",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "page_access_token",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "facebook_page_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "facebook_page_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "scopes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      }
+    ],
+    "primary_key": [
+      "user_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "facebook_page_tokens",
+    "row_count": 1,
+    "columns": [
+      {
+        "column_name": "user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "fb_user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "page_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "page_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "page_access_token",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "token_created_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "scopes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": [
+      "user_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "google_trends_score",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "phrase_id",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "phrase",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "trend_score",
+        "data_type": "FLOAT",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "shopping_intent_score",
+        "data_type": "FLOAT",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "llm_score",
+        "data_type": "FLOAT",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "final_score",
+        "data_type": "FLOAT",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "trend_date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "related_keywords",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "idea_products",
+    "row_count": 170452,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "is_primary",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "discount_pct",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "original_price",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "sale_price",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "item_end_date",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "availability_status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "is_active",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "last_checked_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "idea_rules_deal",
+    "row_count": 150,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "rules_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": [
+      "idea_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "ideas",
+    "row_count": 23470,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": [
+      "idea_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "instagram_oauth_pending",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "pages_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "scopes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": [
+      "user_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "instagram_oauth_tokens",
+    "row_count": 1,
+    "columns": [
+      {
+        "column_name": "user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "page_access_token",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "instagram_business_account_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "facebook_page_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "facebook_page_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "scopes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "instagram_username",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "meta_fb_user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "selected_page_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "token_created_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      }
+    ],
+    "primary_key": [
+      "user_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "llm_decisions_log",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "decision_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "prompt_meta",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "product_enrichment",
+    "row_count": 5049,
+    "columns": [
+      {
+        "column_name": "product_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "ship_type",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "ship_cost_value",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "ship_cost_currency",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "ship_free",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "ship_min_eta",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "ship_max_eta",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "ship_cutoff",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "ship_eta_min_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "ship_eta_max_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "returns_accepted",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "return_window_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      },
+      {
+        "column_name": "return_shipping_payer",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 13
+      },
+      {
+        "column_name": "refund_method",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 14
+      },
+      {
+        "column_name": "return_method",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 15
+      },
+      {
+        "column_name": "restocking_fee_pct",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 16
+      },
+      {
+        "column_name": "condition_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 17
+      },
+      {
+        "column_name": "condition_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 18
+      },
+      {
+        "column_name": "source_json",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 19
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 20
+      }
+    ],
+    "primary_key": [
+      "product_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_media",
+    "row_count": 16156,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "image_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": [
+      "parent_asin",
+      "image_url",
+      "source"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_media_new",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "image_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": [
+      "parent_asin",
+      "image_url",
+      "source"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_metrics",
+    "row_count": 6000,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "avg_rating",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "n_reviews",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      }
+    ],
+    "primary_key": [
+      "parent_asin"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_metrics_ebay",
+    "row_count": 14869,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "product_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "seller_score",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "feedback_pct",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "feedback_score",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "returns",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "eta_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "trust_level",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "review_rating",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "review_count",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "summary",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_review_summaries",
+    "row_count": 6000,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "review_paragraph",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "review_pros",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "review_cons",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "review_summary_short",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "review_loved",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "review_tips",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      }
+    ],
+    "primary_key": [
+      "parent_asin"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "product_text",
+    "row_count": 6000,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "description",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "features",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "pros_raw",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "cons_raw",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": [
+      "parent_asin"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "products",
+    "row_count": 14774,
+    "columns": [
+      {
+        "column_name": "parent_asin",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "product_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "price",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "external_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      }
+    ],
+    "primary_key": [
+      "parent_asin"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_brand_categories",
+    "row_count": 28,
+    "columns": [
+      {
+        "column_name": "brand_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      }
+    ],
+    "primary_key": [
+      "brand_slug",
+      "category_slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_brands",
+    "row_count": 16,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "primary_category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      }
+    ],
+    "primary_key": [
+      "slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_categories",
+    "row_count": 4,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      }
+    ],
+    "primary_key": [
+      "slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_decisions",
+    "row_count": 234,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "sd_category_key",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "filters_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "buying_options",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "post_tag",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "title_suggest",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      }
+    ],
+    "primary_key": [
+      "run_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_errors",
+    "row_count": 4,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "step",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "error_msg",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "sd_item_enrichment",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "item_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "ship_type",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "ship_cost_value",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "ship_cost_ccy",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "ship_free",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "ship_eta_min_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "ship_eta_max_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "returns_accepted",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "return_window_days",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "return_shipping_payer",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "refund_method",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      },
+      {
+        "column_name": "return_method",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 13
+      },
+      {
+        "column_name": "restocking_fee_pct",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 14
+      },
+      {
+        "column_name": "condition_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 15
+      },
+      {
+        "column_name": "condition_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 16
+      },
+      {
+        "column_name": "detail_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 17
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 18
+      }
+    ],
+    "primary_key": [
+      "run_id",
+      "item_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_items",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "item_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "price_value",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "currency",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "raw_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      }
+    ],
+    "primary_key": [
+      "run_id",
+      "item_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_publications",
+    "row_count": 232,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "sd_category_key",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "date_published",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": [
+      "run_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_run_stats",
+    "row_count": 0,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "total_kept",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "max_discount",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "avg_discount",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "price_min",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "price_max",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "hero_image",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      }
+    ],
+    "primary_key": [
+      "run_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_runs",
+    "row_count": 236,
+    "columns": [
+      {
+        "column_name": "run_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "started_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "llm_prompt",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "candidate_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "season_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "decision_ctx",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "llm_decision",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "notes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      }
+    ],
+    "primary_key": [
+      "run_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "sd_seed_brands",
+    "row_count": 36,
+    "columns": [
+      {
+        "column_name": "brand",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      }
+    ],
+    "primary_key": [
+      "brand"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "season_phrases",
+    "row_count": 379,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "season_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "seed",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "phrase",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "kept",
+        "data_type": "BOOLEAN",
+        "is_nullable": "NO",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "score",
+        "data_type": "DOUBLE",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "theme_hits",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "type_hits",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "drop_reason",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "seasons",
+    "row_count": 7,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "season_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "seeds_json",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "theme_tokens",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "type_tokens",
+        "data_type": "JSON",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "season_group",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "start_date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "end_date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "locale",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "reason",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "sources",
+    "row_count": 1,
+    "columns": [
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      }
+    ],
+    "primary_key": [
+      "slug"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "tiktok_oauth_tokens",
+    "row_count": 1,
+    "columns": [
+      {
+        "column_name": "user_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "access_token",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "refresh_token",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "open_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "username",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "scopes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "refresh_expires_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "display_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      }
+    ],
+    "primary_key": [
+      "user_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "trend_feed_snapshot",
+    "row_count": 3,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "topic",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "change_pct",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "date",
+        "data_type": "DATE",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "collected_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "trend_ideas",
+    "row_count": 194,
+    "columns": [
+      {
+        "column_name": "idea_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "trend_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "idea_type",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "category_slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      }
+    ],
+    "primary_key": [
+      "idea_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "trend_instagram_posts",
+    "row_count": 412,
+    "columns": [
+      {
+        "column_name": "insta_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "image_path",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "caption_json",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "trend_publications",
+    "row_count": 204,
+    "columns": [
+      {
+        "column_name": "pub_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "published_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "published_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      }
+    ],
+    "primary_key": [
+      "pub_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "trend_topics",
+    "row_count": 185,
+    "columns": [
+      {
+        "column_name": "trend_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "trend",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "description",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "slug",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      }
+    ],
+    "primary_key": [
+      "trend_id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "trends_categories",
+    "row_count": 1426,
+    "columns": [
+      {
+        "column_name": "category_id",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "category_name",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "parent_id",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      }
+    ],
+    "primary_key": []
+  },
+  {
+    "schema": "main",
+    "table": "youtube_captions",
+    "row_count": 3,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "video_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "caption_text",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "source",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "lang",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "youtube_channels",
+    "row_count": 3,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "channel_handle",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "channel_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "channel_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "is_active",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "notes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "last_checked_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "youtube_trend_ideas",
+    "row_count": 9,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "idea_date",
+        "data_type": "DATE",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "channel_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "video_id",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "channel_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "video_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "video_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "idea_text",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "notes",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  },
+  {
+    "schema": "main",
+    "table": "youtube_videos",
+    "row_count": 16,
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 1
+      },
+      {
+        "column_name": "channel_id",
+        "data_type": "BIGINT",
+        "is_nullable": "NO",
+        "ordinal_position": 2
+      },
+      {
+        "column_name": "video_id",
+        "data_type": "VARCHAR",
+        "is_nullable": "NO",
+        "ordinal_position": 3
+      },
+      {
+        "column_name": "video_title",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 4
+      },
+      {
+        "column_name": "video_url",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 5
+      },
+      {
+        "column_name": "published_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 6
+      },
+      {
+        "column_name": "has_captions",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 7
+      },
+      {
+        "column_name": "caption_lang",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 8
+      },
+      {
+        "column_name": "last_checked_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 9
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 10
+      },
+      {
+        "column_name": "duration_seconds",
+        "data_type": "INTEGER",
+        "is_nullable": "YES",
+        "ordinal_position": 11
+      },
+      {
+        "column_name": "is_short",
+        "data_type": "BOOLEAN",
+        "is_nullable": "YES",
+        "ordinal_position": 12
+      },
+      {
+        "column_name": "view_count",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 13
+      },
+      {
+        "column_name": "like_count",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 14
+      },
+      {
+        "column_name": "comment_count",
+        "data_type": "BIGINT",
+        "is_nullable": "YES",
+        "ordinal_position": 15
+      },
+      {
+        "column_name": "stats_fetched_at",
+        "data_type": "TIMESTAMP",
+        "is_nullable": "YES",
+        "ordinal_position": 16
+      },
+      {
+        "column_name": "download_status",
+        "data_type": "VARCHAR",
+        "is_nullable": "YES",
+        "ordinal_position": 17
+      }
+    ],
+    "primary_key": [
+      "id"
+    ]
+  }
+]

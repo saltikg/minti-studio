@@ -1,0 +1,865 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Voice Practice{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <style>
+    .voice-practice-page .vp-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 0;
+    }
+    .voice-practice-page .vp-toolbar .btn {
+      min-width: 140px;
+    }
+    .voice-practice-page textarea {
+      min-height: 220px;
+      resize: vertical;
+    }
+    .voice-practice-page .vp-secondary {
+      min-height: 130px;
+    }
+    .voice-practice-page .vp-status {
+      font-size: 0.92rem;
+      color: rgba(255, 255, 255, 0.78);
+      min-height: 1.15rem;
+    }
+    .voice-practice-page .vp-main-body {
+      padding: 1.15rem 1.2rem 1.3rem;
+    }
+    .voice-practice-page .vp-main-body > * + * {
+      margin-top: 0.95rem;
+    }
+    .voice-practice-page .vp-main-body .vp-toolbar,
+    .voice-practice-page .vp-main-body .vp-status,
+    .voice-practice-page .vp-main-body .vp-qa-section {
+      margin-top: 0;
+    }
+    .voice-practice-page .vp-save-row {
+      margin-top: 0;
+    }
+    .voice-practice-page #vp-save-status {
+      min-height: 1.1rem;
+      margin-top: 0.5rem;
+    }
+    .voice-practice-page #vp-recordings-wrap {
+      margin-top: 0.5rem;
+    }
+    .voice-practice-page .vp-secondary-label {
+      margin-top: 1.1rem;
+    }
+    @media (max-width: 768px) {
+      .voice-practice-page .vp-main-body {
+        padding: 1rem;
+      }
+      .voice-practice-page .vp-main-body > * + * {
+        margin-top: 0.8rem;
+      }
+    }
+    .voice-practice-page .vp-recording-card {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 12px;
+    }
+    .voice-practice-page .vp-recording-title {
+      color: #fff;
+      font-weight: 600;
+    }
+    .voice-practice-page .vp-qa-item {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 10px 12px;
+    }
+    .voice-practice-page .vp-qa-question {
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .voice-practice-page .vp-qa-question.is-active {
+      color: #fff;
+      text-decoration: underline;
+    }
+    .voice-practice-page .vp-qa-toggle-icon {
+      font-size: 1.1rem;
+      opacity: 0.85;
+    }
+    .voice-practice-page .vp-qa-answer-line {
+      color: #fff;
+      font-weight: 400;
+      font-size: 1rem;
+    }
+    .voice-practice-page .vp-qa-answer-line.is-active {
+      color: #fff;
+      font-weight: 700;
+    }
+    #vp-qa-import-modal .modal-dialog {
+      max-width: 920px;
+    }
+    #vp-qa-import-modal .modal-body {
+      min-height: 62vh;
+    }
+    #vp-qa-import-modal #vp-qa-import-text {
+      min-height: 42vh;
+    }
+  </style>
+
+  <div class="voice-practice-page">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+      <div>
+        <h3 class="mb-1">Voice Practice</h3>
+      </div>
+      <a href="{{ url_for('video_shorts_bp.interview_interviews_page') }}" class="btn btn-outline-light btn-sm">Back to Interviews</a>
+    </div>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-body vp-main-body">
+        <div class="vp-toolbar">
+          <button id="vp-start-btn" type="button" class="btn vs-btn vs-btn-primary">
+            <span class="material-symbols-outlined" aria-hidden="true">mic</span>
+            Start Listening
+          </button>
+          <button id="vp-stop-btn" type="button" class="btn btn-outline-light" disabled>
+            <span class="material-symbols-outlined" aria-hidden="true">mic_off</span>
+            Stop
+          </button>
+          <button id="vp-copy-btn" type="button" class="btn btn-outline-light">
+            <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
+            Copy Transcript
+          </button>
+          <button id="vp-clear-btn" type="button" class="btn btn-outline-light">
+            <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+            Clear
+          </button>
+          <button id="vp-qa-open-btn" type="button" class="btn btn-outline-light" data-bs-toggle="modal" data-bs-target="#vp-qa-import-modal">
+            <span class="material-symbols-outlined" aria-hidden="true">quiz</span>
+            Q/A Import
+          </button>
+        </div>
+
+        <div id="vp-status" class="vp-status"></div>
+
+        <div class="card shadow-sm vs-card vp-qa-section">
+          <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span>Interview Questions</span>
+          </div>
+          <div class="card-body">
+            <div id="vp-qa-list" class="d-flex flex-column gap-2"></div>
+          </div>
+        </div>
+
+        <label for="vp-transcript" class="form-label text-white-50">Live Transcript</label>
+        <textarea id="vp-transcript" class="form-control vs-input" spellcheck="false" placeholder="Your transcript appears here..."></textarea>
+
+        <div class="d-flex gap-2 align-items-center vp-save-row">
+          <input id="vp-save-note" type="text" class="form-control vs-input flex-grow-1" maxlength="140" placeholder="Short Save Note">
+          <button id="vp-save-btn" type="button" class="btn vs-btn vs-btn-primary flex-shrink-0">Save</button>
+        </div>
+
+        <div id="vp-save-status" class="small text-white-50"></div>
+
+        <div id="vp-recordings-wrap" class="d-flex flex-column gap-3"></div>
+
+        <label for="vp-secondary" class="form-label text-white-50 vp-secondary-label">Second Text Box (Optional)</label>
+        <textarea id="vp-secondary" class="form-control vs-input vp-secondary" spellcheck="false" placeholder="Optional notes or cleaned response..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="vp-qa-import-modal" tabindex="-1" role="dialog" aria-labelledby="vp-qa-import-modal-label" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable" role="document">
+    <div class="modal-content vs-card">
+      <div class="modal-header">
+        <h5 class="modal-title" id="vp-qa-import-modal-label">Import Q/A</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-white-50 mb-2">Format: <code>Q:</code> question line, <code>A:</code> answer line(s)</div>
+        <textarea id="vp-qa-import-text" class="form-control vs-input vp-secondary mb-2" spellcheck="false" placeholder="Q: Tell me about yourself&#10;A: I am a product manager with ..."></textarea>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <label class="small text-white-50 d-inline-flex align-items-center gap-1 mb-0">
+            <input id="vp-qa-replace" type="checkbox" class="form-check-input m-0">
+            Replace existing
+          </label>
+          <button id="vp-qa-import-btn" type="button" class="btn btn-sm btn-outline-light">Import Q/A</button>
+        </div>
+        <div id="vp-qa-status" class="small text-white-50 mt-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const interviewId = "{{ interview.id }}";
+  const listApiUrl = "{{ url_for('video_shorts_bp.interview_recordings_api', interview_id=interview.id) }}";
+  const materialsApiUrl = `/video_shorts/api/interview/interviews/${encodeURIComponent(interviewId)}/materials`;
+  const materialsImportApiUrl = `/video_shorts/api/interview/interviews/${encodeURIComponent(interviewId)}/materials/import`;
+
+  const startBtn = document.getElementById("vp-start-btn");
+  const stopBtn = document.getElementById("vp-stop-btn");
+  const copyBtn = document.getElementById("vp-copy-btn");
+  const clearBtn = document.getElementById("vp-clear-btn");
+  const saveBtn = document.getElementById("vp-save-btn");
+  const qaOpenBtn = document.getElementById("vp-qa-open-btn");
+
+  const transcriptEl = document.getElementById("vp-transcript");
+  const secondaryEl = document.getElementById("vp-secondary");
+  const saveNoteEl = document.getElementById("vp-save-note");
+  const statusEl = document.getElementById("vp-status");
+  const saveStatusEl = document.getElementById("vp-save-status");
+  const recordingsWrapEl = document.getElementById("vp-recordings-wrap");
+  const qaImportTextEl = document.getElementById("vp-qa-import-text");
+  const qaImportBtn = document.getElementById("vp-qa-import-btn");
+  const qaReplaceEl = document.getElementById("vp-qa-replace");
+  const qaStatusEl = document.getElementById("vp-qa-status");
+  const qaListEl = document.getElementById("vp-qa-list");
+  const qaModalEl = document.getElementById("vp-qa-import-modal");
+
+  const RecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  let recognition = null;
+  let finalTranscript = "";
+
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let currentAudioBlob = null;
+  let isRecorderActive = false;
+  let finalizeRecordingPromise = null;
+  let qaSentenceEntries = [];
+  let activeQaKey = null;
+  let qaRowsCache = [];
+
+  const esc = (s) => String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  const setStatus = (msg, isError = false) => {
+    statusEl.textContent = msg || "";
+    statusEl.classList.toggle("text-danger", !!isError);
+  };
+
+  const setSaveStatus = (msg, isError = false) => {
+    saveStatusEl.textContent = msg || "";
+    saveStatusEl.classList.toggle("text-danger", !!isError);
+  };
+
+  const setQaStatus = (msg, isError = false) => {
+    qaStatusEl.textContent = msg || "";
+    qaStatusEl.classList.toggle("text-danger", !!isError);
+  };
+
+  const buildQaImportText = (rows) => {
+    if (!Array.isArray(rows) || !rows.length) return "";
+    return rows.map((row) => {
+      const q = String((row && row.question) || "").trim();
+      const a = String((row && row.answer) || "").trim();
+      return `Q: ${q}\nA: ${a}`;
+    }).join("\n\n");
+  };
+
+  const closeQaImportModal = () => {
+    if (!qaModalEl) return;
+    if (window.bootstrap && window.bootstrap.Modal) {
+      const instance = window.bootstrap.Modal.getInstance(qaModalEl) || new window.bootstrap.Modal(qaModalEl);
+      instance.hide();
+      return;
+    }
+    if (window.jQuery && window.jQuery.fn && window.jQuery.fn.modal) {
+      window.jQuery(qaModalEl).modal("hide");
+    }
+  };
+
+  const renderTranscript = (interim = "") => {
+    const merged = `${finalTranscript}${interim}`.trim();
+    transcriptEl.value = merged;
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    updateQaHighlight(merged);
+  };
+
+  const setListeningState = (listening) => {
+    startBtn.disabled = !!listening;
+    stopBtn.disabled = !listening;
+  };
+
+  const stopMediaTracks = () => {
+    if (!mediaStream) return;
+    mediaStream.getTracks().forEach((track) => {
+      try { track.stop(); } catch (err) {}
+    });
+    mediaStream = null;
+  };
+
+  const startMicCapture = async () => {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    audioChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        audioChunks.push(event.data);
+      }
+    };
+    mediaRecorder.onstop = () => {
+      currentAudioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      isRecorderActive = false;
+      stopMediaTracks();
+      setSaveStatus("Recording ready. Click Save.");
+    };
+    mediaRecorder.start(250);
+    isRecorderActive = true;
+  };
+
+  const stopMicCapture = () => {
+    if (!mediaRecorder || mediaRecorder.state === "inactive") {
+      isRecorderActive = false;
+      stopMediaTracks();
+      return;
+    }
+    try {
+      mediaRecorder.stop();
+    } catch (err) {
+      isRecorderActive = false;
+      stopMediaTracks();
+    }
+  };
+
+  const finalizeRecording = async () => {
+    if (!mediaRecorder || mediaRecorder.state === "inactive") {
+      if (!currentAudioBlob && audioChunks.length > 0) {
+        currentAudioBlob = new Blob(audioChunks, { type: "audio/webm" });
+      }
+      return;
+    }
+    if (finalizeRecordingPromise) {
+      await finalizeRecordingPromise;
+      return;
+    }
+
+    finalizeRecordingPromise = new Promise((resolve) => {
+      const onStop = () => {
+        if (!currentAudioBlob && audioChunks.length > 0) {
+          currentAudioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        }
+        finalizeRecordingPromise = null;
+        resolve();
+      };
+      mediaRecorder.addEventListener("stop", onStop, { once: true });
+      try {
+        mediaRecorder.requestData();
+      } catch (err) {}
+      try {
+        mediaRecorder.stop();
+      } catch (err) {
+        finalizeRecordingPromise = null;
+        resolve();
+      }
+    });
+    await finalizeRecordingPromise;
+  };
+
+  const formatDate = (isoText) => {
+    const dt = new Date(isoText || "");
+    if (Number.isNaN(dt.getTime())) return "-";
+    return dt.toLocaleString();
+  };
+
+  const formatDuration = (secondsValue) => {
+    const total = Number(secondsValue);
+    if (!Number.isFinite(total) || total < 0) return "--:--";
+    const rounded = Math.floor(total);
+    const mins = Math.floor(rounded / 60);
+    const secs = rounded % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  const extractDuration = (audioEl) => {
+    const direct = Number(audioEl.duration);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    if (audioEl.seekable && audioEl.seekable.length > 0) {
+      const seekEnd = Number(audioEl.seekable.end(audioEl.seekable.length - 1));
+      if (Number.isFinite(seekEnd) && seekEnd > 0) return seekEnd;
+    }
+    return NaN;
+  };
+
+  const loadRecordings = async () => {
+    try {
+      const response = await fetch(listApiUrl, { credentials: "same-origin" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not load recordings.");
+      }
+      const rows = Array.isArray(payload.recordings) ? payload.recordings : [];
+      recordingsWrapEl.innerHTML = "";
+      if (!rows.length) {
+        recordingsWrapEl.innerHTML = '<div class="small text-white-50">No recordings for this interview yet.</div>';
+        return;
+      }
+
+      rows.forEach((row) => {
+        const item = document.createElement("div");
+        item.className = "vp-recording-card";
+        const preview = String(row.transcript || "").slice(0, 220);
+        const title = (row.note && String(row.note).trim()) ? String(row.note).trim() : "Untitled Recording";
+        item.innerHTML = `
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <div class="vp-recording-title">${esc(title)} - (${esc(formatDate(row.created_at))})</div>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-delete-id="${esc(row.id)}">Delete</button>
+          </div>
+          <audio controls preload="metadata" src="${esc(row.audio_url || "")}" class="w-100 mb-2"></audio>
+          <div class="small text-white-50 mb-2">Duration: <span data-duration-id="${esc(row.id)}">--:--</span></div>
+          <div class="small text-white-50 mb-2" data-preview-id="${esc(row.id)}">${esc(preview || "No transcript")}</div>
+          <div class="small text-white-50 d-none mb-2" data-full-id="${esc(row.id)}" style="white-space: pre-wrap;">${esc(row.transcript || "No transcript")}</div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-outline-light" data-toggle-id="${esc(row.id)}">Show more</button>
+            <button type="button" class="btn btn-sm btn-outline-light" data-copy-id="${esc(row.id)}">Copy</button>
+          </div>
+        `;
+        recordingsWrapEl.appendChild(item);
+      });
+
+      recordingsWrapEl.querySelectorAll("audio").forEach((audioEl) => {
+        const cardEl = audioEl.closest(".vp-recording-card");
+        if (!cardEl) return;
+        const deleteBtn = cardEl.querySelector("[data-delete-id]");
+        if (!deleteBtn) return;
+        const recId = deleteBtn.getAttribute("data-delete-id") || "";
+        if (!recId) return;
+        const durationEl = cardEl.querySelector(`[data-duration-id="${CSS.escape(recId)}"]`);
+        if (!durationEl) return;
+        const update = () => {
+          durationEl.textContent = formatDuration(extractDuration(audioEl));
+        };
+        audioEl.addEventListener("loadedmetadata", update);
+        audioEl.addEventListener("durationchange", update);
+        audioEl.addEventListener("progress", update);
+        audioEl.addEventListener("canplay", update);
+        audioEl.addEventListener("timeupdate", update);
+        if (audioEl.readyState >= 1) {
+          update();
+        }
+
+        // Fallback for some WebM files where duration metadata is missing.
+        const maybeDuration = extractDuration(audioEl);
+        if (!Number.isFinite(maybeDuration) || maybeDuration <= 0) {
+          fetch(audioEl.currentSrc || audioEl.src, { credentials: "same-origin" })
+            .then((res) => res.arrayBuffer())
+            .then(async (buffer) => {
+              const Ctx = window.AudioContext || window.webkitAudioContext;
+              if (!Ctx) return;
+              const ctx = new Ctx();
+              try {
+                const decoded = await ctx.decodeAudioData(buffer.slice(0));
+                const d = Number(decoded && decoded.duration);
+                if (Number.isFinite(d) && d > 0) {
+                  durationEl.textContent = formatDuration(d);
+                }
+              } finally {
+                try { await ctx.close(); } catch (err) {}
+              }
+            })
+            .catch(() => {});
+        }
+      });
+
+      recordingsWrapEl.querySelectorAll("[data-delete-id]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const recId = btn.getAttribute("data-delete-id") || "";
+          if (!recId) return;
+          if (!window.confirm("Delete this recording?")) return;
+          btn.disabled = true;
+          setSaveStatus("Deleting...");
+          try {
+            const delUrl = `/video_shorts/api/interview/recordings/${encodeURIComponent(recId)}`;
+            const res = await fetch(delUrl, { method: "DELETE", credentials: "same-origin" });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(payload.error || "Delete failed.");
+            }
+            setSaveStatus("Deleted.");
+            await loadRecordings();
+          } catch (err) {
+            setSaveStatus(err.message || "Delete failed.", true);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+
+      recordingsWrapEl.querySelectorAll("[data-toggle-id]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const recId = btn.getAttribute("data-toggle-id") || "";
+          const previewEl = recordingsWrapEl.querySelector(`[data-preview-id="${CSS.escape(recId)}"]`);
+          const fullEl = recordingsWrapEl.querySelector(`[data-full-id="${CSS.escape(recId)}"]`);
+          if (!previewEl || !fullEl) return;
+          const expanded = !fullEl.classList.contains("d-none");
+          if (expanded) {
+            fullEl.classList.add("d-none");
+            previewEl.classList.remove("d-none");
+            btn.textContent = "Show more";
+          } else {
+            previewEl.classList.add("d-none");
+            fullEl.classList.remove("d-none");
+            btn.textContent = "Show less";
+          }
+        });
+      });
+
+      recordingsWrapEl.querySelectorAll("[data-copy-id]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const recId = btn.getAttribute("data-copy-id") || "";
+          const row = rows.find((r) => String(r.id) === recId);
+          const text = (row && row.transcript) ? String(row.transcript) : "";
+          if (!text.trim()) {
+            setSaveStatus("No transcript to copy.", true);
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(text);
+            setSaveStatus("Transcript copied.");
+          } catch (err) {
+            setSaveStatus("Copy failed.", true);
+          }
+        });
+      });
+    } catch (err) {
+      recordingsWrapEl.innerHTML = `<div class="small text-danger">${esc(err.message || "Could not load recordings.")}</div>`;
+    }
+  };
+
+  const loadMaterials = async () => {
+    try {
+      const response = await fetch(materialsApiUrl, { credentials: "same-origin" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not load Q/A materials.");
+      }
+      const rows = Array.isArray(payload.materials) ? payload.materials : [];
+      qaRowsCache = rows;
+      qaListEl.innerHTML = "";
+      qaSentenceEntries = [];
+      activeQaKey = null;
+      if (!rows.length) {
+        qaListEl.innerHTML = '<div class="small text-white-50">No imported questions yet.</div>';
+        return;
+      }
+      const splitSentences = (text) => {
+        const normalized = String(text || "").replace(/\r/g, " ").trim();
+        if (!normalized) return [];
+        const chunks = normalized
+          .split(/(?<=[.!?])\s+|\n+/)
+          .map((x) => x.trim())
+          .filter(Boolean);
+        return chunks.length ? chunks : [normalized];
+      };
+      rows.forEach((row, idx) => {
+        const qId = `qa-${String(row.id || idx)}`;
+        const answerSentences = splitSentences(row.answer || "");
+        const answerHtml = answerSentences.length
+          ? answerSentences.map((s) => `<div class="vp-qa-answer-line" data-qa-sentence="${esc(qId)}">${esc(s)}</div>`).join("")
+          : '<div class="vp-qa-answer-line" data-qa-sentence="' + esc(qId) + '">No answer</div>';
+        const item = document.createElement("div");
+        item.className = "vp-qa-item";
+        item.innerHTML = `
+          <div class="vp-qa-question" data-qa-toggle="${esc(qId)}">
+            <span>${esc(row.question || "")}</span>
+            <span class="material-symbols-outlined vp-qa-toggle-icon" data-qa-icon="${esc(qId)}" aria-hidden="true">expand_more</span>
+          </div>
+          <div class="small text-white-50 d-none mt-2" data-qa-answer="${esc(qId)}" style="white-space: pre-wrap;">${answerHtml}</div>
+        `;
+        qaListEl.appendChild(item);
+      });
+
+      qaListEl.querySelectorAll("[data-qa-answer]").forEach((answerWrap) => {
+        const key = answerWrap.getAttribute("data-qa-answer") || "";
+        const qEl = qaListEl.querySelector(`[data-qa-toggle="${CSS.escape(key)}"]`);
+        answerWrap.querySelectorAll("[data-qa-sentence]").forEach((sEl) => {
+          qaSentenceEntries.push({
+            key,
+            questionEl: qEl,
+            answerWrap,
+            sentenceEl: sEl,
+            sentenceText: sEl.textContent || "",
+          });
+        });
+      });
+
+      qaListEl.querySelectorAll("[data-qa-toggle]").forEach((qEl) => {
+        qEl.addEventListener("click", () => {
+          const key = qEl.getAttribute("data-qa-toggle") || "";
+          const aEl = qaListEl.querySelector(`[data-qa-answer="${CSS.escape(key)}"]`);
+          const iconEl = qaListEl.querySelector(`[data-qa-icon="${CSS.escape(key)}"]`);
+          if (!aEl) return;
+          const willOpen = aEl.classList.contains("d-none");
+          aEl.classList.toggle("d-none");
+          if (iconEl) {
+            iconEl.textContent = willOpen ? "expand_less" : "expand_more";
+          }
+          activeQaKey = willOpen ? key : (activeQaKey === key ? null : activeQaKey);
+          updateQaHighlight(transcriptEl.value || "");
+        });
+      });
+      updateQaHighlight(transcriptEl.value || "");
+    } catch (err) {
+      qaListEl.innerHTML = `<div class="small text-danger">${esc(err.message || "Could not load Q/A materials.")}</div>`;
+    }
+  };
+
+  const tokenize = (text) => {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9çğıöşüİı\s]/gi, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 2);
+  };
+
+  const updateQaHighlight = (liveText) => {
+    if (!qaSentenceEntries.length) return;
+    const liveTokens = tokenize(liveText);
+    const windowTokens = liveTokens.slice(-24);
+    const tokenSet = new Set(windowTokens);
+
+    qaSentenceEntries.forEach((entry) => {
+      entry.sentenceEl.classList.remove("is-active");
+      if (entry.questionEl) entry.questionEl.classList.remove("is-active");
+    });
+    if (!tokenSet.size) return;
+
+    // Focus only on the answer currently opened by the user.
+    const pool = qaSentenceEntries.filter(
+      (entry) =>
+        entry.key === activeQaKey &&
+        entry.answerWrap &&
+        !entry.answerWrap.classList.contains("d-none")
+    );
+    if (!pool.length) return;
+
+    const ranked = [];
+    pool.forEach((entry) => {
+      const sentenceTokens = tokenize(entry.sentenceText);
+      if (!sentenceTokens.length) return;
+      let overlap = 0;
+      sentenceTokens.forEach((t) => {
+        if (tokenSet.has(t)) overlap += 1;
+      });
+      const score = overlap / Math.max(3, sentenceTokens.length);
+      ranked.push({ entry, score, overlap });
+    });
+
+    if (!ranked.length) return;
+    ranked.sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    const second = ranked[1];
+    const margin = second ? (best.score - second.score) : best.score;
+
+    // Be conservative to avoid jumping to the wrong question.
+    // Earlier highlight for live reading flow.
+    const minOverlap = tokenSet.size < 6 ? 1 : 2;
+    const minScore = tokenSet.size < 6 ? 0.10 : 0.18;
+    const minMargin = 0.02;
+    const confidentMatch = best.overlap >= minOverlap && best.score >= minScore && margin >= minMargin;
+    if (!confidentMatch) return;
+
+    const { entry } = best;
+    entry.sentenceEl.classList.add("is-active");
+    if (entry.questionEl) entry.questionEl.classList.add("is-active");
+  };
+
+  if (!RecognitionClass) {
+    setStatus("SpeechRecognition is not supported in this browser. Try latest Chrome/Edge.", true);
+    startBtn.disabled = true;
+    stopBtn.disabled = true;
+  } else {
+    recognition = new RecognitionClass();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      setListeningState(true);
+      setStatus("Listening...");
+    };
+
+    recognition.onresult = (event) => {
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const chunk = result[0] ? result[0].transcript : "";
+        if (result.isFinal) {
+          finalTranscript += `${chunk.trim()} `;
+        } else {
+          interimTranscript += chunk;
+        }
+      }
+      renderTranscript(interimTranscript);
+    };
+
+    recognition.onerror = (event) => {
+      const message = event && event.error ? `Listening error: ${event.error}` : "Listening error";
+      setStatus(message, true);
+    };
+
+    recognition.onend = () => {
+      setListeningState(false);
+      setStatus("Stopped.");
+      renderTranscript("");
+    };
+  }
+
+  startBtn.addEventListener("click", async () => {
+    setSaveStatus("");
+    currentAudioBlob = null;
+    try {
+      if (recognition) recognition.start();
+      await startMicCapture();
+      setStatus("Listening and recording...");
+      setListeningState(true);
+    } catch (err) {
+      setListeningState(false);
+      stopMicCapture();
+      setStatus("Could not start. Check microphone permissions.", true);
+    }
+  });
+
+  stopBtn.addEventListener("click", () => {
+    if (recognition) {
+      try { recognition.stop(); } catch (err) {}
+    }
+    stopMicCapture();
+    setListeningState(false);
+    setStatus("Stopped.");
+  });
+
+  copyBtn.addEventListener("click", async () => {
+    const text = transcriptEl.value || "";
+    if (!text.trim()) {
+      setStatus("Transcript is empty.", true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Transcript copied.");
+    } catch (err) {
+      setStatus("Clipboard copy failed.", true);
+    }
+  });
+
+  clearBtn.addEventListener("click", () => {
+    finalTranscript = "";
+    transcriptEl.value = "";
+    secondaryEl.value = "";
+    saveNoteEl.value = "";
+    setStatus("Cleared.");
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    setSaveStatus("Preparing recording...");
+    try {
+      if (isRecorderActive || (mediaRecorder && mediaRecorder.state !== "inactive")) {
+        if (recognition) {
+          try { recognition.stop(); } catch (err) {}
+        }
+        setListeningState(false);
+        setStatus("Stopped.");
+        await finalizeRecording();
+      }
+      if ((!currentAudioBlob || currentAudioBlob.size === 0) && audioChunks.length > 0) {
+        currentAudioBlob = new Blob(audioChunks, { type: (mediaRecorder && mediaRecorder.mimeType) || "audio/webm" });
+      }
+      if (!currentAudioBlob || currentAudioBlob.size === 0) {
+        setSaveStatus("No recording to save. Use Start and speak first.", true);
+        return;
+      }
+
+      const form = new FormData();
+      form.append("audio", currentAudioBlob, `recording-${Date.now()}.webm`);
+      form.append("note", (saveNoteEl.value || "").trim());
+      form.append("transcript", (transcriptEl.value || "").trim());
+      form.append("secondary_text", (secondaryEl.value || "").trim());
+
+      const response = await fetch(listApiUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        body: form,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Save failed.");
+      }
+
+      setSaveStatus("Saved.");
+      await loadRecordings();
+    } catch (err) {
+      setSaveStatus(err.message || "Save failed.", true);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  qaImportBtn.addEventListener("click", async () => {
+    const text = (qaImportTextEl.value || "").trim();
+    if (!text) {
+      setQaStatus("Paste Q/A text first.", true);
+      return;
+    }
+    qaImportBtn.disabled = true;
+    setQaStatus("Importing...");
+    try {
+      const response = await fetch(materialsImportApiUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          replace_existing: !!qaReplaceEl.checked,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Import failed.");
+      }
+      setQaStatus(`Imported ${payload.imported_count || 0} Q/A item(s).`);
+      qaImportTextEl.value = "";
+      await loadMaterials();
+      closeQaImportModal();
+    } catch (err) {
+      setQaStatus(err.message || "Import failed.", true);
+    } finally {
+      qaImportBtn.disabled = false;
+    }
+  });
+
+  if (qaOpenBtn) {
+    qaOpenBtn.addEventListener("click", () => {
+      setQaStatus("");
+      qaImportTextEl.value = buildQaImportText(qaRowsCache);
+    });
+  }
+
+  loadRecordings();
+  loadMaterials();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+┌──────────────────────────┬──────────────────┬───────────┬──────────────────┐
+│        table_name        │   column_name    │ data_type │ ordinal_position │
+│         varchar          │     varchar      │  varchar  │      int32       │
+├──────────────────────────┼──────────────────┼───────────┼──────────────────┤
+│ blog_posts               │ idea_id          │ VARCHAR   │                1 │
+│ blog_posts               │ status           │ VARCHAR   │                2 │
+│ blog_posts               │ blog_url         │ VARCHAR   │                3 │
+│ blog_posts               │ updated_at       │ TIMESTAMP │                4 │
+│ categories               │ slug             │ VARCHAR   │                1 │
+│ categories               │ name             │ VARCHAR   │                2 │
+│ idea_products            │ idea_id          │ VARCHAR   │                1 │
+│ idea_products            │ parent_asin      │ VARCHAR   │                2 │
+│ ideas                    │ idea_id          │ VARCHAR   │                1 │
+│ ideas                    │ idea_title       │ VARCHAR   │                2 │
+│ ideas                    │ created_at       │ TIMESTAMP │                3 │
+│ ideas                    │ category_slug    │ VARCHAR   │                4 │
+│ product_media            │ parent_asin      │ VARCHAR   │                1 │
+│ product_media            │ image_url        │ VARCHAR   │                2 │
+│ product_metrics          │ parent_asin      │ VARCHAR   │                1 │
+│ product_metrics          │ avg_rating       │ DOUBLE    │                2 │
+│ product_metrics          │ n_reviews        │ INTEGER   │                3 │
+│ product_review_summaries │ parent_asin      │ VARCHAR   │                1 │
+│ product_review_summaries │ review_paragraph │ VARCHAR   │                2 │
+│ product_review_summaries │ review_pros      │ VARCHAR   │                3 │
+│         ·                │      ·           │    ·      │                · │
+│         ·                │      ·           │    ·      │                · │
+│         ·                │      ·           │    ·      │                · │
+│ trends_categories        │ category_name    │ VARCHAR   │                2 │
+│ trends_categories        │ parent_id        │ INTEGER   │                3 │
+│ v_products               │ parent_asin      │ VARCHAR   │                1 │
+│ v_products               │ product_title    │ VARCHAR   │                2 │
+│ v_products               │ brand            │ VARCHAR   │                3 │
+│ v_products               │ price            │ VARCHAR   │                4 │
+│ v_products               │ avg_rating       │ DOUBLE    │                5 │
+│ v_products               │ n_reviews        │ INTEGER   │                6 │
+│ v_products               │ description      │ VARCHAR   │                7 │
+│ v_products               │ features         │ VARCHAR   │                8 │
+│ v_products               │ pros_raw         │ VARCHAR   │                9 │
+│ v_products               │ cons_raw         │ VARCHAR   │               10 │
+│ v_products               │ image_url        │ VARCHAR   │               11 │
+│ v_products               │ review_paragraph │ VARCHAR   │               12 │
+│ v_products               │ review_pros      │ VARCHAR   │               13 │
+│ v_products               │ review_cons      │ VARCHAR   │               14 │
+│ v_products               │ review_loved     │ VARCHAR   │               15 │
+│ v_products               │ review_tips      │ VARCHAR   │               16 │
+│ v_products               │ category_slug    │ VARCHAR   │               17 │
+│ v_products               │ category_name    │ VARCHAR   │               18 │
+├──────────────────────────┴──────────────────┴───────────┴──────────────────┤
+│ 55 rows (40 shown)                                               4 columns │
+└────────────────────────────────────────────────────────────────────────────┘

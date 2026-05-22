@@ -1,0 +1,433 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Sources – Video Shorts{% endblock %}
+
+{% block content %}
+
+<style>
+  .sources-page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .sources-title {
+    font-weight: 600;
+    margin: 0;
+  }
+  .sources-subtitle {
+    color: #64748b;
+    font-size: 0.9rem;
+    margin-top: 2px;
+  }
+  .sources-card {
+    border: 0;
+    border-radius: 14px;
+  }
+  .sources-card .card-header {
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    font-weight: 600;
+  }
+  .sources-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 16px;
+    align-items: end;
+  }
+  .sources-url {
+    display: inline-block;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+  .sources-table th,
+  .sources-table td {
+    vertical-align: middle;
+  }
+  .sources-table .text-num {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .sources-table .status-cell {
+    text-align: center;
+    white-space: nowrap;
+  }
+  .sources-actions {
+    display: inline-flex;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .sources-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 32px;
+    padding: 0 10px;
+  }
+  .sources-progress {
+    height: 6px;
+    background: #e2e8f0;
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .sources-progress .progress-bar-base,
+  .sources-progress .progress-bar-done {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+  }
+  .sources-progress .progress-bar-base {
+    background: #94a3b8;
+  }
+  .sources-progress .progress-bar-done {
+    background: #16a34a;
+  }
+  @media (max-width: 992px) {
+    .sources-form-grid {
+      grid-template-columns: 1fr;
+    }
+    .sources-url {
+      max-width: 180px;
+    }
+  }
+  @media (max-width: 768px) {
+  .sources-table {
+    min-width: 720px;
+  }
+  }
+  .sources-card {
+    background: var(--surface-2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+  }
+  .sources-card .card-header {
+    background: transparent;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text);
+  }
+  .sources-form-grid .form-control,
+  .sources-form-grid .form-select {
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text);
+    border-radius: 12px;
+  }
+  .sources-form-grid .form-control:focus,
+  .sources-form-grid .form-select:focus {
+    border-color: var(--mint);
+    box-shadow: 0 0 0 0.2rem rgba(45, 212, 191, 0.35);
+    outline: none;
+  }
+  .sources-form-grid label {
+    color: var(--muted);
+  }
+  .sources-card .btn,
+  .sources-actions .btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text);
+  }
+  .sources-card .btn.btn-primary {
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--mint-2), var(--mint));
+    color: #031018;
+  }
+  .sources-table {
+    background: var(--surface-2);
+    border-radius: 0 0 16px 16px;
+    border: none;
+    overflow: hidden;
+  }
+  .sources-table thead {
+    background: var(--surface-3);
+  }
+  .sources-table thead th {
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .sources-table tbody tr {
+    background: var(--surface-2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .sources-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .channel-table td,
+  .channel-table th,
+  .channel-table td .small,
+  .channel-table td .text-muted {
+    color: var(--text);
+  }
+  .channel-table a {
+    color: var(--mint);
+  }
+  .channel-table .sources-url {
+    max-width: 380px;
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sources-progress {
+    border-radius: 10px;
+    height: 8px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+  .sources-progress .progress-bar-base {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .sources-progress .progress-bar-done {
+    background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    background: rgba(45, 212, 191, 0.1);
+    color: var(--mint);
+  }
+  .status-pill.inactive {
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .channel-kind-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+  }
+  .channel-kind-badge.music {
+    color: #fef3c7;
+    background: rgba(217, 119, 6, 0.22);
+    border-color: rgba(245, 158, 11, 0.45);
+  }
+  .channel-kind-badge.podcast {
+    color: #dbeafe;
+    background: rgba(37, 99, 235, 0.18);
+    border-color: rgba(96, 165, 250, 0.4);
+  }
+</style>
+
+<div class="sources-page-header mb-4">
+  <div>
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-youtube text-danger fs-4" aria-hidden="true"></i>
+      <h3 class="sources-title">Sources</h3>
+    </div>
+    <div class="sources-subtitle">Manage your YouTube sources for Shorts</div>
+  </div>
+</div>
+
+<!-- Add new channel form -->
+<div class="card shadow-sm sources-card mb-4 vs-card">
+  <div class="card-header py-2">Add New Channel</div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('video_shorts_bp.channels_page') }}">
+      <div class="sources-form-grid">
+        <div>
+          <label class="form-label form-label-sm mb-1">Channel Name</label>
+          <input type="text"
+                 name="channel_name"
+                 class="form-control form-control-sm vs-input"
+                 placeholder="e.g. NadirKilicOfficial"
+                 required>
+        </div>
+
+        <div>
+          <label class="form-label form-label-sm mb-1">Channel URL</label>
+          <input type="url"
+                 name="channel_url"
+                 class="form-control form-control-sm vs-input"
+                 placeholder="https://www.youtube.com/@Channel"
+                 required>
+        </div>
+
+        <div class="text-end">
+          <button class="btn btn-sm btn-primary px-3 vs-btn vs-btn-primary">Add Channel</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Channel list -->
+<div class="card shadow-sm sources-card vs-card">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span>Channel List</span>
+    <span class="badge text-bg-light">{{ channels|length }} channels</span>
+  </div>
+
+  <div class="card-body p-0 vs-table-dark">
+    <div class="table-responsive">
+      <div class="vs-table-dark-inner">
+      <div class="vs-table-dark-inner">
+        <table class="table table-sm table-hover align-middle mb-0 sources-table channel-table vs-table">
+        <thead class="table-light">
+          <tr>
+            <th style="width:70px;">ID</th>
+            <th style="width:70px;">Videos</th>
+            <th>Channel Name</th>
+            <th style="width:220px;">URL</th>
+            <th style="width:170px;">Progress</th>
+            <th class="text-num" style="width:90px;">Pending</th>
+            <th class="text-num" style="width:110px;">Downloaded</th>
+            <th class="status-cell" style="width:90px;">Status</th>
+            <th style="width:170px;">Added</th>
+            <th class="text-end" style="width:180px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          {% for ch in channels %}
+          <tr>
+            <td class="text-muted small">{{ "—" if ch.is_pseudo else ch.channel_id }}</td>
+
+            <td>
+                {% if ch.is_pseudo %}
+                <a href="{{ url_for('video_shorts_bp.image_to_video_lab') }}"
+                 class="btn btn-outline-primary btn-sm px-3 vs-btn" title="Music uploads">
+                <i class="bi bi-music-note-list"></i>
+              </a>
+                {% else %}
+                <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=ch.channel_id) }}"
+                 class="btn btn-outline-primary btn-sm px-3 vs-btn" title="Videos">
+                <i class="bi bi-collection-play"></i>
+              </a>
+                {% endif %}
+            </td>
+
+            <td class="small fw-semibold">
+              {{ ch.channel_name }}
+              {% if ch.is_pseudo and ch.channel_kind == "music" %}
+                <span class="channel-kind-badge music">
+                  <i class="bi bi-music-note-beamed"></i> Music
+                </span>
+              {% endif %}
+              {% if (ch.channel_name or '') == 'Podcast channel' %}
+                <span class="channel-kind-badge podcast">
+                  <i class="bi bi-mic"></i> Podcast
+                </span>
+              {% endif %}
+            </td>
+
+            <td class="small">
+              {% if ch.channel_url and ch.channel_url.startswith('local://') %}
+                <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=ch.channel_id) }}" class="sources-url">
+                  {{ ch.channel_url }}
+                </a>
+              {% else %}
+                <a href="{{ ch.channel_url }}" target="_blank" class="sources-url">
+                  {{ ch.channel_url }}
+                </a>
+              {% endif %}
+            </td>
+
+            <td class="small">
+              {% if ch.total_videos %}
+                <div>{{ ch.pulled_videos }} / {{ ch.total_videos }}</div>
+                {% if ch.completion_pct is not none %}
+                  <div class="progress mt-1 sources-progress" role="progressbar"
+                       aria-valuenow="{{ ch.completion_pct }}"
+                       aria-valuemin="0"
+                       aria-valuemax="100">
+                    <div class="progress-bar-base" style="width: {{ ch.completion_pct }}%;"></div>
+                    <div class="progress-bar-done" style="width: {{ ch.download_pct or 0 }}%;"></div>
+                  </div>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">{{ ch.pulled_videos }} pulled</span>
+              {% endif %}
+            </td>
+            <td class="small text-num">
+              {{ ch.pending_videos or 0 }}
+            </td>
+            <td class="small text-num">
+              {{ ch.downloaded_videos or 0 }}
+            </td>
+
+            <td class="status-cell">
+              {% if ch.is_active %}
+                <span class="status-pill">Active</span>
+              {% else %}
+                <span class="status-pill inactive">Inactive</span>
+              {% endif %}
+            </td>
+
+            <td class="small text-muted">
+              {{ ch.added_at_display }}
+            </td>
+
+            <td class="text-end">
+              <div class="sources-actions">
+                {% if ch.is_pseudo %}
+                <a href="{{ url_for('video_shorts_bp.image_to_video_lab') }}"
+                   class="btn btn-outline-info btn-sm vs-btn"
+                   title="Open music uploads">
+                  <i class="bi bi-arrow-up-right-square"></i>
+                </a>
+                {% else %}
+                <form method="post"
+                      action="{{ url_for('video_shorts_bp.set_channel_active', channel_id=ch.channel_id) }}">
+                  {% if ch.is_active %}
+                    <input type="hidden" name="is_active" value="0">
+                    <button class="btn btn-outline-warning btn-sm vs-btn" title="Pause">
+                      <i class="bi bi-pause"></i>
+                    </button>
+                  {% else %}
+                    <input type="hidden" name="is_active" value="1">
+                    <button class="btn btn-outline-success btn-sm vs-btn" title="Activate">
+                      <i class="bi bi-play"></i>
+                    </button>
+                  {% endif %}
+                </form>
+
+                <form method="post"
+                      action="{{ url_for('video_shorts_bp.delete_channel', channel_id=ch.channel_id) }}"
+                      onsubmit="return confirm('Delete this channel?');">
+                  <button class="btn btn-outline-danger btn-sm vs-btn" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+
+          {% if channels|length == 0 %}
+          <tr>
+            <td colspan="9" class="text-center text-muted py-3">
+              No channels yet. Add one above.
+            </td>
+          </tr>
+          {% endif %}
+
+        </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

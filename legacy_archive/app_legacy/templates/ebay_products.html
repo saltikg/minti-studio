@@ -1,0 +1,86 @@
+<section class="featured-products">
+  <h2>Products Featured in This Article</h2>
+
+  <div class="product-grid">
+    {% for product in ebay_products %}
+    <article class="product-card ebay-product-card">
+      <div class="product-image-container">
+        <a href="{{ product.url }}" target="_blank" rel="noopener sponsored" class="product-image-link" aria-label="Open on eBay">
+          <img
+            src="{{ product.image or '/static/img/placeholder.png' }}"
+            alt="{{ product.title }}"
+            class="product-image"
+            loading="lazy">
+        </a>
+
+        {# İndirim rozeti #}
+        {% if product.discount_pct %}
+          <span class="disc-badge" aria-label="{{ product.discount_pct|int }}% off">
+            <svg class="disc-ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path d="M3 7l6 6 4-4 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M21 15v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <strong>{{ product.discount_pct|int }}%</strong>
+          </span>
+        {% endif %}
+
+        {# trust badge #}
+        {% set trust_txt = 'Top Rated' if product.trust in ['High','high']
+                           else ('Trusted' if product.trust in ['Medium','medium']
+                           else 'New/Low History') %}
+        <span class="trust-badge trust-{{ (product.trust or 'low')|lower }}"
+              title="Seller trust: {{ trust_txt }} • {{ '{:.1f}'.format(product.fb_pct) if product.fb_pct is not none else 'n/a' }}% positive • {{ '{:,}'.format(product.fb_score) if product.fb_score else 'n/a' }} reviews">
+          {{ trust_txt }}
+        </span>
+      </div>
+
+      <div class="product-info">
+        <h3 class="product-title">{{ product.title | truncate(80) }}</h3>
+
+        {% if product.sale_price or product.price %}
+          <div class="product-price-block">
+            {% if product.sale_price %}
+              <span class="price-now">${{ "%.2f"|format(product.sale_price) }}</span>
+              {% if product.original_price and product.original_price > product.sale_price %}
+                <span class="price-was">${{ "%.2f"|format(product.original_price) }}</span>
+              {% endif %}
+            {% else %}
+              <span class="price-now">${{ "%.2f"|format(product.price) }}</span>
+            {% endif %}
+            {% if product.auth_guarantee %}
+              <span class="ag-badge" title="eBay Authenticity Guarantee">✓⃝&nbsp;Authenticity&nbsp;Guarantee</span>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        {# Rating #}
+        {% set score = product.score or 0 %}
+        {% set full = product.stars_whole or 0 %}
+        {% set empty = 5 - (product.stars_whole or 0) %}
+
+        <div class="seller-rating" aria-label="{{ '%.1f'|format(score) }} out of 5">
+          <span class="stars-int">
+            {% for _ in range(full) %}★{% endfor %}
+            {% for _ in range(empty) %}☆{% endfor %}
+          </span>
+          <span class="score-num">{{ '%.1f'|format(score) }}</span>
+          <span class="score-label">{{ product.seller_label }}</span>
+        </div>
+
+        <div class="seller-info">
+          {% if product.fb_score %}{{ "{:,}".format(product.fb_score) }} reviews{% endif %}
+          {% if product.fb_pct %}{% if product.fb_score %} • {% endif %}{{ "%.1f"|format(product.fb_pct) }}% positive{% endif %}
+          {% if product.eta_days %} • ETA: {{ product.eta_days }} days{% endif %}
+          {% if product.returns %} • Returns: {{ product.returns }}{% endif %}
+        </div>
+
+        <div class="product-cta">
+          <a href="{{ product.url }}" target="_blank" rel="noopener sponsored" class="btn-ebay btn-sm">
+            View on eBay
+          </a>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>

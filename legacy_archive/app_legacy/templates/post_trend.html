@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title }} — MintiProduct{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  
+  <div class="trend-layout">
+    
+    <header class="post-header">
+        <h1>{{ post.title }}</h1>
+        {% if post.author_name or post.date_published %}
+          <div class="post-meta">
+            {% if post.author_name %}By <strong>{{ post.author_name }}</strong>{% endif %}
+            {% if post.date_published %} on {{ post.date_published }}{% endif %}
+          </div>
+        {% endif %}
+      </header>
+
+
+    {# === 1) HERO: tam genişlikte, ilk satır === #}
+    {% if post.hero_image_url or post.intro_lead %}
+    <section class="trend-hero hero-card">
+      <div class="hero-card-grid">
+        {% if post.hero_image_url %}
+          <figure class="hero-card-media">
+            <img class="hero-card-img" src="{{ post.hero_image_url }}" alt="{{ post.hero_alt or post.title }}" loading="eager" decoding="async">
+          </figure>
+        {% endif %}
+        <div class="hero-card-body">
+          <div class="hero-card-title">Overview</div>
+          {% if post.intro_lead %}
+            <div class="hero-card-text intro-text">{{ post.intro_lead | safe }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+    {# === 2) SOL KOLON: asıl içerik === #}
+    <article class="post">
+    
+
+      {% if post.intro_rest %}
+        <section class="section">{{ post.intro_rest | safe }}</section>
+      {% endif %}
+
+      {% if post.faq %}
+        {{ post.faq | safe }}
+      {% endif %}
+
+      {% if post.buyers_guide %}
+        {{ post.buyers_guide | safe }}
+      {% endif %}
+
+      {% if post.conclusion %}
+        {{ post.conclusion | safe }}
+      {% endif %}
+
+      {% if post.author_name %}
+      <section class="author-box">
+        <img class="author-box-avatar" src="{{ post.author_avatar_url or '/static/img/placeholder.png' }}" alt="{{ post.author_name }}">
+        <div class="author-box-info">
+          <div class="author-box-label">Author</div>
+          <h3 class="author-box-name">{{ post.author_name }}</h3>
+          {% if post.author_bio %}
+            <p class="author-box-bio">{{ post.author_bio }}</p>
+          {% endif %}
+        </div>
+      </section>
+      {% endif %}
+    </article>
+
+    {# === 3) SAĞ KOLON: ürünler (hero’dan SONRA başlar) === #}
+    <aside class="trend-sidebar">
+      {% if ebay_products and ebay_products|length > 0 %}
+      <div class="trend-sticky">
+        <section class="trend-side-section">
+          <h2 style="margin:0 0 .75rem;">Trending Picks</h2>
+          <div class="trend-grid">
+            {% for p in ebay_products %}
+              <div class="trend-card">
+                <img class="trend-card-img" src="{{ p.image or '/static/img/placeholder.png' }}" alt="{{ p.title }}">
+                <h4 class="trend-card-title">{{ p.title }}</h4>
+                {% if p.sale_price is not none %}
+                  <p class="trend-card-price">${{ '%.2f'|format(p.sale_price) }}</p>
+                {% elif p.price is not none %}
+                  <p class="trend-card-price">${{ '%.2f'|format(p.price) }}</p>
+                {% else %}
+                  <p class="trend-card-price">&nbsp;</p>
+                {% endif %}
+                <a class="trend-card-cta" href="{{ p.url }}" target="_blank" rel="noopener sponsored">View on eBay</a>
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+      </div>
+      {% endif %}
+    </aside>
+
+  </div>
+</div>
+{% endblock %}

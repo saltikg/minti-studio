@@ -1,0 +1,1651 @@
+from flask import Blueprint, Response, render_template
+import duckdb
+import unicodedata
+import re, os , logging
+from flask import make_response
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+import json
+load_dotenv()  # .env dosyasını oku
+import math
+from flask import send_from_directory
+
+logger = logging.getLogger(__name__)
+
+
+try:
+    from .epn import build_epn_link, make_custom_id   # paket içi çalışmada
+except ImportError:
+    from .epn import build_epn_link, make_custom_id
+ 
+
+EPN_CAMPID   = os.getenv("EPN_DEFAULT_CAMPID", "5339128108")
+EPN_TOOL_ID  = int(os.getenv("EPN_TOOL_ID", "10001"))
+EPN_CH_ID    = int(os.getenv("EPN_CHANNEL_ID", "1"))
+EPN_ROT_US   = os.getenv("EPN_ROTATION_ID_US", "711-53200-19255-0")
+
+BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+DB_PATH   = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
+
+bp = Blueprint("bp", __name__) 
+
+
+def _lastmod_iso(ts) -> str:
+    # DuckDB'den gelen timestamp string ya da datetime olabilir
+    if not ts:
+        return None
+    if isinstance(ts, str):
+        try:
+            # 2025-09-24 21:03:11.123 gibi
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    elif isinstance(ts, datetime):
+        dt = ts
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+from datetime import datetime, timezone
+
+
+
+
+def _eta_as_days(val):
+    """ETA değerini (int/float, ISO string, datetime) 'gün' (int) olarak döndürür."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, datetime):
+        now = datetime.now(timezone.utc) if val.tzinfo else datetime.utcnow()
+        return max(0, (val - now).days)
+    if isinstance(val, str):
+        s = val.strip()
+        if s.isdigit():
+            return int(s)
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc) if dt.tzinfo else datetime.utcnow()
+            return max(0, (dt - now).days)
+        except Exception:
+            return None
+    return None
+
+
+def _round_half(x):   # 0.5 adım
+    return max(0.0, min(5.0, round(x * 2) / 2.0))
+
+def _floor_half(x):   # 0.5 adım aşağı yuvarla (cap uyumu için)
+    return max(0.0, math.floor(x * 2) / 2.0)
+
+def _wilson_lower_bound(p, n, z=1.96):
+    if n is None or n <= 0 or p is None:
+        return 0.60  # veri yoksa muhafazakâr taban
+    a = p + z*z/(2*n)
+    b = z * math.sqrt((p*(1-p))/n + (z*z)/(4*n*n))
+    c = 1 + z*z/n
+    return max(0.0, (a - b) / c)
+
+def _credibility_cap(n):
+    if n is None: return 4.5
+    if n < 100:    return 4.5
+    if n < 500:    return 4.7
+    if n < 5000:   return 4.9
+    return 5.0
+
+def _compute_seller_rating(
+    fb_pct, fb_count, seller_score, trust_level,
+    returns_accepted=None, return_shipping_payer=None,
+    ship_free=None, ship_type=None,
+    ship_min_eta=None, ship_max_eta=None,
+    seller_level=None, defect_rate=None   # opsiyonel dış API sinyalleri
+):
+    """
+    ÇIKTI:
+      - score: 1 ondalıklı puan (cap sonrası, ör. 4.9)
+      - stars_whole: tam yıldız (ör. 4.9 → 5, 4.2 → 4)
+      - label: etiket (Top Rated / Excellent / ...)
+      - tier: rozet rengi (high/medium/low)
+    """
+
+    # 1) kalite tabanı: Wilson ya da seller_score normalizasyonu
+    if fb_pct is not None and fb_count:
+        L = _wilson_lower_bound(fb_pct/100.0, fb_count, 1.96)
+    elif seller_score is not None:
+        norm = seller_score/100.0 if seller_score > 5 else seller_score/5.0
+        L = max(0.0, min(1.0, norm))
+    else:
+        L = 0.6
+    base = L * 5.0
+
+    # 2) mikro bonus/ceza (±0.3★)
+    delta = 0.0
+    if returns_accepted is True and str(return_shipping_payer or '').upper() == 'SELLER':
+        delta += 0.10
+    elif returns_accepted is False:
+        delta -= 0.20
+    if ship_free:
+        delta += 0.05
+    if (ship_type or '').lower() == 'expedited':
+        delta += 0.05
+
+    # ETA: her tipten (int/float/str/datetime) gün'e çevir
+    eta_min_days = _eta_as_days(ship_min_eta)
+    eta_max_days = _eta_as_days(ship_max_eta)
+    if eta_min_days is None and eta_max_days is None:
+        delta -= 0.05
+    elif eta_max_days is not None and eta_max_days > 14:
+        delta -= 0.05
+
+    # (opsiyonel) dış API sinyalleri
+    if (seller_level or '').upper() == 'TOP_RATED':
+        delta += 0.20
+    if defect_rate is not None:
+        if defect_rate >= 2.0:
+            delta -= 0.20
+        elif defect_rate <= 0.5:
+            delta += 0.10
+
+    delta = max(-0.3, min(0.3, delta))
+    raw = max(0.0, min(5.0, base + delta))
+
+    # 3) güvenilirlik tavanı ve yıldız kuralı
+    cap = _credibility_cap(fb_count)
+    capped = min(raw, cap)
+    score = round(capped, 1)                  # metin: 4.9
+    stars_whole = int(math.floor(score + 0.5))# yıldız: 4.9→5, 4.2→4, 4.5→5
+
+    # 4) etiket + rozet
+    n = fb_count or 0
+    if score >= 4.8 and n >= 5000:
+        label = "Top Rated"
+    elif score >= 4.6 and n >= 500:
+        label = "Excellent"
+    elif score >= 4.2 and n >= 100:
+        label = "Very Good"
+    elif score >= 4.2:
+        label = "Very Good (limited history)"
+    elif score >= 3.8:
+        label = "Good"
+    elif score >= 3.2:
+        label = "Fair"
+    else:
+        label = "Unproven"
+
+    if score >= 4.5:
+        tier = "high"
+    elif score >= 3.5:
+        tier = "medium"
+    else:
+        tier = "low"
+
+    return {"score": score, "stars_whole": stars_whole, "label": label, "tier": tier}
+
+ 
+# --------------------------
+# DB helpers
+# --------------------------
+def split_intro_lead(html: str):
+    """
+    Introduction HTML'ini ikiye böler:
+    - lead: ilk paragraf(lar) (Quick Take başlamadan önceki kısım)
+    - rest: Quick Take ve devamı (başlığı, listesi vs. dahil)
+    Ayırma işaretleri: 'Quick Take:' başlığı, <blockquote>, <ul> vb.
+    """
+    if not html:
+        return "", ""
+    txt = html.strip()
+
+    # Quick Take başlığına göre ayır
+    m = re.search(r"(?i)(<h\d[^>]*>\s*quick\s*take\s*:?\s*</h\d>|<strong>\s*quick\s*take\s*:?\s*</strong>|Quick\s*Take:)", txt)
+    if m:
+        return txt[:m.start()].strip(), txt[m.start():].strip()
+
+    # Blok alıntı ya da ilk <ul> varsa onları 'rest'e al
+    m = re.search(r"(<blockquote[\s>]|<ul[\s>])", txt, flags=re.I)
+    if m:
+        return txt[:m.start()].strip(), txt[m.start():].strip()
+
+    # fallback: ilk paragrafı lead yap
+    m = re.search(r"</p>", txt, flags=re.I)
+    if m:
+        return txt[:m.end()].strip(), txt[m.end():].strip()
+
+    return txt, ""
+
+def pretty_season_label(season_name: str, fallback_slug: str) -> str:
+    """
+    'thanksgiving-2025' → 'Thanksgiving 2025'
+    'halloween-2025'   → 'Halloween 2025'
+    seasonal değilse fallback slug'ı Title Case döndürür.
+    """
+    if not season_name or fallback_slug != "seasonal":
+        return (fallback_slug or "uncategorized").replace("-", " ").title()
+    # 'base-year' ayrıştır
+    m = re.match(r"^(.+?)-(\d{4})$", season_name)
+    if m:
+        base, year = m.group(1), m.group(2)
+        return f"{base.replace('-', ' ').title()} {year}"
+    # yıl yoksa sadece base'i güzelleştir
+    return season_name.replace("-", " ").title()
+
+
+def _connect_ro():
+    return duckdb.connect(DB_PATH, read_only=True)
+
+def fetch_row_by_slug(slug: str):
+    con = _connect_ro()
+    df = con.execute("""
+        SELECT
+            bc.*,
+            bp.date_published,
+            a.display_name AS author_name,
+            a.avatar_url AS author_avatar_url,
+            a.author_bio
+        FROM blog_contents bc
+        LEFT JOIN blog_posts bp ON bc.idea_id = bp.idea_id
+        LEFT JOIN authors a ON bp.author_id = a.author_id
+        WHERE bc.slug = ?
+        LIMIT 1
+    """, [slug]).df()
+    con.close()
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+def get_categories():
+    con = _connect_ro()
+    cats = [r[0] for r in con.execute("""
+        SELECT COALESCE(category_slug,'uncategorized') AS c
+        FROM blog_contents
+        GROUP BY 1
+        ORDER BY 1
+    """).fetchall()]
+    con.close()
+    return cats
+
+
+
+# --------------------------
+# Routes
+# --------------------------
+
+# --- title stripping helpers ---
+
+
+# --- Markdown yardimcilar ---
+try:
+    from markdown import markdown as md_to_html
+except Exception:
+    md_to_html = None
+
+def _md(s: str) -> str:
+    """Markdown varsa HTML'e çevir, yoksa metni döndür."""
+    if not s:
+        return ""
+    return md_to_html(s) if md_to_html else s
+
+
+def split_faq_and_tail(raw: str):
+    """
+    FAQ metnini Q&A HTML'i ve sonda kalan 'tail' (çoğunlukla conclusion) olarak ayırır.
+    - JSON (dict/list) gelirse parse eder ve <details> blokları üretir.
+    - Markdown kalıbı gelirse mevcut regex mantığıyla ayrıştırır.
+    - En sonda tail başındaki '## Conclusion' başlığını temizler.
+    """
+    
+    if not raw:
+        return "", ""
+
+    txt = raw.strip()
+    txt = txt.replace("\\'", "'")
+
+    # Başta '## FAQ' varsa temizle
+    txt = re.sub(r"^\s*##\s*faq\s*\r?\n?", "", txt, flags=re.I)
+
+    # --- Yardımcılar ---
+    def _render_faq(pairs):
+        details_html = []
+        for q, a in pairs:
+            q = (q or "").strip()
+            a = (a or "").strip()
+            details_html.append(f"""
+<details class="faq-item">
+  <summary>{q}</summary>
+  <div class="faq-answer">{_md(a)}</div>
+</details>
+""".strip())
+        return f"""
+<section class="faq">
+  <h2>FAQ</h2>
+  {''.join(details_html)}
+</section>
+""".strip()
+
+    def _try_json(txt0):
+        if not txt0 or txt0[0] not in "{[":
+            return None
+        try:
+            return json.loads(txt0)
+        except Exception:
+            return None
+
+    faq_html = ""
+    tail = ""
+
+    # 0) JSON parse dene
+    parsed = _try_json(txt)
+    if isinstance(parsed, dict):
+        # {"1. Soru?": "cevap", "2. ...": "..."}
+        def srt(k):
+            m = re.match(r"\s*(\d+)", k)
+            return int(m.group(1)) if m else 10**9
+        pairs = []
+        for k in sorted(parsed.keys(), key=srt):
+            q = re.sub(r"^\s*\d+\.\s*", "", str(k)).strip()
+            a = str(parsed[k]).strip()
+            pairs.append((q, a))
+        faq_html = _render_faq(pairs)
+
+    elif isinstance(parsed, list):
+        # [{"question": "...", "answer": "..."}, ...] ya da ["S1", "S2", ...]
+        pairs = []
+        for it in parsed:
+            if isinstance(it, dict):
+                q = it.get("question") or it.get("q") or it.get("title") or it.get("head") or ""
+                a = it.get("answer")   or it.get("a") or it.get("body")  or it.get("text") or ""
+                q = re.sub(r"^\s*\d+\.\s*", "", str(q)).strip()
+                pairs.append((q, a))
+            else:
+                pairs.append((str(it), ""))
+        faq_html = _render_faq(pairs)
+
+    else:
+        # 1) Markdown kalıbı: **1. Soru?** Cevap ... (mevcut davranış)
+        pat = re.compile(
+            r"(?:^|\n)\s*(?:[-*]\s*)?\*\*\s*(?:\d+\.?\s*)?(.+?)\s*\*\*\s*(.*?)(?=(?:\n\s*(?:[-*]\s*)?\*\*\s*(?:\d+\.?\s*)?.+?\s*\*\*|\Z))",
+            re.S
+        )
+
+        qa = []
+        last_end = 0
+        for m in pat.finditer(txt):
+            q = m.group(1).strip()
+            a = m.group(2).strip()
+            qa.append([q, a])
+            last_end = m.end()
+
+        tail = txt[last_end:].strip() if last_end else ""
+
+        # SON CEVABIN İÇİNDEN 'Conclusion'u AYIR (varsa)
+        if qa:
+            concl_split_pat = re.compile(r"(?im)^\s*(?:##\s*conclusion\b|in\s+conclusion\b[:,]?)\s*")
+            last_q, last_a = qa[-1][0], qa[-1][1]
+            m = concl_split_pat.search(last_a)
+            if m:
+                body = last_a[:m.start()].rstrip()
+                tail_inside = last_a[m.start():].lstrip()
+                qa[-1][1] = body
+                tail = (tail + "\n\n" + tail_inside).strip() if tail else tail_inside
+
+            # HTML üret
+            pairs = []
+            for q, a in qa:
+                q_clean = re.sub(r"^\s*\d+\.?\s*", "", q)               # "1." veya "1" at
+                q_clean = re.sub(r"^\*+\s*|\s*\*+$", "", q_clean).strip()
+
+                pairs.append((q_clean, a))
+            faq_html = _render_faq(pairs)
+        else:
+            # 2) Regex tutmazsa düz MD → HTML
+            faq_html = f"""
+<section class="faq">
+  <h2>FAQ</h2>
+  {_md(txt)}
+</section>
+""".strip()
+
+    # --- tail başında '## Conclusion' varsa temizle (senin bloğun) ---
+    if tail:
+        tail = re.sub(r"^\s*##\s*conclusion\s*:?[\r\n]*", "", tail, flags=re.I)
+
+    return faq_html, tail
+
+
+# --- Section formatter'lar ---
+def format_buyers_guide(raw: str) -> str:
+    """
+    'Buyer's Guide' içeriğini sağlam HTML'ye çevirir.
+    - JSON dict/list gelirse parse eder.
+    - Düz metin gelirse mevcut regex'lerle numaralı liste çıkarır.
+    """
+    if not raw:
+        return ""
+    txt = raw.strip()
+
+    # Geçici olarak HTML kartlarını kenara ayır
+    card_pat = re.compile(r'(<div style="border:1px solid #eee;.*?</div>)', re.DOTALL)
+    cards = card_pat.findall(txt)
+    txt = card_pat.sub("", txt)
+    
+    # Başlık ve gövde aynı satırdaysa (örn. "1. Focus on ... <gövde>") araya newline koy
+    # "1. <başlık>" kısmını yakalayıp hemen ardından bir satır sonu enjekte ediyoruz.
+    txt = re.sub(r"(?m)^\s*(\d+)\.\s+([^\n]+?)\s+(?=[A-Za-z])", r"\1. \2\n", txt)
+
+
+    # Başta '## Buyer...' başlığı varsa sök
+    txt = re.sub(r"^\s*##\s*buyer[''`]?s?\s*guide\s*\n?", "", txt, flags=re.I)
+
+    # 0) JSON olarak gelmiş mi? ({"1. ...": "...", ...} veya [...])
+    parsed = None
+    if txt and txt[0] in "{[":
+        try:
+            parsed = json.loads(txt)
+        except Exception:
+            parsed = None
+
+    def _render_ol(items_html):
+        return f"""
+<section class="buyers-guide">
+  <h2>Buyer's Guide</h2>
+  <ol class="guide-list">
+    {''.join(items_html)}
+  </ol>
+</section>
+""".strip()
+
+    # 0.a) Dict ise: key = "1. Başlık" / value = body
+    if isinstance(parsed, dict):
+        def _sort_key(k):
+            m = re.match(r"\s*(\d+)", k)
+            return int(m.group(1)) if m else 10**9
+        items = []
+        for k in sorted(parsed.keys(), key=_sort_key):
+            head = re.sub(r"^\s*\d+\.\s*", "", str(k)).strip()
+            body = str(parsed[k]).strip()
+            items.append(f"<li><strong>{head}</strong><br>{_md(body)}</li>")
+        return _render_ol(items)
+
+    # 0.b) Liste ise: {title/body} ya da string maddeleri destekle
+    if isinstance(parsed, list):
+        items = []
+        for it in parsed:
+            if isinstance(it, dict):
+                head = it.get("title") or it.get("heading") or it.get("head") or ""
+                body = it.get("body") or it.get("content") or it.get("text") or ""
+                head = re.sub(r"^\s*\d+\.\s*", "", str(head)).strip() or "Tip"
+                items.append(f"<li><strong>{head}</strong><br>{_md(str(body).strip())}</li>")
+            else:
+                items.append(f"<li>{_md(str(it))}</li>")
+        return _render_ol(items)
+
+    # 1) "#### 1. Başlık" / "### 1. Başlık" → normalize
+    txt = re.sub(r"^\s*#{3,6}\s+(\d+\.\s+)", r"\1", txt, flags=re.M)
+
+    # 2) "1. Başlık\n<gövde>\n2. Başlık\n..." kalıbını yakala
+    pat = re.compile(
+        r"^\s*(\d+)\.\s+([^\n]+)\n+([\s\S]*?)(?=^\s*\d+\.\s+[^\n]+\n+|\Z)",
+        re.M
+    )
+    items = []
+    for m in pat.finditer(txt):
+        head = m.group(2).strip()
+        body = m.group(3).strip()
+        block_md = f"**{head}**\n\n{body}" if body else f"**{head}**"
+        items.append(f"<li>{_md(block_md)}</li>")
+
+    if items:
+        return _render_ol(items)
+
+    # 3) Hiçbiri değilse dümdüz renderla
+    html_out = f"""
+<section class="buyers-guide">
+  <h2>Buyer's Guide</h2>
+  {_md(txt)}
+</section>
+""".strip()
+
+    # Kenara ayırdığımız kartları sona ekle
+    if cards:
+        html_out += "\n" + "\n".join(cards)
+
+    return html_out
+
+
+
+def format_faq(raw: str) -> str:
+    """'## FAQ **1. Soru?** Cevap...' metnini <details> bloklarına çevirir."""
+    if not raw:
+        return ""
+    txt = raw.strip()
+
+    # Başta '## FAQ' varsa sök
+    txt = re.sub(r"^\s*##\s*faq\s*\n?", "", txt, flags=re.I)
+
+    # Pattern: **1. Soru?** Cevap ... (bir sonraki **N. ile ayrılır)
+    qa = []
+    pat = re.compile(
+        r"(?:^|\n)\s*(?:[-*]\s*)?\*\*\s*(?:\d+\.?\s*)?(.+?)\s*\*\*\s*(.*?)(?=(?:\n\s*(?:[-*]\s*)?\*\*\s*(?:\d+\.?\s*)?.+?\s*\*\*|\Z))",
+        re.S
+    )
+
+    for m in pat.finditer(txt):
+        q = m.group(1).strip()
+        a = m.group(2).strip()
+        qa.append((q, a))
+
+    if qa:
+        details = []
+        for q, a in qa:
+            q = re.sub(r"^\s*\d+\.?\s*", "", q)
+            q = re.sub(r"^\*+\s*|\s*\*+$", "", q).strip()
+            details.append(f"""
+<details class="faq-item">
+  <summary>{q}</summary>
+  <div class="faq-answer">
+    {_md(a)}
+  </div>
+</details>
+""".strip())
+        return f"""
+<section class="faq">
+  <h2>FAQ</h2>
+  {''.join(details)}
+</section>
+""".strip()
+
+    # Yakalanamadıysa direkt MD→HTML
+    return f"""
+<section class="faq">
+  <h2>FAQ</h2>
+  {_md(txt)}
+</section>
+""".strip()
+
+
+def _product_card_html_from_ebay(p):
+    title = p.get("title") or "Product"
+    img   = p.get("image") or "/static/img/placeholder.png"
+    price = p.get("price")
+    url   = p.get("url") or "#"
+    price_txt = f"${price:,.2f}" if isinstance(price, (int,float)) else (str(price) if price else "")
+    return f"""
+<div style="border:1px solid #eee;padding:10px;margin:15px 5px;text-align:center;max-width:200px;display:inline-block;vertical-align:top;box-shadow:0 2px 4px rgba(0,0,0,0.1);border-radius:5px;">
+  <img src="{img}" alt="{title}" style="max-width:100%;height:150px;object-fit:cover;display:block;margin:0 auto 10px;border-radius:3px;">
+  <h4 style="font-size:0.9em;margin:0 0 10px;line-height:1.2;font-weight:normal;height:4.5em;overflow:hidden;">{title}</h4>
+  <p style="font-weight:bold;color:#e53935;font-size:1.1em;margin:0 0 10px;">{price_txt}</p>
+  <a href="{url}" target="_blank" rel="noopener sponsored" style="display:inline-block;padding:8px 12px;background-color:#3665f3;color:#fff;text-decoration:none;border-radius:20px;font-size:0.9em;font-weight:bold;">View on eBay</a>
+</div>
+""".strip()
+
+def _inject_product_cards_into_text(txt: str, ebay_products: list):
+    if not txt:
+        return txt
+    # İlk 5 ürünü kart olarak hazırla
+    cards = [ _product_card_html_from_ebay(p) for p in (ebay_products or [])[:5] ]
+    # Hem {{PRODUCT_CARD_n}} hem {PRODUCT_CARD_n} destekle
+    for i, html in enumerate(cards, start=1):
+        for pat in (rf"\{{\{{\s*PRODUCT_CARD_{i}\s*\}}\}}", rf"\{{\s*PRODUCT_CARD_{i}\s*\}}"):
+            if re.search(pat, txt):
+                txt = re.sub(pat, html, txt, count=1)
+                break
+        else:
+            # Hiç placeholder yoksa, bu kartı sona ekle
+            txt += f"\n\n{html}\n"
+    return txt
+
+
+
+def format_conclusion(raw: str) -> str:
+    if not raw:
+        return ""
+    txt = raw.strip()
+    # Başta '## Conclusion' varsa sök
+    txt = re.sub(r"^\s*##\s*conclusion\s*\n?", "", txt, flags=re.I)
+    return f"""
+<section class="conclusion">
+  <h2>Conclusion</h2>
+  {_md(txt)}
+</section>
+""".strip()
+
+
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    return s
+
+def strip_leading_title_from_md(md_text: str, title: str) -> str:
+    """Markdown başında title ile aynı olan H1 (ATX # veya Setext ===/---) varsa kaldır."""
+    if not md_text or not title:
+        return md_text
+
+    lines = md_text.splitlines()
+    # ilk boş olmayan satır
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return md_text
+
+    first = lines[i].strip()
+    title_norm = _norm(title)
+
+    # ATX başlık: "# ..." (H1-H6 kabul ediyoruz)
+    m = re.match(r"^\s*#{1,6}\s+(.*)$", first)
+    if m and _norm(m.group(1)) == title_norm:
+        j = i + 1
+        if j < len(lines) and not lines[j].strip():
+            j += 1
+        return "\n".join(lines[:i] + lines[j:])
+
+    # Setext başlık: "Title" + "====" veya "----"
+    if _norm(first) == title_norm:
+        j = i + 1
+        if j < len(lines) and re.match(r"^\s*(=+|-+)\s*$", lines[j]):
+            k = j + 1
+            if k < len(lines) and not lines[k].strip():
+                k += 1
+            return "\n".join(lines[:i] + lines[k:])
+
+    return md_text
+
+def _affiliatize_products(products, *, post_slug: str, season: str|None, placement: str):
+    """products[*]['url'] üzerinde EPN parametrelerini uygular."""
+    subid = make_custom_id(season=season, post_slug=post_slug, placement=placement)
+    for p in products:
+        raw = p.get("url")
+        if not raw:
+            continue
+        p["url"] = build_epn_link(
+            raw, EPN_CAMPID,
+            custom_id=subid,
+            marketplace="US",
+            tool_id=EPN_TOOL_ID,
+            channel_id=EPN_CH_ID,
+            rotation_id=EPN_ROT_US
+        )
+    return products
+
+
+def strip_leading_h1_from_html(html: str, title: str) -> str:
+    """HTML başında <h1>Title</h1> varsa ve title ile eşleşiyorsa kaldır."""
+    if not html or not title:
+        return html
+    pat = re.compile(r"^\s*<h1[^>]*>\s*(.*?)\s*</h1>\s*", re.IGNORECASE | re.DOTALL)
+    m = pat.match(html)
+    if m and _norm(re.sub("<.*?>", "", m.group(1))) == _norm(title):
+        return html[m.end():]
+    return html
+
+def get_recent_seasons(limit: int = 5, group: str = "seasonal"):
+    con = _connect_ro()
+    rows = con.execute("""
+        SELECT season_name
+        FROM seasons
+        WHERE COALESCE(season_group,'seasonal') = ?
+        ORDER BY created_at DESC NULLS LAST, id DESC
+        LIMIT ?
+    """, [group, limit]).fetchall()
+    con.close()
+    return [r[0] for r in rows]
+
+
+# routes.py (blog_detail_with_cat tanımından ÖNCE ekleyebilirsin, ama 3 segment olduğu için şart değil)
+
+@bp.route("/special-deals/g/<group_key>/", methods=["GET", "HEAD"])
+def special_deals_group_page(group_key):
+    cats = get_categories()
+    con = _connect_ro()
+    rows = con.execute("""
+        WITH ranked AS (
+            SELECT
+                ip.idea_id,
+                pm.image_url,
+                ROW_NUMBER() OVER (PARTITION BY ip.idea_id ORDER BY ip.parent_asin) AS rn
+            FROM idea_products ip
+            LEFT JOIN product_media pm ON pm.parent_asin = ip.parent_asin
+            WHERE pm.image_url IS NOT NULL
+        ),
+        main_image AS (
+            SELECT idea_id, image_url FROM ranked WHERE rn = 1
+        )
+        SELECT
+            bc.title,
+            bc.slug,
+            COALESCE(bc.category_slug,'uncategorized') AS c,
+            COALESCE(
+                mi.image_url,
+                NULLIF(bc.hero_image_url, ''),
+                '/static/img/placeholder.png'
+            ) AS image_url,
+            CASE WHEN DATE(bc.updated_at) = CURRENT_DATE THEN TRUE ELSE FALSE END AS is_new
+        FROM blog_contents bc
+        JOIN idea_rules_deal r ON r.idea_id = bc.idea_id
+        LEFT JOIN main_image mi ON mi.idea_id = bc.idea_id
+        WHERE bc.category_slug = 'special-deals'
+          AND lower(json_extract_string(r.rules_json, '$.category_key')) = lower(?)
+          AND bc.slug IS NOT NULL AND length(trim(bc.slug)) > 0
+        ORDER BY bc.updated_at DESC
+        LIMIT 200
+    """, [group_key]).fetchall()
+    con.close()
+
+    posts = [{
+        "title": t,
+        "url": f"/{c}/{s}/",
+        "category": c,
+        "category_display": "Special Deals",
+        "image": img,
+        "excerpt": None,
+        "is_new": bool(is_new)
+    } for (t, s, c, img, is_new) in rows]
+
+    label_map = {
+        'watches': 'Watches',
+        'cell_phones': 'Cell Phone',
+        'jewelry': 'Jewelry',
+        'handbags': 'Handbag',
+        'fashion': 'Fashion',
+        'other': 'Others'
+    }
+    pretty = label_map.get(group_key.lower(), group_key.replace('_',' ').title())
+
+    return render_template("category.html",
+                           categories=cats,
+                           current_category=f"Special Deals: {pretty}",
+                           posts=posts)
+
+
+
+@bp.route("/<category>/<slug>/", methods=["GET", "HEAD"])
+def blog_detail_with_cat(category, slug):
+    row = fetch_row_by_slug(slug)
+    if not row:
+        return Response("Not found", status=404)
+
+    title = (row.get("title") or "").strip()
+    kw = row.get("idea_id")  # idea_id
+
+    # --- Bu yazı "deal" mi? (trend değilse grid/top5 gösterilecek) ---
+    # "special-deals" veya "seasonal" kategorisindeyse eski şablonu kullan.
+    # Bu, "Top 5 Sellers" tablosunu ve ürün gridini gösterir.
+    is_legacy_post_type = False
+    try:
+        con = _connect_ro()
+        is_deal_rule_present = bool(con.execute(
+            "SELECT 1 FROM idea_rules_deal WHERE idea_id = ? LIMIT 1", [kw]
+        ).fetchone())
+        con.close()
+        is_legacy_post_type = is_deal_rule_present or (category == "seasonal")
+    except Exception:
+        is_legacy_post_type = (category == "seasonal")
+
+    # --- eBay verileri (in-article injection için yine çekiyoruz) ---
+    ebay_products = []
+    top5_html = ""
+    insights_html = ""
+
+    # Auth Guarantee?
+    auth_guarantee = False
+    try:
+        con = _connect_ro()
+        auth_row = con.execute("""
+            SELECT CAST(json_extract(r.rules_json, '$.auth_guarantee') AS INTEGER)
+            FROM idea_rules_deal r
+            WHERE r.idea_id = ?
+            LIMIT 1
+        """, [kw]).fetchone()
+        con.close()
+        auth_guarantee = bool(auth_row and (auth_row[0] or 0) == 1)
+    except Exception:
+        auth_guarantee = False
+
+    if kw and not str(kw).startswith("i-"):
+        # Ürünleri çek (en fazla 15)
+        ebay_products = fetch_ebay_products(kw, limit=15)
+
+        # AG bilgisini ürünlere ekle
+        for p in ebay_products:
+            p["auth_guarantee"] = auth_guarantee
+
+        # Affiliate parametreleri uygula
+        _affiliatize_products(ebay_products, post_slug=slug, season=None, placement="in-article")
+
+        # Sadece DEAL yazılarında Top5 tablo göster
+        if is_legacy_post_type:
+            top5_html = build_top5_table(ebay_products)
+
+        # Insights (ekranda gösterdiğimiz ürünlerden hesap)
+        product_ids = [p.get("id") for p in ebay_products if p.get("id")]
+        insights_html = build_enrichment_insights_table(kw, product_ids)
+
+    # --- Metin alanları ---
+    intro   = str(row.get("overview_updated") or row.get("introduction") or "").strip()
+    gallery = str(row.get("product_gallery") or "").strip()
+    urunler = str(row.get("urunler") or "").strip()
+    buyers  = str(row.get("buyers_guide") or "").strip()
+    faq_raw = str(row.get("faq") or "").strip()
+    concl_raw = str(row.get("conclusion") or "").strip()
+
+    # --- Buyer's Guide içine inline kart enjektesi ---
+
+    buyers_html = format_buyers_guide(buyers) if buyers else ""
+    buyers_html = format_buyers_guide(buyers) if buyers else "" # Bu fonksiyon zaten HTML döndürüyor
+
+    # --- Related links ---
+    related_links_raw = row.get("related_links_json")
+    related_links = None
+    if related_links_raw:
+        try:
+            related_links = json.loads(related_links_raw)
+        except Exception:
+            related_links = None
+
+    # --- FAQ + Conclusion ayrıştır ---
+    faq_html, faq_tail = split_faq_and_tail(faq_raw)
+    final_conclusion = concl_raw or faq_tail
+
+    # --- Intro'yu lead/rest olarak böl ---
+    lead_intro, rest_intro = split_intro_lead(_md(intro))
+
+    # --- Post sözlüğü ---
+    post = {
+        "title": title,
+        "author_name": row.get("author_name"),
+        "author_avatar_url": row.get("author_avatar_url"),
+        "author_bio": row.get("author_bio"),
+        "date_published": row.get("date_published"),
+        "hero_image_url": row.get("hero_image_url") or (ebay_products[0].get("image") if ebay_products else None),
+        "hero_alt": row.get("hero_alt") or title,
+        "introduction": _md(intro),
+        "gallery": gallery,
+        "urunler": _md(urunler),
+        "buyers_guide": buyers_html,
+        "buyers_guide": buyers_html, # Şablonda {{ post.buyers_guide | safe }} kullanılmalı
+        "related_links": related_links,
+        "faq": faq_html if faq_raw else "",
+        "conclusion": format_conclusion(final_conclusion) if final_conclusion else "",
+        "insights_table": insights_html,
+        "intro_lead": lead_intro,
+        "intro_rest": rest_intro,
+        "top5_table": top5_html if is_legacy_post_type else "",   # trend yazılarda gizle
+        "auth_guarantee": auth_guarantee,
+    }
+
+    cats = get_categories()
+
+    # Grid'i de yalnızca deal yazılarında gönder
+    ebay_products_for_template = ebay_products if is_legacy_post_type else []
+
+    return render_template(
+        "post.html",
+        categories=cats,
+        post=post,
+        ebay_products=ebay_products_for_template
+    )
+
+
+@bp.route("/authors/", methods=["GET"])
+def authors_page():
+    con = _connect_ro()
+    df = con.execute("""
+        SELECT 
+            a.author_id,
+            a.display_name,
+            COALESCE(a.avatar_url, '/static/img/placeholder.png') AS avatar_url,
+            a.author_bio,
+            a.created_at,
+            c.name AS category_name,
+            c.slug AS category_slug
+        FROM authors a
+        LEFT JOIN categories c
+          ON a.primary_category_slug = c.slug
+        ORDER BY a.created_at DESC
+    """).fetchdf()
+    con.close()
+
+    authors = df.to_dict("records")
+
+    if not authors:
+        authors = [{
+            "author_id": "test-author",
+            "display_name": "Test Author",
+            "avatar_url": "/static/img/placeholder.png",
+            "author_bio": "This is a sample bio for testing.",
+            "created_at": None,
+            "category_name": "Electronics",
+            "category_slug": "electronics",
+        }]
+
+    return render_template("authors.html", authors=authors)
+
+@bp.route("/ethics-policy/", methods=["GET"])
+def ethics_policy_page():
+    cats = get_categories()
+    return render_template("ethics.html", categories=cats)
+
+@bp.route("/privacy-policy/", methods=["GET"])
+def privacy_policy_page():
+    cats = get_categories()
+    return render_template("privacy.html", categories=cats)
+
+@bp.route("/terms-of-service/", methods=["GET"])
+def terms_of_service_page():
+    cats = get_categories()
+    return render_template("terms.html", categories=cats)
+
+@bp.route("/about/", methods=["GET"])
+def about_page():
+    cats = get_categories()
+    return render_template("about.html", categories=cats)
+
+
+
+
+
+def build_enrichment_insights_table(idea_id: str, product_ids: list[str] | None = None) -> str:
+    if product_ids:
+        # VALUES listesi oluştur (duckdb VALUES ...)
+        placeholders = ",".join([f"('{pid}')" for pid in product_ids])
+        items_cte = f"(VALUES {placeholders}) AS v(pid)"
+        join_src = "SELECT pid AS product_id FROM " + items_cte
+    else:
+        join_src = "SELECT ip.parent_asin AS product_id FROM idea_products ip WHERE ip.idea_id = ?"
+
+    con = _connect_ro()
+    params = [] if product_ids else [idea_id]
+    agg = con.execute(f"""
+        WITH items AS (
+          {join_src}
+        )
+        SELECT
+          COUNT(*) AS total_items,
+          SUM(CASE WHEN e.ship_free THEN 1 ELSE 0 END) AS free_shipping_count,
+          ROUND(100.0 * SUM(CASE WHEN e.ship_free THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS free_shipping_pct,
+          MIN(e.ship_min_eta) AS eta_min_min,
+          MAX(e.ship_max_eta) AS eta_max_max,
+          SUM(CASE WHEN e.returns_accepted THEN 1 ELSE 0 END) AS returns_yes,
+          ROUND(100.0 * SUM(CASE WHEN e.returns_accepted THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0), 1) AS returns_yes_pct,
+          SUM(CASE WHEN e.returns_accepted AND e.return_shipping_payer='SELLER' THEN 1 ELSE 0 END) AS free_returns_count,
+          SUM(CASE WHEN e.returns_accepted AND e.return_shipping_payer='BUYER' THEN 1 ELSE 0 END) AS returns_buyer_pays_count,
+          SUM(CASE WHEN NOT e.returns_accepted THEN 1 ELSE 0 END) AS returns_no,
+          SUM(CASE WHEN e.condition_name ILIKE 'Pre-owned%' THEN 1 ELSE 0 END) AS preowned_count,
+          SUM(CASE WHEN e.condition_name ILIKE 'New%' THEN 1 ELSE 0 END) AS new_count,
+          SUM(CASE WHEN e.ship_min_eta IS NULL AND e.ship_max_eta IS NULL THEN 1 ELSE 0 END) AS eta_na_count
+        FROM product_enrichment e
+        JOIN items i ON i.product_id = e.product_id
+    """, params).fetchone()
+
+    # shipping types
+    ship_rows = con.execute("""
+        WITH items AS (SELECT ip.parent_asin AS product_id FROM idea_products ip WHERE ip.idea_id = ?)
+        SELECT COALESCE(e.ship_type,'n/a') AS ship_type, COUNT(*) AS c
+        FROM product_enrichment e JOIN items i ON i.product_id = e.product_id
+        GROUP BY 1 ORDER BY c DESC LIMIT 3
+    """, [idea_id]).fetchall()
+
+    # payer breakdown
+    payer_rows = con.execute("""
+        WITH items AS (SELECT ip.parent_asin AS product_id FROM idea_products ip WHERE ip.idea_id = ?)
+        SELECT COALESCE(e.return_shipping_payer,'n/a') AS payer, COUNT(*) AS c
+        FROM product_enrichment e JOIN items i ON i.product_id = e.product_id
+        GROUP BY 1 ORDER BY c DESC LIMIT 3
+    """, [idea_id]).fetchall()
+
+    # tüm ETA'ları çek → ortalama gün hesapla
+    eta_rows = con.execute("""
+        WITH items AS (SELECT ip.parent_asin AS product_id FROM idea_products ip WHERE ip.idea_id = ?)
+        SELECT e.ship_min_eta, e.ship_max_eta
+        FROM product_enrichment e JOIN items i ON i.product_id = e.product_id
+    """, [idea_id]).fetchall()
+    con.close()
+
+    if not agg or agg[0] is None or agg[0] == 0:
+        return ""
+
+    (total_items, free_ship_cnt, free_ship_pct, eta_min, eta_max,
+     ret_yes, ret_yes_pct, free_ret_cnt, ret_buyer_cnt, ret_no,
+     preowned_cnt, new_cnt, eta_na_cnt) = agg
+
+    # Yardımcılar
+    ship_types_txt = ", ".join([f"{t} ({c})" for (t, c) in ship_rows]) or "—"
+    payer_txt = ", ".join([f"{p} ({c})" for (p, c) in payer_rows]) or "—"
+
+    # Ortalama ETA (gün) — min/max'tan orta nokta
+    mids = []
+    for (emin, emax) in eta_rows:
+        dmin = _eta_as_days(emin)
+        dmax = _eta_as_days(emax)
+        if dmin is None and dmax is None:
+            continue
+        if dmin is not None and dmax is not None:
+            mids.append((dmin + dmax) / 2.0)
+        elif dmin is not None:
+            mids.append(float(dmin))
+        else:
+            mids.append(float(dmax))
+    avg_eta_days = int(round(sum(mids) / len(mids))) if mids else None
+
+    # ikonlar
+    ico_truck = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M3 7h10v7h3.5l1.8-3H21V7h-2l-2-3H3v3Zm3 9a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z' /></svg>"""
+    ico_return = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M7 7v3L3 6l4-4v3h6a6 6 0 0 1 0 12H7v-2h6a4 4 0 0 0 0-8H7Z'/></svg>"""
+    ico_clock = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2Zm1 5h-2v6l5 3 1-1.732-4-2.268V7Z'/></svg>"""
+    ico_box = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M3 7 12 3l9 4-9 4-9-4Zm0 4 9 4 9-4v7l-9 4-9-4v-7Z'/></svg>"""
+    ico_money = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M3 6h18v12H3V6Zm2 2v8h14V8H5Zm3 4a4 4 0 1 0 8 0 4 4 0 0 0-8 0Z'/></svg>"""
+    ico_ship  = """<svg viewBox='0 0 24 24' class='ql-ico'><path d='M2 12h20v2H2zM4 8h16v2H4zM6 16h12v2H6z'/></svg>"""
+
+    # Quick Look (tek satır 6 kart)
+    quick = f"""
+<section class="insights insights--quicklook">
+  <h2 class="ql-title">What we analyzed for you</h2>
+  <div class="ql-grid ql-grid--six">
+    <div class="ql-card">
+      <div class="ql-icon">{ico_truck}</div>
+      <div class="ql-head">Free shipping</div>
+      <div class="ql-val">{free_ship_cnt} / {total_items}</div>
+      <div class="ql-subtle">sellers offer free shipping</div>
+    </div>
+    <div class="ql-card">
+      <div class="ql-icon">{ico_return}</div>
+      <div class="ql-head">Returns</div>
+      <div class="ql-val">{ret_yes} sellers accept returns</div>
+      <div class="ql-subtle">&nbsp;</div>
+    </div>
+    <div class="ql-card">
+      <div class="ql-icon">{ico_clock}</div>
+      <div class="ql-head">Average ETA</div>
+      <div class="ql-val">{(str(avg_eta_days)+' days') if avg_eta_days is not None else '—'}</div>
+      <div class="ql-subtle">{'n/a for '+str(eta_na_cnt)+' items' if eta_na_cnt else '&nbsp;'}</div>
+    </div>
+    <div class="ql-card">
+      <div class="ql-icon">{ico_box}</div>
+      <div class="ql-head">Condition mix</div>
+      <div class="ql-val">New {new_cnt or 0} / Pre-owned {preowned_cnt or 0}</div>
+      <div class="ql-subtle">{total_items} total items</div>
+    </div>
+    <div class="ql-card">
+      <div class="ql-icon">{ico_ship}</div>
+      <div class="ql-head">Shipping types</div>
+      <div class="ql-val">{ship_types_txt or '—'}</div>
+      <div class="ql-subtle">&nbsp;</div>
+    </div>
+    <div class="ql-card">
+      <div class="ql-icon">{ico_money}</div>
+      <div class="ql-head">Return shipping payer</div>
+      <div class="ql-val">{payer_txt or '—'}</div>
+      <div class="ql-subtle">&nbsp;</div>
+    </div>
+  </div>
+
+  <details class="ql-details">
+    <summary>View details</summary>
+    <div class="insights-table-wrap">
+      <table class="insights-table">
+        <tbody>
+          <tr><th>Total items</th><td>{total_items}</td></tr>
+          <tr><th>Free shipping</th><td>{free_ship_cnt} items</td></tr>
+          <tr><th>Average ETA</th><td>{(str(avg_eta_days)+' days') if avg_eta_days is not None else '—'}</td></tr>
+          <tr><th>Returns accepted</th><td>{ret_yes} sellers</td></tr>
+          <tr><th>Free returns (seller pays)</th><td>{free_ret_cnt} items</td></tr>
+          <tr><th>Returns (buyer pays)</th><td>{ret_buyer_cnt} items</td></tr>
+          <tr><th>No returns</th><td>{ret_no} items</td></tr>
+          <tr><th>Condition mix</th><td>New: {new_cnt or 0} • Pre-owned: {preowned_cnt or 0}</td></tr>
+          <tr><th>Shipping types (top)</th><td>{ship_types_txt}</td></tr>
+          <tr><th>Return shipping payer (top)</th><td>{payer_txt}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+""".strip()
+
+    return quick
+
+def build_top5_table(ebay_products):
+    if not ebay_products:
+        return ""
+
+    # skora göre sırala (yüksek önce), eşitlikte review sayısı yüksek olan öne
+    prods = sorted(
+        ebay_products,
+        key=lambda x: (x.get("score") or 0.0, x.get("fb_score") or 0),
+        reverse=True
+    )[:5]
+
+    def star_row(n):
+        n = max(0, min(5, int(n or 0)))
+        full = "★" * n
+        empty = "☆" * (5 - n)
+        return f"<span class='stars-int'>{full}{empty}</span>"
+
+    rows_html = []
+    for p in prods:
+        img         = p.get("image") or "/static/img/placeholder.png"
+        url         = p.get("url") or "#"
+        title       = p.get("title") or "Product"
+
+        score       = p.get("score")
+        score_txt   = f"{score:.1f}" if score is not None else "—"   # = Minti Point
+        stars_whole = p.get("stars_whole") or 0
+        label       = p.get("seller_label") or ""
+
+        fb_score    = p.get("fb_score") or 0
+        fb_pct      = p.get("fb_pct")
+        fb_pct_txt  = f"{fb_pct:.1f}%" if fb_pct is not None else "—"
+
+        ship_free   = p.get("ship_free")
+        ship_free_txt = "Yes" if ship_free is True else ("No" if ship_free is False else "—")
+
+        returns_txt = p.get("returns") or "—"
+        payer_raw   = (p.get("return_shipping_payer") or "").upper()
+        payer_txt   = {"SELLER": "seller pays", "BUYER": "buyer pays"}.get(
+            payer_raw, payer_raw.lower() if payer_raw else ""
+        )
+        ret_col     = returns_txt if not payer_txt else f"{returns_txt} • {payer_txt}"
+
+        eta_txt     = p.get("eta_days") or "—"
+        ship_type   = p.get("ship_type") or "—"
+
+        rows_html.append(f"""
+<tr>
+  <!-- Product (image only, tooltip with title) -->
+  <td class="col-img">
+    <a class="tab-img" href="{url}" target="_blank" rel="noopener sponsored" title="{title}">
+      <img src="{img}" alt="Product image" loading="lazy" decoding="async">
+    </a>
+  </td>
+
+  <!-- Minti Point -->
+  <td class="col-minti">{score_txt}</td>
+
+  <!-- Stars (filled/empty) + label küçük -->
+  <td class="col-stars">
+    <div class="score-wrap">
+      {star_row(stars_whole)}
+      <span class="score-label">{label}</span>
+    </div>
+  </td>
+
+  <!-- Free Ship -->
+  <td class="col-shipfree">{ship_free_txt}</td>
+
+  <!-- Returns / Payer -->
+  <td class="col-returns">{ret_col}</td>
+
+  <!-- Reviews -->
+  <td class="col-rev">{fb_score:,}</td>
+
+  <!-- Positive % -->
+  <td class="col-pos">{fb_pct_txt}</td>
+
+  <!-- ETA (days text like 2–5) -->
+  <td class="col-eta">{eta_txt}</td>
+
+  <!-- Ship Type -->
+  <td class="col-shiptype">{ship_type}</td>
+</tr>
+""".strip())
+
+    return f"""
+<section class="rating-table">
+  <h2 class="rt-title">Top 5 Sellers (by Minti Point)</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-img">Product</th>
+          <th class="col-minti">Minti Point</th>
+          <th class="col-stars">Stars</th>
+          <th class="col-shipfree">Free Ship</th>
+          <th class="col-returns">Returns / Payer</th>
+          <th class="col-rev">Reviews</th>
+          <th class="col-pos">Positive %</th>
+          <th class="col-eta">ETA</th>
+          <th class="col-shiptype">Ship Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {''.join(rows_html)}
+      </tbody>
+    </table>
+  </div>
+</section>
+""".strip()
+
+def fetch_ebay_products(idea_id: str, limit: int = 20):
+    con = _connect_ro()
+    rows = con.execute("""
+        WITH one_image AS (
+            SELECT parent_asin, ANY_VALUE(image_url) AS image_url
+            FROM product_media
+            GROUP BY parent_asin
+        ),
+        -- product_metrics_ebay: her product_id için tek satıra indir
+        latest_m AS (
+            SELECT
+              product_id,
+              ANY_VALUE(seller_score)  AS seller_score,
+              ANY_VALUE(trust_level)   AS trust_level,
+              ANY_VALUE(feedback_pct)  AS feedback_pct,
+              ANY_VALUE(feedback_score)AS feedback_score
+            FROM product_metrics_ebay
+            GROUP BY product_id
+        ),
+        -- product_enrichment: ihtiyaç duyulan alanları tek satıra indir
+        latest_e AS (
+            SELECT
+              product_id,
+              ANY_VALUE(returns_accepted)       AS returns_accepted,
+              ANY_VALUE(return_shipping_payer)  AS return_shipping_payer,
+              ANY_VALUE(ship_free)              AS ship_free,
+              ANY_VALUE(ship_type)              AS ship_type,
+              ANY_VALUE(ship_min_eta)           AS ship_min_eta,
+              ANY_VALUE(ship_max_eta)           AS ship_max_eta
+            FROM product_enrichment
+            GROUP BY product_id
+        ),
+        -- idea_products konsolidasyonu (aynı ürün birden fazlaysa)
+        ipx AS (
+            SELECT
+              ip.parent_asin,
+              MAX(ip.discount_pct)   AS discount_pct,
+              MAX(ip.original_price) AS original_price,
+              MAX(ip.sale_price)     AS sale_price
+            FROM idea_products ip
+            WHERE ip.idea_id = ?
+            GROUP BY ip.parent_asin
+        )
+        SELECT 
+            p.product_title,
+            p.price,
+            oi.image_url,
+            p.external_id,
+            m.seller_score,
+            m.trust_level,
+            m.feedback_pct,
+            m.feedback_score,
+            e.returns_accepted,
+            e.return_shipping_payer,
+            e.ship_free,
+            e.ship_type,
+            e.ship_min_eta,
+            e.ship_max_eta,
+            ipx.discount_pct,
+            ipx.original_price,
+            ipx.sale_price,
+            p.parent_asin AS parent_asin
+        FROM products p
+        JOIN ipx               ON ipx.parent_asin = p.parent_asin
+        LEFT JOIN one_image oi ON oi.parent_asin  = p.parent_asin
+        LEFT JOIN latest_m m   ON m.product_id    = p.parent_asin
+        LEFT JOIN latest_e e   ON e.product_id    = p.parent_asin
+        WHERE p.source = 'ebay'
+    """, [idea_id]).fetchall()
+    con.close()
+
+    # --- Python tarafı: emniyetli dedupe (başlık+fiyat) ve veri hazırlığı ---
+    def _eta_days(val):
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            try:
+                dt = datetime.fromisoformat(val.replace("Z","+00:00"))
+                now = datetime.now(timezone.utc) if dt.tzinfo else datetime.utcnow()
+                return max(0, (dt - now).days)
+            except Exception:
+                return None
+        return None
+
+    def _norm_title(s):
+        import re
+        return re.sub(r'[^a-z0-9]+', '', (s or '').lower())
+
+    products, seen = [], set()
+
+    for (t, pr, img, eid, s, trust, fb_pct, fb_score,
+         ret_acc, ret_payer, ship_free, ship_type, eta_min, eta_max,
+         ip_disc, ip_orig, ip_sale, pid) in rows:   # 👈 pid eklendi
+
+        eta_min_days = _eta_days(eta_min)
+        eta_max_days = _eta_days(eta_max)
+        eta_txt = (f"{eta_min_days}–{eta_max_days}"
+                   if (eta_min_days is not None and eta_max_days is not None)
+                   else (str(eta_min_days) if eta_min_days is not None else None))
+
+        # indirim %
+        disc_pct = None
+        try:
+            if ip_disc is not None:
+                disc_pct = float(ip_disc)
+            elif ip_orig and ip_sale and float(ip_orig) > 0:
+                disc_pct = max(0.0, 100.0 * (float(ip_orig) - float(ip_sale)) / float(ip_orig))
+        except Exception:
+            disc_pct = None
+
+        # eBay URL (pipe'lı external_id'ler için)
+        try:
+            url = f"https://www.ebay.com/itm/{eid.split('|')[1]}" if (eid and '|' in eid) else f"https://www.ebay.com/itm/{eid}"
+        except Exception:
+            url = "#"
+
+        # dedupe anahtarı: normalize başlık + efektif fiyat
+        eff_price = (ip_sale if ip_sale is not None else pr) or 0
+        key = (_norm_title(t), int(float(eff_price)))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        rating = _compute_seller_rating(
+            fb_pct, fb_score, s, trust,
+            returns_accepted=ret_acc, return_shipping_payer=ret_payer,
+            ship_free=ship_free, ship_type=ship_type,
+            ship_min_eta=eta_min, ship_max_eta=eta_max
+        )
+
+        products.append({
+            "id": pid,  # 👈 EKLE
+            "title": t,
+            "price": float(pr) if pr is not None else None,
+            "image": img,
+            "url": url,
+            "seller_score": s,
+            "trust": rating["tier"],
+            "fb_pct": fb_pct,
+            "fb_score": fb_score,
+            "score": rating["score"],
+            "stars_whole": rating["stars_whole"],
+            "seller_label": rating["label"],
+            "returns": ("Yes (seller pays)" if (ret_acc and str(ret_payer or '').upper()=='SELLER')
+                        else "Yes" if ret_acc else "No"),
+            "eta_days": eta_txt,
+            "ship_free": bool(ship_free) if ship_free is not None else None,
+            "ship_type": ship_type,
+            "return_shipping_payer": ret_payer,
+            "discount_pct": disc_pct,
+            "original_price": float(ip_orig) if ip_orig is not None else None,
+            "sale_price": float(ip_sale) if ip_sale is not None else None,
+        })
+
+    # en yüksek indirim üstte; None'lar en sona
+    products.sort(key=lambda p: (p["discount_pct"] is None, -(p["discount_pct"] or 0.0)))
+    return products[:limit]
+
+ 
+# 2) Düz slug → önce blog dene, yoksa kategori fallback
+@bp.route("/<slug>/", methods=["GET", "HEAD"])
+def blog_detail_or_category(slug):
+    row = fetch_row_by_slug(slug)
+    if row:
+        return blog_detail_with_cat(row.get("category_slug") or "uncategorized", slug)
+
+    # kategori adı mı?
+    con = _connect_ro()
+    exists = con.execute(
+        "SELECT 1 FROM blog_contents WHERE category_slug = ? LIMIT 1", [slug]
+    ).fetchone()
+    con.close()
+    if exists:
+        return category_page(slug)
+
+    return Response("Not found", status=404)
+
+
+@bp.route("/ebatlist.html", methods=["GET"])
+def serve_ebatlist():
+    return send_from_directory("/var/www/html", "ebatlist.html")
+
+
+
+# 3) Kategori listesi
+@bp.route("/<category>/", methods=["GET", "HEAD"])
+def category_page(category):
+    cats = get_categories()
+    con = _connect_ro()
+    rows = con.execute("""
+        WITH ranked AS (
+            SELECT
+                ip.idea_id,
+                pm.image_url,
+                ROW_NUMBER() OVER (PARTITION BY ip.idea_id ORDER BY ip.parent_asin) AS rn
+            FROM idea_products ip
+            LEFT JOIN product_media pm ON pm.parent_asin = ip.parent_asin
+            WHERE pm.image_url IS NOT NULL
+        ),
+        main_image AS (
+            SELECT idea_id, image_url FROM ranked WHERE rn = 1
+        )
+        SELECT
+            bc.title,
+            bc.slug,
+            COALESCE(bc.category_slug,'uncategorized') AS c,
+            COALESCE(
+                mi.image_url,
+                NULLIF(bc.hero_image_url, ''),
+                '/static/img/placeholder.png'
+            ) AS image_url,
+            CASE WHEN DATE(bc.updated_at) = CURRENT_DATE THEN TRUE ELSE FALSE END AS is_new,
+            s.season_name  -- 👈 yeni
+
+        FROM blog_contents bc
+        LEFT JOIN main_image mi ON mi.idea_id = bc.idea_id
+        LEFT JOIN blog_posts bp ON bp.idea_id = bc.idea_id
+       LEFT JOIN season_phrases sp ON sp.phrase = bc.idea_id         -- 👈 yeni
+        LEFT JOIN seasons s        ON s.id = sp.season_id             -- 👈 yeni
+
+        WHERE bc.category_slug = ?
+        AND bc.slug IS NOT NULL AND length(trim(bc.slug)) > 0
+        ORDER BY bc.updated_at DESC
+        LIMIT 200
+    """, [category]).fetchall()
+
+
+    posts = [{
+        "title": t,
+        "url": f"/{c}/{s}/",
+        "category": c,  # URL için teknik slug
+        "category_display": pretty_season_label(season_name, c),  # 👈 kartta yazdıracağız
+        "image": img,
+        "excerpt": None,
+        "is_new": bool(is_new)
+    } for (t, s, c, img, is_new, season_name) in rows] 
+
+
+
+    return render_template("category.html",
+                       categories=cats,
+                       current_category=category,
+                       posts=posts)
+
+
+
+# routes.py (uygun bir yere ekle)
+
+def get_deal_groups():
+    """
+    Special Deals altında hangi alt gruplar (watches, cell_phones, ...) var?
+    rules_json.category_key'ye göre unique liste + sayım döndürür.
+    """
+    con = _connect_ro()
+    rows = con.execute("""
+        SELECT
+          lower(coalesce(json_extract_string(r.rules_json, '$.category_key'), 'other')) AS gkey,
+          COUNT(*) AS cnt
+        FROM idea_rules_deal r
+        JOIN blog_contents bc ON bc.idea_id = r.idea_id
+        WHERE bc.category_slug = 'special-deals'
+        GROUP BY 1
+        ORDER BY cnt DESC, gkey ASC
+    """).fetchall()
+    con.close()
+
+    label_map = {
+        'watches': 'Watches Deals',
+        'cell_phones': 'Cell Phone Deals',
+        'jewelry': 'Jewelry Deals',
+        'handbags': 'Handbag Deals',
+        'fashion': 'Fashion Deals',
+        'other': 'Other Deals'
+    }
+    return [{"key": k, "label": label_map.get(k, k.replace('_',' ').title()), "count": c} for (k, c) in rows]
+
+
+@bp.app_context_processor
+def inject_recent_seasons():
+    try:
+        return {
+            "recent_seasons": get_recent_seasons(group="seasonal"),
+            "watch_seasons":  get_recent_seasons(group="watches"),
+            "deal_groups":    get_deal_groups(),   # 👈 YENİ
+        }
+    except Exception:
+        return {"recent_seasons": [], "watch_seasons": [], "deal_groups": []}
+
+
+
+
+@bp.route("/season/<season_name>/", methods=["GET", "HEAD"])
+def season_page(season_name):
+    cats = get_categories()
+    con = _connect_ro()
+
+    row = con.execute(
+        "SELECT id FROM seasons WHERE season_name = ? LIMIT 1",
+        [season_name]
+    ).fetchone()
+    if not row:
+        con.close()
+        return Response("Season not found", status=404)
+    season_id = row[0]
+
+    rows = con.execute("""
+        WITH kept_phr AS (
+            SELECT phrase
+            FROM season_phrases
+            WHERE season_id = ? AND kept = TRUE
+            ),
+            ranked AS (
+            SELECT
+                ip.idea_id,
+                pm.image_url,
+                ROW_NUMBER() OVER (PARTITION BY ip.idea_id ORDER BY ip.parent_asin) AS rn
+            FROM idea_products ip
+            LEFT JOIN product_media pm ON pm.parent_asin = ip.parent_asin
+            WHERE pm.image_url IS NOT NULL
+            ),
+            main_image AS (
+            SELECT idea_id, image_url FROM ranked WHERE rn = 1
+            ),
+            season_join AS (
+            SELECT bc.*
+            FROM blog_contents bc
+            JOIN kept_phr kp ON kp.phrase = bc.idea_id
+            ),
+            category_fallback AS (
+            SELECT bc.*
+            FROM blog_contents bc
+            WHERE bc.category_slug = (SELECT season_name FROM seasons WHERE id = ? LIMIT 1)
+            )
+            SELECT
+            bc.title,
+            bc.slug,
+            COALESCE(bc.category_slug,'uncategorized') AS c,
+            COALESCE(
+                mi.image_url,
+                NULLIF(bc.hero_image_url,''),
+                '/static/img/placeholder.png'
+            ) AS image_url,
+            CASE WHEN CAST(bc.updated_at AS DATE) = CURRENT_DATE THEN TRUE ELSE FALSE END AS is_new
+            FROM (
+            SELECT * FROM season_join
+            UNION ALL
+            SELECT * FROM category_fallback
+            ) bc
+            LEFT JOIN main_image mi ON mi.idea_id = bc.idea_id
+            WHERE bc.slug IS NOT NULL AND length(trim(bc.slug)) > 0
+            ORDER BY bc.updated_at DESC
+            LIMIT 200
+        """, [season_id, season_id]).fetchall()  # 👈 ikinci parametre eklendi
+    con.close()
+
+    posts = [{
+        "title": t,
+        "url": f"/{c}/{s}/",
+        "image": img or "/static/img/placeholder.png",
+        "is_new": bool(is_new),  # 👈 eklendi
+    } for (t, s, c, img, is_new) in rows]
+
+
+    pretty = (season_name or "").replace("-", " ").title()
+
+    return render_template(
+        "category.html",
+        categories=cats,
+        current_category=f"Season: {pretty}",  # header'da görünsün
+        posts=posts
+    )
+
+
+# 4) Home
+@bp.route("/", methods=["GET", "HEAD"])
+def home():
+    cats = get_categories()
+    con = _connect_ro()
+    rows = con.execute("""
+    WITH ranked AS (
+        SELECT
+            ip.idea_id,
+            pm.image_url,
+            ROW_NUMBER() OVER (PARTITION BY ip.idea_id ORDER BY ip.parent_asin) AS rn
+        FROM idea_products ip
+        LEFT JOIN product_media pm ON pm.parent_asin = ip.parent_asin
+        WHERE pm.image_url IS NOT NULL
+    ),
+    main_image AS (
+        SELECT idea_id, image_url FROM ranked WHERE rn = 1
+    )
+    SELECT
+        bc.title,
+        bc.slug,
+        COALESCE(bc.category_slug,'uncategorized') AS c,
+        COALESCE(
+            mi.image_url,
+            NULLIF(bc.hero_image_url, ''), 
+            '/static/img/placeholder.png'
+        ) AS image_url,
+        CASE WHEN CAST(bc.updated_at AS DATE) = CURRENT_DATE THEN TRUE ELSE FALSE END AS is_new,
+        s.season_name  -- 👈 yeni
+    FROM blog_contents bc
+    LEFT JOIN main_image mi ON mi.idea_id = bc.idea_id
+    LEFT JOIN season_phrases sp ON sp.phrase = bc.idea_id           -- 👈 yeni
+    LEFT JOIN seasons s        ON s.id = sp.season_id               -- 👈 yeni
+    WHERE bc.slug IS NOT NULL AND length(trim(bc.slug)) > 0
+    ORDER BY bc.updated_at DESC
+    LIMIT 30
+""").fetchall()
+
+    
+    con.close()
+
+    posts = [{
+        "title": t,
+        "url": f"/{c}/{sslug}/",
+        "category": c,  # internal slug (URL için)
+        "category_display": pretty_season_label(season_name, c),  # 👈 yeni (kartta göstereceğiz)
+        "image": img,
+        "excerpt": None,
+        "is_new": bool(is_new)
+    } for (t, sslug, c, img, is_new, season_name) in rows]
+
+
+    return render_template("index.html",
+                       categories=cats,
+                       posts=posts)
+
+    

@@ -1,0 +1,375 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Characters & Backgrounds{% endblock %}
+
+{% block content %}
+<style>
+  .ai-video-subtitle {
+    color: rgba(232, 238, 252, 0.68);
+    max-width: 760px;
+  }
+  .ai-video-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.95fr;
+    gap: 20px;
+  }
+  .ai-video-stack {
+    display: grid;
+    gap: 20px;
+  }
+  .ai-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(10, 16, 30, 0.78);
+  }
+  .ai-entity-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .ai-entity-card + .ai-entity-card {
+    margin-top: 14px;
+  }
+  .ai-entity-meta {
+    color: rgba(232, 238, 252, 0.64);
+    font-size: 0.84rem;
+  }
+  .ai-avatar-preview {
+    width: 72px;
+    height: 72px;
+    border-radius: 14px;
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .ai-bg-preview {
+    width: 100%;
+    min-height: 108px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ai-bg-preview img,
+  .ai-bg-preview video {
+    width: 100%;
+    height: 108px;
+    object-fit: cover;
+  }
+  .ai-form-note {
+    color: rgba(232, 238, 252, 0.62);
+    font-size: 0.82rem;
+  }
+  @media (max-width: 991.98px) {
+    .ai-video-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+  <div>
+    <h3 class="mb-1">Characters &amp; Backgrounds</h3>
+    <div class="ai-video-subtitle">
+      Manage reusable AI presenter presets for the current brand. These records will be used later by Create Video.
+    </div>
+  </div>
+  {% if vs_current_brand %}
+    <span class="badge text-bg-dark">{{ vs_current_brand.name }}</span>
+  {% endif %}
+</div>
+
+{% if not heygen_configured %}
+  <div class="alert alert-warning">
+    HeyGen is not connected yet. Add <code>HEYGEN_API_KEY</code> to enable avatar retrieval.
+  </div>
+{% elif heygen_error %}
+  <div class="alert alert-warning">
+    HeyGen avatar sync is currently unavailable: {{ heygen_error }}
+  </div>
+{% else %}
+  <div class="alert alert-info">
+    HeyGen avatar library is connected. {{ heygen_avatar_options|length }} avatar options are available for mapping.
+  </div>
+{% endif %}
+
+<div class="ai-video-grid">
+  <div class="ai-video-stack">
+    <div class="card shadow-sm vs-card ai-card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h5 class="card-title vs-card-title mb-1">Characters</h5>
+            <div class="ai-form-note">Brand-scoped presenter presets with optional HeyGen avatar mapping.</div>
+          </div>
+          <span class="badge text-bg-dark">{{ characters|length }} total</span>
+        </div>
+
+        {% for character in characters %}
+          <div class="ai-entity-card">
+            <div class="d-flex justify-content-between gap-3">
+              <div class="d-flex gap-3">
+                {% if character.heygen_preview_image_url %}
+                  <img src="{{ character.heygen_preview_image_url }}" alt="{{ character.name }}" class="ai-avatar-preview">
+                {% else %}
+                  <div class="ai-avatar-preview d-flex align-items-center justify-content-center">
+                    <span class="material-symbols-outlined">person</span>
+                  </div>
+                {% endif %}
+                <div>
+                  <div class="fw-semibold">{{ character.name }}</div>
+                  <div class="ai-entity-meta">{{ character.description or "No description yet." }}</div>
+                  <div class="ai-entity-meta mt-2">
+                    HeyGen:
+                    {% if character.heygen_avatar_id %}
+                      {{ character.heygen_avatar_name or character.heygen_avatar_id }}
+                    {% else %}
+                      Not connected
+                    {% endif %}
+                  </div>
+                  {% if character.tone_notes %}
+                    <div class="ai-entity-meta mt-1">Tone: {{ character.tone_notes }}</div>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="d-flex flex-column align-items-end gap-2">
+                {% if character.is_default %}
+                  <span class="badge text-bg-primary">Default</span>
+                {% endif %}
+                <a href="{{ url_for('video_shorts_bp.ai_video_characters_backgrounds', edit_character=character.id) }}" class="btn btn-sm btn-outline-light">Edit</a>
+                <form method="post" class="m-0">
+                  <input type="hidden" name="action" value="set_default_character">
+                  <input type="hidden" name="character_id" value="{{ character.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-light" {% if character.is_default %}disabled{% endif %}>Make Default</button>
+                </form>
+                <form method="post" class="m-0" onsubmit="return confirm('Delete this character?');">
+                  <input type="hidden" name="action" value="delete_character">
+                  <input type="hidden" name="character_id" value="{{ character.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        {% else %}
+          <div class="ai-entity-card">
+            <div class="ai-entity-meta">No characters created for this brand yet.</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card ai-card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h5 class="card-title vs-card-title mb-1">Backgrounds</h5>
+            <div class="ai-form-note">Internal reusable backgrounds for later video generation.</div>
+          </div>
+          <span class="badge text-bg-dark">{{ backgrounds|length }} total</span>
+        </div>
+
+        {% for background in backgrounds %}
+          <div class="ai-entity-card">
+            <div class="row g-3 align-items-center">
+              <div class="col-md-4">
+                <div class="ai-bg-preview" {% if background.background_type == 'color' and background.color_hex %}style="background: {{ background.color_hex }};"{% endif %}>
+                  {% if background.background_type != 'color' %}
+                    {% set bg_preview = background.public_url or background.source_url %}
+                    {% if bg_preview %}
+                      {% if background.background_type == 'video' %}
+                        <video src="{{ bg_preview }}" muted playsinline></video>
+                      {% else %}
+                        <img src="{{ bg_preview }}" alt="{{ background.name }}">
+                      {% endif %}
+                    {% else %}
+                      <span class="material-symbols-outlined">image</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge text-bg-dark">{{ background.color_hex or 'Color' }}</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-md-5">
+                <div class="fw-semibold">{{ background.name }}</div>
+                <div class="ai-entity-meta">{{ background.description or "No description yet." }}</div>
+                <div class="ai-entity-meta mt-2">Type: {{ background.background_type|capitalize }}</div>
+                {% if background.heygen_asset_id %}
+                  <div class="ai-entity-meta">HeyGen asset: {{ background.heygen_asset_id }}</div>
+                {% endif %}
+              </div>
+              <div class="col-md-3 d-flex flex-column align-items-md-end gap-2">
+                {% if background.is_default %}
+                  <span class="badge text-bg-primary">Default</span>
+                {% endif %}
+                <a href="{{ url_for('video_shorts_bp.ai_video_characters_backgrounds', edit_background=background.id) }}" class="btn btn-sm btn-outline-light">Edit</a>
+                <form method="post" class="m-0">
+                  <input type="hidden" name="action" value="set_default_background">
+                  <input type="hidden" name="background_id" value="{{ background.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-light" {% if background.is_default %}disabled{% endif %}>Make Default</button>
+                </form>
+                <form method="post" class="m-0" onsubmit="return confirm('Delete this background?');">
+                  <input type="hidden" name="action" value="delete_background">
+                  <input type="hidden" name="background_id" value="{{ background.id }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        {% else %}
+          <div class="ai-entity-card">
+            <div class="ai-entity-meta">No backgrounds created for this brand yet.</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="ai-video-stack">
+    <div class="card shadow-sm vs-card ai-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title mb-3">{{ "Edit Character" if editing_character else "Create Character" }}</h5>
+        <form method="post" class="d-grid gap-3">
+          <input type="hidden" name="action" value="save_character">
+          <input type="hidden" name="character_id" value="{{ editing_character.id if editing_character else '' }}">
+          <div>
+            <label class="form-label">Character Name</label>
+            <input type="text" name="name" class="form-control vs-input" maxlength="80" value="{{ editing_character.name if editing_character else '' }}" required>
+          </div>
+          <div>
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control vs-input" rows="2" maxlength="300">{{ editing_character.description if editing_character else '' }}</textarea>
+          </div>
+          <div>
+            <label class="form-label">Tone Notes</label>
+            <textarea name="tone_notes" class="form-control vs-input" rows="3" maxlength="400" placeholder="Example: calm, educational, young English narrator">{{ editing_character.tone_notes if editing_character else '' }}</textarea>
+          </div>
+          <div>
+            <label class="form-label">HeyGen Avatar</label>
+            <select name="heygen_avatar_id" class="form-select vs-input" id="heygen-avatar-select">
+              <option value="">No avatar selected</option>
+              {% for avatar in heygen_avatar_options %}
+                <option
+                  value="{{ avatar.avatar_id }}"
+                  data-avatar-name="{{ avatar.avatar_name }}"
+                  data-avatar-gender="{{ avatar.gender }}"
+                  data-preview-image="{{ avatar.preview_image_url }}"
+                  data-preview-video="{{ avatar.preview_video_url }}"
+                  {% if editing_character and editing_character.heygen_avatar_id == avatar.avatar_id %}selected{% endif %}
+                >
+                  {{ avatar.avatar_name }}{% if avatar.gender %} · {{ avatar.gender }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <div class="ai-form-note mt-2">Uses HeyGen avatar retrieval via API when configured.</div>
+          </div>
+          <input type="hidden" name="heygen_avatar_name" id="heygen-avatar-name" value="{{ editing_character.heygen_avatar_name if editing_character else '' }}">
+          <input type="hidden" name="heygen_avatar_gender" id="heygen-avatar-gender" value="{{ editing_character.heygen_avatar_gender if editing_character else '' }}">
+          <input type="hidden" name="heygen_preview_image_url" id="heygen-preview-image-url" value="{{ editing_character.heygen_preview_image_url if editing_character else '' }}">
+          <input type="hidden" name="heygen_preview_video_url" id="heygen-preview-video-url" value="{{ editing_character.heygen_preview_video_url if editing_character else '' }}">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_default" id="character-default-toggle" {% if editing_character and editing_character.is_default %}checked{% endif %}>
+            <label class="form-check-label" for="character-default-toggle">Make this the default character</label>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn vs-btn vs-btn-primary">Save Character</button>
+            {% if editing_character %}
+              <a href="{{ url_for('video_shorts_bp.ai_video_characters_backgrounds') }}" class="btn btn-outline-light">Cancel</a>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card ai-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title mb-3">{{ "Edit Background" if editing_background else "Create Background" }}</h5>
+        <form method="post" enctype="multipart/form-data" class="d-grid gap-3">
+          <input type="hidden" name="action" value="save_background">
+          <input type="hidden" name="background_id" value="{{ editing_background.id if editing_background else '' }}">
+          <div>
+            <label class="form-label">Background Name</label>
+            <input type="text" name="name" class="form-control vs-input" maxlength="80" value="{{ editing_background.name if editing_background else '' }}" required>
+          </div>
+          <div>
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control vs-input" rows="2" maxlength="300">{{ editing_background.description if editing_background else '' }}</textarea>
+          </div>
+          <div>
+            <label class="form-label">Background Type</label>
+            <select name="background_type" class="form-select vs-input">
+              {% set current_bg_type = editing_background.background_type if editing_background else 'image' %}
+              <option value="image" {% if current_bg_type == 'image' %}selected{% endif %}>Image</option>
+              <option value="video" {% if current_bg_type == 'video' %}selected{% endif %}>Video</option>
+              <option value="color" {% if current_bg_type == 'color' %}selected{% endif %}>Color</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Upload File</label>
+            <input type="file" name="background_file" class="form-control vs-input" accept="image/*,video/*">
+            <div class="ai-form-note mt-2">If uploaded, the file is stored as an internal reusable asset for this brand.</div>
+          </div>
+          <div>
+            <label class="form-label">External URL</label>
+            <input type="url" name="source_url" class="form-control vs-input" value="{{ editing_background.source_url if editing_background else '' }}" placeholder="https://...">
+          </div>
+          <div>
+            <label class="form-label">Color Hex</label>
+            <input type="text" name="color_hex" class="form-control vs-input" value="{{ editing_background.color_hex if editing_background else '' }}" placeholder="#0B1220">
+          </div>
+          <div>
+            <label class="form-label">HeyGen Asset ID</label>
+            <input type="text" name="heygen_asset_id" class="form-control vs-input" value="{{ editing_background.heygen_asset_id if editing_background else '' }}" placeholder="Optional future asset mapping">
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_default" id="background-default-toggle" {% if editing_background and editing_background.is_default %}checked{% endif %}>
+            <label class="form-check-label" for="background-default-toggle">Make this the default background</label>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn vs-btn vs-btn-primary">Save Background</button>
+            {% if editing_background %}
+              <a href="{{ url_for('video_shorts_bp.ai_video_characters_backgrounds') }}" class="btn btn-outline-light">Cancel</a>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card ai-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title mb-3">HeyGen Background Notes</h5>
+        <div class="ai-form-note mb-2">
+          {{ heygen_background_capabilities.notes }}
+        </div>
+        <div class="small text-secondary mb-2">
+          Supported background types in HeyGen video generation:
+          {{ heygen_background_capabilities.supported_background_types|join(", ") }}
+        </div>
+        <a href="{{ heygen_background_capabilities.docs_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-light">
+          Open HeyGen Background Docs
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const select = document.getElementById("heygen-avatar-select");
+    if (!select) return;
+    const sync = () => {
+      const option = select.options[select.selectedIndex];
+      document.getElementById("heygen-avatar-name").value = option?.dataset.avatarName || "";
+      document.getElementById("heygen-avatar-gender").value = option?.dataset.avatarGender || "";
+      document.getElementById("heygen-preview-image-url").value = option?.dataset.previewImage || "";
+      document.getElementById("heygen-preview-video-url").value = option?.dataset.previewVideo || "";
+    };
+    select.addEventListener("change", sync);
+    sync();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,2299 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Your Channel{% endblock %}
+
+{% block extra_styles %}
+<link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='css/vs_publishing.css') }}">
+{% endblock %}
+
+{% block content %}
+
+<div class="vs-publishing-page">
+
+<div class="vs-hero mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <h3 class="fw-bold mb-1">Your Channel</h3>
+    </div>
+  </div>
+</div>
+<div class="small text-white mb-3 d-none" id="socialOverviewMeta"></div>
+
+{% if vs_overview_quota and vs_overview_quota.active %}
+  <div class="alert vs-alert-danger d-flex flex-column gap-1 mb-3">
+    <div class="fw-semibold">YouTube quota mode active</div>
+    <div class="small">
+      Cooldown until: {{ vs_overview_quota.until_utc or '—' }} (UTC) ·
+      {{ vs_overview_quota.until_pst or '—' }} (PST)
+    </div>
+  </div>
+{% endif %}
+
+<div class="card border-0 shadow-sm mb-3 publishing-filter-card">
+  <div class="card-body publishing-filter-body">
+    <form method="get" id="shortsFiltersForm" class="publishing-filter-form">
+      <input type="hidden" name="day" id="calendarDayInput" value="{{ day_filter }}">
+      <input type="hidden" name="status" id="statusInput" value="{{ status_filter }}">
+      <input type="hidden" name="comments" id="commentsInput" value="{{ comments_filter }}">
+      <input type="hidden" name="pending_only" id="pendingOnlyInput" value="{{ '1' if pending_only else '' }}">
+      <div class="row g-3 align-items-start">
+        <div class="col-lg-7">
+          <div class="row g-2">
+            <div class="col-12 col-md-6">
+              <label class="form-label vs-card-title mb-1">Title</label>
+              <input type="search"
+                     name="q"
+                     value="{{ search_q }}"
+                     class="form-control form-control-sm"
+                     placeholder="Clip or video title">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label vs-card-title mb-1">Channel</label>
+              <div class="row g-2 align-items-end flex-nowrap publishing-filter-actions">
+                <div class="col">
+                  <select name="channel" class="form-select form-select-sm">
+                    <option value="">All</option>
+                    {% for chan in channel_options %}
+                      <option value="{{ chan.id }}" {% if channel_filter == chan.id|string %}selected{% endif %}>
+                        {{ chan.name }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-auto">
+                  <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 mt-2">
+              <div class="row g-2">
+                <div class="col-12 col-md-4">
+                  <div class="kpi-card {% if status_filter == 'published' %}kpi-card-active{% endif %}">
+                    <div class="kpi-label">Published</div>
+                    <button type="button"
+                            class="kpi-value kpi-link"
+                            data-status-filter="published">
+                      {{ total_published }}
+                    </button>
+                    <div class="kpi-spacer"></div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-4">
+                  <div class="kpi-card {% if status_filter == 'scheduled' %}kpi-card-active{% endif %}">
+                    <div class="kpi-label">Scheduled</div>
+                    <button type="button"
+                            class="kpi-value kpi-link"
+                            data-status-filter="scheduled">
+                      {{ total_scheduled }}
+                    </button>
+                    <div class="kpi-spacer"></div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-4">
+                  <div class="kpi-card {% if comments_filter == 'new' %}kpi-card-active{% endif %}">
+                    <div class="kpi-label">Videos with new comments</div>
+                    <button type="button"
+                            class="kpi-value kpi-link"
+                            data-comments-filter="new">
+                      {{ unread_videos_total }}
+                    </button>
+                    <div class="kpi-spacer"></div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="small vs-text-body">
+                    Last comment check: {{ last_comment_check_display or '—' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="shorts-calendar-wrapper calendar-card">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div class="vs-card-title">Calendar</div>
+              <div class="d-flex align-items-center gap-1">
+                <button class="shorts-calendar-nav" type="button" data-calendar-prev>
+                  <span class="material-symbols-outlined">chevron_left</span>
+                </button>
+                <div class="vs-card-title" data-calendar-label>Month</div>
+                <button class="shorts-calendar-nav" type="button" data-calendar-next>
+                  <span class="material-symbols-outlined">chevron_right</span>
+                </button>
+              </div>
+            </div>
+            <div class="shorts-calendar" id="shortsCalendar">
+              <div class="shorts-calendar-weekdays">
+                <span>Su</span>
+                <span>Mo</span>
+                <span>Tu</span>
+                <span>We</span>
+                <span>Th</span>
+                <span>Fr</span>
+                <span>Sa</span>
+              </div>
+              <div class="shorts-calendar-grid" data-calendar-grid></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if pending_videos_total %}
+  <div class="publishing-pending-bar d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div class="pending-message">
+      <strong>{{ pending_videos_total }}</strong> videos have comments waiting for approval.
+    </div>
+    {% if not pending_only %}
+      <a class="pending-toggle"
+         href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=sort_key, dir=sort_dir, page=page, pending_only=1) }}">
+        Show pending only
+      </a>
+    {% else %}
+      <a class="pending-toggle"
+         href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=sort_key, dir=sort_dir, page=page) }}">
+        Show all videos
+      </a>
+    {% endif %}
+  </div>
+{% endif %}
+
+  <div class="card border-0 shadow-sm publishing-table-card mb-4 vs-card">
+    
+    {% macro sort_header(column, label) %}
+      {% set actual_sort = column %}
+      {% if column == "date" %}
+        {% set actual_sort = "publish" %}
+      {% endif %}
+      {% set is_active = sort_key == actual_sort %}
+      {% if is_active %}
+        {% set next_dir = "asc" if sort_dir == "desc" else "desc" %}
+      {% else %}
+        {% set next_dir = "desc" %}
+      {% endif %}
+      <a class="text-decoration-none text-white d-inline-flex align-items-center gap-1"
+         href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=actual_sort, dir=next_dir, page=page, pending_only=1 if pending_only else None) }}">
+        {{ label }}
+        {% if is_active %}
+          <i class="bi bi-chevron-{{ 'down' if sort_dir == 'desc' else 'up' }}"></i>
+        {% endif %}
+      </a>
+    {% endmacro %}
+    <div class="table-responsive publishing-table-wrapper">
+      <table class="table table-sm table-hover align-middle mb-0 vs-table">
+        <thead>
+          <tr>
+            <th>Short</th>
+            <th>{{ sort_header("date", "YouTube") }}</th>
+            <th>{{ sort_header("status", "Instagram") }}</th>
+            <th>TikTok</th>
+            <th>Facebook Page</th>
+            <th class="text-center">Plan &amp; Editor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in entries %}
+            <tr class="{% if entry.pending_comment_count %}short-row-pending{% endif %}"
+                {% if entry.short_video_id %}data-short-row="{{ entry.short_video_id }}"{% endif %}>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <a class="d-flex gap-3 align-items-center text-decoration-none text-body flex-grow-1"
+                   href="{{ entry.short_video_url or entry.video_url }}"
+                   target="_blank"
+                   rel="noopener">
+                  <div class="shorts-thumb-wrapper">
+                    {% if entry.publish_status == 'published' and (entry.short_thumbnail_url or entry.thumbnail_url) %}
+                      <img class="shorts-thumb"
+                           src="{{ entry.short_thumbnail_url or entry.thumbnail_url }}"
+                           alt="short thumbnail">
+                    {% elif entry.publish_status == 'published' and entry.clip_preview_url %}
+                      <video class="shorts-thumb-video"
+                             src="{{ entry.clip_preview_url }}"
+                             poster="{{ entry.thumbnail_url }}"
+                             muted
+                             loop
+                             autoplay
+                             playsinline
+                             preload="metadata"></video>
+                    {% else %}
+                      <div class="shorts-thumb-placeholder placeholder-icon-only" title="Scheduled">
+                        <span class="material-symbols-outlined">schedule_send</span>
+                      </div>
+                    {% endif %}
+                  </div>
+                  <div class="flex-grow-1">
+                    <div class="short-title fw-semibold mb-0 d-flex align-items-center gap-2">
+                      {% if entry.short_video_id %}
+                        <span class="pending-indicator {% if not entry.pending_comment_count %}d-none{% endif %}" data-role="pending-indicator"></span>
+                      {% endif %}
+                      <span>{{ entry.plan_title or entry.video_title or 'Untitled clip' }}</span>
+                    </div>
+                    <div class="shorts-meta small">
+                      <strong>{{ entry.channel_name }}</strong>
+                      {% if entry.excerpt %}
+                        <span>{{ entry.excerpt|truncate(60, True, '...') }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </a>
+              </div>
+            </td>
+              <td>
+                <div class="d-flex flex-column gap-2">
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-{{ 'success' if entry.publish_status == 'published' else 'warning text-dark' }} text-uppercase">
+                      {{ entry.publish_status_label }}
+                    </span>
+                    {% if entry.publish_status == 'published' and (entry.short_video_url or entry.video_url) %}
+                      <a href="{{ entry.short_video_url or entry.video_url }}" target="_blank" rel="noopener" class="text-decoration-none text-muted" title="Open on YouTube">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                      </a>
+                    {% endif %}
+                  </div>
+                  <div class="text-muted small">
+                    {{ entry.publish_display or entry.publish_label or 'TBD' }}
+                  </div>
+                  <div class="shorts-meta-stats d-flex flex-wrap gap-3 mt-1">
+                    <span class="d-flex align-items-center gap-1 text-muted">
+                      <i class="bi bi-eye"></i>
+                      {{ entry.short_view_count if entry.short_view_count is not none else '-' }}
+                    </span>
+                    <span class="d-flex align-items-center gap-1 text-muted">
+                      <i class="bi bi-hand-thumbs-up"></i>
+                      {{ entry.short_like_count if entry.short_like_count is not none else '-' }}
+                    </span>
+                    {% set pending_count = entry.pending_comment_count or 0 %}
+                    {% set published_count = entry.published_comment_count or 0 %}
+                    {% set total_comments = pending_count + published_count %}
+                    {% if total_comments == 0 and entry.short_comment_count is not none %}
+                      {% set total_comments = entry.short_comment_count %}
+                    {% endif %}
+                    <span class="d-flex align-items-center gap-1 text-muted position-relative">
+                      {% if entry.comments_url %}
+                        <span
+                          role="button"
+                          tabindex="0"
+                          class="short-comments-btn {% if pending_count %}short-comments-btn-pending{% elif entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
+                          data-comments-url="{{ entry.comments_url }}"
+                          data-comments-status="all"
+                          data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
+                          data-video-id="{{ (entry.short_video_id or '')|e }}"
+                          {% if entry.short_video_id %}data-comments-trigger="{{ entry.short_video_id }}"{% endif %}
+                          data-pending-count="{{ pending_count }}"
+                          data-published-count="{{ published_count }}"
+                          title="View comments">
+                          <i class="bi bi-chat-dots"></i>
+                          <span class="fw-semibold" data-role="comment-count">({{ total_comments }})</span>
+                        </span>
+                        {% if pending_count %}
+                          <span class="comment-alert-dot ms-1"></span>
+                        {% endif %}
+                      {% else %}
+                        <i class="bi bi-chat-dots"></i>
+                        <span class="fw-semibold">{{ entry.short_comment_count if entry.short_comment_count is not none else 0 }}</span>
+                      {% endif %}
+                    </span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                {% if entry.instagram_entries %}
+                  {% for ig in entry.instagram_entries %}
+                    <div class="d-flex flex-column gap-2 {% if not loop.first %}mt-3 pt-3 border-top border-secondary-subtle{% endif %}">
+                      <div class="d-flex align-items-center gap-2">
+                        <span class="badge {{ ig.badge_class }} text-uppercase">
+                          {{ ig.media_type_label }} · {{ ig.status_label }}
+                        </span>
+                        {% if ig.status_label|lower == 'published' and ig.permalink %}
+                          <a href="{{ ig.permalink }}" target="_blank" rel="noopener" class="text-decoration-none text-muted" title="Open on Instagram">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                          </a>
+                        {% endif %}
+                      </div>
+                      <div class="text-muted small">
+                        {{ ig.publish_display or 'TBD' }}
+                      </div>
+                      <div class="shorts-meta-stats d-flex flex-wrap gap-3 mt-1">
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-eye"></i>
+                          {{ ig.impressions if ig.impressions is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-broadcast"></i>
+                          {{ ig.reach if ig.reach is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-bookmark"></i>
+                          {{ ig.saved if ig.saved is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-share"></i>
+                          {{ ig.shares if ig.shares is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-heart"></i>
+                          {{ ig.like_count if ig.like_count is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          {% if ig.queue_id %}
+                            <span
+                              role="button"
+                              tabindex="0"
+                              class="instagram-comments-btn{% if ig.has_flagged_comments %} instagram-comments-flagged{% endif %}{% if ig.has_unread_comments %} instagram-comments-new{% endif %}"
+                              data-ig-queue-id="{{ ig.queue_id }}"
+                              data-ig-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Instagram comments')|e }}"
+                              title="View Instagram comments">
+                              <i class="bi bi-chat-dots"></i>
+                              <span class="fw-semibold">({{ ig.comment_count if ig.comment_count is not none else 0 }})</span>
+                            </span>
+                          {% else %}
+                            <i class="bi bi-chat-dots"></i>
+                            {{ ig.comment_count if ig.comment_count is not none else '-' }}
+                          {% endif %}
+                        </span>
+                      </div>
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <div>
+                    <span class="badge text-bg-secondary text-uppercase px-3 py-2">Not planned</span>
+                  </div>
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.tiktok_entries %}
+                  {% for tt in entry.tiktok_entries %}
+                    <div class="d-flex flex-column gap-2 {% if not loop.first %}mt-3 pt-3 border-top border-secondary-subtle{% endif %}">
+                      <div class="d-flex align-items-center gap-2">
+                        <span class="badge {{ tt.badge_class }} text-uppercase">
+                          {{ tt.status_label }}
+                        </span>
+                        {% if tt.status|lower == 'failed' %}
+                          <button
+                            type="button"
+                            class="btn btn-link btn-sm text-decoration-none p-0 tiktok-error-btn"
+                            data-bs-toggle="modal"
+                            data-bs-target="#tiktokErrorModal"
+                            data-error-code="{{ tt.last_error_code or '' }}"
+                            data-error-message="{{ tt.last_error_message or '' }}"
+                            data-error-logid="{{ tt.last_error_logid or '' }}"
+                            data-error-payload="{{ (tt.last_error_payload or '')|e }}"
+                            data-http-status="{{ tt.last_http_status or '' }}"
+                            data-step="{{ tt.last_step or '' }}"
+                            data-clip="{{ entry.plan_title or entry.video_title or 'TikTok publish' }}"
+                          >
+                            View error
+                          </button>
+                        {% endif %}
+                      </div>
+                      <div class="text-muted small">
+                        {{ tt.publish_display or 'TBD' }}
+                      </div>
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <div>
+                    <span class="badge text-bg-secondary text-uppercase px-3 py-2">Not planned</span>
+                  </div>
+                {% endif %}
+              </td>
+              <td>
+                {% if entry.facebook_entries %}
+                  {% for fb in entry.facebook_entries %}
+                    <div class="d-flex flex-column gap-2 {% if not loop.first %}mt-3 pt-3 border-top border-secondary-subtle{% endif %}">
+                      <div class="d-flex align-items-center gap-2">
+                        <span class="badge {{ fb.badge_class }} text-uppercase">
+                          {{ fb.status_label }}
+                        </span>
+                        {% if fb.status_label|lower == 'published' and (fb.permalink or fb.facebook_video_id) %}
+                          {% set fb_link = fb.permalink or ('https://www.facebook.com/' ~ fb.facebook_video_id) %}
+                          <a href="{{ fb_link }}" target="_blank" rel="noopener" class="text-decoration-none text-muted" title="Open on Facebook">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                          </a>
+                        {% endif %}
+                      </div>
+                      <div class="text-muted small">
+                        {{ fb.status_label }} - {{ fb.publish_display or 'TBD' }}
+                      </div>
+                      <div class="shorts-meta-stats d-flex flex-wrap gap-3 mt-1">
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-eye"></i>
+                          {{ fb.view_count if fb.view_count is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-broadcast"></i>
+                          {{ fb.reach if fb.reach is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-collection"></i>
+                          {{ fb.impressions if fb.impressions is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          <i class="bi bi-hand-thumbs-up"></i>
+                          {{ fb.reactions if fb.reactions is not none else '-' }}
+                        </span>
+                        <span class="d-flex align-items-center gap-1 text-muted">
+                          {% if fb.queue_id %}
+                            <span
+                              role="button"
+                              tabindex="0"
+                              class="facebook-comments-btn{% if fb.has_unread_comments %} facebook-comments-new{% endif %}"
+                              data-fb-queue-id="{{ fb.queue_id }}"
+                              data-fb-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Facebook comments')|e }}"
+                              title="View Facebook comments">
+                              <i class="bi bi-chat-dots"></i>
+                              <span class="fw-semibold">({{ fb.comment_count if fb.comment_count is not none else 0 }})</span>
+                            </span>
+                          {% else %}
+                            <i class="bi bi-chat-dots"></i>
+                            {{ fb.comment_count if fb.comment_count is not none else '-' }}
+                          {% endif %}
+                        </span>
+                      </div>
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <div>
+                    <span class="badge text-bg-secondary text-uppercase px-3 py-2">Not planned</span>
+                  </div>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                {% if entry.video_pk %}
+                  <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=entry.video_pk) }}"
+                     class="text-decoration-none text-muted fs-5"
+                     title="Open plan page">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                  </a>
+                {% else %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+            </tr>
+        {% else %}
+          <tr>
+            <td colspan="6" class="text-center text-muted py-4">
+              No published or scheduled shorts yet.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mt-3 px-3">
+      <div class="small text-muted">
+        {{ showing_from }} - {{ showing_to }} / {{ entries_count }} items
+      </div>
+      {% if total_pages > 1 %}
+        <nav aria-label="Shorts pagination">
+          <ul class="pagination pagination-sm mb-0">
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=sort_key, dir=sort_dir, page=page-1, pending_only=1 if pending_only else None) }}" aria-label="Previous">
+                <span aria-hidden="true">&laquo;</span>
+              </a>
+            </li>
+            {% for page_num in range(1, total_pages+1) %}
+              <li class="page-item {% if page_num == page %}active{% endif %}">
+                <a class="page-link" href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=sort_key, dir=sort_dir, page=page_num, pending_only=1 if pending_only else None) }}">{{ page_num }}</a>
+              </li>
+            {% endfor %}
+            <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('video_shorts_bp.shorts_overview', status=status_filter, comments=comments_filter, channel=channel_filter, q=search_q, sort=sort_key, dir=sort_dir, page=page+1, pending_only=1 if pending_only else None) }}" aria-label="Next">
+                <span aria-hidden="true">&raquo;</span>
+              </a>
+            </li>
+          </ul>
+    </nav>
+  {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="shortCommentsModal" tabindex="-1" aria-labelledby="shortCommentsLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title short-comments-modal-title vs-modal-title" id="shortCommentsLabel">Short Comments</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <p class="text-muted small mb-3 vs-modal-meta" id="shortCommentsVideoMeta"></p>
+        <div id="shortCommentsLoading" class="text-center py-4 d-none">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+        <div id="shortCommentsStatus" class="alert alert-warning d-none small vs-modal-alert"></div>
+        <div class="short-comments-toolbar vs-modal-toolbar" id="shortCommentsFilters"></div>
+        <ul class="list-group vs-modal-list" id="shortCommentsList"></ul>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <button type="button" class="btn btn-outline-secondary me-auto vs-btn" id="shortCommentsRefreshBtn">
+          Refresh
+        </button>
+        <button type="button" class="btn btn-secondary vs-btn" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="instagramCommentsModal" tabindex="-1" aria-labelledby="instagramCommentsLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title instagram-comments-modal-title vs-modal-title" id="instagramCommentsLabel">Instagram Comments</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <div id="instagramCommentsLoading" class="text-center py-4 d-none">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+        <div id="instagramCommentsStatus" class="alert alert-warning d-none small vs-modal-alert"></div>
+        <ul class="list-group vs-modal-list" id="instagramCommentsList"></ul>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <button type="button" class="btn btn-outline-secondary me-auto vs-btn" id="instagramCommentsRefreshBtn">
+          Refresh
+        </button>
+        <button type="button" class="btn btn-secondary vs-btn" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="facebookCommentsModal" tabindex="-1" aria-labelledby="facebookCommentsLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title facebook-comments-modal-title vs-modal-title" id="facebookCommentsLabel">Facebook Comments</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <p class="text-muted small mb-3 vs-modal-meta" id="facebookCommentsMeta"></p>
+        <div id="facebookCommentsLoading" class="text-center py-4 d-none">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+        <div id="facebookCommentsStatus" class="alert alert-warning d-none small vs-modal-alert"></div>
+        <ul class="list-group vs-modal-list" id="facebookCommentsList"></ul>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <button type="button" class="btn btn-outline-secondary me-auto vs-btn" id="facebookCommentsRefreshBtn">
+          Refresh
+        </button>
+        <button type="button" class="btn btn-secondary vs-btn" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="tiktokErrorModal" tabindex="-1" aria-labelledby="tiktokErrorLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title vs-modal-title" id="tiktokErrorLabel">TikTok Publish Error</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <p class="text-muted small mb-3" id="tiktokErrorMeta"></p>
+        <div class="row g-2 mb-3">
+          <div class="col-md-4">
+            <div class="small text-muted">HTTP status</div>
+            <div class="fw-semibold" id="tiktokErrorHttpStatus">-</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">Error code</div>
+            <div class="fw-semibold" id="tiktokErrorCode">-</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">Log ID</div>
+            <div class="fw-semibold" id="tiktokErrorLogid">-</div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="small text-muted">Error message</div>
+          <div class="fw-semibold" id="tiktokErrorMessage">-</div>
+        </div>
+        <div class="mb-3">
+          <div class="small text-muted">Step</div>
+          <div class="fw-semibold" id="tiktokErrorStep">-</div>
+        </div>
+        <div class="mb-3">
+          <div class="small text-muted">Raw payload</div>
+          <pre class="p-3 bg-dark text-white-50 rounded" id="tiktokErrorPayload"></pre>
+        </div>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <button type="button" class="btn btn-outline-secondary me-auto vs-btn" id="tiktokCopyErrorBtn">
+          Copy error report
+        </button>
+        <button type="button" class="btn btn-secondary vs-btn" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const calendarSummary = {{ calendar_summary|tojson }};
+    const selectedDayInitial = {{ day_filter|tojson }};
+    setupShortsCalendar(calendarSummary, selectedDayInitial);
+    attachStatusCardFilters();
+
+    const errorModalEl = document.getElementById("tiktokErrorModal");
+    const errorMeta = document.getElementById("tiktokErrorMeta");
+    const errorHttpStatus = document.getElementById("tiktokErrorHttpStatus");
+    const errorCode = document.getElementById("tiktokErrorCode");
+    const errorMessage = document.getElementById("tiktokErrorMessage");
+    const errorLogid = document.getElementById("tiktokErrorLogid");
+    const errorPayload = document.getElementById("tiktokErrorPayload");
+    const errorStep = document.getElementById("tiktokErrorStep");
+    const copyBtn = document.getElementById("tiktokCopyErrorBtn");
+    let latestErrorReport = "";
+
+    document.querySelectorAll(".tiktok-error-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const clipTitle = btn.dataset.clip || "TikTok publish";
+        const httpStatus = btn.dataset.httpStatus || "-";
+        const code = btn.dataset.errorCode || "-";
+        const message = btn.dataset.errorMessage || "-";
+        const logid = btn.dataset.errorLogid || "-";
+        const payload = btn.dataset.errorPayload || "";
+        const step = btn.dataset.step || "-";
+        if (errorMeta) {
+          errorMeta.textContent = clipTitle;
+        }
+        if (errorHttpStatus) errorHttpStatus.textContent = httpStatus;
+        if (errorCode) errorCode.textContent = code;
+        if (errorMessage) errorMessage.textContent = message;
+        if (errorLogid) errorLogid.textContent = logid;
+        if (errorStep) errorStep.textContent = step;
+        if (errorPayload) errorPayload.textContent = payload || "-";
+        latestErrorReport = `clip=${clipTitle}\nstep=${step}\nhttp_status=${httpStatus}\nerror_code=${code}\nerror_message=${message}\nlogid=${logid}\npayload=${payload}`;
+      });
+    });
+
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        if (!latestErrorReport) {
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(latestErrorReport);
+          copyBtn.textContent = "Copied";
+          setTimeout(() => {
+            copyBtn.textContent = "Copy error report";
+          }, 1200);
+        } catch (err) {
+          copyBtn.textContent = "Copy failed";
+          setTimeout(() => {
+            copyBtn.textContent = "Copy error report";
+          }, 1200);
+        }
+      });
+    }
+
+    function setupShortsCalendar(summaryData, initialDay) {
+      const labelEl = document.querySelector("[data-calendar-label]");
+      const prevBtn = document.querySelector("[data-calendar-prev]");
+      const nextBtn = document.querySelector("[data-calendar-next]");
+      const gridEl = document.querySelector("[data-calendar-grid]");
+      const filterForm = document.getElementById("shortsFiltersForm");
+      const dayInput = document.getElementById("calendarDayInput");
+      if (!labelEl || !prevBtn || !nextBtn || !gridEl) {
+        return;
+      }
+      const today = new Date();
+      const state = {
+        viewDate: new Date(today.getFullYear(), today.getMonth(), 1),
+        selectedDay: (dayInput?.value || initialDay || "").trim(),
+      };
+
+      function formatKey(dateObj) {
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const day = String(dateObj.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      }
+
+      function renderCalendar() {
+        const view = state.viewDate;
+        labelEl.textContent = view.toLocaleString(undefined, {
+          month: "long",
+          year: "numeric",
+        });
+        gridEl.innerHTML = "";
+        const year = view.getFullYear();
+        const month = view.getMonth();
+        const firstOfMonth = new Date(year, month, 1);
+        const startingWeekday = firstOfMonth.getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const totalCells = Math.ceil((startingWeekday + daysInMonth) / 7) * 7;
+        let cursor = new Date(year, month, 1 - startingWeekday);
+        for (let i = 0; i < totalCells; i += 1) {
+          const cellDate = new Date(cursor);
+          const cell = document.createElement("div");
+          cell.className = "shorts-calendar-day";
+          const key = formatKey(cellDate);
+          cell.dataset.date = key;
+          if (cellDate.getMonth() !== month) {
+            cell.classList.add("muted");
+          }
+          if (
+            cellDate.getFullYear() === today.getFullYear() &&
+            cellDate.getMonth() === today.getMonth() &&
+            cellDate.getDate() === today.getDate()
+          ) {
+            cell.classList.add("today");
+          }
+          const daySpan = document.createElement("span");
+          daySpan.className = "shorts-calendar-date";
+          daySpan.textContent = cellDate.getDate();
+          cell.appendChild(daySpan);
+          const summary = summaryData[key];
+          if (summary) {
+            const platformConfigs = [
+              {
+                key: "youtube",
+                label: "YouTube",
+                iconClass: "bi-youtube",
+                scheduledClass: "youtube-scheduled",
+                publishedClass: "youtube-published",
+              },
+              {
+                key: "instagram",
+                label: "Instagram",
+                iconClass: "bi-instagram",
+                scheduledClass: "instagram-scheduled",
+                publishedClass: "instagram-published",
+              },
+              {
+                key: "tiktok",
+                label: "TikTok",
+                iconClass: "bi-tiktok",
+                scheduledClass: "tiktok-scheduled",
+                publishedClass: "tiktok-published",
+              },
+              {
+                key: "facebook",
+                label: "Facebook",
+                iconClass: "bi-facebook",
+                scheduledClass: "facebook-scheduled",
+                publishedClass: "facebook-published",
+              },
+            ];
+            const tooltipParts = [];
+            const icons = [];
+            platformConfigs.forEach((platform) => {
+              const platformSummary = summary[platform.key];
+              const scheduledCount = platformSummary?.scheduled || 0;
+              const publishedCount = platformSummary?.published || 0;
+              if (!scheduledCount && !publishedCount) {
+                return;
+              }
+              tooltipParts.push(
+                `${platform.label}: ${scheduledCount} scheduled / ${publishedCount} published`
+              );
+              const addIcons = (count, cssClass, labelText) => {
+                const iconsToRender = Math.min(count, 4);
+                for (let idx = 0; idx < iconsToRender; idx += 1) {
+                  icons.push({
+                    className: `calendar-icon bi ${platform.iconClass} ${cssClass}`,
+                    title: `${platform.label}: ${count} ${labelText}`,
+                  });
+                }
+              };
+              if (scheduledCount) {
+                addIcons(scheduledCount, platform.scheduledClass, "scheduled");
+              }
+              if (publishedCount) {
+                addIcons(publishedCount, platform.publishedClass, "published");
+              }
+            });
+            if (icons.length) {
+              const grid = document.createElement("div");
+              grid.className = "d-flex flex-column gap-1";
+              icons.forEach((iconData, idx) => {
+                if (idx % 3 === 0) {
+                  const line = document.createElement("div");
+                  line.className = "d-flex align-items-center gap-1";
+                  grid.appendChild(line);
+                }
+                const line = grid.lastChild;
+                const icon = document.createElement("i");
+                icon.className = iconData.className;
+                icon.title = iconData.title;
+                line.appendChild(icon);
+              });
+              cell.appendChild(grid);
+            }
+            if (tooltipParts.length) {
+              cell.title = tooltipParts.join(" | ");
+            }
+          }
+          gridEl.appendChild(cell);
+          cursor.setDate(cursor.getDate() + 1);
+          cell.addEventListener("click", () => {
+            if (!filterForm || !dayInput) {
+              return;
+            }
+            if (state.selectedDay === key) {
+              state.selectedDay = "";
+              dayInput.value = "";
+            } else {
+              state.selectedDay = key;
+              dayInput.value = key;
+            }
+            filterForm.submit();
+          });
+          if (state.selectedDay && key === state.selectedDay) {
+            cell.classList.add("selected");
+          }
+        }
+      }
+
+      prevBtn.addEventListener("click", () => {
+        state.viewDate.setMonth(state.viewDate.getMonth() - 1);
+        renderCalendar();
+      });
+      nextBtn.addEventListener("click", () => {
+        state.viewDate.setMonth(state.viewDate.getMonth() + 1);
+        renderCalendar();
+      });
+      renderCalendar();
+    }
+
+    function attachStatusCardFilters() {
+      const filterForm = document.getElementById("shortsFiltersForm");
+      if (!filterForm) {
+        return;
+      }
+      const statusButtons = document.querySelectorAll("[data-status-filter]");
+      const commentsButtons = document.querySelectorAll("[data-comments-filter]");
+      const statusInput = document.getElementById("statusInput");
+      const commentsInput = document.getElementById("commentsInput");
+      const pendingButton = document.querySelector("[data-pending-filter]");
+      const pendingInput = document.getElementById("pendingOnlyInput");
+      statusButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (!statusInput) {
+            return;
+          }
+          const statusValue = (btn.dataset.statusFilter || "").toLowerCase();
+          const current = (statusInput.value || "").toLowerCase();
+          statusInput.value = current === statusValue ? "" : statusValue;
+          filterForm.submit();
+        });
+      });
+      commentsButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (!commentsInput) {
+            return;
+          }
+          const commentsValue = (btn.dataset.commentsFilter || "").toLowerCase();
+          const current = (commentsInput.value || "").toLowerCase();
+          commentsInput.value = current === commentsValue ? "" : commentsValue;
+          filterForm.submit();
+        });
+      });
+      if (pendingButton) {
+        pendingButton.addEventListener("click", () => {
+          if (!pendingInput) {
+            return;
+          }
+          pendingInput.value = pendingInput.value === "1" ? "" : "1";
+          filterForm.submit();
+        });
+      }
+    }
+
+    const modalEl = document.getElementById("shortCommentsModal");
+    if (!modalEl || typeof bootstrap === "undefined") {
+      return;
+    }
+    const modal = new bootstrap.Modal(modalEl);
+    const modalTitle = modalEl.querySelector(".short-comments-modal-title");
+    const videoMeta = modalEl.querySelector("#shortCommentsVideoMeta");
+    const loadingEl = modalEl.querySelector("#shortCommentsLoading");
+    const statusEl = modalEl.querySelector("#shortCommentsStatus");
+    const listEl = modalEl.querySelector("#shortCommentsList");
+    const filterBarEl = modalEl.querySelector("#shortCommentsFilters");
+    const refreshBtn = modalEl.querySelector("#shortCommentsRefreshBtn");
+    const statusLabels = {
+      heldForReview: "Pending",
+      published: "Published",
+      likelySpam: "Likely spam",
+      rejected: "Rejected",
+      deleted: "Deleted",
+      all: "All comments",
+    };
+    const filterConfig = [
+      { key: "all", label: "All" },
+      { key: "heldForReview", label: "Pending" },
+      { key: "published", label: "Published" },
+      { key: "rejected", label: "Rejected" },
+    ];
+    const statusClassMap = {
+      heldForReview: "comment-status-held",
+      likelySpam: "comment-status-held",
+      published: "comment-status-published",
+      rejected: "comment-status-rejected",
+    };
+    const statusBadgeMap = {
+      heldForReview: "vs-comment-status-held",
+      likelySpam: "vs-comment-status-held",
+      published: "vs-comment-status-published",
+      rejected: "vs-comment-status-rejected",
+      deleted: "bg-secondary",
+    };
+    const actionConfig = {
+      heldForReview: { approve: true, reject: true, delete: true, hide: true },
+      likelySpam: { approve: true, reject: true, delete: true, hide: true },
+      published: { delete: true, reject: true, hide: true },
+      rejected: { approve: true, delete: true, hide: true },
+      all: { delete: true, hide: true },
+    };
+    let currentFilter = "all";
+    let currentComments = [];
+    let currentCounts = { all: 0, heldForReview: 0, published: 0, rejected: 0 };
+    let currentFetchUrl = null;
+    let refreshNextFetch = false;
+    let currentVideoId = null;
+    let currentExpectedTotal = 0;
+    let emptyLoadRetryCount = 0;
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || "";
+      statusEl.classList.toggle("d-none", !message);
+      statusEl.classList.toggle("alert-danger", !!isError);
+      statusEl.classList.toggle("alert-warning", !isError);
+    }
+
+    function updateMeta(videoId, activeStatus) {
+      videoMeta.textContent = "";
+      videoMeta.classList.add("d-none");
+    }
+
+    function formatDate(value) {
+      if (!value) {
+        return "";
+      }
+      try {
+        return new Date(value).toLocaleString();
+      } catch (err) {
+        return value;
+      }
+    }
+
+    function attachHandlers(el) {
+      el.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openComments(el);
+      });
+      el.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.stopPropagation();
+          openComments(el);
+        }
+      });
+    }
+
+    function openComments(targetEl) {
+      const url = targetEl.dataset.commentsUrl;
+      if (!url) {
+        return;
+      }
+      const title = targetEl.dataset.videoTitle || "Short Comments";
+      const videoId = targetEl.dataset.videoId || "";
+      currentFilter = "all";
+      currentVideoId = videoId;
+      const pendingHint = Number(targetEl.dataset.pendingCount || 0) || 0;
+      const publishedHint = Number(targetEl.dataset.publishedCount || 0) || 0;
+      const countEl = targetEl.querySelector("[data-role='comment-count']");
+      const countText = countEl ? String(countEl.textContent || "") : "";
+      const parsedFromText = Number((countText.match(/\d+/) || [0])[0]) || 0;
+      currentExpectedTotal = Math.max(pendingHint + publishedHint, parsedFromText);
+      emptyLoadRetryCount = 0;
+      const baseUrl = new URL(url, window.location.origin);
+      baseUrl.searchParams.set("status", "all");
+      currentFetchUrl = baseUrl.href;
+      refreshNextFetch = true;
+      modalTitle.textContent = title;
+      updateMeta(videoId, currentFilter);
+      modal.show();
+      fetchComments();
+    }
+
+    function fetchComments() {
+      if (!currentFetchUrl) {
+        return;
+      }
+      const requestUrl = new URL(currentFetchUrl, window.location.origin);
+      if (refreshNextFetch) {
+        requestUrl.searchParams.set("refresh", "1");
+        refreshNextFetch = false;
+      }
+      listEl.innerHTML = "";
+      setStatus("");
+      loadingEl.classList.remove("d-none");
+      fetch(requestUrl.href)
+        .then((resp) => {
+          if (!resp.ok) {
+            return resp.text().then((text) => {
+              const message = text || `Failed to load comments (HTTP ${resp.status})`;
+              throw new Error(message);
+            });
+          }
+          return resp.json();
+        })
+        .then((data) => {
+          loadingEl.classList.add("d-none");
+          if (!data.success) {
+            setStatus(data.message || "Unable to load comments", true);
+            return;
+          }
+          currentComments = data.comments || [];
+          updateCounts(currentComments);
+          buildFilters();
+          applyFilter(currentFilter);
+          const fetchedVisibleCount = (currentCounts.heldForReview || 0) + (currentCounts.published || 0);
+          const suspiciousEmptyLoad =
+            currentExpectedTotal > 0 &&
+            currentComments.length === 0 &&
+            fetchedVisibleCount === 0;
+          if (suspiciousEmptyLoad) {
+            if (emptyLoadRetryCount < 1) {
+              emptyLoadRetryCount += 1;
+              refreshNextFetch = true;
+              setStatus("Comments are syncing, retrying...", false);
+              window.setTimeout(fetchComments, 500);
+              return;
+            }
+            setStatus("Comments could not be loaded yet. Please press Refresh.", true);
+            return;
+          }
+          emptyLoadRetryCount = 0;
+          currentExpectedTotal = fetchedVisibleCount;
+          persistCounts(currentVideoId, {
+            pending: currentCounts.heldForReview || 0,
+            published: currentCounts.published || 0,
+            rejected: currentCounts.rejected || 0,
+          });
+          if (data.note) {
+            setStatus(data.note, false);
+          } else {
+            setStatus("");
+          }
+        })
+        .catch((err) => {
+          loadingEl.classList.add("d-none");
+          setStatus(err.message || "Unable to load comments", true);
+        });
+    }
+
+    function updateCounts(comments) {
+      const counts = {
+        all: comments.length,
+        heldForReview: 0,
+        published: 0,
+        rejected: 0,
+      };
+      comments.forEach((comment) => {
+        const status = comment.status || "unknown";
+        if (status === "heldForReview" || status === "likelySpam") {
+          counts.heldForReview += 1;
+        } else if (status === "published") {
+          counts.published += 1;
+        } else if (status === "rejected") {
+          counts.rejected += 1;
+        }
+      });
+      currentCounts = counts;
+    }
+
+    function buildFilters() {
+      filterBarEl.innerHTML = "";
+      filterConfig.forEach((cfg) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "short-comments-filter";
+        if (cfg.key === currentFilter) {
+          btn.classList.add("active");
+        }
+        const count = currentCounts[cfg.key] ?? 0;
+        btn.textContent = `${cfg.label} (${count})`;
+        btn.dataset.filter = cfg.key;
+        btn.addEventListener("click", () => {
+          currentFilter = cfg.key;
+          applyFilter(cfg.key);
+        });
+        filterBarEl.appendChild(btn);
+      });
+    }
+
+    function normalizeCounts(counts) {
+      const pending =
+        Number(
+          (counts && (counts.pending ?? counts.pending_comment_count ?? counts.heldForReview)) || 0
+        ) || 0;
+      const published =
+        Number(
+          (counts && (counts.published ?? counts.published_comment_count ?? counts.publishedCount)) ||
+            0
+        ) || 0;
+      const rejected =
+        Number(
+          (counts && (counts.rejected ?? counts.rejected_comment_count ?? counts.rejectedCount)) ||
+            0
+        ) || 0;
+      return { pending, published, rejected };
+    }
+
+    function applyCountsToRow(videoId, counts) {
+      if (!videoId) {
+        return;
+      }
+      const normalized = normalizeCounts(counts);
+      const lastSeenCount =
+        Number(counts?.last_seen_comment_count ?? counts?.lastSeenCommentCount ?? 0) || 0;
+      const row = document.querySelector(`[data-short-row=\"${videoId}\"]`);
+      if (row) {
+        row.classList.toggle("short-row-pending", normalized.pending > 0);
+        const indicator = row.querySelector("[data-role='pending-indicator']");
+        if (indicator) {
+          indicator.classList.toggle("d-none", normalized.pending <= 0);
+        }
+      }
+      const pendingBadge = document.querySelector(
+        `[data-comment-badge=\"pending\"][data-video-id=\"${videoId}\"]`
+      );
+      if (pendingBadge) {
+        pendingBadge.textContent = `Pending ${normalized.pending}`;
+        pendingBadge.classList.toggle("zero", normalized.pending <= 0);
+      }
+      const totalCount = normalized.pending + normalized.published;
+      const totalBadge = document.querySelector(
+        `[data-comment-badge=\"total\"][data-video-id=\"${videoId}\"]`
+      );
+      if (totalBadge) {
+        totalBadge.textContent = `Total comments ${totalCount}`;
+        totalBadge.classList.toggle("zero", totalCount <= 0);
+      }
+      const triggerBtn = document.querySelector(`[data-comments-trigger=\"${videoId}\"]`);
+      if (triggerBtn) {
+        triggerBtn.dataset.pendingCount = normalized.pending;
+        triggerBtn.dataset.publishedCount = normalized.published;
+        triggerBtn.classList.add("short-comments-btn");
+        triggerBtn.classList.remove(
+          "short-comments-btn-pending",
+          "short-comments-btn-default",
+          "short-comments-btn-unread"
+        );
+        let countEl = triggerBtn.querySelector("[data-role='comment-count']");
+        if (!countEl) {
+          triggerBtn.innerHTML =
+            "<i class=\"bi bi-chat-dots\"></i><span class=\"fw-semibold\" data-role=\"comment-count\"></span>";
+          countEl = triggerBtn.querySelector("[data-role='comment-count']");
+        }
+        const hasUnread = totalCount > lastSeenCount;
+        if (normalized.pending > 0) {
+          triggerBtn.classList.add("short-comments-btn-pending");
+          countEl.textContent = `(${normalized.pending})`;
+        } else if (totalCount > 0) {
+          triggerBtn.classList.add(hasUnread ? "short-comments-btn-unread" : "short-comments-btn-default");
+          countEl.textContent = `(${totalCount})`;
+        } else {
+          triggerBtn.classList.add("short-comments-btn-default");
+          countEl.textContent = "(0)";
+        }
+      }
+      const alertDot = row ? row.querySelector(".comment-alert-dot") : null;
+      if (alertDot) {
+        alertDot.classList.toggle("d-none", normalized.pending <= 0);
+      }
+    }
+
+    function persistCounts(videoId, counts) {
+      if (!videoId) {
+        return;
+      }
+      const payload = {
+        pending: Number(counts.pending ?? counts.heldForReview ?? 0) || 0,
+        published: Number(counts.published ?? counts.published_comment_count ?? 0) || 0,
+        rejected: Number(counts.rejected ?? counts.rejected_comment_count ?? 0) || 0,
+        mark_seen: true,
+      };
+      payload.last_seen_comment_count = payload.pending + payload.published;
+      applyCountsToRow(videoId, payload);
+      fetch(`/video_shorts/shorts/comments/${videoId}/cache_counts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify(payload),
+      })
+        .then((resp) => {
+          if (!resp.ok) {
+            return null;
+          }
+          return resp.json();
+        })
+        .then((data) => {
+          if (data && data.success && data.counts) {
+            const merged = {
+              ...data.counts,
+              last_seen_comment_count: data.last_seen_comment_count,
+            };
+            applyCountsToRow(videoId, merged);
+          }
+        })
+        .catch(() => {
+          /* ignore cache sync errors */
+        });
+    }
+
+    function applyFilter(filterKey) {
+      currentFilter = filterKey;
+      Array.from(filterBarEl.children).forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.filter === filterKey);
+      });
+      const filtered =
+        filterKey === "all"
+          ? currentComments
+          : currentComments.filter((comment) => {
+              if (filterKey === "heldForReview") {
+                return comment.status === "heldForReview" || comment.status === "likelySpam";
+              }
+              return comment.status === filterKey;
+            });
+      renderCommentList(filtered);
+      if (!filtered.length) {
+        const emptyMsg =
+          filterKey === "heldForReview"
+            ? "No pending comments for this video."
+            : "No comments match this filter.";
+        setStatus(emptyMsg, false);
+      } else {
+        setStatus("");
+      }
+      updateMeta(currentVideoId, filterKey);
+    }
+
+    function renderCommentList(comments) {
+      listEl.innerHTML = "";
+      comments.forEach((comment) => {
+        const node = renderComment(comment);
+        listEl.appendChild(node);
+      });
+    }
+
+    function createActionButton(icon, label, handler) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-outline-secondary btn-sm d-flex align-items-center gap-1";
+      btn.innerHTML = `<i class="bi ${icon}"></i>`;
+      btn.title = label;
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handler();
+      });
+      return btn;
+    }
+
+    function handleCommentAction(comment, action, method, onSuccess) {
+      if (!comment || !comment.comment_id) {
+        return;
+      }
+      if (action === "" && !confirm("Are you sure you want to delete this comment?")) {
+        return;
+      }
+      const payload = {
+        previous_status: comment.status || "",
+        video_id: currentVideoId || "",
+      };
+      if (comment.thread_id) {
+        payload.thread_id = comment.thread_id;
+      }
+      if (typeof comment.is_reply !== "undefined") {
+        payload.is_reply = Boolean(comment.is_reply);
+      }
+      if (!payload.video_id && comment.video_id) {
+        payload.video_id = comment.video_id;
+      }
+      const url =
+        action === ""
+          ? `/video_shorts/shorts/comments/${comment.comment_id}`
+          : `/video_shorts/shorts/comments/${comment.comment_id}/${action}`;
+      fetch(url, {
+        method: method || "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify(payload),
+      })
+        .then((resp) => {
+          if (!resp.ok) {
+            return resp.text().then((text) => {
+              throw new Error(text || `Request failed (HTTP ${resp.status})`);
+            });
+          }
+          return resp.json();
+        })
+        .then((data) => {
+          if (!data.success) {
+            throw new Error(data.message || "Unable to complete the action");
+          }
+          if (typeof onSuccess === "function") {
+            onSuccess(data);
+          }
+          const videoTarget = payload.video_id || currentVideoId;
+          if (data.counts && videoTarget) {
+            applyCountsToRow(videoTarget, data.counts);
+          }
+        })
+        .catch((err) => {
+          setStatus(err.message || "Action failed", true);
+        });
+    }
+
+    function handleHideUser(comment) {
+      if (!comment || !comment.comment_id) {
+        return;
+      }
+      if (
+        !confirm("Hide all comments from this user? This cannot be undone.")
+      ) {
+        return;
+      }
+      const payload = {
+        previous_status: comment.status || "",
+        video_id: currentVideoId || comment.video_id || "",
+      };
+      fetch(`/video_shorts/shorts/comments/${comment.comment_id}/hide`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify(payload),
+      })
+        .then((resp) => {
+          if (!resp.ok) {
+            return resp.text().then((text) => {
+              throw new Error(text || `Request failed (HTTP ${resp.status})`);
+            });
+          }
+          return resp.json();
+        })
+        .then((data) => {
+          if (!data.success) {
+            throw new Error(data.message || "Unable to complete the action");
+          }
+          updateCommentStatus(comment.comment_id, "rejected");
+          const videoTarget = payload.video_id || currentVideoId;
+          if (data.counts && videoTarget) {
+            applyCountsToRow(videoTarget, data.counts);
+          }
+          setStatus("User hidden. Future comments will be rejected automatically.", false);
+        })
+        .catch((err) => {
+          setStatus(err.message || "Action failed", true);
+        });
+    }
+
+    function handleReplyAction(commentId, text, parentLi, formEl) {
+      if (!commentId || !text) {
+        return;
+      }
+      fetch(`/video_shorts/shorts/comments/${commentId}/reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({ text }),
+      })
+        .then((resp) => {
+          if (!resp.ok) {
+            return resp.text().then((textResp) => {
+              throw new Error(textResp || `Request failed (HTTP ${resp.status})`);
+            });
+          }
+          return resp.json();
+        })
+        .then((data) => {
+          if (!data.success) {
+            throw new Error(data.message || "Failed to send reply");
+          }
+          if (data.comment) {
+            const parentIndex = currentComments.findIndex(
+              (c) => c.comment_id === data.comment.parent_id
+            );
+            if (parentIndex >= 0) {
+              currentComments.splice(parentIndex + 1, 0, data.comment);
+            } else {
+              currentComments.push(data.comment);
+            }
+            updateCounts(currentComments);
+            buildFilters();
+            applyFilter(currentFilter);
+            if (data.counts && currentVideoId) {
+              applyCountsToRow(currentVideoId, data.counts);
+            }
+          }
+          if (formEl) {
+            formEl.remove();
+          }
+        })
+        .catch((err) => setStatus(err.message || "Failed to send reply", true));
+    }
+
+    function showReplyForm(li, comment) {
+      if (!comment.comment_id) {
+        return;
+      }
+      const existing = li.querySelector(".short-comment-reply-form");
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      const form = document.createElement("div");
+      form.className = "short-comment-reply-form mt-2 w-100";
+      const textarea = document.createElement("textarea");
+      textarea.className = "form-control form-control-sm mb-2";
+      textarea.placeholder = "Write your reply";
+      form.appendChild(textarea);
+
+      const formActions = document.createElement("div");
+      formActions.className = "d-flex gap-2";
+      const sendBtn = document.createElement("button");
+      sendBtn.type = "button";
+      sendBtn.className = "btn btn-primary btn-sm";
+      sendBtn.textContent = "Send";
+      sendBtn.addEventListener("click", () => {
+        const replyText = (textarea.value || "").trim();
+        if (!replyText) {
+          setStatus("Reply text cannot be empty", true);
+          textarea.focus();
+          return;
+        }
+        setStatus("");
+        handleReplyAction(comment.comment_id, replyText, li, form);
+      });
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn btn-link btn-sm text-muted";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => form.remove());
+      formActions.appendChild(sendBtn);
+      formActions.appendChild(cancelBtn);
+      form.appendChild(formActions);
+      li.appendChild(form);
+      textarea.focus();
+    }
+
+    function renderComment(comment) {
+      const li = document.createElement("li");
+      li.className = "list-group-item comment-card";
+      const cardClass = statusClassMap[comment.status] || "";
+      if (cardClass) {
+        li.classList.add(cardClass);
+      }
+      if (comment.is_reply) {
+        li.classList.add("short-comment-reply");
+      }
+
+      const header = document.createElement("div");
+      header.className = "comment-header";
+
+      const author = document.createElement("strong");
+      author.className = "comment-author";
+      author.textContent = comment.author || "Anonymous";
+      header.appendChild(author);
+
+      const meta = document.createElement("small");
+      meta.className = "comment-date";
+      meta.textContent = formatDate(comment.published_at);
+      header.appendChild(meta);
+
+      const moderationFlagged =
+        comment.moderation && comment.moderation.flagged !== undefined
+          ? comment.moderation.flagged
+          : comment.moderation_flagged;
+      const moderationKnown = moderationFlagged !== undefined && moderationFlagged !== null;
+      if (!moderationKnown || moderationFlagged) {
+        const flag = document.createElement("span");
+        flag.className = "comment-flag";
+        flag.innerHTML = '<i class="bi bi-flag-fill"></i>';
+        flag.title = moderationKnown && moderationFlagged ? "Flagged by AI" : "AI check pending";
+        header.appendChild(flag);
+      }
+
+      let badge = null;
+      if (comment.status) {
+        badge = document.createElement("span");
+        const badgeClass = statusBadgeMap[comment.status] || "";
+        badge.className = `vs-comment-status ${badgeClass}`.trim();
+        badge.textContent = statusLabels[comment.status] || comment.status;
+        header.appendChild(badge);
+      }
+
+      if (comment.is_reply) {
+        const replyTag = document.createElement("span");
+        replyTag.className = "comment-reply-label";
+        replyTag.textContent = "Reply";
+        header.insertBefore(replyTag, meta);
+      }
+
+      const text = document.createElement("p");
+      text.className = "comment-text";
+      text.textContent = comment.text || "";
+
+      const footer = document.createElement("div");
+      footer.className = "comment-actions d-flex justify-content-between align-items-center gap-2 flex-wrap";
+
+      const likes = document.createElement("span");
+      likes.className = "vs-text-body";
+      const likeCount = typeof comment.like_count === "number" ? comment.like_count : 0;
+      likes.textContent = `${likeCount} likes`;
+      footer.appendChild(likes);
+
+      if (comment.comment_id) {
+        const actions = document.createElement("div");
+        actions.className = "d-flex gap-1 ms-auto flex-wrap";
+        actions.appendChild(
+          createActionButton("bi-reply", "Reply", () => showReplyForm(li, comment))
+        );
+        const normalizedStatus =
+          comment.status === "likelySpam"
+            ? "heldForReview"
+            : comment.status || "all";
+        const cfg = actionConfig[normalizedStatus] || {};
+        if (cfg.approve) {
+          const approveBtn = createActionButton("bi-check-lg", "Approve", () =>
+            handleCommentAction(comment, "approve", "POST", () => {
+              updateCommentStatus(comment.comment_id, "published");
+            })
+          );
+          actions.appendChild(approveBtn);
+        }
+        if (cfg.reject) {
+          actions.appendChild(
+            createActionButton("bi-x-lg", "Reject", () =>
+              handleCommentAction(comment, "reject", "POST", () => {
+                updateCommentStatus(comment.comment_id, "rejected");
+              })
+            )
+          );
+        }
+        if (cfg.delete) {
+          actions.appendChild(
+            createActionButton("bi-trash", "Delete", () =>
+              handleCommentAction(comment, "", "DELETE", () => {
+                removeCommentFromState(comment.comment_id);
+              })
+            )
+          );
+        }
+        if (cfg.hide) {
+          actions.appendChild(
+            createActionButton("bi-eye-slash", "Hide user", () => handleHideUser(comment))
+          );
+        }
+        footer.appendChild(actions);
+      }
+
+      li.appendChild(header);
+      li.appendChild(text);
+      li.appendChild(footer);
+      return li;
+    }
+
+    document.querySelectorAll(".short-comments-btn").forEach(attachHandlers);
+    refreshBtn.addEventListener("click", () => {
+      refreshNextFetch = true;
+      fetchComments();
+    });
+
+    const socialOverviewMeta = document.getElementById("socialOverviewMeta");
+    let instagramOverviewText = "";
+    let facebookOverviewText = "";
+
+    function updateSocialOverviewMeta() {
+      if (!socialOverviewMeta) {
+        return;
+      }
+      const parts = [];
+      if (instagramOverviewText) {
+        parts.push(`Instagram ${instagramOverviewText}`);
+      }
+      if (facebookOverviewText) {
+        parts.push(`Facebook ${facebookOverviewText}`);
+      }
+      const combined = parts.join(" · ");
+      socialOverviewMeta.textContent = combined;
+      socialOverviewMeta.classList.toggle("d-none", combined.length === 0);
+    }
+
+    const instagramModalEl = document.getElementById("instagramCommentsModal");
+    if (instagramModalEl) {
+      const instagramModal = new bootstrap.Modal(instagramModalEl);
+      const instagramTitle = instagramModalEl.querySelector(".instagram-comments-modal-title");
+      const instagramMeta = instagramModalEl.querySelector("#instagramCommentsMeta");
+      const instagramLoading = instagramModalEl.querySelector("#instagramCommentsLoading");
+      const instagramStatus = instagramModalEl.querySelector("#instagramCommentsStatus");
+      const instagramList = instagramModalEl.querySelector("#instagramCommentsList");
+      const instagramRefreshBtn = instagramModalEl.querySelector("#instagramCommentsRefreshBtn");
+      let currentInstagramQueueId = "";
+      let currentInstagramTrigger = null;
+      let currentInstagramExpectedTotal = 0;
+      let instagramEmptyLoadRetryCount = 0;
+
+      function setInstagramStatus(message, isError) {
+        if (!instagramStatus) {
+          return;
+        }
+        if (!message) {
+          instagramStatus.classList.add("d-none");
+          instagramStatus.textContent = "";
+          instagramStatus.classList.remove("alert-danger", "alert-warning");
+          return;
+        }
+        instagramStatus.textContent = message;
+        instagramStatus.classList.remove("d-none");
+        instagramStatus.classList.toggle("alert-danger", Boolean(isError));
+        instagramStatus.classList.toggle("alert-warning", !isError);
+      }
+
+      function updateInstagramMeta(data) {
+        const parts = [];
+        if (data?.instagram_username) {
+          parts.push(`@${data.instagram_username}`);
+        }
+        if (data?.comments_last_synced) {
+          parts.push(`Last synced: ${formatDate(data.comments_last_synced)}`);
+        }
+        const metaText = parts.join(" · ");
+        if (instagramMeta) {
+          instagramMeta.textContent = metaText;
+        }
+        instagramOverviewText = metaText;
+        updateSocialOverviewMeta();
+      }
+
+      function handleInstagramCommentAction(commentId, action, method, payload, onSuccess) {
+        if (!commentId || !currentInstagramQueueId) {
+          return;
+        }
+        const url = action
+          ? `/video_shorts/instagram/media/${currentInstagramQueueId}/comments/${commentId}/${action}`
+          : `/video_shorts/instagram/media/${currentInstagramQueueId}/comments/${commentId}`;
+        const request = {
+          method: method || "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        };
+        if (payload) {
+          request.body = JSON.stringify(payload);
+        }
+        fetch(url, request)
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.text().then((text) => {
+                throw new Error(text || `Request failed (HTTP ${resp.status})`);
+              });
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            if (!data.success) {
+              throw new Error(data.message || "Unable to complete the action");
+            }
+            updateInstagramMeta(data);
+            renderInstagramComments(data.comments || []);
+            if (typeof onSuccess === "function") {
+              onSuccess(data);
+            }
+            setInstagramStatus("");
+          })
+          .catch((err) => {
+            setInstagramStatus(err.message || "Action failed", true);
+          });
+      }
+
+      function handleInstagramReplyAction(commentId, text, parentLi, formEl) {
+        if (!commentId || !text) {
+          return;
+        }
+        handleInstagramCommentAction(
+          commentId,
+          "reply",
+          "POST",
+          { text },
+          (data) => {
+            if (formEl) {
+              formEl.remove();
+            }
+            if (parentLi) {
+              parentLi.classList.remove("instagram-reply-open");
+            }
+            if (!(data.comments || []).length) {
+              setInstagramStatus("Reply sent.", false);
+            }
+          }
+        );
+      }
+
+      function showInstagramReplyForm(li, commentId) {
+        if (!commentId) {
+          return;
+        }
+        const existing = li.querySelector(".instagram-comment-reply-form");
+        if (existing) {
+          existing.remove();
+          li.classList.remove("instagram-reply-open");
+          return;
+        }
+        li.classList.add("instagram-reply-open");
+        const form = document.createElement("div");
+        form.className = "short-comment-reply-form mt-2 w-100 instagram-comment-reply-form";
+        const textarea = document.createElement("textarea");
+        textarea.className = "form-control form-control-sm mb-2";
+        textarea.placeholder = "Write your reply";
+        form.appendChild(textarea);
+
+        const formActions = document.createElement("div");
+        formActions.className = "d-flex gap-2";
+        const sendBtn = document.createElement("button");
+        sendBtn.type = "button";
+        sendBtn.className = "btn btn-primary btn-sm";
+        sendBtn.textContent = "Send";
+        sendBtn.addEventListener("click", () => {
+          const replyText = (textarea.value || "").trim();
+          if (!replyText) {
+            setInstagramStatus("Reply text cannot be empty", true);
+            textarea.focus();
+            return;
+          }
+          setInstagramStatus("");
+          handleInstagramReplyAction(commentId, replyText, li, form);
+        });
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "btn btn-link btn-sm text-muted";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", () => {
+          form.remove();
+          li.classList.remove("instagram-reply-open");
+        });
+        formActions.appendChild(sendBtn);
+        formActions.appendChild(cancelBtn);
+        form.appendChild(formActions);
+        li.appendChild(form);
+        textarea.focus();
+      }
+
+      function renderInstagramComment(comment) {
+        const li = document.createElement("li");
+        li.className = "list-group-item comment-card";
+        if (comment.is_reply) {
+          li.classList.add("short-comment-reply");
+        }
+
+        const header = document.createElement("div");
+        header.className = "comment-header";
+
+        const author = document.createElement("strong");
+        author.className = "comment-author";
+        author.textContent = comment.username || "Anonymous";
+        header.appendChild(author);
+
+      const meta = document.createElement("small");
+      meta.className = "comment-date";
+      meta.textContent = formatDate(comment.timestamp);
+      header.appendChild(meta);
+
+      const moderationFlagged =
+        comment.moderation && comment.moderation.flagged !== undefined
+          ? comment.moderation.flagged
+          : comment.moderation_flagged;
+      const moderationKnown = moderationFlagged !== undefined && moderationFlagged !== null;
+      if (!moderationKnown || moderationFlagged) {
+        const flag = document.createElement("span");
+        flag.className = "comment-flag";
+        flag.innerHTML = '<i class="bi bi-flag-fill"></i>';
+        flag.title = moderationKnown && moderationFlagged ? "Flagged by AI" : "AI check pending";
+        header.appendChild(flag);
+      }
+
+      const text = document.createElement("p");
+      text.className = "comment-text";
+      text.textContent = comment.text || "";
+      const normalizedStatus = (comment.status || "").toLowerCase();
+      if (normalizedStatus) {
+        const badge = document.createElement("span");
+        const badgeClass = statusBadgeMap[normalizedStatus] || "bg-secondary";
+        badge.className = `vs-comment-status ${badgeClass}`.trim();
+        badge.textContent = statusLabels[normalizedStatus] || comment.status;
+        header.appendChild(badge);
+      }
+
+        const footer = document.createElement("div");
+        footer.className = "comment-actions d-flex justify-content-between align-items-center gap-2 flex-wrap";
+        const likes = document.createElement("span");
+        likes.className = "vs-text-body";
+        const likeCount = typeof comment.like_count === "number" ? comment.like_count : 0;
+        likes.textContent = `${likeCount} likes`;
+        footer.appendChild(likes);
+
+        const commentId = comment.id || comment.comment_id;
+        if (commentId) {
+          const actions = document.createElement("div");
+          actions.className = "d-flex gap-1 ms-auto flex-wrap";
+          if (!comment.is_reply) {
+            actions.appendChild(
+              createActionButton("bi-reply", "Reply", () =>
+                showInstagramReplyForm(li, commentId)
+              )
+            );
+          }
+          if (normalizedStatus !== "deleted") {
+            actions.appendChild(
+              createActionButton("bi-trash", "Delete", () => {
+                if (!confirm("Are you sure you want to delete this comment?")) {
+                  return;
+                }
+                handleInstagramCommentAction(commentId, "", "DELETE");
+              })
+            );
+          }
+          footer.appendChild(actions);
+        }
+
+        li.appendChild(header);
+        li.appendChild(text);
+        li.appendChild(footer);
+        return li;
+      }
+
+      function renderInstagramComments(comments) {
+        if (!instagramList) {
+          return;
+        }
+        instagramList.innerHTML = "";
+        comments.forEach((comment) => {
+          instagramList.appendChild(renderInstagramComment(comment));
+          const replies = comment?.replies?.data || [];
+          replies.forEach((reply) => {
+            instagramList.appendChild(
+              renderInstagramComment({
+                ...reply,
+                is_reply: true,
+              })
+            );
+          });
+        });
+      }
+
+      function fetchInstagramComments(refresh = false) {
+        if (!currentInstagramQueueId) {
+          return;
+        }
+        if (instagramList) {
+          instagramList.innerHTML = "";
+        }
+        setInstagramStatus("");
+        instagramLoading?.classList.remove("d-none");
+        const url = new URL(
+          `/video_shorts/instagram/media/${currentInstagramQueueId}/comments`,
+          window.location.origin
+        );
+        if (refresh) {
+          url.searchParams.set("refresh", "1");
+        }
+        fetch(url.toString())
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.text().then((text) => {
+                const message = text || `Failed to load comments (HTTP ${resp.status})`;
+                throw new Error(message);
+              });
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            instagramLoading?.classList.add("d-none");
+            if (!data.success) {
+              setInstagramStatus(data.message || "Unable to load comments", true);
+              return;
+            }
+            updateInstagramMeta(data);
+            const comments = data.comments || [];
+            const suspiciousEmptyLoad =
+              currentInstagramExpectedTotal > 0 && comments.length === 0;
+            if (suspiciousEmptyLoad) {
+              if (instagramEmptyLoadRetryCount < 1) {
+                instagramEmptyLoadRetryCount += 1;
+                setInstagramStatus("Comments are syncing, retrying...", false);
+                window.setTimeout(() => fetchInstagramComments(true), 500);
+                return;
+              }
+              setInstagramStatus("Comments could not be loaded yet. Please press Refresh.", true);
+              return;
+            }
+            instagramEmptyLoadRetryCount = 0;
+            if (comments.length > 0 && currentInstagramTrigger) {
+              currentInstagramTrigger.classList.remove("instagram-comments-new");
+            }
+            renderInstagramComments(comments);
+            if (!comments.length) {
+              setInstagramStatus("No Instagram comments yet.", false);
+            } else {
+              setInstagramStatus("");
+            }
+          })
+          .catch((err) => {
+            instagramLoading?.classList.add("d-none");
+            setInstagramStatus(err.message || "Unable to load comments", true);
+          });
+      }
+
+      function openInstagramComments(targetEl) {
+        const queueId = targetEl.dataset.igQueueId;
+        if (!queueId) {
+          return;
+        }
+        const title = targetEl.dataset.igTitle || "Instagram comments";
+        currentInstagramQueueId = queueId;
+        currentInstagramTrigger = targetEl;
+        const countText = String(
+          targetEl.querySelector(".fw-semibold")?.textContent || ""
+        );
+        currentInstagramExpectedTotal = Number((countText.match(/\d+/) || [0])[0]) || 0;
+        instagramEmptyLoadRetryCount = 0;
+        if (instagramTitle) {
+          instagramTitle.textContent = title;
+        }
+        updateInstagramMeta(null);
+        instagramModal.show();
+        fetchInstagramComments(true);
+      }
+
+      function attachInstagramHandlers(el) {
+        el.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openInstagramComments(el);
+        });
+        el.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            openInstagramComments(el);
+          }
+        });
+      }
+
+      document.querySelectorAll(".instagram-comments-btn").forEach(attachInstagramHandlers);
+      instagramRefreshBtn?.addEventListener("click", () => fetchInstagramComments(true));
+    }
+
+    const facebookModalEl = document.getElementById("facebookCommentsModal");
+    if (facebookModalEl) {
+      const facebookModal = new bootstrap.Modal(facebookModalEl);
+      const facebookTitle = facebookModalEl.querySelector(".facebook-comments-modal-title");
+      const facebookMeta = facebookModalEl.querySelector("#facebookCommentsMeta");
+      const facebookLoading = facebookModalEl.querySelector("#facebookCommentsLoading");
+      const facebookStatus = facebookModalEl.querySelector("#facebookCommentsStatus");
+      const facebookList = facebookModalEl.querySelector("#facebookCommentsList");
+      const facebookRefreshBtn = facebookModalEl.querySelector("#facebookCommentsRefreshBtn");
+      let currentFacebookQueueId = "";
+      let currentFacebookTrigger = null;
+
+      function setFacebookStatus(message, isError) {
+        if (!facebookStatus) {
+          return;
+        }
+        if (!message) {
+          facebookStatus.classList.add("d-none");
+          facebookStatus.textContent = "";
+          facebookStatus.classList.remove("alert-danger", "alert-warning");
+          return;
+        }
+        facebookStatus.textContent = message;
+        facebookStatus.classList.remove("d-none");
+        facebookStatus.classList.toggle("alert-danger", Boolean(isError));
+        facebookStatus.classList.toggle("alert-warning", !isError);
+      }
+
+      function updateFacebookMeta(data) {
+        const parts = [];
+        const pageLabel = data?.facebook_page_name || data?.page_name || data?.facebook_username;
+        if (pageLabel) {
+          parts.push(pageLabel);
+        }
+        if (data?.comments_last_synced) {
+          parts.push(`Last synced: ${formatDate(data.comments_last_synced)}`);
+        }
+        const metaText = parts.join(" · ");
+        if (facebookMeta) {
+          facebookMeta.textContent = metaText;
+        }
+        facebookOverviewText = metaText;
+        updateSocialOverviewMeta();
+      }
+
+      function renderFacebookComment(comment) {
+        const li = document.createElement("li");
+        li.className = "list-group-item comment-card";
+        if (comment.is_reply) {
+          li.classList.add("short-comment-reply");
+        }
+
+        const header = document.createElement("div");
+        header.className = "comment-header";
+
+        const author = document.createElement("strong");
+        author.className = "comment-author";
+        author.textContent = comment.author || "Anonymous";
+        header.appendChild(author);
+
+        const meta = document.createElement("small");
+        meta.className = "comment-date";
+        meta.textContent = formatDate(comment.published_at);
+        header.appendChild(meta);
+
+        const moderationFlagged =
+          comment.moderation && comment.moderation.flagged !== undefined
+            ? comment.moderation.flagged
+            : comment.moderation_flagged;
+        const moderationKnown = moderationFlagged !== undefined && moderationFlagged !== null;
+        if (!moderationKnown || moderationFlagged) {
+          const flag = document.createElement("span");
+          flag.className = "comment-flag";
+          flag.innerHTML = '<i class="bi bi-flag-fill"></i>';
+          flag.title = moderationKnown && moderationFlagged ? "Flagged by AI" : "AI check pending";
+          header.appendChild(flag);
+        }
+
+        const text = document.createElement("p");
+        text.className = "comment-text";
+        text.textContent = comment.text || "";
+
+        const footer = document.createElement("div");
+        footer.className = "comment-actions d-flex justify-content-between align-items-center gap-2 flex-wrap";
+        const likes = document.createElement("span");
+        likes.className = "vs-text-body";
+        const likeCount = typeof comment.like_count === "number" ? comment.like_count : 0;
+        likes.textContent = `${likeCount} likes`;
+        footer.appendChild(likes);
+
+        const commentId = comment.comment_id;
+        if (commentId && currentFacebookQueueId) {
+          const actions = document.createElement("div");
+          actions.className = "d-flex gap-1 ms-auto flex-wrap";
+          if (!comment.is_reply) {
+            actions.appendChild(
+              createActionButton("bi-reply", "Reply", () => {
+                const replyText = prompt("Reply to this comment:");
+                if (!replyText) {
+                  return;
+                }
+                handleFacebookCommentAction(commentId, "reply", "POST", { text: replyText.trim() });
+              })
+            );
+          }
+          actions.appendChild(
+            createActionButton("bi-trash", "Delete", () => {
+              if (!confirm("Are you sure you want to delete this comment?")) {
+                return;
+              }
+              handleFacebookCommentAction(commentId, "", "DELETE");
+            })
+          );
+          footer.appendChild(actions);
+        }
+
+        li.appendChild(header);
+        li.appendChild(text);
+        li.appendChild(footer);
+        return li;
+      }
+
+      function renderFacebookComments(comments) {
+        if (!facebookList) {
+          return;
+        }
+        facebookList.innerHTML = "";
+        comments.forEach((comment) => {
+          facebookList.appendChild(renderFacebookComment(comment));
+        });
+      }
+
+      function handleFacebookCommentAction(commentId, action, method, payload) {
+        if (!commentId || !currentFacebookQueueId) {
+          return;
+        }
+        const url = action
+          ? `/video_shorts/facebook/media/${currentFacebookQueueId}/comments/${commentId}/${action}`
+          : `/video_shorts/facebook/media/${currentFacebookQueueId}/comments/${commentId}`;
+        const request = {
+          method: method || "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        };
+        if (payload) {
+          request.body = JSON.stringify(payload);
+        }
+        fetch(url, request)
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.text().then((text) => {
+                throw new Error(text || `Request failed (HTTP ${resp.status})`);
+              });
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            if (!data.success) {
+              throw new Error(data.message || "Unable to complete the action");
+            }
+            renderFacebookComments(data.comments || []);
+            setFacebookStatus("");
+          })
+          .catch((err) => {
+            setFacebookStatus(err.message || "Action failed", true);
+          });
+      }
+
+      function fetchFacebookComments(refresh = false) {
+        if (!currentFacebookQueueId) {
+          return;
+        }
+        if (facebookList) {
+          facebookList.innerHTML = "";
+        }
+        setFacebookStatus("");
+        facebookLoading?.classList.remove("d-none");
+        const url = new URL(
+          `/video_shorts/facebook/media/${currentFacebookQueueId}/comments`,
+          window.location.origin
+        );
+        if (refresh) {
+          url.searchParams.set("refresh", "1");
+        }
+        fetch(url.toString())
+          .then((resp) => {
+            if (!resp.ok) {
+              return resp.text().then((text) => {
+                const message = text || `Failed to load comments (HTTP ${resp.status})`;
+                throw new Error(message);
+              });
+            }
+            return resp.json();
+          })
+          .then((data) => {
+            facebookLoading?.classList.add("d-none");
+            if (!data.success) {
+              setFacebookStatus(data.message || "Unable to load comments", true);
+              return;
+            }
+            if (currentFacebookTrigger) {
+              currentFacebookTrigger.classList.remove("facebook-comments-new");
+            }
+            updateFacebookMeta(data);
+            const comments = data.comments || [];
+            renderFacebookComments(comments);
+            if (!comments.length) {
+              setFacebookStatus("No Facebook comments yet.", false);
+            } else {
+              setFacebookStatus("");
+            }
+          })
+          .catch((err) => {
+            facebookLoading?.classList.add("d-none");
+            setFacebookStatus(err.message || "Unable to load comments", true);
+          });
+      }
+
+      function openFacebookComments(targetEl) {
+        const queueId = targetEl.dataset.fbQueueId;
+        if (!queueId) {
+          return;
+        }
+        const title = targetEl.dataset.fbTitle || "Facebook comments";
+        currentFacebookQueueId = queueId;
+        currentFacebookTrigger = targetEl;
+        if (facebookTitle) {
+          facebookTitle.textContent = title;
+        }
+        if (facebookMeta) {
+          facebookMeta.textContent = "";
+        }
+        facebookModal.show();
+        fetchFacebookComments(false);
+      }
+
+      function attachFacebookHandlers(el) {
+        el.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openFacebookComments(el);
+        });
+        el.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            openFacebookComments(el);
+          }
+        });
+      }
+
+      document.querySelectorAll(".facebook-comments-btn").forEach(attachFacebookHandlers);
+      facebookRefreshBtn?.addEventListener("click", () => fetchFacebookComments(true));
+    }
+
+    function updateCommentStatus(commentId, newStatus) {
+      let changed = false;
+      currentComments = currentComments.map((comment) => {
+        if (comment.comment_id === commentId) {
+          changed = true;
+          return { ...comment, status: newStatus };
+        }
+        return comment;
+      });
+      if (changed) {
+        updateCounts(currentComments);
+        buildFilters();
+        applyFilter(currentFilter);
+      }
+    }
+
+    function removeCommentFromState(commentId) {
+      const before = currentComments.length;
+      currentComments = currentComments.filter((comment) => comment.comment_id !== commentId);
+      if (currentComments.length !== before) {
+        updateCounts(currentComments);
+        buildFilters();
+        applyFilter(currentFilter);
+      }
+    }
+  });
+</script>
+
+{% endblock %}

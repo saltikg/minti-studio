@@ -1,0 +1,561 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Static Images{% endblock %}
+
+{% block content %}
+  <div class="container-fluid">
+    <style>
+      .static-page-subtitle {
+        font-size: 0.92rem;
+        opacity: 0.72;
+      }
+      .static-upload-layout {
+        row-gap: 12px;
+      }
+      .static-upload-card {
+        padding: 16px 18px;
+      }
+      .static-upload-card .form-label {
+        font-size: 0.84rem;
+        font-weight: 500;
+        margin-bottom: 0.45rem;
+        opacity: 0.9;
+      }
+      .static-upload-card .form-text {
+        font-size: 0.74rem;
+        opacity: 0.78;
+      }
+      .static-field {
+        margin-bottom: 1.2rem;
+      }
+      .static-field:last-child {
+        margin-bottom: 0;
+      }
+      .static-input {
+        min-height: 44px;
+      }
+      .static-dropzone {
+        border: 1px dashed rgba(255, 255, 255, 0.28);
+        border-radius: 12px;
+        min-height: 110px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        background: rgba(255, 255, 255, 0.02);
+        transition: border-color 0.2s ease, background 0.2s ease;
+        cursor: pointer;
+      }
+      .static-dropzone.is-active {
+        border-color: rgba(255, 255, 255, 0.55);
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .static-dropzone-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        align-items: center;
+        color: rgba(255, 255, 255, 0.94);
+      }
+      .static-dropzone-copy .material-symbols-outlined {
+        color: rgba(255, 255, 255, 0.92);
+      }
+      .static-dropzone-title {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.96);
+      }
+      .static-dropzone-hint {
+        font-size: 0.76rem;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      .static-file-preview {
+        margin-top: 14px;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.02);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .static-file-thumb {
+        width: 56px;
+        height: 56px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+      }
+      .static-file-meta {
+        font-size: 0.8rem;
+        line-height: 1.45;
+        opacity: 0.86;
+      }
+      .static-hidden-file {
+        display: none;
+      }
+      .static-category-wrap {
+        position: relative;
+      }
+      .static-category-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .static-category-row #static-category-select {
+        flex: 1 1 auto;
+      }
+      .static-category-add-popover {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        z-index: 20;
+        background: rgba(14, 18, 32, 0.98);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 0.5rem;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+      }
+      #static-category-add-toggle {
+        min-width: 96px;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      .static-upload-submit {
+        min-height: 44px;
+      }
+      @media (max-width: 991.98px) {
+        .static-upload-card {
+          padding: 14px;
+        }
+      }
+    </style>
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div>
+        <h3 class="mb-1">Static Images</h3>
+        <div class="vs-text-body static-page-subtitle">Manage the images you can use in the crop modal.</div>
+      </div>
+    </div>
+
+    <form id="static-image-upload-form" method="post" enctype="multipart/form-data">
+      <div class="card shadow-sm vs-card static-upload-card mb-4">
+        <div class="row static-upload-layout align-items-start">
+          <div class="col-12 col-lg-4">
+            <div class="static-field">
+              <label class="form-label vs-card-title">Gorsel yukleme</label>
+              <input type="file" name="image" id="static-image-file-input" class="static-hidden-file" accept=".png,.jpg,.jpeg,.webp" required>
+              <div id="static-dropzone" class="static-dropzone" role="button" tabindex="0" aria-label="Gorsel sec">
+                <div class="static-dropzone-copy">
+                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
+                  <div class="static-dropzone-title">Surukle birak veya dosya sec</div>
+                  <div class="static-dropzone-hint">PNG, JPG, WEBP</div>
+                  <button type="button" id="static-pick-file-btn" class="btn btn-outline-light btn-sm">Dosya Sec</button>
+                </div>
+              </div>
+              <div id="static-file-preview" class="static-file-preview d-none">
+                <img id="static-file-thumb" class="static-file-thumb" alt="Secilen gorsel">
+                <div id="static-file-meta" class="static-file-meta"></div>
+              </div>
+              <div class="form-text">Maksimum 5MB (PNG, JPG, WEBP).</div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-3">
+            <div class="static-field">
+              <label class="form-label vs-card-title">Kategori</label>
+              <div class="static-category-wrap">
+                <div class="static-category-row">
+                  <select name="category_id" id="static-category-select" class="form-select vs-input static-input" required>
+                    {% for category in categories %}
+                      <option value="{{ category.id }}">{{ category.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-outline-light d-inline-flex align-items-center gap-1" id="static-category-add-toggle" title="Yeni kategori">
+                    <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">add</span>
+                    <span>Yeni</span>
+                  </button>
+                </div>
+                <div class="static-category-add-popover d-none" id="static-category-add-group">
+                  <div class="input-group">
+                    <input type="text" class="form-control vs-input static-input" id="static-category-new-name" maxlength="60" placeholder="Yeni kategori adi">
+                    <button type="button" class="btn btn-outline-light" id="static-category-add-btn">Ekle</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-3">
+            <div class="static-field">
+              <label class="form-label vs-card-title">Label</label>
+              <input type="text" name="label" class="form-control vs-input static-input" maxlength="60" placeholder="Orn: my-background">
+            </div>
+          </div>
+          <div class="col-12 col-lg-2">
+            <button type="submit" id="static-upload-submit" class="btn vs-btn vs-btn-primary d-flex align-items-center justify-content-center gap-2 w-100 static-upload-submit" disabled>
+              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+              <span>Yukle</span>
+            </button>
+          </div>
+          <div class="col-12">
+            <div id="static-upload-progress" class="static-upload-progress">
+              <div class="static-upload-bar" id="static-upload-bar"></div>
+              <div class="static-upload-meta">
+                <span id="static-upload-text">0%</span>
+                <span id="static-upload-bytes">0 MB / 0 MB</span>
+              </div>
+            </div>
+            <div id="static-upload-error" class="alert alert-danger mt-2 d-none" role="alert"></div>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-header">Yuklenen gorseller</div>
+      <div class="card-body">
+        {% if images %}
+          <div class="row g-3">
+            {% for image in images %}
+              <div class="col-sm-6 col-md-4 col-lg-2">
+                <div class="card vs-card h-100">
+                  <img src="{{ image.image_url }}" class="card-img-top" alt="{{ image.label or 'Static image' }}" data-static-image-preview>
+                  <div class="card-body d-flex flex-column gap-2">
+                    <div class="small text-white-50">
+                      <span>{{ image.label or 'Image' }}</span>
+                      <span data-static-image-dimensions> (-)</span>
+                    </div>
+                    <div>
+                      <label class="form-label small text-white-50 mb-1">Kategori</label>
+                      <select
+                        class="form-select form-select-sm vs-input"
+                        data-image-category-select
+                        data-image-id="{{ image.id }}"
+                        data-update-url="{{ url_for('video_shorts_bp.update_static_image_category', image_id=image.id) }}"
+                      >
+                        <option value="" {% if not image.category_id %}selected{% endif %}>Seciniz</option>
+                        {% for category in categories %}
+                          <option value="{{ category.id }}" {% if category.id == image.category_id %}selected{% endif %}>{{ category.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="mt-auto">
+                      <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Gorseli kaldirmak istediginize emin misiniz?">
+                        <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
+                        <span>Kaldir</span>
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-center text-white-50 py-4">Henuz gorsel yok.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const form = document.getElementById("static-image-upload-form");
+  if (!form) return;
+  const progressWrap = document.getElementById("static-upload-progress");
+  const progressBar = document.getElementById("static-upload-bar");
+  const progressText = document.getElementById("static-upload-text");
+  const progressBytes = document.getElementById("static-upload-bytes");
+  const errorBox = document.getElementById("static-upload-error");
+  const previewImages = document.querySelectorAll("[data-static-image-preview]");
+  const categorySelect = document.getElementById("static-category-select");
+  const categoryToggleBtn = document.getElementById("static-category-add-toggle");
+  const categoryAddGroup = document.getElementById("static-category-add-group");
+  const categoryAddBtn = document.getElementById("static-category-add-btn");
+  const categoryNewName = document.getElementById("static-category-new-name");
+  const imageCategorySelects = document.querySelectorAll("[data-image-category-select]");
+  const fileInput = document.getElementById("static-image-file-input");
+  const pickFileBtn = document.getElementById("static-pick-file-btn");
+  const dropzone = document.getElementById("static-dropzone");
+  const filePreview = document.getElementById("static-file-preview");
+  const fileThumb = document.getElementById("static-file-thumb");
+  const fileMeta = document.getElementById("static-file-meta");
+  const uploadSubmitBtn = document.getElementById("static-upload-submit");
+  let previewObjectUrl = null;
+
+  const updateImageDimensions = (img) => {
+    const dimsEl = img.closest(".card")?.querySelector("[data-static-image-dimensions]");
+    if (!dimsEl) return;
+    if (!img.naturalWidth || !img.naturalHeight) {
+      dimsEl.textContent = " (bilinmiyor)";
+      return;
+    }
+    dimsEl.textContent = ` (${img.naturalWidth}x${img.naturalHeight} px)`;
+  };
+
+  previewImages.forEach((img) => {
+    if (img.complete) {
+      updateImageDimensions(img);
+      return;
+    }
+    img.addEventListener("load", () => updateImageDimensions(img), { once: true });
+    img.addEventListener(
+      "error",
+      () => {
+        const dimsEl = img.closest(".card")?.querySelector("[data-static-image-dimensions]");
+        if (dimsEl) dimsEl.textContent = " (okunamadi)";
+      },
+      { once: true }
+    );
+  });
+
+  const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(2);
+  const formatBytes = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const showError = (message) => {
+    errorBox.textContent = message;
+    errorBox.classList.remove("d-none");
+  };
+  const hideError = () => {
+    errorBox.classList.add("d-none");
+    errorBox.textContent = "";
+  };
+
+  const syncUploadSubmitState = () => {
+    const hasFile = Boolean(fileInput?.files?.length);
+    uploadSubmitBtn.disabled = !hasFile;
+  };
+
+  const renderSelectedFile = (file) => {
+    if (!filePreview || !fileMeta || !fileThumb) return;
+    if (!file) {
+      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+      previewObjectUrl = null;
+      filePreview.classList.add("d-none");
+      fileMeta.textContent = "";
+      fileThumb.removeAttribute("src");
+      syncUploadSubmitState();
+      return;
+    }
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(file);
+    fileThumb.src = previewObjectUrl;
+    const ext = (file.name.split(".").pop() || "").toUpperCase();
+    const nameLine = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = file.name;
+    nameLine.appendChild(strong);
+    const infoLine = document.createElement("div");
+    infoLine.textContent = `${formatBytes(file.size)} • ${ext || "-"}`;
+    fileMeta.innerHTML = "";
+    fileMeta.appendChild(nameLine);
+    fileMeta.appendChild(infoLine);
+    filePreview.classList.remove("d-none");
+    syncUploadSubmitState();
+  };
+
+  pickFileBtn?.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    fileInput?.click();
+  });
+
+  dropzone?.addEventListener("click", () => fileInput?.click());
+  dropzone?.addEventListener("keydown", (evt) => {
+    if (evt.key === "Enter" || evt.key === " ") {
+      evt.preventDefault();
+      fileInput?.click();
+    }
+  });
+  ["dragenter", "dragover"].forEach((evName) => {
+    dropzone?.addEventListener(evName, (evt) => {
+      evt.preventDefault();
+      dropzone.classList.add("is-active");
+    });
+  });
+  ["dragleave", "drop"].forEach((evName) => {
+    dropzone?.addEventListener(evName, (evt) => {
+      evt.preventDefault();
+      dropzone.classList.remove("is-active");
+    });
+  });
+  dropzone?.addEventListener("drop", (evt) => {
+    const files = evt.dataTransfer?.files;
+    if (!files || !files.length || !fileInput) return;
+    const dt = new DataTransfer();
+    dt.items.add(files[0]);
+    fileInput.files = dt.files;
+    renderSelectedFile(files[0]);
+  });
+  fileInput?.addEventListener("change", () => {
+    renderSelectedFile(fileInput.files?.[0] || null);
+  });
+  progressWrap.style.display = "none";
+  syncUploadSubmitState();
+
+  if (categoryToggleBtn && categoryAddGroup) {
+    categoryToggleBtn.addEventListener("click", () => {
+      categoryAddGroup.classList.toggle("d-none");
+      if (!categoryAddGroup.classList.contains("d-none")) {
+        categoryNewName?.focus();
+      }
+    });
+    document.addEventListener("click", (evt) => {
+      if (categoryAddGroup.classList.contains("d-none")) return;
+      const insidePopover = categoryAddGroup.contains(evt.target);
+      const clickedToggle = categoryToggleBtn.contains(evt.target);
+      if (!insidePopover && !clickedToggle) {
+        categoryAddGroup.classList.add("d-none");
+      }
+    });
+  }
+
+  const addCategory = async () => {
+    const name = (categoryNewName?.value || "").trim();
+    if (!name) {
+      showError("Kategori adi gerekli.");
+      return;
+    }
+    hideError();
+    const formData = new FormData();
+    formData.append("action", "add_category");
+    formData.append("name", name);
+
+    try {
+      const response = await fetch(window.location.href, {
+        method: "POST",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+        body: formData,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success || !payload?.category) {
+        showError(payload?.message || "Kategori eklenemedi.");
+        return;
+      }
+      const existingOption = categorySelect?.querySelector(`option[value="${payload.category.id}"]`);
+      if (!existingOption && categorySelect) {
+        const option = document.createElement("option");
+        option.value = payload.category.id;
+        option.textContent = payload.category.name;
+        option.selected = true;
+        categorySelect.appendChild(option);
+      }
+      imageCategorySelects.forEach((selectEl) => {
+        const exists = selectEl.querySelector(`option[value="${payload.category.id}"]`);
+        if (exists) return;
+        const opt = document.createElement("option");
+        opt.value = payload.category.id;
+        opt.textContent = payload.category.name;
+        selectEl.appendChild(opt);
+      });
+      if (categorySelect) categorySelect.value = payload.category.id;
+      if (categoryNewName) categoryNewName.value = "";
+      categoryAddGroup?.classList.add("d-none");
+    } catch (err) {
+      showError("Kategori eklenirken baglanti hatasi oldu.");
+    }
+  };
+
+  categoryAddBtn?.addEventListener("click", addCategory);
+  categoryNewName?.addEventListener("keydown", (evt) => {
+    if (evt.key === "Enter") {
+      evt.preventDefault();
+      addCategory();
+    }
+  });
+
+  imageCategorySelects.forEach((selectEl) => {
+    selectEl.dataset.prevValue = selectEl.value || "";
+    selectEl.addEventListener("change", async () => {
+      const categoryId = (selectEl.value || "").trim();
+      const updateUrl = selectEl.dataset.updateUrl;
+      if (!categoryId || !updateUrl) {
+        selectEl.value = selectEl.dataset.prevValue || "";
+        return;
+      }
+      const formData = new FormData();
+      formData.append("category_id", categoryId);
+      selectEl.disabled = true;
+      try {
+        const response = await fetch(updateUrl, {
+          method: "POST",
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) {
+          showError(payload?.message || "Kategori kaydedilemedi.");
+          selectEl.value = selectEl.dataset.prevValue || "";
+          return;
+        }
+        selectEl.dataset.prevValue = categoryId;
+      } catch (err) {
+        showError("Kategori kaydinda baglanti hatasi oldu.");
+        selectEl.value = selectEl.dataset.prevValue || "";
+      } finally {
+        selectEl.disabled = false;
+      }
+    });
+  });
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    hideError();
+    if (!fileInput?.files?.length) {
+      showError("Lutfen bir gorsel secin.");
+      syncUploadSubmitState();
+      return;
+    }
+    syncUploadSubmitState();
+    uploadSubmitBtn.disabled = true;
+    progressWrap.style.display = "block";
+    progressBar.style.width = "0%";
+    progressText.textContent = "0%";
+    progressBytes.textContent = "0 MB / 0 MB";
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", window.location.href, true);
+    xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+
+    xhr.upload.onprogress = (evt) => {
+      if (!evt.lengthComputable) return;
+      const pct = Math.round((evt.loaded / evt.total) * 100);
+      progressBar.style.width = `${pct}%`;
+      progressText.textContent = `${pct}%`;
+      progressBytes.textContent = `${formatMB(evt.loaded)} MB / ${formatMB(evt.total)} MB`;
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        window.location.reload();
+        return;
+      }
+      let message = "Yukleme basarisiz.";
+      try {
+        const payload = JSON.parse(xhr.responseText);
+        if (payload && payload.message) message = payload.message;
+      } catch (err) {
+        // ignore parse errors
+      }
+      errorBox.textContent = message;
+      errorBox.classList.remove("d-none");
+      uploadSubmitBtn.disabled = false;
+    };
+
+    xhr.onerror = () => {
+      errorBox.textContent = "Yukleme sirasinda baglanti hatasi oldu.";
+      errorBox.classList.remove("d-none");
+      uploadSubmitBtn.disabled = false;
+    };
+
+    const formData = new FormData(form);
+    xhr.send(formData);
+  });
+})();
+</script>
+{% endblock %}

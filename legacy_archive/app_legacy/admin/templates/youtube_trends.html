@@ -1,0 +1,391 @@
+{% extends "admin_base.html" %}
+{% block title %}YouTube Trends - Admin{% endblock %}
+
+{% block content %}
+
+<h1 class="h4 mb-3 d-flex align-items-center gap-2">
+  📺 YouTube Trends
+  <span class="badge bg-secondary">{{ total }}</span>
+</h1>
+
+<!-- Top control panel: 2 blok -->
+<div class="row g-3 mb-4">
+
+  <!-- Fetch latest videos -->
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header py-2">
+        <strong>Step 1 · Fetch latest videos per channel</strong>
+      </div>
+      <div class="card-body py-2">
+        <form method="post" action="{{ url_for('admin_bp.youtube_fetch_latest') }}" class="row g-2 align-items-center">
+          <div class="col-6">
+            <label class="form-label small mb-0">Videos per channel</label>
+            <input type="number" name="per_channel" value="3" min="1" max="20"
+                   class="form-control form-control-sm">
+          </div>
+          <div class="col-6 d-flex align-items-end justify-content-end">
+            <button class="btn btn-sm btn-outline-primary">
+              Fetch latest videos
+            </button>
+          </div>
+        </form>
+        <p class="small text-muted mb-0 mt-2">
+          Uses YouTube Data API and stores results in <code>youtube_videos</code>.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate trend ideas -->
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header py-2">
+        <strong>Step 2 · Generate trend ideas from captions</strong>
+      </div>
+      <div class="card-body py-2">
+        <form method="post" action="{{ url_for('admin_bp.youtube_trends_research') }}" class="row g-2 align-items-center">
+          <div class="col-6">
+            <label class="form-label small mb-0">Videos per channel</label>
+            <input type="number" name="limit_per_channel" value="2" min="1" max="10"
+                   class="form-control form-control-sm">
+          </div>
+          <div class="col-6 d-flex align-items-end justify-content-end">
+            <button class="btn btn-sm btn-success">
+              Run trend agent
+            </button>
+          </div>
+        </form>
+        <p class="small text-muted mb-0 mt-2">
+          Uses captions of recent videos that do not have ideas yet.
+        </p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Search + filters -->
+<!-- Search + filters -->
+<div class="card mb-3 shadow-sm">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label small mb-1">Search</label>
+        <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm"
+               placeholder="Search channel or video title">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Idea status</label>
+        <select name="status" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+          <option value="published" {% if status_filter == 'published' %}selected{% endif %}>Published</option>
+          <option value="discarded" {% if status_filter == 'discarded' %}selected{% endif %}>Discarded</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Sort by</label>
+        <select name="sort" class="form-select form-select-sm">
+          <option value="newest" {% if sort == 'newest' %}selected{% endif %}>Newest in system</option>
+          <option value="published" {% if sort == 'published' %}selected{% endif %}>Published date</option>
+          <option value="views_desc" {% if sort == 'views_desc' %}selected{% endif %}>Views high to low</option>
+          <option value="views_asc" {% if sort == 'views_asc' %}selected{% endif %}>Views low to high</option>
+          <option value="comments_desc" {% if sort == 'comments_desc' %}selected{% endif %}>Comments high to low</option>
+        </select>
+      </div>
+
+      <div class="col-md-2 text-end">
+        <button class="btn btn-sm btn-primary mb-1">Search</button>
+        <a href="{{ url_for('admin_bp.youtube_trends_page') }}" class="btn btn-sm btn-outline-secondary mb-1">
+          Reset
+        </a>
+      </div>
+
+      <div class="col-12 mt-2">
+        <div class="d-flex flex-wrap gap-3">
+          <div class="form-check small">
+            <input class="form-check-input" type="checkbox" name="has_captions" value="1"
+                   id="filter_captions" {% if has_captions_filter %}checked{% endif %}>
+            <label class="form-check-label" for="filter_captions">
+              With captions
+            </label>
+          </div>
+
+          <div class="form-check small">
+            <input class="form-check-input" type="checkbox" name="has_ideas" value="1"
+                   id="filter_ideas" {% if has_ideas_filter %}checked{% endif %}>
+            <label class="form-check-label" for="filter_ideas">
+              With ideas
+            </label>
+          </div>
+
+          <div class="form-check small">
+            <input class="form-check-input" type="checkbox" name="only_shorts" value="1"
+                   id="filter_shorts" {% if only_shorts_filter %}checked{% endif %}>
+            <label class="form-check-label" for="filter_shorts">
+              Shorts only
+            </label>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+
+
+<!-- Bulk delete toolbar -->
+<form id="bulkDeleteForm"
+      method="post"
+      action="{{ url_for('admin_bp.bulk_delete_youtube_videos') }}"
+      onsubmit="return confirm('Delete selected videos and related captions and ideas?');">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="small text-muted">
+      Showing {{ videos|length }} of {{ total }} videos.
+    </div>
+    <div class="d-flex align-items-center gap-3">
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="select_all" onclick="toggleAllVideos(this)">
+        <label class="form-check-label small" for="select_all">
+          Select all on this page
+        </label>
+      </div>
+      <button class="btn btn-sm btn-outline-danger" type="submit">
+        Delete selected
+      </button>
+    </div>
+  </div>
+</form>
+
+
+<!-- Video cards -->
+{% for v in videos %}
+  <div class="card mb-3 shadow-sm">
+    <div class="card-body py-2">
+
+      <!-- Header: checkbox + title + badges -->
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="d-flex align-items-start me-2">
+          <div class="form-check mt-1">
+            <input class="form-check-input video-select-checkbox"
+                   type="checkbox"
+                   name="video_ids"
+                   value="{{ v.id }}"
+                   form="bulkDeleteForm">
+          </div>
+        </div>
+
+        <div class="flex-grow-1">
+          <div class="d-flex align-items-center gap-2">
+            <a href="{{ v.video_url }}" target="_blank"
+               class="fw-semibold text-decoration-none">
+              {{ v.video_title }}
+            </a>
+            {% if v.is_new %}
+              <span class="badge bg-warning text-dark">NEW</span>
+            {% endif %}
+          </div>
+
+          <div class="small text-muted">
+            {{ v.channel_title }}
+            {% if v.published_at %}
+              · {{ v.published_at.strftime('%Y-%m-%d %H:%M') }}
+            {% endif %}
+          </div>
+
+          <div class="small text-muted">
+            ⏱ {{ v.duration_human or 'n.a.' }}
+            {% if v.is_short %}
+              · 🎬 Short
+            {% else %}
+              · 🎬 Long
+            {% endif %}
+            {% if v.view_count is not none %}
+              · 👁 {{ "{:,}".format(v.view_count) }} views
+            {% endif %}
+            {% if v.comment_count is not none %}
+              · 💬 {{ "{:,}".format(v.comment_count) }} comments
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="text-end">
+          <div class="mb-1">
+            {% if v.has_captions %}
+              <span class="badge bg-success">
+                Captions ready
+                {% if v.caption_lang %}
+                  ({{ v.caption_lang }})
+                {% endif %}
+              </span>
+              {% if captions_by_video.get(v.id) %}
+                <div class="mt-1">
+                  <button
+                    class="btn btn-sm btn-link text-decoration-none p-0"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#captions-{{ v.id }}"
+                    aria-expanded="false"
+                  >
+                    Show captions
+                  </button>
+                </div>
+              {% endif %}
+            {% else %}
+              <span class="badge bg-secondary">No captions</span>
+            {% endif %}
+          </div>
+          <div>
+            {% if v.idea_count > 0 %}
+              <span class="badge bg-success">{{ v.idea_count }} ideas</span>
+            {% else %}
+              <span class="badge bg-secondary">Ideas: 0</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>  {# header d-flex kapanışı #}
+
+      {# Captions collapse: ideas olsun olmasın çalışsın #}
+      {% if captions_by_video.get(v.id) %}
+        <div class="mt-2">
+          <div class="collapse" id="captions-{{ v.id }}">
+            <div class="border rounded p-2 bg-light small" style="max-height: 220px; overflow-y: auto;">
+              <div class="fw-semibold mb-1">
+                Captions
+                {% if captions_by_video[v.id].lang %}
+                  <span class="text-muted">({{ captions_by_video[v.id].lang }})</span>
+                {% endif %}
+              </div>
+              <div class="text-muted" style="white-space: pre-wrap;">
+                {{ captions_by_video[v.id].caption_text }}
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      <!-- Action row -->
+      <div class="d-flex justify-content-between align-items-center mt-2 border-top pt-2">
+        <div class="small text-muted">
+          {% if v.idea_count > 0 %}
+            Has trend ideas for this video
+          {% else %}
+            No ideas yet
+          {% endif %}
+        </div>
+        <div>
+          <form method="post"
+                action="{{ url_for('admin_bp.delete_youtube_video', video_id=v.id) }}"
+                onsubmit="return confirm('Delete this video and related captions and ideas?');"
+                class="d-inline">
+            <button class="btn btn-sm btn-outline-danger">
+              Delete video
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Accordion: ideas per video -->
+      {% if v.idea_count > 0 %}
+        <div class="mt-2">
+          <button class="btn btn-sm btn-link text-decoration-none px-0"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#ideas-{{ v.id }}"
+                  aria-expanded="false">
+            ▼ Show ideas
+          </button>
+
+          <div class="collapse mt-2" id="ideas-{{ v.id }}">
+            <div class="border rounded p-2 bg-light">
+              {% for idea in ideas_by_video.get(v.id, []) %}
+                <div class="d-flex justify-content-between align-items-start mb-2 pb-2 {% if not loop.last %}border-bottom{% endif %}">
+                  <div>
+                    <div class="small fw-semibold">{{ idea.idea_text }}</div>
+                    {% if idea.notes %}
+                      <div class="small text-muted">{{ idea.notes }}</div>
+                    {% endif %}
+                    <div class="small text-muted">
+                      {% if idea.created_at %}
+                        {{ idea.created_at.strftime('%Y-%m-%d %H:%M') }}
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="text-end ms-2">
+                    <form method="post"
+                          action="{{ url_for('admin_bp.update_youtube_trend_status', idea_id=idea.id) }}"
+                          class="mb-1 d-flex gap-1">
+                      {% set current = (idea.status or '')|lower %}
+                      <select name="status" class="form-select form-select-sm">
+                        <option value="pending" {% if current == 'pending' %}selected{% endif %}>Pending</option>
+                        <option value="published" {% if current == 'published' %}selected{% endif %}>Published</option>
+                        <option value="discarded" {% if current == 'discarded' %}selected{% endif %}>Discarded</option>
+                      </select>
+                      <button class="btn btn-sm btn-outline-primary">Save</button>
+                    </form>
+                    <form method="post"
+                          action="{{ url_for('admin_bp.delete_youtube_trend', idea_id=idea.id) }}"
+                          onsubmit="return confirm('Delete this idea?');">
+                      <button class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+    </div>
+  </div>
+{% endfor %}
+
+<!-- Pagination -->
+<nav aria-label="YouTube trends pagination">
+  <ul class="pagination pagination-sm">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+      <a class="page-link"
+         href="{{ url_for('admin_bp.youtube_trends_page', page=page-1 if page > 1 else 1,
+                          q=search, status=status_filter,
+                          has_captions='1' if has_captions_filter else None,
+                          has_ideas='1' if has_ideas_filter else None,
+                          only_shorts='1' if only_shorts_filter else None,
+                          sort=sort) }}">
+        Previous
+      </a>
+    </li>
+
+    <li class="page-item disabled">
+      <span class="page-link">
+        Page {{ page }} of {{ total_pages }}
+      </span>
+    </li>
+
+    <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+      <a class="page-link"
+         href="{{ url_for('admin_bp.youtube_trends_page', page=page+1 if page < total_pages else total_pages,
+                          q=search, status=status_filter,
+                          has_captions='1' if has_captions_filter else None,
+                          has_ideas='1' if has_ideas_filter else None,
+                          only_shorts='1' if only_shorts_filter else None,
+                          sort=sort) }}">
+        Next
+      </a>
+    </li>
+  </ul>
+</nav>
+
+<script>
+  function toggleAllVideos(master) {
+    const boxes = document.querySelectorAll('.video-select-checkbox');
+    boxes.forEach(function (cb) {
+      cb.checked = master.checked;
+    });
+  }
+</script>
+
+{% endblock %}

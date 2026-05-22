@@ -1,0 +1,147 @@
+{% extends "admin_base.html" %}
+{% block title %}YouTube Channels{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">📺 YouTube Channels</h3>
+</div>
+
+{# Add new channel form #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header bg-light py-2">
+    <strong>Add new channel</strong>
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('admin_bp.youtube_channels_page') }}" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label form-label-sm mb-1">Channel handle</label>
+        <input type="text"
+               name="channel_handle"
+               class="form-control form-control-sm"
+               placeholder="@ChannelHandle"
+               required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label form-label-sm mb-1">Channel URL</label>
+        <input type="url"
+               name="channel_url"
+               class="form-control form-control-sm"
+               placeholder="https://www.youtube.com/@ChannelHandle"
+               required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label form-label-sm mb-1">Title (optional)</label>
+        <input type="text"
+               name="channel_title"
+               class="form-control form-control-sm"
+               placeholder="Channel title">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label form-label-sm mb-1 d-block">Active</label>
+        <div class="form-check form-switch">
+          <input class="form-check-input"
+                 type="checkbox"
+                 role="switch"
+                 id="isActiveInput"
+                 name="is_active"
+                 checked>
+          <label class="form-check-label small" for="isActiveInput">Use in agents</label>
+        </div>
+      </div>
+      <div class="col-12">
+        <label class="form-label form-label-sm mb-1">Notes</label>
+        <textarea name="notes"
+                  rows="2"
+                  class="form-control form-control-sm"
+                  placeholder="Short note about why you track this channel"></textarea>
+      </div>
+      <div class="col-12 text-end">
+        <button class="btn btn-sm btn-primary">Add channel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Channel list #}
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-light py-2 d-flex justify-content-between align-items-center">
+    <strong>Channel list</strong>
+    <span class="small text-muted">{{ channels|length }} channel(s)</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:70px;">ID</th>
+            <th>Channel</th>
+            <th>URL</th>
+            <th style="width:120px;">Status</th>
+            <th style="width:180px;">Last checked</th>
+            <th style="width:180px;">Created</th>
+            <th>Notes</th>
+            <th class="text-end" style="width:180px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ch in channels %}
+          <tr>
+            <td class="text-muted small">{{ ch.id }}</td>
+            <td class="small">
+              <div class="fw-semibold">{{ ch.channel_title or ch.channel_handle }}</div>
+              <div class="text-muted">{{ ch.channel_handle }}</div>
+            </td>
+            <td class="small">
+              <a href="{{ ch.channel_url }}" target="_blank">{{ ch.channel_url }}</a>
+            </td>
+            <td>
+              {% if ch.is_active %}
+                <span class="badge bg-success">Active</span>
+              {% else %}
+                <span class="badge bg-secondary">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="small text-muted">{{ ch.last_checked_at or "-" }}</td>
+            <td class="small text-muted">{{ ch.created_at }}</td>
+            <td class="small text-muted">
+              {{ ch.notes or "" }}
+            </td>
+            <td class="text-end">
+
+              <form method="post"
+                    action="{{ url_for('admin_bp.toggle_youtube_channel', channel_id=ch.id) }}"
+                    class="d-inline">
+                <input type="hidden"
+                       name="is_active"
+                       value="{{ 0 if ch.is_active else 1 }}">
+                <button class="btn btn-sm btn-outline-secondary">
+                  {% if ch.is_active %}Deactivate{% else %}Activate{% endif %}
+                </button>
+              </form>
+
+              <form method="post"
+                    action="{{ url_for('admin_bp.delete_youtube_channel', channel_id=ch.id) }}"
+                    class="d-inline"
+                    onsubmit="return confirm('Delete this channel and its videos?');">
+                <button class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+
+            </td>
+          </tr>
+          {% endfor %}
+
+          {% if channels|length == 0 %}
+          <tr>
+            <td colspan="8" class="text-center text-muted py-3">
+              No channels yet. Add one above.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

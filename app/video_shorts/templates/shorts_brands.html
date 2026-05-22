@@ -1,0 +1,86 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Brands{% endblock %}
+
+{% block content %}
+<style>
+  .vs-brand-switch-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(10, 16, 30, 0.72);
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  }
+  .vs-brand-switch-card:hover {
+    border-color: rgba(83, 212, 141, 0.45);
+    background: rgba(16, 24, 42, 0.9);
+    transform: translateY(-1px);
+  }
+  .vs-brand-switch-btn {
+    color: #e8eefc;
+  }
+  .vs-brand-switch-btn:hover,
+  .vs-brand-switch-btn:focus {
+    color: #f8fbff;
+  }
+  .vs-brand-meta {
+    color: rgba(232, 238, 252, 0.62) !important;
+  }
+</style>
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card shadow-sm vs-card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h5 class="card-title vs-card-title mb-1">Brands</h5>
+            <p class="mb-0 text-secondary small">This account's workspaces.</p>
+          </div>
+          <span class="badge text-bg-dark">{{ brands|length }} total</span>
+        </div>
+
+        <div class="d-grid gap-2">
+          {% for brand in brands %}
+            <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="card border-0 vs-brand-switch-card">
+              <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+              <input type="hidden" name="brand_id" value="{{ brand.id }}">
+              <button type="submit" class="btn text-start p-3 vs-brand-switch-btn">
+                <div class="d-flex justify-content-between align-items-center gap-3">
+                  <div>
+                    <div class="fw-semibold">{{ brand.name }}</div>
+                    <div class="small vs-brand-meta">{{ brand.slug or brand.id }}</div>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    {% if brand.is_default %}
+                      <span class="badge text-bg-secondary">Default</span>
+                    {% endif %}
+                    {% if current_brand and brand.id == current_brand.id %}
+                      <span class="badge text-bg-primary">Active</span>
+                    {% endif %}
+                  </div>
+                </div>
+              </button>
+            </form>
+          {% else %}
+            <div class="text-secondary small">No brands found.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card shadow-sm vs-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title mb-3">Add Brand</h5>
+        <form method="post" action="{{ url_for('video_shorts_bp.create_brand') }}" class="d-grid gap-3">
+          <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+          <div>
+            <label class="form-label vs-card-title">Brand name</label>
+            <input type="text" name="name" class="form-control vs-input" placeholder="New brand name" maxlength="80" required>
+          </div>
+          <button type="submit" class="btn vs-btn vs-btn-primary">Add Brand</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

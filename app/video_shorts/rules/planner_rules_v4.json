@@ -1,0 +1,218 @@
+{
+  "version": "v4-2025-02-02",
+  "source_md": "planner_rules_v4.md",
+  "non_speech_keywords": [
+    "[music]",
+    "music",
+    "muzik",
+    "alkis",
+    "applause",
+    "silence",
+    "sessizlik",
+    "kahkaha",
+    "laughter",
+    "noise",
+    "background noise",
+    "sfx",
+    "sound effect",
+    "efekt"
+  ],
+  "non_speech_regex_patterns": [
+    "^\\s*\\[music\\]\\s*$",
+    "^\\s*\\[applause\\]\\s*$",
+    "^\\s*\\[laughter\\]\\s*$",
+    "^\\s*\\[noise\\]\\s*$",
+    "^\\s*\\[silence\\]\\s*$",
+    "^\\s*\\[sfx\\]\\s*$",
+    "^\\s*[\\u266a\\u266b]+\\s*$"
+  ],
+  "min_speech_chars": 3,
+  "max_single_word_chars": 2,
+  "conjunction_prefixes": [
+    "ama",
+    "fakat",
+    "cunku",
+    "ve",
+    "binaenaleyh",
+    "lakin",
+    "ancak"
+  ],
+  "min_clip_seconds": 25.0,
+  "max_clip_seconds": 60.0,
+  "target_clip_count_default": 8,
+  "max_overlap_ratio": 0.85,
+  "min_gap_seconds": 3.0,
+  "max_per_label": 3,
+  "qa_settings": {
+    "qa_max_question_seconds": 10.0,
+    "qa_min_answer_ratio": 2.0,
+    "qa_keywords": [
+      "soru",
+      "soran",
+      "dinleyici",
+      "kardesimiz"
+    ]
+  },
+  "allowed_labels": [
+    "story",
+    "qa",
+    "tefsir",
+    "principle",
+    "other"
+  ],
+  "few_shot_examples": [
+    {
+      "name": "EXAMPLE 1 (video-1)",
+      "segment_blocks": [
+        {
+          "title": "Segments subset for SHORT A (gold: idx 16-33)",
+          "segments": [
+            {"idx": 16, "start": "1:18.520", "end": "1:19.173", "text": "Nebilerin,"},
+            {"idx": 17, "start": "1:19.173", "end": "1:22.440", "text": "Sıddıkların ağlayıp geçtikleri şu dünyada,"},
+            {"idx": 18, "start": "1:22.500", "end": "1:27.520", "text": "bu ağlamalar bir gülmeli hayatın tohumları mahiyetindedir."},
+            {"idx": 19, "start": "1:28.620", "end": "1:31.160", "text": "Öbür alemde kesretler,"},
+            {"idx": 20, "start": "1:31.160", "end": "1:36.240", "text": "manalar, engeller, perdeler, hâiller mani olmadan,"},
+            {"idx": 21, "start": "1:37.200", "end": "1:38.249", "text": "Hammadun olarak,"},
+            {"idx": 22, "start": "1:38.249", "end": "1:41.920", "text": "Allah'a çok hamd eden bir cemaat olarak,"},
+            {"idx": 23, "start": "1:41.920", "end": "1:47.920", "text": "elinde hammadunun bayrağını taşıyan Hazreti Muhammed'in,"},
+            {"idx": 24, "start": "1:47.940", "end": "1:48.436", "text": "yani"},
+            {"idx": 25, "start": "1:48.436", "end": "1:50.580", "text": "Ahmed-i Mahmud-i Muhammed Mustafa'nın"},
+            {"idx": 26, "start": "1:50.580", "end": "1:52.080", "text": "sallallahu aleyhi ve sellem,"},
+            {"idx": 27, "start": "1:52.080", "end": "1:53.820", "text": "bayrağının altında toplanacak,"},
+            {"idx": 28, "start": "1:53.820", "end": "2:00.020", "text": "manisiz, perdesiz, hâilsiz,"},
+            {"idx": 29, "start": "2:00.020", "end": "2:00.220", "text": "bütün"},
+            {"idx": 30, "start": "2:00.220", "end": "2:05.820", "text": "güzelliklerin kaynağı olan Cenab-ı Hakk'ın cemalini müşahede edecek"},
+            {"idx": 31, "start": "2:05.820", "end": "2:07.440", "text": "ve kendimizden geçeceğiz."}
+          ]
+        },
+        {
+          "title": "Segments subset for SHORT B (gold: idx 108-116)",
+          "segments": [
+            {"idx": 108, "start": "7:29.380", "end": "7:30.560", "text": "Her şeyi ona borçluyuz."},
+            {"idx": 109, "start": "7:31.400", "end": "7:35.540", "text": "Binaenaleyh çok defa gölgeler arkasında yürüyen sizler."},
+            {"idx": 110, "start": "7:36.660", "end": "7:41.820", "text": "Çok defa fani şahısların fani olmalarına işlerinizi bina eden sizler."},
+            {"idx": 111, "start": "7:41.820", "end": "7:51.160", "text": "Ben biliyorum ki siz bütün bu gölgelerin önünde, bütün bu gölgelerin mihrabında, bütün bu gölgelerin minberinde"},
+            {"idx": 112, "start": "7:52.200", "end": "7:54.060", "text": "nazarınızda tek şey vardır."},
+            {"idx": 113, "start": "7:54.800", "end": "7:56.093", "text": "O da Hz."},
+            {"idx": 114, "start": "7:56.093", "end": "7:56.956", "text": "Muhammed Mustafa"},
+            {"idx": 115, "start": "7:56.956", "end": "7:57.818", "text": "sallallahu aleyhi"},
+            {"idx": 116, "start": "7:57.818", "end": "7:58.680", "text": "ve sellem'dir."}
+          ]
+        }
+      ],
+      "gold": [
+        {
+          "label": "story",
+          "start_idx": 16,
+          "end_idx": 33,
+          "why_selected": "Duygudan baslayip net bir manevi zirveye ulasan, tek parca tamamlanan bir dusunce akisi var."
+        },
+        {
+          "label": "principle",
+          "start_idx": 108,
+          "end_idx": 116,
+          "why_selected": "Net bir tez ile baslayip tek bir odakta (Hz. Muhammed) kapanan guclu bir vurgu yapiyor."
+        }
+      ]
+    },
+    {
+      "name": "EXAMPLE 2 (video-2)",
+      "segment_blocks": [
+        {
+          "title": "Segments subset for SHORT A (gold: idx 1-8)",
+          "segments": [
+            {"idx": 1, "start": "0:06.040", "end": "0:13.060", "text": "Şöyle de diyebiliriz. İnsanlık, iman, bu imandaki marifetle, o bilgiyle yeniden bir doğuşa ulaşmıştır. Bu doğuşu bize temin edene ruhumuz feda olsun. Bu doğuşu bize temin eden Hz. Muhammed"},
+            {"idx": 2, "start": "0:13.060", "end": "0:15.868", "text": "Mustafa'dır. Onun için bir şeye dikkatinizi çekeceğim. Hz. Muhammed'in veladeti aynı zamanda insanlığın yeniden veladetidir. Hz. Muhammed doğarken"},
+            {"idx": 3, "start": "0:15.868", "end": "0:20.080", "text": "insanlık yeniden bir kere daha doğmuştur."},
+            {"idx": 4, "start": "0:20.080", "end": "0:31.820", "text": "Çölün dehşet engiz manzarası karşısında iki büklüm oluyorduk. Onun doğuşuyla gökten yere bir nur indi. Bütün varlık aydınlandı. Bu aydınlanmış iklimde biz de kendimizin yeniden doğduğumuzu gördük. O sayede yeniden bir kere daha varlığa erdik. Varlığa erdiren Sultanı"},
+            {"idx": 5, "start": "0:32.560", "end": "0:33.268", "text": "Zişan'a ruhlarımız feda olsun."},
+            {"idx": 6, "start": "0:33.268", "end": "0:38.226", "text": "sana feda olsun. Ya Resulallah deyip sonra da dudaklarını yaladıkları Hz. Muhammed Mustafa sallallahu aleyhi ve sellem. Ruhlarımız ona feda olsun."},
+            {"idx": 7, "start": "0:38.226", "end": "0:38.934", "text": "(devam)"},
+            {"idx": 8, "start": "0:38.934", "end": "0:44.600", "text": "(devam)"}
+          ]
+        },
+        {
+          "title": "Segments subset for SHORT B (gold: idx 10-14)",
+          "segments": [
+            {"idx": 10, "start": "1:02.360", "end": "1:20.740", "text": "Çölün dehşet engiz manzarası karşısında iki büklüm oluyorduk. Onun doğuşuyla gökten yere bir nur indi. Bütün varlık aydınlandı. Bu aydınlanmış iklimde biz de kendimizin yeniden doğduğumuzu gördük."},
+            {"idx": 11, "start": "1:21.720", "end": "1:37.740", "text": "O sayede yeniden bir kere daha varlığa erdik. Varlığa erdiren Sultanı Zişan'a ruhlarımız feda olsun."},
+            {"idx": 12, "start": "1:37.740", "end": "1:49.454", "text": "Bi ebi ente ve ummi anam babam tatlı canım sana feda olsun. Ya Resulallah deyip sonra da dudaklarını yaladıkları Hz."},
+            {"idx": 13, "start": "1:49.454", "end": "1:52.969", "text": "Muhammed Mustafa sallallahu aleyhi ve sellem."},
+            {"idx": 14, "start": "1:52.969", "end": "1:55.311", "text": "Ruhlarımız ona feda olsun."}
+          ]
+        }
+      ],
+      "gold": [
+        {
+          "label": "principle",
+          "start_idx": 1,
+          "end_idx": 8,
+          "why_selected": "Iman ve yeniden dogus temasini hizla kuruyor ve tek mesaj halinde toparliyor."
+        },
+        {
+          "label": "principle",
+          "start_idx": 10,
+          "end_idx": 14,
+          "why_selected": "Karanliktan nura gecis gibi net bir donusum duygusu verip guclu bir kapanis yapiyor."
+        }
+      ]
+    },
+    {
+      "name": "EXAMPLE 3 (video-3)",
+      "segment_blocks": [
+        {
+          "title": "Segments subset for SHORT A (gold: idx 56-70)",
+          "segments": [
+            {"idx": 56, "start": "3:57.000", "end": "3:57.827", "text": "Kızcağızım,"},
+            {"idx": 57, "start": "3:57.827", "end": "3:58.653", "text": "korkma,"},
+            {"idx": 58, "start": "3:58.653", "end": "4:01.960", "text": "Allah senin babanı zayi etmeyecektir."},
+            {"idx": 59, "start": "4:03.480", "end": "4:08.140", "text": "Yerinizin idraki içindeyseniz ve kendinizden emin bulunuyorsanız,"},
+            {"idx": 60, "start": "4:09.020", "end": "4:10.340", "text": "Ben de aynı teminatı,"},
+            {"idx": 61, "start": "4:11.740", "end": "4:17.920", "text": "O bizim için tevekkülün de teslimiyetin de timsali olan o büyük zaata, itimat ve inkıyad ile"},
+            {"idx": 62, "start": "4:19.980", "end": "4:22.160", "text": "Aynı şeyi söyleyeyim."},
+            {"idx": 63, "start": "4:22.580", "end": "4:23.264", "text": "Korkmayın,"},
+            {"idx": 64, "start": "4:23.264", "end": "4:26.000", "text": "Allah sizi zayi etmeyecektir."},
+            {"idx": 65, "start": "4:26.440", "end": "4:31.720", "text": "Fakat ..."},
+            {"idx": 66, "start": "4:31.720", "end": "4:34.720", "text": "(devam)"},
+            {"idx": 67, "start": "4:34.720", "end": "4:42.420", "text": "(devam)"},
+            {"idx": 68, "start": "4:42.420", "end": "4:46.960", "text": "Herhangi bir çukura, herhangi bir deliğe düşme ihtimaliniz vardır."},
+            {"idx": 69, "start": "4:48.840", "end": "4:52.420", "text": "Teminatınızı, teminat noktalarınızı bir kere daha kontrol ediniz."},
+            {"idx": 70, "start": "4:53.640", "end": "4:57.100", "text": "Bir suvari gibi atınızın kolanlarına bir kere daha bakıveriniz."}
+          ]
+        },
+        {
+          "title": "Segments subset for SHORT B (gold: idx 75-87)",
+          "segments": [
+            {"idx": 75, "start": "5:07.400", "end": "5:10.260", "text": "Allah'la münasebetiniz açısından neredesiniz?"},
+            {"idx": 76, "start": "5:11.200", "end": "5:15.540", "text": "Elem ye’ni lillezîne âmenû en tahşe‘a kulûbuhum li zikrillâh"},
+            {"idx": 77, "start": "5:17.620", "end": "5:23.380", "text": "Allah'ın bu kadar lütufları içinde, nurdan lütuflarını yarıp yarıp,"},
+            {"idx": 78, "start": "5:24.120", "end": "5:26.700", "text": "Hevenk hevenk nurdan lütufları içinde gezerken,"},
+            {"idx": 79, "start": "5:27.540", "end": "5:30.060", "text": "Kalbinizin yumuşayacağı an gelmedi mi diyor?"},
+            {"idx": 80, "start": "5:31.920", "end": "5:35.800", "text": "Başkaları için mukadder olan sû-i akıbet sizin için de mukadderdir."},
+            {"idx": 81, "start": "5:37.000", "end": "5:42.120", "text": "Başkalarının zebil olarak döküldüğü çukurlara sizin de dökülmeniz mukadderdir."},
+            {"idx": 82, "start": "5:43.300", "end": "5:45.680", "text": "Gelin bir kere daha söz verip Allah'a,"},
+            {"idx": 83, "start": "5:46.300", "end": "5:49.580", "text": "Başlattığınız şu ahdü peymana bir kere daha yeminde bulunalım."},
+            {"idx": 84, "start": "5:50.880", "end": "5:52.980", "text": "Bu can bu uğurda bir kere daha diyelim."},
+            {"idx": 85, "start": "5:54.780", "end": "5:57.320", "text": "Şu üç büyük beldenin insanı olarak,"},
+            {"idx": 86, "start": "5:58.460", "end": "6:00.580", "text": "Kendimizi bir kere daha kontrol edelim."},
+            {"idx": 87, "start": "6:03.060", "end": "6:04.580", "text": "Kaybetmeyecek kazanacağız."}
+          ]
+        }
+      ],
+      "gold": [
+        {
+          "label": "qa",
+          "start_idx": 56,
+          "end_idx": 70,
+          "why_selected": "Teselli ile baslayip dinleyiciyi oz kontrol cagrisina tasiyan net bir akisi var."
+        },
+        {
+          "label": "qa",
+          "start_idx": 75,
+          "end_idx": 87,
+          "why_selected": "Soru ile gerilim kurup uyarilari ardarda getiriyor ve guclu bir final cumlesiyle kapaniyor."
+        }
+      ]
+    }
+  ]
+}

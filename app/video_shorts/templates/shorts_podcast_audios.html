@@ -1,0 +1,279 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Podcast Audio{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <style>
+    .podcast-audio-card { padding: 16px 18px; }
+    .podcast-audio-subtitle { font-size: .92rem; opacity: .75; }
+    .podcast-audio-list audio { width: 100%; }
+    .podcast-audio-item {
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 12px;
+      background: rgba(255,255,255,.02);
+      padding: 12px;
+      height: 100%;
+      color: #fff;
+    }
+    .podcast-audio-empty {
+      border: 1px dashed rgba(255,255,255,.12);
+      border-radius: 12px;
+      padding: 28px 12px;
+      color: rgba(255,255,255,.6);
+      text-align: center;
+    }
+    .pa-progress {
+      display: none;
+      border-radius: 10px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      padding: 10px;
+      margin-top: 8px;
+    }
+    .pa-progress-bar {
+      width: 0%;
+      height: 8px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--mint-2), var(--mint));
+      transition: width .12s ease;
+    }
+    .pa-progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 6px;
+      font-size: .82rem;
+      color: rgba(255,255,255,.72);
+    }
+  </style>
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-1">Podcast Audio</h3>
+      <div class="vs-text-body podcast-audio-subtitle">Manage audio files used in Generate > Podcast mode.</div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm vs-card podcast-audio-card mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-12 col-lg-5">
+        <label class="form-label small text-white-50">Audio file</label>
+        <input type="file" id="pa-file" class="form-control vs-input" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*">
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label small text-white-50">Label (optional)</label>
+        <input type="text" id="pa-label" class="form-control vs-input" maxlength="80" placeholder="Podcast intro / episode audio">
+      </div>
+      <div class="col-12 col-lg-3 d-grid">
+        <button type="button" id="pa-upload-btn" class="btn vs-btn vs-btn-primary">Upload Audio</button>
+      </div>
+      <div class="col-12">
+        <div id="pa-progress" class="pa-progress">
+          <div id="pa-progress-bar" class="pa-progress-bar"></div>
+          <div class="pa-progress-meta">
+            <span id="pa-progress-text">0%</span>
+            <span id="pa-progress-bytes">0 MB / 0 MB</span>
+          </div>
+        </div>
+        <div id="pa-status" class="small text-white-50"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm vs-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>Saved Podcast Audio Files</span>
+      <button type="button" id="pa-refresh-btn" class="btn btn-sm btn-outline-light">Refresh</button>
+    </div>
+    <div class="card-body">
+      <div id="pa-empty" class="podcast-audio-empty d-none">No audio files yet.</div>
+      <div id="pa-list" class="row g-3 podcast-audio-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const els = {
+    file: document.getElementById("pa-file"),
+    label: document.getElementById("pa-label"),
+    uploadBtn: document.getElementById("pa-upload-btn"),
+    refreshBtn: document.getElementById("pa-refresh-btn"),
+    status: document.getElementById("pa-status"),
+    progress: document.getElementById("pa-progress"),
+    progressBar: document.getElementById("pa-progress-bar"),
+    progressText: document.getElementById("pa-progress-text"),
+    progressBytes: document.getElementById("pa-progress-bytes"),
+    list: document.getElementById("pa-list"),
+    empty: document.getElementById("pa-empty"),
+  };
+  const API_URL = "{{ url_for('video_shorts_bp.list_podcast_audios') }}";
+  let audios = [];
+
+  const esc = (s) => String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  const fmtBytes = (n) => {
+    const v = Number(n || 0);
+    if (!Number.isFinite(v) || v <= 0) return "-";
+    if (v < 1024) return `${v} B`;
+    if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+    return `${(v / (1024 * 1024)).toFixed(2)} MB`;
+  };
+  const fmtDuration = (seconds) => {
+    const s = Number(seconds);
+    if (!Number.isFinite(s) || s <= 0) return "";
+    const total = Math.round(s);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = total % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+  const resetProgress = () => {
+    if (!els.progress) return;
+    els.progress.style.display = "none";
+    if (els.progressBar) els.progressBar.style.width = "0%";
+    if (els.progressText) els.progressText.textContent = "0%";
+    if (els.progressBytes) els.progressBytes.textContent = "0 MB / 0 MB";
+  };
+  const showProgress = (loaded, total) => {
+    if (!els.progress) return;
+    els.progress.style.display = "block";
+    const safeTotal = Number(total || 0);
+    const safeLoaded = Number(loaded || 0);
+    const pct = safeTotal > 0 ? Math.max(0, Math.min(100, Math.round((safeLoaded / safeTotal) * 100))) : 0;
+    if (els.progressBar) els.progressBar.style.width = `${pct}%`;
+    if (els.progressText) els.progressText.textContent = `${pct}%`;
+    if (els.progressBytes) {
+      const loadedLabel = (safeLoaded / (1024 * 1024)).toFixed(1);
+      const totalLabel = safeTotal > 0 ? (safeTotal / (1024 * 1024)).toFixed(1) : "0.0";
+      els.progressBytes.textContent = `${loadedLabel} MB / ${totalLabel} MB`;
+    }
+  };
+
+  const setStatus = (msg, isError = false) => {
+    if (!els.status) return;
+    els.status.textContent = msg || "";
+    els.status.classList.toggle("text-danger", !!isError);
+  };
+
+  const render = () => {
+    if (!els.list || !els.empty) return;
+    els.list.innerHTML = "";
+    els.empty.classList.toggle("d-none", audios.length > 0);
+    audios.forEach((audio) => {
+      const col = document.createElement("div");
+      col.className = "col-12 col-md-6 col-xl-4";
+      col.innerHTML = `
+        <div class="podcast-audio-item">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+            <div>
+              <div class="fw-semibold text-white">${esc(audio.display_name || audio.filename || "Audio")}</div>
+              <div class="small text-white-50">${fmtBytes(audio.size_bytes)}${fmtDuration(audio.duration_seconds) ? ` • ${fmtDuration(audio.duration_seconds)}` : ""}</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-delete-id="${esc(audio.id || "")}">Delete</button>
+          </div>
+          <audio controls preload="none" src="${esc(audio.url || "")}"></audio>
+        </div>
+      `;
+      els.list.appendChild(col);
+    });
+    els.list.querySelectorAll("[data-delete-id]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-delete-id") || "";
+        if (!id) return;
+        if (!window.confirm("Delete this audio file?")) return;
+        btn.disabled = true;
+        setStatus("Deleting audio...");
+        try {
+          const res = await fetch(`${API_URL}/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            credentials: "same-origin",
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok || !payload.ok) throw new Error(payload.error || "Delete failed");
+          setStatus("Audio deleted.");
+          await loadAudios();
+        } catch (err) {
+          setStatus(err.message || "Delete failed.", true);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  };
+
+  const loadAudios = async () => {
+    try {
+      const res = await fetch(API_URL, { credentials: "same-origin" });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "Audio list could not be loaded.");
+      audios = Array.isArray(payload.audios) ? payload.audios : [];
+      render();
+    } catch (err) {
+      setStatus(err.message || "Audio list could not be loaded.", true);
+    }
+  };
+
+  const uploadAudio = async () => {
+    const file = els.file?.files?.[0];
+    if (!file) {
+      setStatus("Please choose an audio file first.", true);
+      return;
+    }
+    els.uploadBtn.disabled = true;
+    setStatus("Uploading audio...");
+    resetProgress();
+    showProgress(0, file.size || 0);
+    try {
+      const fd = new FormData();
+      fd.append("audio", file);
+      fd.append("label", (els.label?.value || file.name.replace(/\.[^.]+$/, "")).trim());
+      const payload = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", API_URL, true);
+        xhr.withCredentials = true;
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          showProgress(e.loaded, e.total);
+        };
+        xhr.onerror = () => reject(new Error("Upload failed."));
+        xhr.onload = () => {
+          let result = {};
+          try {
+            result = JSON.parse(xhr.responseText || "{}");
+          } catch (_) {
+            result = {};
+          }
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(result.error || "Upload failed."));
+            return;
+          }
+          showProgress(file.size || 0, file.size || 0);
+          resolve(result);
+        };
+        xhr.send(fd);
+      });
+      if (els.file) els.file.value = "";
+      if (els.label) els.label.value = "";
+      setStatus("Audio uploaded.");
+      await loadAudios();
+    } catch (err) {
+      setStatus(err.message || "Audio upload failed.", true);
+    } finally {
+      els.uploadBtn.disabled = false;
+      setTimeout(resetProgress, 800);
+    }
+  };
+
+  els.uploadBtn?.addEventListener("click", uploadAudio);
+  els.refreshBtn?.addEventListener("click", loadAudios);
+  resetProgress();
+  loadAudios();
+});
+</script>
+{% endblock %}

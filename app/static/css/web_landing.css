@@ -1,0 +1,200 @@
+.web-landing .vs-web-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.web-landing .vs-web-banner {
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 1.5rem 2rem 1.6rem;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.85), rgba(11, 15, 20, 0.7));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), 0 0 35px rgba(45, 212, 191, 0.2);
+  overflow: hidden;
+}
+
+.web-landing .vs-web-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 25% 40%, rgba(45, 212, 191, 0.18), transparent 55%);
+  pointer-events: none;
+}
+
+.web-landing .vs-web-slide-title {
+  font-size: clamp(1.9rem, 3vw, 2.7rem);
+  font-weight: 700;
+  margin: 0 0 1.1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.web-landing .vs-web-steps-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  position: relative;
+  z-index: 1;
+}
+
+.web-landing .vs-web-step-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  text-align: left;
+  position: relative;
+}
+
+.web-landing .vs-web-step-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.web-landing .vs-web-step-col:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 16px;
+  right: -0.75rem;
+  width: 1.5rem;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.web-landing .vs-web-step-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.web-landing .vs-web-step-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.2);
+  border: 1px solid rgba(45, 212, 191, 0.5);
+  color: var(--mint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.web-landing .vs-web-step-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.web-landing .vs-web-step-frame {
+  position: relative;
+  width: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(11, 15, 20, 0.6);
+}
+
+.web-landing .vs-web-step-media {
+  width: 100%;
+  height: 360px;
+  object-fit: contain;
+  display: block;
+}
+
+.web-landing .vs-web-step-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.65rem 0.75rem;
+}
+
+.web-landing .vs-web-step-bottombar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.web-landing .vs-web-step-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.web-landing .vs-web-step-icon {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+}
+
+.web-landing .vs-web-slide-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.2rem;
+  position: relative;
+  z-index: 1;
+}
+
+.web-landing .vs-web-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.web-landing .vs-web-feature {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+}
+
+.web-landing .vs-web-feature i {
+  color: var(--mint);
+  font-size: 1.2rem;
+}
+
+.web-landing .vs-web-feature-title {
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.web-landing .vs-web-feature p {
+  margin: 0.3rem 0 0;
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+.web-landing .vs-web-cta-strip {
+  border-radius: 20px;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  background: linear-gradient(120deg, rgba(45, 212, 191, 0.12), rgba(15, 23, 42, 0.95));
+}
+
+@media (max-width: 991px) {
+  .web-landing .vs-web-banner {
+    padding: 1.2rem 1rem 1.4rem;
+  }
+
+  .web-landing .vs-web-steps-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .web-landing .vs-web-step-col:not(:last-child)::after {
+    display: none;
+  }
+
+  .web-landing .vs-web-step-media {
+    height: 280px;
+  }
+}

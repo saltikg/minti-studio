@@ -1,0 +1,181 @@
+{% extends "web/base.html" %}
+
+{% block title %}MintiStudio | Daily Shorts System{% endblock %}
+
+{% block content %}
+<div class="vs-web-landing vs-daily-shorts">
+  <section class="vs-web-hero vs-daily-hero">
+    <div class="vs-daily-hero-bg"></div>
+    <div class="row g-4 align-items-center">
+      <div class="col-lg-7">
+        <div class="vs-web-label">
+          <span class="vs-web-label-dot"></span>
+          Use case
+        </div>
+        <h1 class="vs-web-hero-title">Daily Shorts System</h1>
+        <div class="vs-daily-subhead">Create once. Publish daily across every platform.</div>
+        <p class="vs-web-hero-subtitle">
+          Turn your content into a daily short pipeline. From idea to publish, Minti Studio helps you stay consistent without burning out.
+        </p>
+        <div class="vs-web-hero-actions">
+          <a class="btn btn-primary" href="#daily-shorts-how">Start Daily Plan</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('bp.web_landing') }}#templates">See templates</a>
+        </div>
+        <div class="vs-daily-pills">
+          <span class="vs-daily-pill"><i class="bi bi-calendar3"></i>Daily publishing</span>
+          <span class="vs-daily-pill"><i class="bi bi-share"></i>Cross platform</span>
+          <span class="vs-daily-pill"><i class="bi bi-arrow-repeat"></i>Consistency loop</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">The problem</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-exclamation-triangle"></i>Posting daily is exhausting and inconsistent</li>
+              <li><i class="bi bi-clock"></i>One video never fits every platform</li>
+              <li><i class="bi bi-shuffle"></i>You lose time on repetitive editing and uploads</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">The outcome</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-check-circle"></i>A repeatable daily workflow</li>
+              <li><i class="bi bi-rocket"></i>Auto formatting for each platform</li>
+              <li><i class="bi bi-grid"></i>Publish and track everything in one place</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section" id="daily-shorts-how">
+    <div class="vs-web-section-title">How it works</div>
+    <div class="vs-daily-timeline">
+      <div class="vs-daily-step vs-glass-card is-active">
+        <div class="vs-daily-step-icon"><i class="bi bi-calendar-plus"></i></div>
+        <div class="vs-daily-step-title">Plan</div>
+        <p>Create a daily queue from your content library. Pick topics, dates, and platforms.</p>
+      </div>
+      <div class="vs-daily-step vs-glass-card">
+        <div class="vs-daily-step-icon"><i class="bi bi-scissors"></i></div>
+        <div class="vs-daily-step-title">Produce</div>
+        <p>Generate short variations, add captions, and apply your brand template.</p>
+      </div>
+      <div class="vs-daily-step vs-glass-card">
+        <div class="vs-daily-step-icon"><i class="bi bi-send"></i></div>
+        <div class="vs-daily-step-title">Publish</div>
+        <p>Schedule or post to TikTok, YouTube Shorts, Instagram Reels, and Facebook Reels.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-daily-section">
+    <div class="vs-web-section-title">Daily Shorts System features</div>
+    <div class="vs-daily-feature-grid">
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-list-ol"></i>
+        <div>
+          <div class="vs-daily-feature-title">Daily Queue</div>
+          <p>Build a pipeline of shorts so you always know what posts next.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-crop"></i>
+        <div>
+          <div class="vs-daily-feature-title">Auto Resize and Safe Zones</div>
+          <p>9:16 output with platform-safe margins for UI overlays.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-subtitles"></i>
+        <div>
+          <div class="vs-daily-feature-title">Captions that match your style</div>
+          <p>Fast subtitles, clean typography, consistent look.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-palette"></i>
+        <div>
+          <div class="vs-daily-feature-title">Templates for brand consistency</div>
+          <p>Logo, colors, title cards, lower thirds.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-share"></i>
+        <div>
+          <div class="vs-daily-feature-title">Cross platform scheduling</div>
+          <p>One publish flow, multiple platforms.</p>
+        </div>
+      </div>
+      <div class="vs-glass-card vs-daily-feature">
+        <i class="bi bi-graph-up"></i>
+        <div>
+          <div class="vs-daily-feature-title">Performance feedback loop</div>
+          <p>See what works and generate more of it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <section class="vs-daily-section">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100">
+          <div class="card-body">
+            <div class="vs-daily-card-title">Built for creators and small teams</div>
+            <ul class="vs-daily-bullets">
+              <li><i class="bi bi-check-circle"></i>Save hours every week</li>
+              <li><i class="bi bi-check-circle"></i>Stay consistent without stress</li>
+              <li><i class="bi bi-check-circle"></i>Turn one idea into daily growth</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card vs-glass-card h-100 vs-daily-final-cta">
+          <div class="card-body d-flex flex-column gap-3">
+            <div class="vs-daily-card-title">Ready to run your Daily Shorts System?</div>
+            <div class="vs-daily-cta-actions">
+              <a class="btn btn-primary" href="{{ quick_url }}">Create my daily plan</a>
+              <a class="btn btn-outline-secondary" href="{{ url_for('bp.web_landing') }}#contact">Contact us</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const timelineSteps = Array.from(document.querySelectorAll(".vs-daily-step"));
+  if (timelineSteps.length) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting);
+        if (!visible.length) {
+          return;
+        }
+        visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        const active = visible[0].target;
+        timelineSteps.forEach((step) => step.classList.toggle("is-active", step === active));
+      },
+      { threshold: [0.4, 0.6, 0.8] }
+    );
+    timelineSteps.forEach((step) => observer.observe(step));
+  }
+</script>
+{% endblock %}

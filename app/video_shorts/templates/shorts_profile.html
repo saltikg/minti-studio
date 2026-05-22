@@ -1,0 +1,90 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Profile{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card shadow-sm h-100 vs-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title">Account details</h5>
+        <form method="post" class="row g-3">
+          <input type="hidden" name="form_type" value="profile">
+          <div class="col-12">
+            <label class="form-label vs-card-title">Username</label>
+            <input type="text" class="form-control vs-input" value="{{ profile_user.username }}" disabled>
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-card-title">Full name</label>
+            <input type="text" class="form-control vs-input" name="name" value="{{ profile_user.name }}" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-card-title">Email</label>
+            <input type="email" class="form-control vs-input" name="email" value="{{ profile_user.email or '' }}" placeholder="you@example.com">
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-card-title">Zaman dilimi</label>
+            <select class="form-select vs-select" name="time_zone">
+              {% for tz_value, tz_label in timezones %}
+                <option value="{{ tz_value }}" {% if tz_value == selected_timezone %}selected{% endif %}>
+                  {{ tz_label }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 d-flex justify-content-between">
+            <a href="{{ url_for('video_shorts_bp.logout') }}" class="btn vs-btn vs-btn-secondary">Logout</a>
+            <button class="btn vs-btn vs-btn-primary" type="submit">Save profile</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card shadow-sm mb-4 vs-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title">Change password</h5>
+        <form method="post" class="row g-3">
+          <input type="hidden" name="form_type" value="password">
+          <div class="col-12">
+            <label class="form-label vs-card-title">Current password</label>
+            <input type="password" name="current_password" class="form-control vs-input" placeholder="Current password">
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-card-title">New password</label>
+            <input type="password" name="new_password" class="form-control vs-input" placeholder="New password" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-card-title">Confirm new password</label>
+            <input type="password" name="confirm_password" class="form-control vs-input" placeholder="Repeat new password" required>
+          </div>
+          <div class="col-12 text-end">
+            <button class="btn vs-btn vs-btn-secondary" type="submit">Update password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-body">
+        <h5 class="card-title vs-card-title">Subscription</h5>
+        <p class="mb-1"><strong>Plan:</strong> {{ plan_label }}</p>
+        <p class="mb-3"><strong>Quota:</strong> {{ limit_label }}</p>
+        <div class="d-flex justify-content-between vs-text-small vs-text-muted">
+          <span>{{ used_label }} used</span>
+          <span>{{ usage_percent }}%</span>
+        </div>
+        <div class="progress" style="height:6px;">
+          <div class="progress-bar {% if usage_percent > 80 %}bg-danger{% elif usage_percent > 60 %}bg-warning{% else %}bg-success{% endif %}"
+               role="progressbar"
+               style="width: {{ usage_percent }}%;"
+               aria-valuenow="{{ usage_percent }}"
+               aria-valuemin="0"
+               aria-valuemax="100">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

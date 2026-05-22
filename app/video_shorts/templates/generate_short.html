@@ -1,0 +1,4415 @@
+{% extends "vs_base.html" %}
+
+{% set short_bg_url = url_for('video_shorts_bp.static', filename='img/1-short_bg_8.png') %}
+{% set SHORT_BG_WIDTH = 900 %}
+{% set SHORT_BG_HEIGHT = 1600 %}
+{% set PREVIEW_BG_WIDTH = 270 %}
+{% set PREVIEW_SCALE = PREVIEW_BG_WIDTH / SHORT_BG_WIDTH %}
+{% set PREVIEW_BG_HEIGHT = (SHORT_BG_HEIGHT * PREVIEW_SCALE) | round(2) %}
+{% set VIDEO_OVERLAY_WIDTH = SHORT_BG_WIDTH %}
+{% set VIDEO_OVERLAY_HEIGHT_LANDSCAPE = (VIDEO_OVERLAY_WIDTH * 9 / 16) | round(2) %}
+{% set VIDEO_OVERLAY_HEIGHT_PORTRAIT = SHORT_BG_HEIGHT %}
+{% set VIDEO_OVERLAY_X = (SHORT_BG_WIDTH - VIDEO_OVERLAY_WIDTH) / 2 %}
+{% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 400) %}
+{% set TITLE_BAND_Y = 250 %}
+{% set TITLE_BAND_HEIGHT = 70 %}
+{% set SUBTITLE_BAND_HEIGHT = 90 %}
+{% set SUBTITLE_BAND_Y = SHORT_BG_HEIGHT - SUBTITLE_BAND_HEIGHT - 40 %}
+{% set PREVIEW_CONFIG = {
+  "frameWidth": PREVIEW_BG_WIDTH,
+  "frameHeight": PREVIEW_BG_HEIGHT,
+  "bgUrl": short_bg_url or '',
+  "scale": PREVIEW_SCALE,
+  "titleY": TITLE_BAND_Y,
+  "titleHeight": TITLE_BAND_HEIGHT,
+  "videoX": VIDEO_OVERLAY_X,
+  "videoYLandscape": VIDEO_OVERLAY_Y,
+  "videoYPortrait": 0,
+  "videoWidthLandscape": VIDEO_OVERLAY_WIDTH,
+  "videoHeightLandscape": VIDEO_OVERLAY_HEIGHT_LANDSCAPE,
+  "videoWidthPortrait": VIDEO_OVERLAY_WIDTH,
+  "videoHeightPortrait": VIDEO_OVERLAY_HEIGHT_PORTRAIT,
+  "subtitleY": SUBTITLE_BAND_Y,
+  "subtitleHeight": SUBTITLE_BAND_HEIGHT
+} %}
+{% set has_transcript = transcript_text or (segments_view|length > 0) %}
+
+{% macro format_stat(value) %}
+  {% if value is none %}
+    -
+  {% else %}
+    {{ '{:,}'.format(value) }}
+  {% endif %}
+{% endmacro %}
+
+{% block title %}Generate Short – {{ video.title }}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
+<link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.css') }}">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Merriweather:wght@700&family=Source+Code+Pro:wght@700&family=Arimo:wght@400;700&family=Open+Sans+Condensed:wght@400;700&display=swap">
+
+
+<div class="gs-header mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+      <div class="d-flex align-items-center gap-3 w-100 flex-wrap">
+        <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-2"
+           href="{{ url_for('video_shorts_bp.videos_page', channel_id=video.channel_id) }}">
+          ← Back to videos
+        </a>
+        {% if video.video_url %}
+          <a class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-2"
+             href="{{ video.video_url }}" target="_blank" aria-label="YouTube">
+            ▶ Watch on YouTube
+          </a>
+        {% endif %}
+        <h3 class="fw-bold mb-0 d-flex align-items-center gap-2 flex-grow-1 gs-title">
+          🎬 Generate short – {{ video.title }}
+        </h3>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <span class="badge bg-transparent border border-secondary text-white-50 d-inline-flex align-items-center gap-2 px-2 py-1 fs-6"
+                title="Video ID">ID: {{ video.video_id }}</span>
+          <span class="badge bg-transparent border border-secondary text-white-50 d-inline-flex align-items-center gap-2 px-2 py-1 fs-6"
+                title="Views"><span class="material-symbols-outlined" aria-hidden="true">visibility</span> {{ '{:,}'.format(video.view_count|int) if video.view_count is not none else '-' }}</span>
+          <span class="badge bg-transparent border border-secondary text-white-50 d-inline-flex align-items-center gap-2 px-2 py-1 fs-6"
+                title="Likes"><span class="material-symbols-outlined" aria-hidden="true">favorite</span> {{ '{:,}'.format(video.like_count|int) if video.like_count is not none else '-' }}</span>
+          <span class="badge bg-transparent border border-secondary text-white-50 d-inline-flex align-items-center gap-2 px-2 py-1 fs-6"
+                title="Comments"><span class="material-symbols-outlined" aria-hidden="true">chat_bubble</span> {{ '{:,}'.format(video.comment_count|int) if video.comment_count is not none else '-' }}</span>
+          <span class="badge bg-transparent border border-secondary text-white-50 d-inline-flex align-items-center gap-2 px-2 py-1 fs-6"
+                title="Total duration"><span class="material-symbols-outlined" aria-hidden="true">schedule</span> {{ video_duration_label or (video.duration_seconds ~ 's' if video.duration_seconds else '-') }}</span>
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-none"
+            id="choose-crop-btn"
+            data-bs-toggle="modal"
+            data-bs-target="#crop-area-modal"
+            data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
+            data-preview-url="{{ preview_url or '' }}"
+            data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
+            data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
+            data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
+            data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+            data-static-visual-key="{{ video_static_visual_key or '' }}"
+            data-background-visual-key="{{ video_background_visual_key or '' }}"
+            data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
+            📐 Crop for Shorts
+          </button>
+        </div>
+      </div>
+    </div>
+</div>
+
+<div id="js-debug-panel"
+     class="alert alert-danger py-2 px-3 d-none"
+     style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;"></div>
+
+{% if (video.download_status or '')|lower == 'pending' %}
+  <div class="alert alert-info">
+    Downloading. The local downloader runs hourly, so there may be a short delay.
+  </div>
+{% endif %}
+
+{% set step1_done = has_transcript %}
+{% set step2_done = plan_exists %}
+{% set step2_enabled = has_transcript %}
+{% set step3_enabled = plan_exists %}
+
+<div class="gs-card mb-3 steps-card">
+  <div class="steps-row">
+    <button type="submit"
+            form="step1-form"
+            id="step1-btn"
+            class="step-button {{ 'step-completed' if step1_done else '' }}"
+            {% if step1_done %}data-confirm-message="A transcript already exists; re-running Whisper can take a while. Continue?"{% endif %}>
+      <div class="step-number">Step 1</div>
+      <div class="step-title">Transcribe video</div>
+      <div class="step-status">{{ 'Done' if step1_done else 'Run Whisper' }}</div>
+    </button>
+    <button type="submit"
+            form="step2-form"
+            id="step2-btn"
+            class="step-button {% if step2_done %}step-completed{% elif not step2_enabled %}step-disabled{% endif %}"
+            {% if step2_done %}
+              data-confirm-message="A clip plan already exists; rerunning will regenerate it and may take time. Continue?"
+            {% endif %}
+            {% if not step2_enabled %}disabled{% endif %}>
+      <div class="step-number">Step 2</div>
+      <div class="step-title">Create clip plan</div>
+      <div class="step-status">
+        {% if step2_done %}Plan ready{% else %}Needs transcript{% endif %}
+      </div>
+    </button>
+    <button type="submit"
+            form="step2-form"
+            name="language"
+            value="en"
+            class="step-button {% if step2_done %}step-completed{% elif not step2_enabled %}step-disabled{% endif %}"
+            {% if step2_done %}
+              data-confirm-message="An English clip plan will replace the current plan. Continue?"
+            {% endif %}
+            {% if not step2_enabled %}disabled{% endif %}>
+      <div class="step-number">Step 2</div>
+      <div class="step-title">Create clip plan (EN)</div>
+      <div class="step-status">
+        {% if step2_done %}Plan ready{% else %}Needs transcript{% endif %}
+      </div>
+    </button>
+    <button type="submit"
+            form="step2-form"
+            name="plan_focus"
+            value="anecdote_memory_scene"
+            class="step-button {% if step2_done %}step-completed{% elif not step2_enabled %}step-disabled{% endif %}"
+            {% if step2_done %}
+              data-confirm-message="A story/relaxing clip plan will replace the current plan. Continue?"
+            {% endif %}
+            {% if not step2_enabled %}disabled{% endif %}>
+      <div class="step-number">Step 2</div>
+      <div class="step-title">Story / relaxing plan</div>
+      <div class="step-status">
+        {% if step2_done %}Focused plan{% else %}Transcript required{% endif %}
+      </div>
+    </button>
+    <button type="button"
+            id="step3-btn"
+            class="step-button {% if not step3_enabled %}step-disabled{% endif %}"
+            {% if not step3_enabled %}disabled{% endif %}>
+      <div class="step-number">Step 3</div>
+      <div class="step-title">Generate short clips</div>
+      <div class="step-status">
+        {% if step3_enabled %}Use plan to render clips{% else %}Plan required{% endif %}
+      </div>
+    </button>
+  </div>
+  <div class="small text-muted mt-2">
+    {% if not has_transcript %}
+    {% elif not plan_exists %}
+      Run Step 2 to create the clip plan and unlock Step 3.
+    {% else %}
+      Step 3 active: select a plan entry below to generate a short clip.
+    {% endif %}
+  </div>
+  <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
+  <div id="plan-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
+  <div class="mt-3">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <button
+        type="button"
+        class="btn btn-primary btn-lg"
+        id="video-editor-btn"
+        data-bs-toggle="modal"
+        data-bs-target="#crop-area-modal"
+        data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
+        data-preview-url="{{ preview_url or '' }}"
+        data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
+        data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
+        data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
+        data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+        data-static-visual-key="{{ video_static_visual_key or '' }}"
+        data-background-visual-key="{{ video_background_visual_key or '' }}"
+        data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
+        Video Editor / settings
+      </button>
+      <button
+        type="button"
+        class="btn btn-outline-light btn-lg"
+        id="create-long-from-shorts-btn"
+        data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
+        {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
+        Create long video from shorts
+      </button>
+      <span id="create-long-from-shorts-elapsed" class="small text-white-50"></span>
+      <span id="crop-status-text" class="small text-white">
+        {% if static_visual_label %}
+          Static visual {{ static_visual_label }} selected
+        {% elif created_visual_label %}
+          Created video {{ created_visual_label }} selected
+        {% elif video.crop_x_ratio is not none %}
+          Crop area saved
+        {% else %}
+        {% endif %}
+      </span>
+    </div>
+  </div>
+</div>
+
+{% if long_compilation_videos %}
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="gs-card">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <h5 class="mb-0">Long Videos From Published Shorts</h5>
+        <span class="small text-white-50">{{ long_compilation_videos|length }} video</span>
+      </div>
+      <div class="row g-3">
+        {% for item in long_compilation_videos %}
+        <div class="col-12 col-lg-4">
+          <div class="border rounded-3 p-2 h-100">
+            <video controls style="width:100%;border-radius:10px;">
+              <source src="{{ item.url }}" type="video/mp4">
+            </video>
+            <div class="small text-light">Created: {{ item.created_at }}</div>
+            <div class="small text-light">Clips: {{ item.clip_count if item.clip_count is not none else '?' }}</div>
+            <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap mt-1">
+              {% if item.youtube_label or item.youtube_display %}
+                {% set yt_tip = item.youtube_display or item.youtube_label %}
+                <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ yt_tip }}">
+                  <i class="bi bi-youtube {{ item.youtube_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
+                </span>
+              {% endif %}
+              {% if item.instagram_label or item.instagram_display %}
+                {% set ig_tip = item.instagram_display or item.instagram_label %}
+                <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ ig_tip }}">
+                  <i class="bi bi-instagram {{ item.instagram_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
+                </span>
+              {% endif %}
+              {% if item.tiktok_label or item.tiktok_display %}
+                {% set tt_tip = item.tiktok_display or item.tiktok_label %}
+                <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ tt_tip }}">
+                  <i class="bi bi-tiktok {{ item.tiktok_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
+                </span>
+              {% endif %}
+              {% if item.facebook_label or item.facebook_display %}
+                {% set fb_tip = item.facebook_display or item.facebook_label %}
+                <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ fb_tip }}">
+                  <i class="bi bi-facebook {{ item.facebook_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
+                </span>
+              {% endif %}
+            </div>
+            <a
+              href="{{ item.url }}"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn btn-sm btn-outline-light mt-2 me-2"
+              title="Open in new tab">
+              <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+            </a>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-danger mt-2 me-2 long-video-delete-btn"
+              data-filename="{{ item.filename }}"
+              data-delete-url="{{ url_for('video_shorts_bp.delete_long_video_from_generate', video_pk=video.id) }}">
+              <i class="bi bi-trash3" aria-hidden="true"></i>
+            </button>
+            <button
+              type="button"
+              class="btn btn-dark btn-sm mt-2 send-to-youtube-btn"
+              data-upload-url="{{ url_for('video_shorts_bp.publish_long_video_from_generate', video_pk=video.id) }}"
+              data-filename="{{ item.filename }}"
+              data-plan-index="longcomp"
+              data-video-pk="{{ video.id }}"
+              data-title="{{ (item.suggested_title or suggested_long_video_title)|e }}"
+              data-description=""
+              data-long-titles="{{ (item.source_titles or [])|tojson|urlencode }}"
+              data-long-chapters="{{ (item.source_chapters or [])|tojson|urlencode }}"
+              data-button-label="Schedule & publish"
+              data-description-disabled="1">
+              <i class="bi bi-youtube"></i>
+              Schedule & publish
+            </button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<form id="step1-form"
+      method="post"
+      action="{{ url_for('video_shorts_bp.transcribe_video', video_pk=video.id) }}"
+      data-transcribe-start-url="{{ url_for('video_shorts_bp.transcribe_video_start', video_pk=video.id) }}"
+      data-transcribe-status-url="{{ url_for('video_shorts_bp.transcribe_video_status', video_pk=video.id) }}"></form>
+
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <form id="step2-form"
+          method="post"
+          action="{{ url_for('video_shorts_bp.create_clip_plan', video_pk=video.id) }}"
+          data-plan-start-url="{{ url_for('video_shorts_bp.create_clip_plan_start', video_pk=video.id) }}"
+          data-plan-status-url="{{ url_for('video_shorts_bp.create_clip_plan_status', video_pk=video.id) }}">
+    </form>
+  </div>
+
+  <div class="col-12">
+    {% if has_transcript %}
+      {% set total_clip_count = clip_rows|length %}
+      {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
+      <div class="gs-card h-100">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+          <div class="small text-white-50">Clips: {{ created_clip_count }}/{{ total_clip_count }} created</div>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+            id="add-clip-toggle-btn"
+            aria-expanded="false"
+            aria-controls="add-clip-panel">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>
+            Add clip
+          </button>
+        </div>
+        <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
+          <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+              <label class="form-label small mb-1">Start</label>
+              <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label small mb-1">End</label>
+              <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label small mb-1">Title (optional)</label>
+              <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
+            </div>
+            <div class="col-12 col-md-2 d-grid">
+              <button type="submit" class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
+              </button>
+            </div>
+          </form>
+        </div>
+        <div id="clip-list" class="clip-list">
+          {% for row in clip_rows %}
+            {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
+            {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
+              {% set clip_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
+              {% set meta_row_classes = "clip-card-meta-row" %}
+              {% if row.publish_status == "scheduled" %}
+                {% set meta_row_classes = meta_row_classes + " scheduled" %}
+              {% elif row.publish_status == "published" %}
+                {% set meta_row_classes = meta_row_classes + " published" %}
+              {% endif %}
+            <div class="clip-card" data-status="{{ row.status }}" data-publish="{{ row.publish_status }}" data-start="{{ row.start or 0 }}" data-duration="{{ row.duration or 0 }}">
+              <div class="clip-card-strip {{ row.status }}"></div>
+              <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
+                <div class="clip-card-meta-time">
+                  {{ clip_start_label }} – {{ clip_end_label }} ({{ clip_duration_label }})
+                </div>
+                <div class="clip-card-meta-status">
+                  <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
+                    {% if row.publish_display %}
+                      {% if row.publish_status == "published" %}
+                        {% set yt_icon_class = "text-success" %}
+                      {% elif row.publish_status == "scheduled" %}
+                        {% set yt_icon_class = "text-warning" %}
+                      {% else %}
+                        {% set yt_icon_class = "text-danger" %}
+                      {% endif %}
+                      {% set yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ yt_tooltip_label }}: {{ row.publish_display }}">
+                        <i class="bi bi-youtube {{ yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                      </span>
+                    {% endif %}
+                    {% if row.instagram_display %}
+                      {% set ig_label_lower = (row.instagram_label or "")|lower %}
+                      {% if "published" in ig_label_lower %}
+                        {% set ig_icon_class = "text-success" %}
+                      {% elif "scheduled" in ig_label_lower or "queued" in ig_label_lower %}
+                        {% set ig_icon_class = "text-warning" %}
+                      {% elif "failed" in ig_label_lower %}
+                        {% set ig_icon_class = "text-danger" %}
+                      {% else %}
+                        {% set ig_icon_class = "text-warning" %}
+                      {% endif %}
+                      {% set ig_tooltip_label = "Published date" if "published" in ig_label_lower else "Schedule date" %}
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ ig_tooltip_label }}: {{ row.instagram_display }}">
+                        <i class="bi bi-instagram {{ ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                      </span>
+                    {% endif %}
+                    {% if row.tiktok_display %}
+                      {% set tt_label_lower = (row.tiktok_label or "")|lower %}
+                      {% if "published" in tt_label_lower %}
+                        {% set tt_icon_class = "text-success" %}
+                      {% elif "scheduled" in tt_label_lower or "queued" in tt_label_lower %}
+                        {% set tt_icon_class = "text-warning" %}
+                      {% elif "failed" in tt_label_lower %}
+                        {% set tt_icon_class = "text-danger" %}
+                      {% else %}
+                        {% set tt_icon_class = "text-warning" %}
+                      {% endif %}
+                      {% set tt_tooltip_label = "Published date" if "published" in tt_label_lower else "Schedule date" %}
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ tt_tooltip_label }}: {{ row.tiktok_display }}">
+                        <i class="bi bi-tiktok {{ tt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                      </span>
+                    {% endif %}
+                    {% if row.facebook_label or row.facebook_display %}
+                      {% set fb_tooltip = row.facebook_display or (row.facebook_mode == 'sync' and row.publish_display) or row.facebook_label %}
+                      {% set fb_label_lower = (row.facebook_label or "")|lower %}
+                      {% if "failed" in fb_label_lower %}
+                        {% set fb_icon_class = "text-danger" %}
+                      {% elif "published" in fb_label_lower %}
+                        {% set fb_icon_class = "text-success" %}
+                      {% elif "scheduled" in fb_label_lower or "queued" in fb_label_lower %}
+                        {% set fb_icon_class = "text-warning" %}
+                      {% else %}
+                        {% set fb_icon_class = "text-primary" %}
+                      {% endif %}
+                      {% set fb_tooltip_label = "Published date" if "published" in fb_label_lower else "Schedule date" %}
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ fb_tooltip_label }}: {{ fb_tooltip }}">
+                        <i class="bi bi-facebook {{ fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                      </span>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+              <div class="clip-card-body">
+                  <div class="clip-card-media">
+                  {% if row.status == "created" and row.video_filename and row.video_url %}
+                    <video controls preload="metadata">
+                      <source src="{{ row.video_url }}" type="video/mp4">
+                    </video>
+                    <div class="clip-card-media-actions d-flex gap-2 mt-2">
+                      <a
+                        class="btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center"
+                        href="{{ row.video_url }}"
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open video">
+                        <span class="visually-hidden">Open video</span>
+                        <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+                      </a>
+                      <form method="post" action="{{ url_for('video_shorts_bp.delete_clip', video_pk=video.id) }}" class="mb-0">
+                        <input type="hidden" name="filename" value="{{ row.video_filename }}">
+                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                        <button
+                          type="submit"
+                          class="btn btn-outline-danger btn-sm p-2 d-flex align-items-center justify-content-center"
+                          title="Delete video"
+                          data-confirm-message="Are you sure you want to delete this clip file and remove its link from the plan?">
+                          <span class="visually-hidden">Delete video</span>
+                          <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
+                        </button>
+                      </form>
+                      <form method="post" action="{{ url_for('video_shorts_bp.update_clip_category', video_pk=video.id) }}" class="clip-category-form" data-save-url="{{ url_for('video_shorts_bp.update_clip_category', video_pk=video.id) }}">
+                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                        <select name="category" class="form-select form-select-sm clip-category-select" aria-label="Category">
+                          <option value="">{% if row.category %}Category{% else %}Select category{% endif %}</option>
+                          {% for category in category_options %}
+                            <option value="{{ category }}" {% if row.category == category %}selected{% endif %}>{{ category }}</option>
+                          {% endfor %}
+                        </select>
+                        <span class="clip-category-feedback text-muted d-none"></span>
+                      </form>
+                    </div>
+                  {% else %}
+                    <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
+                      <form class="generate-clip-form" method="post" action="{{ url_for('video_shorts_bp.autoclip_video', video_pk=video.id) }}">
+                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                        <input type="hidden" name="title" class="generate-clip-hidden-title" value="{{ row.title or '' }}">
+                        <button type="submit" class="btn btn-primary clip-generate-btn">
+                          <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                          <span class="btn-label">Generate Short Clip</span>
+                        </button>
+                      </form>
+                      <div class="clip-card-generate-feedback small mt-1 d-none"></div>
+                    </div>
+                  {% endif %}
+                  </div>
+                <div class="clip-card-main">
+                  <form class="clip-card-title-row" method="post" action="{{ url_for('video_shorts_bp.adjust_clip_timing', video_pk=video.id) }}">
+                    <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                    <div class="clip-title-field clip-title-start">
+                      <label class="form-label">Start</label>
+                      <input
+                        type="text"
+                        name="start_time"
+                        class="form-control form-control-sm clip-time-input"
+                        placeholder="MM:SS.mmm"
+                        value="{{ row.start_label or '' }}">
+                    </div>
+                    <div class="clip-title-field clip-title-main">
+                      <label class="form-label">Clip title</label>
+                      <input type="text" name="title" class="form-control clip-title-input" placeholder="Clip title" value="{{ row.title or '' }}">
+                    </div>
+                    <div class="clip-title-field clip-title-suggest-field">
+                      <label class="form-label" aria-hidden="true">&nbsp;</label>
+                      <button type="button"
+                              class="btn btn-sm btn-outline-secondary clip-suggest-title-btn d-flex align-items-center justify-content-center"
+                              title="Suggest new title"
+                              data-video-pk="{{ video.id }}"
+                              data-plan-index="{{ row.plan_index }}"
+                              data-excerpt="{{ (row.excerpt or row.transcript_full or '')|replace('\\n', ' ')|truncate(120, True, '…')|e }}"
+                              data-suggest-url="{{ url_for('video_shorts_bp.suggest_clip_title', video_pk=video.id) }}">
+                        <span class="material-symbols-outlined" aria-hidden="true">change_circle</span>
+                        <span class="visually-hidden">Suggest title</span>
+                      </button>
+                    </div>
+                    <div class="clip-title-field clip-title-end">
+                      <label class="form-label">End</label>
+                      <input
+                        type="text"
+                        name="end_time"
+                        class="form-control form-control-sm clip-time-input"
+                        placeholder="MM:SS.mmm"
+                        value="{{ row.end_label or '' }}">
+                    </div>
+                    <div class="clip-title-field clip-title-action">
+                      <label class="form-label" aria-hidden="true">&nbsp;</label>
+                      <button type="submit" class="btn btn-sm btn-outline-primary clip-save-btn d-flex align-items-center justify-content-center" title="Save adjustments">
+                        <span class="material-symbols-outlined" aria-hidden="true">save</span>
+                        <span class="visually-hidden">Apply</span>
+                      </button>
+                    </div>
+                  </form>
+                  <div class="clip-card-save-feedback small mt-1 d-none"></div>
+                  <div class="clip-title-suggestion-feedback small mt-1 text-muted d-none"></div>
+                  <form id="transcript-form-{{ row.plan_index }}" class="clip-card-transcript" method="post" action="{{ url_for('video_shorts_bp.update_clip_subtitle', video_pk=video.id) }}">
+                    <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                    <input type="hidden" name="video_filename" value="{{ row.video_filename or '' }}">
+                    <textarea name="subtitle" class="form-control" rows="5">{{ row.transcript_full or "" }}</textarea>
+                  </form>
+                  <div class="clip-card-action-bar mt-3">
+                      {% if row.publish_status == "published" %}
+                        {% set stats = row.published_stats or {} %}
+                        <div class="clip-card-published-stats">
+                          <div class="clip-card-stats">
+                            <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Views">
+                              <i class="bi bi-eye"></i>
+                              <span class="clip-card-stat-value">{{ format_stat(stats.get("view_count")) }}</span>
+                            </span>
+                            <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Likes">
+                              <i class="bi bi-hand-thumbs-up"></i>
+                              <span class="clip-card-stat-value">{{ format_stat(stats.get("like_count")) }}</span>
+                            </span>
+                            <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Comments">
+                              <i class="bi bi-chat-right-text"></i>
+                              <span class="clip-card-stat-value">{{ format_stat(stats.get("comment_count")) }}</span>
+                            </span>
+                            <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Favorites">
+                              <i class="bi bi-star"></i>
+                              <span class="clip-card-stat-value">{{ format_stat(stats.get("favorite_count")) }}</span>
+                            </span>
+                            <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Dislikes">
+                              <i class="bi bi-hand-thumbs-down"></i>
+                              <span class="clip-card-stat-value">{{ format_stat(stats.get("dislike_count")) }}</span>
+                            </span>
+                            {% if row.yt_video_id %}
+                              <span class="clip-card-stat-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Open on YouTube">
+                                <a
+                                  class="clip-card-youtube-link"
+                                  href="https://www.youtube.com/watch?v={{ row.yt_video_id }}"
+                                  target="_blank"
+                                  rel="noreferrer">
+                                  <i class="bi bi-youtube" aria-hidden="true"></i>
+                                </a>
+                              </span>
+                            {% endif %}
+                          </div>
+                        </div>
+                      {% endif %}
+                        <div class="clip-card-action-footer{% if row.publish_status == 'published' %} justify-content-end{% endif %}">
+                          {% if row.publish_status != "published" %}
+                          <div class="clip-card-action-secondary">
+                            <form class="mb-0 clip-card-inline-actions">
+                              <button type="submit" name="action" value="update" form="transcript-form-{{ row.plan_index }}" class="btn btn-sm btn-outline-primary save-transcript-btn clip-card-mini-btn" title="Save transcript edits">
+                                <span class="material-symbols-outlined" aria-hidden="true">save</span>
+                                Save
+                              </button>
+                              <button type="submit" name="action" value="correct" form="transcript-form-{{ row.plan_index }}" class="btn btn-sm btn-outline-info clip-card-mini-btn" title="Improve transcript with AI">
+                                <i class="bi bi-stars" aria-hidden="true"></i>
+                                AI Edit
+                              </button>
+                            </form>
+                          </div>
+                          {% endif %}
+                          {% if row.status == "created" and row.video_filename %}
+                            <div class="clip-card-action-primary">
+                              <button
+                                type="button"
+                                class="btn btn-dark clip-card-send-btn clip-card-mini-btn send-to-youtube-btn"
+                                data-filename="{{ row.video_filename }}"
+                                data-plan-index="{{ row.plan_index }}"
+                                data-title="{{ (row.yt_title or row.title or video.title) | e }}"
+                                data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}"
+                                data-video-pk="{{ video.id }}"
+                                data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}"
+                                data-latest-scheduled="{{ (channel_latest_scheduled_display or '') | e }}"
+                                data-yt-video-id="{{ row.yt_video_id or '' }}"
+                                data-instagram-reel="{{ '1' if row.instagram_reel else '' }}"
+                                data-instagram-feed="{{ '1' if row.instagram_feed else '' }}"
+                                data-instagram-mode="{{ row.instagram_mode or '' }}"
+                                data-instagram-publish-at="{{ row.instagram_publish_at or '' }}"
+                                data-tiktok-enabled="{{ '1' if row.tiktok_enabled else '' }}"
+                                data-tiktok-mode="{{ row.tiktok_mode or '' }}"
+                                data-tiktok-publish-at="{{ row.tiktok_publish_at or '' }}"
+                                data-facebook-reel="{{ '1' if row.facebook_reel else '' }}"
+                                data-facebook-feed="{{ '1' if row.facebook_feed else '' }}"
+                                data-facebook-mode="{{ row.facebook_mode or '' }}"
+                                data-facebook-publish-at="{{ row.facebook_publish_at or '' }}"
+                                data-button-label="{% if row.publish_status == 'scheduled' %}Update schedule{% elif row.publish_status == 'uploaded' %}Update upload{% else %}Schedule & publish{% endif %}"
+                                {% if not youtube_connected %}disabled title="YouTube connection not set up"{% endif %}>
+                                <i class="bi bi-youtube"></i>
+                                Schedule
+                              </button>
+                            </div>
+                          {% endif %}
+                        </div>
+                    </div>
+                    {% if row.status != "created" %}
+                      <form method="post" action="{{ url_for('video_shorts_bp.remove_plan_entry', video_pk=video.id) }}" class="mb-0 mt-2">
+                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                        <input type="hidden" name="filename" value="{{ row.video_filename or '' }}">
+                        <button type="submit" class="btn btn-outline-danger" data-confirm-message="Are you sure you want to delete this plan section?">
+                          <i class="bi bi-trash3 me-1" aria-hidden="true"></i> Delete section
+                        </button>
+                      </form>
+                    {% endif %}
+                    <div class="clip-card-progress">
+                      <div class="progress-bar"></div>
+                    </div>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% else %}
+      <div class="gs-card">
+        <div class="small text-muted">
+          <span class="text-white">After completing Step 1, the clip plan and CLIPS table will appear.</span>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="loading-overlay" id="spinner-overlay">
+  <div class="text-center">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="mt-2 fw-semibold text-primary">Processing clips…</div>
+    <div class="small text-muted" id="overlay-info">This may take a few minutes.</div>
+    <div class="progress mt-2">
+      <div class="progress-bar"></div>
+    </div>
+    <div class="small text-muted mt-1" id="elapsed-label">Elapsed: 0s</div>
+  </div>
+</div>
+<div class="modal fade" id="youtubeUploadModal" tabindex="-1" aria-labelledby="youtubeUploadModalLabel" aria-hidden="true">
+<div class="modal-dialog modal-dialog-centered modal-lg gs-modal-dialog">
+    <div class="modal-content gs-modal-content">
+      <div class="modal-header bg-dark text-white border-0">
+        <div class="d-flex align-items-center gap-2">
+          <svg width="26" height="26" viewBox="0 0 26 26" role="presentation" aria-hidden="true">
+            <rect width="26" height="26" rx="6" fill="#FF0000"></rect>
+            <path d="M10 8l8 5-8 5V8z" fill="#fff"></path>
+          </svg>
+          <h5 class="modal-title mb-0" id="youtubeUploadModalLabel">Schedule & Publish</h5>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+            <form id="youtube-upload-form" method="post" action="{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}">
+        <input type="hidden" name="filename" value="">
+        <input type="hidden" name="plan_index" value="">
+        <input type="hidden" name="video_pk" value="{{ video.id }}">
+        <input type="hidden" name="yt_video_id" value="">
+        <div class="modal-body py-4 text-white gs-modal-body">
+          <div id="youtube-upload-feedback" class="alert alert-danger d-none mb-2" role="alert"></div>
+          <div class="row g-3">
+            <div class="col-12 col-lg-8">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-body">
+                  <label class="form-label fw-semibold" for="youtube-title-input">Title</label>
+                  <input
+                    type="text"
+                    id="youtube-title-input"
+                    name="title"
+                    class="form-control mb-3"
+                    placeholder="Short, punchy title">
+                  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                    <label class="form-label fw-semibold mb-0" for="youtube-description-input">Description</label>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-light youtube-description-btn d-inline-flex align-items-center gap-2"
+                      id="youtube-description-generate-btn">
+                      <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                      <span class="btn-label">Create Description</span>
+                      <span class="youtube-desc-llm">LLM</span>
+                    </button>
+                  </div>
+                  <textarea
+                    id="youtube-description-input"
+                    name="description"
+                    class="form-control"
+                    rows="5"
+                    placeholder="Add context and links for YouTube"></textarea>
+                  <div id="youtube-description-counter" class="small text-white-50 mt-2">0 / 5000</div>
+                  <div id="youtube-description-status" class="small text-success mt-2 d-none"></div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-4 d-flex flex-column gap-3">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-youtube text-danger fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">YouTube</h5>
+                  </div>
+                  <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <div class="form-check form-switch text-white-50">
+                      <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" checked>
+                      <label class="form-check-label small" for="youtubeEnableToggle">Enabled</label>
+                    </div>
+                    <span class="badge text-white bg-success" id="youtubeStatusBadge">Now</span>
+                  </div>
+                </div>
+                <div class="card-body pt-0">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="form-label fw-semibold text-white mb-0">Publish time ({{ user_time_zone_label }})</label>
+                  </div>
+                  <input type="datetime-local" name="publish_at" class="form-control mb-2">
+                  <div class="form-text text-white-50" id="youtube-latest-scheduled">
+                    {% if channel_latest_scheduled_display %}
+                      Last scheduled publish: {{ channel_latest_scheduled_display }}
+                    {% else %}
+                      No scheduled videos yet.
+                    {% endif %}
+                  </div>
+                  <div id="youtubeDisabledHint" class="small text-warning mt-2 d-none">This clip will not be sent to YouTube.</div>
+                </div>
+              </div>
+              <div class="card bg-dark text-white border border-secondary-subtle" id="instagramSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-instagram text-warning fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Instagram</h5>
+                  </div>
+                    <span class="badge bg-secondary" id="instagramStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="instagramReelToggle" name="schedule_instagram_reel">
+                      <label class="form-check-label" for="instagramReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" role="switch" id="instagramFeedToggle" name="schedule_instagram_feed">
+                      <label class="form-check-label" for="instagramFeedToggle">Share as feed video</label>
+                    </div>
+                    <div class="form-check mt-2">
+                      <input class="form-check-input" type="checkbox" id="instagramForceRequeue" name="force_requeue_instagram">
+                      <label class="form-check-label" for="instagramForceRequeue">Force requeue if already published</label>
+                    </div>
+                  </div>
+                  <div id="instagramTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Instagram scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeSync" value="sync" checked>
+                        <label class="form-check-label" for="instagramModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeNow" value="now">
+                        <label class="form-check-label" for="instagramModeNow">Publish immediately on Instagram</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeSchedule" value="schedule">
+                        <label class="form-check-label" for="instagramModeSchedule">Choose a separate Instagram time</label>
+                      </div>
+                    </div>
+                    <div id="instagramScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Instagram publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="instagram_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="instagramTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+              <div class="card bg-dark text-white border border-secondary-subtle" id="facebookSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-facebook text-primary fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Facebook Page</h5>
+                  </div>
+                  <span class="badge bg-secondary" id="facebookStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not facebook_connected %}
+                    <div class="small text-warning mb-2">
+                      Facebook Page is not connected. Please connect it in
+                      <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                    </div>
+                  {% endif %}
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="facebookReelToggle" name="schedule_facebook_reel" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="facebookReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" role="switch" id="facebookFeedToggle" name="schedule_facebook_feed" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="facebookFeedToggle">Share as feed video</label>
+                    </div>
+                  </div>
+                  <div id="facebookTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Facebook scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeSync" value="sync" checked>
+                        <label class="form-check-label" for="facebookModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeNow" value="now">
+                        <label class="form-check-label" for="facebookModeNow">Publish immediately on Facebook</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeSchedule" value="schedule">
+                        <label class="form-check-label" for="facebookModeSchedule">Choose a separate Facebook time</label>
+                      </div>
+                    </div>
+                    <div id="facebookScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Facebook publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="facebook_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="facebookTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+              <div class="card bg-dark text-white border border-secondary-subtle" id="tiktokSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <h5 class="mb-0 text-white">TikTok</h5>
+                  </div>
+                  <span class="badge bg-secondary" id="tiktokStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not tiktok_connected %}
+                    <div class="small text-warning mb-2">
+                      TikTok is not connected. Please connect it in
+                      <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                    </div>
+                  {% endif %}
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" role="switch" id="tiktokToggle" name="schedule_tiktok" {% if not tiktok_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="tiktokToggle">Share to TikTok</label>
+                    </div>
+                    <div class="form-check mt-2">
+                      <input class="form-check-input" type="checkbox" id="tiktokForceRequeue" name="force_requeue_tiktok" {% if not tiktok_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="tiktokForceRequeue">Force requeue if already published</label>
+                    </div>
+                  </div>
+                  <div id="tiktokTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">TikTok scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeSync" value="sync" checked>
+                        <label class="form-check-label" for="tiktokModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeNow" value="now">
+                        <label class="form-check-label" for="tiktokModeNow">Publish immediately on TikTok</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeSchedule" value="schedule">
+                        <label class="form-check-label" for="tiktokModeSchedule">Choose a separate TikTok time</label>
+                      </div>
+                    </div>
+                    <div id="tiktokScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">TikTok publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="tiktok_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="tiktokTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer d-flex justify-content-between py-3 px-4 border-0 align-items-center">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M23.498 6.186a2.88 2.88 0 0 0-2.03-2.03C19.408 3.5 12 3.5 12 3.5s-7.408 0-9.468.656a2.88 2.88 0 0 0-2.03 2.03C.5 8.23.5 12 .5 12s0 3.77.002 5.814a2.88 2.88 0 0 0 2.03 2.03C4.592 21.5 12 21.5 12 21.5s7.408 0 9.468-.656a2.88 2.88 0 0 0 2.03-2.03C23.5 15.77 23.5 12 23.5 12s0-3.77-.002-5.814zM9.75 16.5v-9l6.5 4.5-6.5 4.5z"/>
+            </svg>
+            <span class="btn-label">Schedule & publish</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<div class="modal fade" id="crop-area-modal" tabindex="-1" aria-labelledby="cropAreaModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title d-flex align-items-center gap-2" id="cropAreaModalLabel">
+          Crop for Shorts
+          <button
+            type="button"
+            class="btn btn-link p-0 text-muted"
+            data-bs-toggle="tooltip"
+            data-bs-placement="right"
+            title="Choose between cropping the video or using a static image.">
+            <i class="bi bi-info-circle"></i>
+          </button>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="top-controls mb-3">
+          <div class="d-flex flex-column gap-2" style="flex: 0 0 300px; max-width: 300px; width: 100%;">
+            <div class="control-group" id="crop-aspect-selector" style="padding: 8px 10px;">
+              <label class="text-white-50 d-flex align-items-center gap-2">
+                Format
+              </label>
+              <div class="controls" role="group" aria-label="Crop aspect ratio" style="gap: 8px;">
+                <button type="button" class="aspect-card" data-crop-aspect="portrait" style="min-height: 56px; padding: 8px 10px;">
+                  <span class="aspect-icon"><i class="bi bi-phone"></i></span>
+                  <span>
+                    <div class="aspect-title text-white">Vertical</div>
+                    <div class="aspect-sub">9:16</div>
+                  </span>
+                </button>
+                <button type="button" class="aspect-card" data-crop-aspect="landscape" style="min-height: 56px; padding: 8px 10px;">
+                  <span class="aspect-icon"><i class="bi bi-display"></i></span>
+                  <span>
+                    <div class="aspect-title text-white">Horizontal</div>
+                    <div class="aspect-sub">16:9</div>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' style="padding: 8px 10px;">
+              <label class="text-white-50">Background</label>
+              <div class="controls static-visual-grid" id="background-visual-grid" style="gap: 6px;">
+                {% for visual in bg_visual_options %}
+                  {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
+                  <button
+                    type="button"
+                    class="static-visual-option bg-visual-option"
+                    data-bg-visual-key="{{ visual.key }}"
+                    data-img-url="{{ bg_img_url or '' }}"
+                    aria-label="Select background {{ visual.label }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Background {{ visual.label }}"
+                    style="width: 50px; height: 50px;"
+                  >
+                    <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
+                    <span class="bg-selected-badge" aria-hidden="true">
+                      <i class="bi bi-check"></i>
+                    </span>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="control-group static-visual-selector" data-static-visuals='{{ static_visual_options | tojson | safe }}' style="flex: 1 1 700px; min-width: 560px; padding: 10px 12px;">
+            <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
+            <label class="text-white-50">Visual mode</label>
+            <div class="controls visual-mode-buttons" id="visual-mode-buttons">
+              <button type="button" class="visual-mode-btn" data-visual-mode="video">
+                <i class="bi bi-camera-video"></i><span class="text-white">Video</span>
+              </button>
+              <button type="button" class="visual-mode-btn" data-visual-mode="static">
+                <i class="bi bi-image"></i><span class="text-white">Static image</span>
+              </button>
+              <button type="button" class="visual-mode-btn" data-visual-mode="created">
+                <i class="bi bi-film"></i><span class="text-white">Created video</span>
+              </button>
+              <button type="button" class="visual-mode-btn" data-visual-mode="podcast">
+                <i class="bi bi-mic"></i><span class="text-white">Podcast</span>
+              </button>
+            </div>
+            <div id="podcast-audio-card" class="mt-2 border rounded p-2 d-none" style="border-color: rgba(255,255,255,.10) !important; background: rgba(255,255,255,.02);">
+              <div class="small text-white mb-1">Podcast audio</div>
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <select id="podcast-audio-select" class="form-select form-select-sm" style="max-width: 240px;">
+                  <option value="">No podcast audio</option>
+                </select>
+                <input type="hidden" name="podcast_audio_filename" id="podcastAudioFilename" value="{{ selected_podcast_audio_filename or '' }}">
+                <span class="small text-muted">Manage: <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}" target="_blank" rel="noopener">Podcast Audio</a></span>
+              </div>
+              <audio id="podcast-audio-preview" controls preload="none" class="w-100 d-none mt-2" style="max-height: 34px;"></audio>
+              <div id="podcast-audio-status" class="small text-muted mt-1"></div>
+              <div class="small text-muted mt-1">Selecting podcast audio forces horizontal output (16:9).</div>
+              <hr class="my-2" style="border-color: rgba(255,255,255,.12);">
+              <div class="small text-white mb-1">Related short clips (max 2)</div>
+              <input type="text" id="podcast-short-clips-search" class="form-control form-control-sm mb-2" placeholder="Search short clips...">
+              <input type="hidden" name="podcast_overlay_short_ids" id="podcastOverlayShortIds" value='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
+              <div id="podcast-short-clips-list" class="d-flex flex-column gap-1"></div>
+              <div id="podcast-short-clips-status" class="small text-muted mt-1"></div>
+            </div>
+            <div class="static-visual-strip" id="static-visual-grid">
+              {% for visual in static_visual_options %}
+                <button
+                  type="button"
+                  class="static-visual-option"
+                  data-visual-key="{{ visual.key }}"
+                  data-img-url="{{ visual.image_url or '' }}"
+                  aria-label="Select static frame {{ visual.label }}"
+                >
+                  {% if visual.image_url %}
+                    <img src="{{ visual.image_url }}" alt="Static visual {{ visual.label }}">
+                  {% endif %}
+                  <span class="bg-selected-badge" aria-hidden="true">
+                    <i class="bi bi-check"></i>
+                  </span>
+                  <span class="static-visual-badge">{{ visual.label }}</span>
+                </button>
+              {% endfor %}
+            </div>
+            <div class="static-visual-strip d-none" id="created-visual-grid">
+              {% for visual in created_visual_options %}
+                <button
+                  type="button"
+                  class="static-visual-option created-visual-option"
+                  data-visual-key="{{ visual.key }}"
+                  data-video-url="{{ visual.video_url or '' }}"
+                  data-preview-image-url="{{ visual.preview_image_url or '' }}"
+                  aria-label="Select created video {{ visual.label }}"
+                >
+                  {% if visual.preview_image_url %}
+                    <img src="{{ visual.preview_image_url }}" alt="Created video {{ visual.label }}">
+                  {% elif visual.video_url %}
+                    <video src="{{ visual.video_url }}" muted playsinline preload="metadata"></video>
+                  {% endif %}
+                  {% if visual.has_music %}
+                    <span class="created-music-badge" title="Has music" aria-label="Has music">
+                      <i class="bi bi-music-note-beamed"></i>
+                      <span class="created-music-level">%{{ visual.music_level_percent if visual.music_level_percent is not none else 0 }}</span>
+                    </span>
+                  {% endif %}
+                  <span class="bg-selected-badge" aria-hidden="true">
+                    <i class="bi bi-check"></i>
+                  </span>
+                  <span class="static-visual-badge">
+                    {{ visual.label }}{% if visual.duration_seconds %} ({{ visual.duration_seconds }} sn){% endif %}
+                  </span>
+                </button>
+              {% endfor %}
+            </div>
+            <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
+          </div>
+        </div>
+        <div class="short-video-settings">
+          <div class="short-video-settings-heading">
+            <span>Short video settings</span>
+          </div>
+          <div class="short-video-body"
+               data-save-url="{{ url_for('video_shorts_bp.save_short_settings', video_pk=video.id) }}"
+               data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
+               data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
+               data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
+               data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
+               data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
+            <div class="short-settings compact-row">
+              <div class="short-settings-row single">
+                <div class="short-label">
+                  <span>Title</span>
+                </div>
+                <div class="font-preview-group tight">
+                  {% if title_font_options %}
+                  <select name="font" id="titleFont" class="form-select form-select-sm">
+                    {% for font in title_font_options %}
+                      <option value="{{ font.key }}" data-font-family="{{ font.css_family|e }}" {% if font.key == selected_title_font_key %}selected{% endif %}>{{ font.label }}</option>
+                    {% endfor %}
+                  </select>
+                  {% endif %}
+                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Font&nbsp;Preview</div>
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Size</span>
+                  <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Offset</span>
+                  <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Line gap</span>
+                  <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
+                </div>
+                <div class="short-bg-trigger" id="titleBgTrigger">
+                  <div class="short-bg-swatch" id="titleBgSwatch"></div>
+                  <span id="titleBgHex" class="color-value">{{ selected_title_bg_color or '#FFD600' }}</span>
+                  <div class="short-bg-popover closed" id="titleBgPopover">
+                    {% set palette_groups = [
+                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
+                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
+                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
+                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
+                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
+                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#455A64'],
+                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#000000']
+                    ] %}
+                    {% set max_rows = palette_groups | map('length') | max %}
+                    {% for row in range(max_rows) %}
+                      {% for group in palette_groups %}
+                        {% set color = group[row] if row < group|length else '' %}
+                        {% if color %}
+                          <div class="short-color-swatch" data-color="{{ color }}"></div>
+                        {% else %}
+                          <div class="short-color-swatch empty"></div>
+                        {% endif %}
+                      {% endfor %}
+                    {% endfor %}
+                  </div>
+                  <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
+                </div>
+                <div class="short-label">
+                  <span>Subtitle</span>
+                </div>
+                <div class="font-preview-group tight">
+                  <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
+                    {% for f in sub_fonts %}
+                      <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
+                    {% endfor %}
+                  </select>
+                  <div id="subtitlePreview" class="short-font-preview">Font&nbsp;Preview</div>
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Size</span>
+                  <input type="number" name="sub_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_sub_font_size or 9 }}" min="1" max="990">
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Offset</span>
+                  <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Video date</span>
+                  <input type="text"
+                         name="video_date_text"
+                         class="form-control form-control-sm short-input-small short-input-wide"
+                         value="{{ selected_video_date|e }}"
+                         placeholder="Optional date">
+                </div>
+                <div class="input-group-inline compact">
+                  <span>Video offset</span>
+                  <input type="number"
+                         name="video_overlay_offset"
+                         class="form-control form-control-sm short-input-small"
+                         value="{{ selected_video_overlay_offset or 400 }}"
+                         min="0"
+                         max="1200">
+                </div>
+                <div class="short-settings-row single">
+                  {% if brand_subscribe_overlay_available %}
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                      <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
+                    </div>
+                  {% else %}
+                    <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
+                  {% endif %}
+                </div>
+                <div class="short-settings-row single">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
+                    <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
+                  </div>
+                </div>
+                <div class="ms-auto"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="cropper-modal-layout">
+          <div class="cropper-modal-preview flex-fill">
+            <div class="small text-muted mb-2">Drag to reframe</div>
+            <div class="cropper-loader" id="cropper-loader">
+              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
+              <span>Loading frame…</span>
+            </div>
+            <img id="cropper-image" src="" alt="Crop preview" />
+          </div>
+          <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
+            <div class="small text-muted mb-2">Final Preview</div>
+            <div class="shorts-preview-frame" id="shorts-preview-frame">
+              <div class="shorts-preview-title-band" id="shorts-preview-title-band">
+              </div>
+              <div class="shorts-preview-video" id="shorts-preview-video">
+                <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
+              </div>
+              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">
+                Preview
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 d-flex flex-wrap align-items-center gap-3"></div>
+      </div>
+      <div class="modal-footer border-0 d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="crop-save-btn" disabled data-saving-text="Saving…">
+            <i class="bi bi-check-lg me-1"></i>Save and continue
+          </button>
+          <span id="crop-save-status" class="ms-2 small crop-save-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% if has_transcript and v2_plan_rows %}
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="gs-card">
+      <h5 class="mb-2">V2 Clip Plan Output</h5>
+      <div class="table-responsive gs-table-scroll-420">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th class="gs-col-text">Full text</th>
+              <th class="gs-col-time">Time range</th>
+              <th class="gs-col-excerpt">Excerpt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set total_rows = v2_plan_rows|length %}
+            {% for row in v2_plan_rows %}
+              {% set time_label = (row.start_label or row.start or '-') ~ ' - ' ~ (row.end_label or row.end or '-') %}
+              <tr>
+                {% if loop.first %}
+                  <td class="gs-prewrap" rowspan="{{ total_rows }}">{{ transcript_override or transcript_text_tr or transcript_text }}</td>
+                {% endif %}
+                <td class="text-nowrap">{{ time_label }}</td>
+                <td class="gs-prewrap">{{ row.excerpt or row.transcript_full or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% if has_transcript %}
+<div class="row g-3">
+  <div class="col-lg-6 order-lg-2">
+        <div class="gs-card">
+      <h5 class="mb-2">Transcript</h5>
+      <div class="mb-2">
+        <div class="fw-bold small text-muted">Original transcript</div>
+        <div class="gs-code gs-code-scroll-220" id="transcript-text">
+          {{ transcript_override or transcript_text_tr or transcript_text }}
+        </div>
+      </div>
+    </div>
+  </div>
+    <div class="col-lg-6 order-lg-1">
+      <div class="gs-card">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <h5 class="mb-0">Segments (with timing)</h5>
+        {% if segments_view %}
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="segments-copy-btn">
+              Copy
+            </button>
+            <span id="segments-copy-status" class="small text-muted"></span>
+          </div>
+        {% endif %}
+      </div>
+      {% if segments_view %}
+        <div class="table-responsive gs-table-scroll-520">
+          <table class="table table-sm align-middle" id="segments-table">
+            <thead class="table-light">
+              <tr>
+                <th class="gs-col-start">Start</th>
+                <th class="gs-col-end">End</th>
+                <th>Text</th>
+                <th class="gs-col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for seg in segments_view %}
+                <tr data-index="{{ loop.index0 }}">
+                  <td class="text-nowrap">{{ seg.start_label or seg.start }}</td>
+                  <td class="text-nowrap">{{ seg.end_label or seg.end }}</td>
+                  <td class="seg-text-cell gs-prewrap gs-col-seg-text">
+                    <div class="seg-text-view small">{{ seg.tr_text or seg.text }}</div>
+                    <input type="text" class="form-control form-control-sm seg-text-input d-none" value="{{ seg.tr_text or seg.text }}">
+                  </td>
+                  <td>
+                    <div class="d-flex align-items-center flex-nowrap gap-1 seg-actions-row">
+                      <button type="button" class="seg-edit-btn seg-action-btn edit-btn" data-mode="view" title="Edit segment">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M12.146 1.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708L5.207 13.5H2v-3.207L12.146 1.146zM11.207 2.5 3 10.707V12h1.293L13.5 3.793 11.207 2.5z"/>
+                        </svg>
+                      </button>
+                      <button type="button" class="seg-save-btn d-none seg-action-btn save-btn" title="Save changes">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M13.854 3.146a.5.5 0 0 1 0 .708L7 10.707l-2.854-2.853a.5.5 0 1 1 .708-.708L7 9.293l6.146-6.147a.5.5 0 0 1 .708 0z"/>
+                        </svg>
+                      </button>
+                      <button type="button" class="seg-cancel-btn d-none seg-action-btn cancel-btn" title="Cancel edit">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                        </svg>
+                      </button>
+                      <button type="button" class="seg-ns-btn btn btn-outline-secondary btn-sm" data-ns-type="other">Set</button>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">No segment data stored yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</div>
+{% endif %}
+
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.js') }}"></script>
+<script>
+(function() {
+  const overlay = document.getElementById('spinner-overlay');
+  const overlayInfo = document.getElementById('overlay-info');
+  let timerId = null;
+  let startTs = null;
+  function startTimer() {
+    startTs = Date.now();
+    const label = document.getElementById('elapsed-label');
+    if (!label) return;
+    timerId = setInterval(() => {
+      const secs = Math.floor((Date.now() - startTs) / 1000);
+      label.textContent = `Elapsed: ${secs}s`;
+    }, 1000);
+  }
+  function stopTimer() {
+    if (timerId) clearInterval(timerId);
+    timerId = null;
+  }
+  if (overlay) {
+    document.querySelectorAll('form').forEach((form) => {
+      form.addEventListener('submit', (e) => {
+        const btn = form.querySelector('[data-loading-target]');
+        if (btn && btn.getAttribute('data-loading-target') === 'spinner-overlay') {
+          overlay.classList.add('active');
+          startTimer();
+        }
+      });
+    });
+  }
+
+})();
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("step1-form");
+  const step1Btn = document.getElementById("step1-btn");
+  const statusBox = document.getElementById("transcribe-live-status");
+  if (!form || !step1Btn || !statusBox) {
+    return;
+  }
+
+  const startUrl = form.dataset.transcribeStartUrl;
+  const statusUrl = form.dataset.transcribeStatusUrl;
+  if (!startUrl || !statusUrl) {
+    return;
+  }
+
+  let pollingTimer = null;
+  let running = false;
+  let consecutivePollFailures = 0;
+  const MAX_CONSECUTIVE_POLL_FAILURES = 8;
+
+  const esc = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const showStatus = (text, isError = false, spinning = false) => {
+    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
+    statusBox.classList.add(isError ? "alert-danger" : "alert-secondary");
+    const spinnerHtml = spinning
+      ? '<span class="spinner-border spinner-border-sm me-2 align-middle" role="status" aria-hidden="true"></span>'
+      : "";
+    statusBox.innerHTML = `${spinnerHtml}<span>${esc(text || "")}</span>`;
+  };
+
+  const showSuccess = (text) => {
+    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
+    statusBox.classList.add("alert-success");
+    statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
+  };
+
+  const stopPolling = () => {
+    if (pollingTimer) {
+      window.clearInterval(pollingTimer);
+      pollingTimer = null;
+    }
+    running = false;
+    consecutivePollFailures = 0;
+    step1Btn.removeAttribute("disabled");
+  };
+
+  const pollStatus = async () => {
+    try {
+      const response = await fetch(statusUrl, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const raw = await response.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch (parseErr) {
+        const snippet = (raw || "").replace(/\s+/g, " ").slice(0, 140);
+        throw new Error(`Non-JSON response (HTTP ${response.status}). ${snippet}`);
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Status fetch failed.");
+      }
+      consecutivePollFailures = 0;
+
+      if (running && payload.status === "idle") {
+        // Multi-worker polling can briefly return stale idle; ignore while active.
+        return;
+      }
+      const stage = payload.stage || "unknown";
+      const message = payload.message || "";
+      const elapsed = Number(payload.elapsed_seconds || 0);
+      const stillRunning = payload.status === "running" || payload.running === true;
+      showStatus(`Stage: ${stage} | ${message} | ${elapsed.toFixed(1)}s`, false, stillRunning);
+
+      if (payload.status === "completed") {
+        stopPolling();
+        showSuccess(`Done: ${payload.message || "Transcript completed."}`);
+        window.setTimeout(() => window.location.reload(), 900);
+        return;
+      }
+      if (payload.status === "failed") {
+        stopPolling();
+        showStatus(`Failed at stage "${stage}": ${payload.error || payload.message || "Unknown error"}`, true);
+      }
+    } catch (err) {
+      consecutivePollFailures += 1;
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        stopPolling();
+        showStatus(`Status polling failed after retries: ${err.message || err}`, true);
+        return;
+      }
+      const reconnecting = `Connection issue (${consecutivePollFailures}/${MAX_CONSECUTIVE_POLL_FAILURES}). Retrying...`;
+      showStatus(reconnecting, false, true);
+    }
+  };
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (running) {
+      return;
+    }
+    running = true;
+    step1Btn.setAttribute("disabled", "disabled");
+    showStatus("Starting transcription...", false, true);
+
+    try {
+      const response = await fetch(startUrl, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const raw = await response.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch (parseErr) {
+        const snippet = (raw || "").replace(/\s+/g, " ").slice(0, 140);
+        throw new Error(`Non-JSON response (HTTP ${response.status}). ${snippet}`);
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Could not start transcription.");
+      }
+      showStatus(payload.message || "Transcription started.", false, true);
+      await pollStatus();
+      if (running) {
+        pollingTimer = window.setInterval(pollStatus, 1500);
+      }
+    } catch (err) {
+      stopPolling();
+      showStatus(`Start failed: ${err.message || err}`, true);
+    }
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const transcriptEl = document.getElementById("transcript-text");
+  const editUrl = "{{ url_for('video_shorts_bp.edit_segment_text', video_pk=video.id) }}";
+  if (!transcriptEl) {
+    return;
+  }
+
+  document.querySelectorAll("#segments-table tbody tr").forEach((row) => {
+    const editBtn = row.querySelector(".seg-edit-btn");
+    const saveBtn = row.querySelector(".seg-save-btn");
+    const cancelBtn = row.querySelector(".seg-cancel-btn");
+    const inputEl = row.querySelector(".seg-text-input");
+    const view = row.querySelector(".seg-text-view");
+    if (!editBtn || !saveBtn || !cancelBtn || !inputEl || !view) {
+      return;
+    }
+
+    const idx = Number(row.dataset.index);
+    const resetUI = (textValue) => {
+      saveBtn.classList.add("d-none");
+      cancelBtn.classList.add("d-none");
+      editBtn.classList.remove("d-none");
+      inputEl.classList.add("d-none");
+      view.classList.remove("d-none");
+      view.textContent = textValue;
+    };
+
+    editBtn.addEventListener("click", () => {
+      inputEl.dataset.original = inputEl.value || view.textContent || "";
+      inputEl.value = view.textContent || "";
+      view.classList.add("d-none");
+      inputEl.classList.remove("d-none");
+      editBtn.classList.add("d-none");
+      saveBtn.classList.remove("d-none");
+      cancelBtn.classList.remove("d-none");
+      inputEl.focus();
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      const original = inputEl.dataset.original || view.textContent || "";
+      inputEl.value = original;
+      resetUI(original);
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      const newText = inputEl.value;
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      try {
+        const response = await fetch(editUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ index: idx, text: newText }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || "Segment update failed.");
+        }
+        const updatedText = data.segment_text ?? newText;
+        if (data.transcript) {
+          transcriptEl.textContent = data.transcript;
+        }
+        resetUI(updatedText);
+      } catch (err) {
+        alert(err.message || "Segment update failed.");
+      } finally {
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    });
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("step2-form");
+  const statusBox = document.getElementById("plan-live-status");
+  if (!form || !statusBox) {
+    return;
+  }
+
+  const startUrl = form.dataset.planStartUrl;
+  const statusUrl = form.dataset.planStatusUrl;
+  if (!startUrl || !statusUrl) {
+    return;
+  }
+
+  let pollingTimer = null;
+  let running = false;
+  let consecutivePollFailures = 0;
+  const MAX_CONSECUTIVE_POLL_FAILURES = 8;
+  let activeButton = null;
+
+  const esc = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const showStatus = (text, isError = false, spinning = false) => {
+    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
+    statusBox.classList.add(isError ? "alert-danger" : "alert-secondary");
+    const spinnerHtml = spinning
+      ? '<span class="spinner-border spinner-border-sm me-2 align-middle" role="status" aria-hidden="true"></span>'
+      : "";
+    statusBox.innerHTML = `${spinnerHtml}<span>${esc(text || "")}</span>`;
+  };
+
+  const showSuccess = (text) => {
+    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
+    statusBox.classList.add("alert-success");
+    statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
+  };
+
+  const stopPolling = () => {
+    if (pollingTimer) {
+      window.clearInterval(pollingTimer);
+      pollingTimer = null;
+    }
+    running = false;
+    consecutivePollFailures = 0;
+    if (activeButton) {
+      activeButton.removeAttribute("disabled");
+      activeButton = null;
+    }
+  };
+
+  const pollStatus = async () => {
+    try {
+      const response = await fetch(statusUrl, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const raw = await response.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch (parseErr) {
+        const snippet = (raw || "").replace(/\s+/g, " ").slice(0, 140);
+        throw new Error(`Non-JSON response (HTTP ${response.status}). ${snippet}`);
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Status fetch failed.");
+      }
+      consecutivePollFailures = 0;
+
+      if (running && payload.status === "idle") {
+        return;
+      }
+
+      const stage = payload.stage || "unknown";
+      const message = payload.message || "";
+      const elapsed = Number(payload.elapsed_seconds || 0);
+      const stillRunning = payload.status === "running" || payload.running === true;
+      showStatus(`Stage: ${stage} | ${message} | ${elapsed.toFixed(1)}s`, false, stillRunning);
+
+      if (payload.status === "completed") {
+        stopPolling();
+        showSuccess(`Done: ${payload.message || "Clip plan created."}`);
+        window.setTimeout(() => window.location.reload(), 900);
+        return;
+      }
+      if (payload.status === "failed") {
+        stopPolling();
+        showStatus(`Failed at stage "${stage}": ${payload.error || payload.message || "Unknown error"}`, true);
+      }
+    } catch (err) {
+      consecutivePollFailures += 1;
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        stopPolling();
+        showStatus(`Status polling failed after retries: ${err.message || err}`, true);
+        return;
+      }
+      const reconnecting = `Connection issue (${consecutivePollFailures}/${MAX_CONSECUTIVE_POLL_FAILURES}). Retrying...`;
+      showStatus(reconnecting, false, true);
+    }
+  };
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (running) {
+      return;
+    }
+
+    const submitter = event.submitter instanceof HTMLElement ? event.submitter : null;
+    activeButton = submitter;
+    running = true;
+    if (activeButton) {
+      activeButton.setAttribute("disabled", "disabled");
+    }
+
+    const formData = new FormData(form);
+    if (submitter && submitter.getAttribute("name")) {
+      formData.set(submitter.getAttribute("name"), submitter.getAttribute("value") || "");
+    }
+
+    const buttonLabel = submitter?.querySelector(".step-title")?.textContent?.trim() || "clip plan";
+    showStatus(`Starting ${buttonLabel}...`, false, true);
+
+    try {
+      const response = await fetch(startUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        body: formData,
+      });
+      const raw = await response.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch (parseErr) {
+        const snippet = (raw || "").replace(/\s+/g, " ").slice(0, 140);
+        throw new Error(`Non-JSON response (HTTP ${response.status}). ${snippet}`);
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || "Could not start clip plan generation.");
+      }
+      showStatus(payload.message || "Clip plan generation started.", false, true);
+      await pollStatus();
+      if (running) {
+        pollingTimer = window.setInterval(pollStatus, 1500);
+      }
+    } catch (err) {
+      stopPolling();
+      showStatus(`Start failed: ${err.message || err}`, true);
+    }
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const copyBtn = document.getElementById("segments-copy-btn");
+  const statusEl = document.getElementById("segments-copy-status");
+  const table = document.getElementById("segments-table");
+  if (!copyBtn || !table) {
+    return;
+  }
+
+  const setStatus = (message) => {
+    if (!statusEl) {
+      return;
+    }
+    statusEl.textContent = message || "";
+  };
+
+  const toCellText = (value) => {
+    return (value || "").replace(/\s+/g, " ").trim();
+  };
+
+  const buildTsv = () => {
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    const lines = ["Start\tEnd\tText"];
+    rows.forEach((row) => {
+      const cells = row.querySelectorAll("td");
+      if (cells.length < 3) {
+        return;
+      }
+      const start = toCellText(cells[0]?.textContent);
+      const end = toCellText(cells[1]?.textContent);
+      const textEl = row.querySelector(".seg-text-view");
+      const text = toCellText(textEl?.textContent || cells[2]?.textContent || "");
+      lines.push([start, end, text].join("\t"));
+    });
+    return lines.join("\n");
+  };
+
+  const writeClipboard = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const temp = document.createElement("textarea");
+    temp.value = text;
+    temp.setAttribute("readonly", "readonly");
+    temp.style.position = "absolute";
+    temp.style.left = "-9999px";
+    document.body.appendChild(temp);
+    temp.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(temp);
+    return ok;
+  };
+
+  copyBtn.addEventListener("click", async () => {
+    const payload = buildTsv();
+    if (!payload.trim()) {
+      setStatus("No rows to copy.");
+      return;
+    }
+    copyBtn.disabled = true;
+    setStatus("Copying...");
+    try {
+      const ok = await writeClipboard(payload);
+      setStatus(ok ? "Copied." : "Copy failed.");
+    } catch (err) {
+      setStatus("Copy failed.");
+    } finally {
+      copyBtn.disabled = false;
+      setTimeout(() => setStatus(""), 2000);
+    }
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const nonSpeechUrl = "{{ url_for('video_shorts_bp.update_segment_non_speech', video_pk=video.id) }}";
+  document.querySelectorAll("#segments-table tbody tr").forEach((row) => {
+    const setBtn = row.querySelector(".seg-ns-btn");
+    if (!setBtn) {
+      return;
+    }
+    const idx = Number(row.dataset.index);
+    setBtn.addEventListener("click", async () => {
+      setBtn.disabled = true;
+      try {
+        const response = await fetch(nonSpeechUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            index: idx,
+            non_speech_type: setBtn.dataset.nsType || "other",
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Non-speech update failed.");
+        }
+      } catch (err) {
+        alert(err.message || "Non-speech update failed.");
+      } finally {
+        setBtn.disabled = false;
+      }
+    });
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const step3Btn = document.getElementById("step3-btn");
+  const clipList = document.getElementById("clip-list");
+  if (step3Btn && clipList) {
+    step3Btn.addEventListener("click", () => {
+      clipList.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("[data-confirm-message]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      const message = btn.getAttribute("data-confirm-message");
+      if (message && !window.confirm(message)) {
+        event.preventDefault();
+      }
+    });
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof bootstrap === "undefined") {
+    return;
+  }
+  const tooltipTriggers = [].slice.call(document.querySelectorAll("[data-bs-toggle='tooltip']"));
+  tooltipTriggers.forEach((el) => new bootstrap.Tooltip(el));
+});
+</script>
+<script>
+const refreshClipList = async () => {
+  const clipList = document.getElementById("clip-list");
+  if (!clipList) {
+    return false;
+  }
+  try {
+    const response = await fetch(window.location.href, {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const newClipList = doc.getElementById("clip-list");
+    if (newClipList) {
+      clipList.replaceWith(newClipList);
+      initGenerateClipForms();
+      initRemovePlanEntryAjax();
+      initClipTitleRowAjax();
+      initClipCategoryAjax();
+      initSendToYoutubeButtons();
+    }
+    const latestInfo = document.getElementById("youtube-latest-scheduled");
+    const newLatest = doc.getElementById("youtube-latest-scheduled");
+    if (latestInfo && newLatest) {
+      latestInfo.textContent = newLatest.textContent;
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to refresh clip list", err);
+    return false;
+  }
+};
+
+const getClipCardByPlanIndex = (planIndex) => {
+  const normalizedPlanIndex = String(planIndex || "").trim();
+  if (!normalizedPlanIndex) {
+    return null;
+  }
+  return Array.from(document.querySelectorAll(".clip-card")).find((card) => {
+    const planIndexInput = card.querySelector("input[name='plan_index']");
+    return planIndexInput && String(planIndexInput.value || "").trim() === normalizedPlanIndex;
+  }) || null;
+};
+
+const isCreatedClipRendered = (planIndex) => {
+  const card = getClipCardByPlanIndex(planIndex);
+  if (!card) {
+    return false;
+  }
+  return card.dataset.status === "created" && !!card.querySelector("video");
+};
+
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const waitForCreatedClipRender = async (
+  planIndex,
+  { attempts = 8, delayMs = 1200 } = {},
+) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const refreshed = await refreshClipList();
+    if (refreshed && isCreatedClipRendered(planIndex)) {
+      return true;
+    }
+    if (attempt < attempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+  return false;
+};
+
+const initGenerateClipForms = () => {
+  document.querySelectorAll(".generate-clip-form").forEach((form) => {
+    if (form.dataset.generateClipBound === "1") {
+      return;
+    }
+    form.dataset.generateClipBound = "1";
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const card = form.closest(".clip-card");
+      if (!card) {
+        return;
+      }
+      const planIndex = form.querySelector("input[name='plan_index']")?.value || "";
+      const titleSource = card.querySelector(".clip-title-input");
+      const hiddenTitleInput = form.querySelector("input[name='title']");
+      if (hiddenTitleInput && titleSource) {
+        hiddenTitleInput.value = titleSource.value || "";
+      }
+      const btn = card.querySelector(".clip-generate-btn");
+      const label = btn?.querySelector(".btn-label");
+      const spinner = btn?.querySelector(".spinner-border");
+      const originalLabel = label?.textContent || "Generate Short Clip";
+      const feedback = card.querySelector(".clip-card-generate-feedback");
+      if (feedback) {
+        feedback.classList.add("d-none");
+      }
+      if (btn) {
+        btn.disabled = true;
+      }
+      if (label) {
+        label.textContent = "Generating…";
+      }
+      if (spinner) {
+        spinner.classList.remove("d-none");
+      }
+      const data = new URLSearchParams(new FormData(form));
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: data,
+          credentials: "same-origin",
+        });
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (err) {
+          payload = {};
+        }
+        const clipAlreadyExists =
+          response.status === 409 &&
+          typeof payload.message === "string" &&
+          payload.message.toLowerCase().includes("already generated");
+        let success =
+          (response.ok && payload.success) ||
+          payload.status === "created" ||
+          clipAlreadyExists;
+        if (!success) {
+          const refreshed = await refreshClipList();
+          if (refreshed && isCreatedClipRendered(planIndex)) {
+            success = true;
+          }
+        }
+        let message =
+          payload.message ||
+          (success ? "Clip generated." : "Clip generation failed.");
+        if (
+          success &&
+          !response.ok &&
+          !clipAlreadyExists &&
+          (!payload.message || payload.message === "Clip generation failed.")
+        ) {
+          message = "Clip generated. The page was refreshed after a delayed server response.";
+        }
+        if (feedback) {
+          feedback.textContent = message;
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add(success ? "text-success" : "text-danger");
+        }
+        if (success) {
+          if (feedback) {
+            feedback.textContent = "Clip generated. Preparing preview…";
+            feedback.classList.remove("text-danger", "d-none");
+            feedback.classList.add("text-success");
+          }
+          const previewReady = await waitForCreatedClipRender(planIndex);
+          if (!previewReady && feedback) {
+            feedback.textContent = "Clip generated. Refresh the page if the preview does not appear yet.";
+          }
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.textContent = "Failed to reach server.";
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add("text-danger");
+        }
+        const previewReady = await waitForCreatedClipRender(planIndex, { attempts: 6, delayMs: 1500 });
+        if (previewReady && feedback) {
+          feedback.textContent = "Clip generated. The page was refreshed after a delayed server response.";
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add("text-success");
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+        }
+        if (label) {
+          label.textContent = originalLabel;
+        }
+        if (spinner) {
+          spinner.classList.add("d-none");
+        }
+      }
+    });
+  });
+};
+</script>
+<script>
+const initClipTitleRowAjax = () => {
+  document.querySelectorAll(".clip-card-title-row").forEach((form) => {
+    if (form.dataset.clipTitleAjaxBound === "1") {
+      return;
+    }
+    form.dataset.clipTitleAjaxBound = "1";
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const card = form.closest(".clip-card");
+      if (!card) {
+        return;
+      }
+      const feedback = card.querySelector(".clip-card-save-feedback");
+      const btn = form.querySelector(".clip-save-btn");
+      if (feedback) {
+        feedback.classList.add("d-none");
+      }
+      if (btn) {
+        btn.disabled = true;
+      }
+      const data = new URLSearchParams(new FormData(form));
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: data,
+        });
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (err) {
+          payload = {};
+        }
+        const isSuccess = response.ok && payload.success;
+        const message =
+          payload.message ||
+          (isSuccess ? "Clip timing saved." : "Clip timing could not be saved.");
+        if (feedback) {
+          feedback.textContent = message;
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add(isSuccess ? "text-success" : "text-danger");
+        }
+        if (isSuccess) {
+          const metaTime = card.querySelector(".clip-card-meta-time");
+          if (metaTime && payload.start_label && payload.end_label && payload.duration_label) {
+            metaTime.textContent = `${payload.start_label} – ${payload.end_label} (${payload.duration_label})`;
+          }
+          if (payload.start !== undefined) {
+            card.dataset.start = payload.start;
+          }
+          if (payload.duration !== undefined) {
+            card.dataset.duration = payload.duration;
+          }
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.textContent = "Failed to reach server.";
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add("text-danger");
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+        }
+      }
+    });
+  });
+};
+</script>
+<script>
+const initClipCategoryAjax = () => {
+  document.querySelectorAll(".clip-category-form").forEach((form) => {
+    if (form.dataset.clipCategoryAjaxBound === "1") {
+      return;
+    }
+    form.dataset.clipCategoryAjaxBound = "1";
+    const select = form.querySelector(".clip-category-select");
+    const feedback = form.querySelector(".clip-category-feedback");
+    const submitBtn = form.querySelector("button[type='submit']");
+    if (!select) {
+      return;
+    }
+    const save = async () => {
+      if (feedback) {
+        feedback.classList.add("d-none");
+      }
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+      const data = new URLSearchParams(new FormData(form));
+      try {
+        const response = await fetch(form.dataset.saveUrl || form.action, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: data,
+        });
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (err) {
+          payload = {};
+        }
+        const isSuccess = response.ok && payload.success;
+        const message =
+          payload.message ||
+          (isSuccess ? "Category saved." : "Category could not be saved.");
+        if (feedback) {
+          feedback.textContent = message;
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add(isSuccess ? "text-success" : "text-danger");
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.textContent = "Failed to reach server.";
+          feedback.classList.remove("text-success", "text-danger", "d-none");
+          feedback.classList.add("text-danger");
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+        }
+      }
+    };
+    select.addEventListener("change", () => {
+      save();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      save();
+    });
+  });
+};
+</script>
+<script>
+const youtubeModalContext = (() => {
+  const modalEl = document.getElementById("youtubeUploadModal");
+  if (!modalEl || typeof bootstrap === "undefined") {
+    return null;
+  }
+  const modalInstance = new bootstrap.Modal(modalEl);
+  const form = document.getElementById("youtube-upload-form");
+  if (!form) {
+    return null;
+  }
+  const filenameInput = form.querySelector("[name='filename']");
+  const planIndexInput = form.querySelector("[name='plan_index']");
+  const videoPkInput = form.querySelector("[name='video_pk']");
+  const titleInput = form.querySelector("[name='title']");
+  const descriptionInput = form.querySelector("[name='description']");
+  const publishInput = form.querySelector("[name='publish_at']");
+  const latestScheduledInfo = document.getElementById("youtube-latest-scheduled");
+  const alertBox = document.getElementById("youtube-upload-feedback");
+  const submitBtn = form.querySelector("button[type='submit']");
+  const spinner = submitBtn?.querySelector(".spinner-border");
+  const submitLabel = submitBtn?.querySelector(".btn-label");
+  const descriptionStatus = document.getElementById("youtube-description-status");
+  const descriptionCounter = document.getElementById("youtube-description-counter");
+  const createDescriptionBtn = document.getElementById("youtube-description-generate-btn");
+  const descriptionSpinner = createDescriptionBtn?.querySelector(".spinner-border");
+  const descriptionBtnLabel = createDescriptionBtn?.querySelector(".btn-label");
+  const descriptionEndpoint = "{{ url_for('video_shorts_bp.prepare_description', video_pk=video.id) }}";
+  const ytVideoIdInput = form.querySelector("[name='yt_video_id']");
+  const youtubeStatusBadge = document.getElementById("youtubeStatusBadge");
+  const youtubeEnableToggle = document.getElementById("youtubeEnableToggle");
+  const youtubeDisabledHint = document.getElementById("youtubeDisabledHint");
+  const defaultSubmitLabel = "Schedule & publish";
+  const queueOnlyLabel = "Queue only";
+  const defaultUploadUrl = form.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
+  const userTimeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
+  const normalizeForDatetimeLocal = (value) => {
+    if (!value) {
+      return "";
+    }
+    const exactMatch = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/);
+    if (exactMatch) {
+      return exactMatch[1];
+    }
+    const prefixMatch = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
+    const hasTimezone = /[zZ]|[+\-]\d{2}:\d{2}$/.test(value);
+    if (!hasTimezone) {
+      return prefixMatch ? prefixMatch[1] : value;
+    }
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return prefixMatch ? prefixMatch[1] : "";
+    }
+    try {
+      if (typeof Intl === "undefined" || typeof Intl.DateTimeFormat === "undefined") {
+        return prefixMatch ? prefixMatch[1] : "";
+      }
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: userTimeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+      const parts = formatter.formatToParts(parsedDate);
+      const components = {};
+      parts.forEach((part) => {
+        if (part.type !== "literal") {
+          components[part.type] = part.value;
+        }
+      });
+      if (components.year && components.month && components.day && components.hour && components.minute) {
+        return `${components.year}-${components.month}-${components.day}T${components.hour}:${components.minute}`;
+      }
+    } catch (error) {
+      console.error("Failed to format scheduled time", error);
+    }
+    return prefixMatch ? prefixMatch[1] : "";
+  };
+  const decodeDescriptionValue = (raw) => {
+    if (!raw) return "";
+    return raw.replace(/\\r/g, "\r").replace(/\\n/g, "\n");
+  };
+  const encodeDescriptionValue = (text) => (text || "").replace(/\\r/g, "\\r").replace(/\\n/g, "\\n");
+  const updateDescriptionStatus = (message, variant = "success") => {
+    if (!descriptionStatus) return;
+    descriptionStatus.textContent = message;
+    descriptionStatus.classList.remove("text-success", "text-danger", "d-none");
+    descriptionStatus.classList.add(variant === "error" ? "text-danger" : "text-success");
+  };
+  const resetDescriptionStatus = () => {
+    if (!descriptionStatus) return;
+    descriptionStatus.classList.add("d-none");
+  };
+  const resetAlert = () => {
+    if (!alertBox) return;
+    alertBox.classList.add("d-none");
+    alertBox.textContent = "";
+  };
+  const descriptionLimit = 5000;
+  const syncDescriptionCounter = () => {
+    if (!descriptionInput || !descriptionCounter) {
+      return true;
+    }
+    const currentLength = descriptionInput.value.length;
+    const overLimit = currentLength > descriptionLimit;
+    descriptionCounter.textContent = `${currentLength} / ${descriptionLimit}`;
+    descriptionCounter.classList.remove("text-white-50", "text-danger");
+    descriptionCounter.classList.add(overLimit ? "text-danger" : "text-white-50");
+    descriptionInput.classList.toggle("is-invalid", overLimit);
+    return !overLimit;
+  };
+  descriptionInput?.addEventListener("input", () => {
+    syncDescriptionCounter();
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!submitBtn) {
+      return;
+    }
+    if (!syncDescriptionCounter()) {
+      if (alertBox) {
+        alertBox.textContent = `Description cannot exceed ${descriptionLimit} characters.`;
+        alertBox.classList.remove("d-none");
+      }
+      return;
+    }
+    submitBtn.disabled = true;
+    spinner?.classList.remove("d-none");
+    if (submitLabel) {
+      submitLabel.textContent = "Submitting...";
+    }
+    try {
+      const uploadUrl = activeSendBtn?.dataset.uploadUrl || defaultUploadUrl;
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (parseErr) {
+        payload = null;
+      }
+      const isSuccess = response.ok && (payload ? payload.success !== false : true);
+      if (!isSuccess) {
+        if (alertBox) {
+          alertBox.textContent = payload?.message || "YouTube upload failed.";
+          alertBox.classList.remove("d-none");
+        }
+        return;
+      }
+      modalInstance.hide();
+      window.location.reload();
+    } catch (err) {
+      if (alertBox) {
+        alertBox.textContent = "Failed to reach server.";
+        alertBox.classList.remove("d-none");
+      }
+    } finally {
+      submitBtn.disabled = false;
+      spinner?.classList.add("d-none");
+      resetSubmitLabel();
+    }
+  });
+  createDescriptionBtn?.addEventListener("click", async () => {
+    if (!createDescriptionBtn || createDescriptionBtn.disabled) {
+      return;
+    }
+    const filename = filenameInput.value;
+    if (!filename) {
+      updateDescriptionStatus("No clip selected.", "error");
+      return;
+    }
+    createDescriptionBtn.disabled = true;
+    descriptionSpinner?.classList.remove("d-none");
+    if (descriptionBtnLabel) {
+      descriptionBtnLabel.textContent = "Generating…";
+    }
+    resetDescriptionStatus();
+    try {
+      const formData = new FormData();
+      formData.append("filename", filename);
+      if (planIndexInput && planIndexInput.value) {
+        formData.append("plan_index", planIndexInput.value);
+      }
+      const response = await fetch(descriptionEndpoint, {
+        method: "POST",
+        body: formData,
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (err) {
+        payload = {};
+      }
+      if (!response.ok || !payload.success) {
+        const errMsg = payload.message || "Description creation failed.";
+        updateDescriptionStatus(errMsg, "error");
+      } else {
+        const generated = payload.description || "";
+        if (descriptionInput) {
+          descriptionInput.value = generated;
+        }
+        syncDescriptionCounter();
+        if (activeSendBtn) {
+          activeSendBtn.dataset.description = encodeDescriptionValue(generated);
+        }
+        updateDescriptionStatus("Description ready", "success");
+      }
+    } catch (err) {
+      updateDescriptionStatus("Server error", "error");
+    } finally {
+      createDescriptionBtn.disabled = false;
+      descriptionSpinner?.classList.add("d-none");
+      if (descriptionBtnLabel) {
+        descriptionBtnLabel.textContent = "Create YouTube Description";
+      }
+    }
+  });
+  let activeSendBtn = null;
+  const isYoutubeEnabled = () => !youtubeEnableToggle || youtubeEnableToggle.checked;
+  const updateYoutubeBadge = () => {
+    if (!youtubeStatusBadge) {
+      return;
+    }
+    if (!isYoutubeEnabled()) {
+      youtubeStatusBadge.textContent = "Off";
+      youtubeStatusBadge.className = "badge text-white bg-secondary";
+      return;
+    }
+    const scheduled = Boolean(publishInput?.value);
+    youtubeStatusBadge.textContent = scheduled ? "Planned" : "Now";
+    youtubeStatusBadge.className = `badge text-white ${scheduled ? "bg-primary" : "bg-success"}`;
+  };
+  const updateYoutubeHint = () => {
+    if (!youtubeDisabledHint) {
+      return;
+    }
+    youtubeDisabledHint.classList.toggle("d-none", isYoutubeEnabled());
+  };
+  const resolveSubmitLabel = (labelOverride) => {
+    const baseLabel = labelOverride || activeSendBtn?.dataset.buttonLabel || defaultSubmitLabel;
+    return isYoutubeEnabled() ? baseLabel : queueOnlyLabel;
+  };
+  const resetSubmitLabel = (labelOverride) => {
+    if (!submitLabel) {
+      return;
+    }
+    submitLabel.textContent = resolveSubmitLabel(labelOverride);
+  };
+  const syncYoutubeState = (labelOverride) => {
+    updateYoutubeBadge();
+    updateYoutubeHint();
+    resetSubmitLabel(labelOverride);
+  };
+  const setDescriptionGeneratorEnabled = (enabled) => {
+    if (!createDescriptionBtn) {
+      return;
+    }
+    createDescriptionBtn.classList.toggle("d-none", !enabled);
+    createDescriptionBtn.disabled = !enabled;
+    if (!enabled) {
+      resetDescriptionStatus();
+    }
+  };
+  youtubeEnableToggle?.addEventListener("change", () => syncYoutubeState());
+  publishInput?.addEventListener("input", updateYoutubeBadge);
+  if (modalEl) {
+    modalEl.addEventListener("show.bs.modal", () => {
+      if (youtubeEnableToggle) {
+        youtubeEnableToggle.checked = true;
+      }
+      syncYoutubeState();
+    });
+  }
+  return {
+    modalInstance,
+    publishInput,
+    latestScheduledInfo,
+    filenameInput,
+    planIndexInput,
+    videoPkInput,
+    titleInput,
+    descriptionInput,
+    ytVideoIdInput,
+    normalizePublishValue: normalizeForDatetimeLocal,
+    resetAlert,
+    resetDescriptionStatus,
+    decodeDescriptionValue,
+    encodeDescriptionValue,
+    syncDescriptionCounter,
+    setActiveSendBtn: (btn) => {
+      activeSendBtn = btn;
+    },
+    setDescriptionGeneratorEnabled,
+    resetSubmitLabel,
+    getActiveSendBtn: () => activeSendBtn,
+    syncYoutubeState,
+  };
+})();
+const instagramModalControls = (() => {
+  const modalEl = document.getElementById("youtubeUploadModal");
+  const reelToggle = document.getElementById("instagramReelToggle");
+  const feedToggle = document.getElementById("instagramFeedToggle");
+  const timingContainer = document.getElementById("instagramTimingContainer");
+  const scheduleGroup = document.getElementById("instagramScheduleGroup");
+  const timingHint = document.getElementById("instagramTimingHint");
+  const publishInput = document.querySelector("input[name='instagram_publish_at']");
+  const statusBadge = document.getElementById("instagramStatusBadge");
+  const modeRadios = Array.from(document.querySelectorAll("input[name='instagram_mode']"));
+  const normalizePublishValue = youtubeModalContext?.normalizePublishValue;
+  if (!modalEl || !reelToggle || !feedToggle || !timingContainer || !scheduleGroup || !timingHint || !statusBadge) {
+    return null;
+  }
+  const parseBool = (value) => {
+    if (!value) return false;
+    return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+  };
+  const getSelectedMode = () => {
+    const active = modeRadios.find((radio) => radio.checked);
+    return active ? active.value : "sync";
+  };
+  const updateBadge = (enabled, mode) => {
+    if (!statusBadge) {
+      return;
+    }
+    let label = "Closed";
+    let variant = "bg-secondary";
+    if (enabled) {
+      if (mode === "now") {
+        label = "Now";
+        variant = "bg-success";
+      } else if (mode === "schedule") {
+        label = "Scheduled";
+        variant = "bg-primary";
+      } else {
+        label = "Sync";
+        variant = "bg-info";
+      }
+    }
+    statusBadge.textContent = label;
+    statusBadge.className = `badge text-white ${variant}`;
+  };
+  const updateHint = (enabled, mode) => {
+    if (!timingHint) return;
+    if (!enabled) {
+      timingHint.classList.add("d-none");
+      timingHint.textContent = "";
+      return;
+    }
+    let message = "Same as YouTube plan.";
+    if (mode === "now") {
+      message = "Instagram post will be published immediately.";
+    } else if (mode === "schedule") {
+      message = "Instagram post will be published at the selected time.";
+    }
+    timingHint.textContent = message;
+    timingHint.classList.remove("d-none");
+  };
+  const updateVisibility = () => {
+    const enabled = reelToggle.checked || feedToggle.checked;
+    const mode = getSelectedMode();
+    if (!enabled) {
+      timingContainer.classList.add("d-none");
+    } else {
+      timingContainer.classList.remove("d-none");
+    }
+    if (!enabled || mode !== "schedule") {
+      scheduleGroup.classList.add("d-none");
+      if (publishInput) {
+        publishInput.value = "";
+      }
+    } else {
+      scheduleGroup.classList.remove("d-none");
+    }
+    updateHint(enabled, mode);
+    updateBadge(enabled, mode);
+  };
+  const reset = () => {
+    reelToggle.checked = false;
+    feedToggle.checked = false;
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === "sync";
+    });
+    if (publishInput) {
+      publishInput.value = "";
+    }
+    updateVisibility();
+  };
+  const applyState = ({ reel, feed, mode, publishAt }) => {
+    reelToggle.checked = !!reel;
+    feedToggle.checked = !!feed;
+    let resolvedMode = (mode || "").toLowerCase();
+    if (!["sync", "now", "schedule"].includes(resolvedMode)) {
+      resolvedMode = publishAt ? "schedule" : "sync";
+    }
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === resolvedMode;
+    });
+    if (publishInput) {
+      if (resolvedMode === "schedule" && publishAt) {
+        publishInput.value = normalizePublishValue ? normalizePublishValue(publishAt) : publishAt;
+      } else {
+        publishInput.value = "";
+      }
+    }
+    updateVisibility();
+  };
+  [reelToggle, feedToggle].forEach((toggle) => {
+    toggle.addEventListener("change", updateVisibility);
+  });
+  modeRadios.forEach((radio) => {
+    radio.addEventListener("change", updateVisibility);
+  });
+  return {
+    reset,
+    updateVisibility,
+    applyState,
+    parseBool,
+  };
+})();
+const tiktokModalControls = (() => {
+  const modalEl = document.getElementById("youtubeUploadModal");
+  const toggle = document.getElementById("tiktokToggle");
+  const timingContainer = document.getElementById("tiktokTimingContainer");
+  const scheduleGroup = document.getElementById("tiktokScheduleGroup");
+  const timingHint = document.getElementById("tiktokTimingHint");
+  const publishInput = document.querySelector("input[name='tiktok_publish_at']");
+  const statusBadge = document.getElementById("tiktokStatusBadge");
+  const modeRadios = Array.from(document.querySelectorAll("input[name='tiktok_mode']"));
+  const normalizePublishValue = youtubeModalContext?.normalizePublishValue;
+  if (!modalEl || !toggle || !timingContainer || !scheduleGroup || !timingHint || !statusBadge) {
+    return null;
+  }
+  const parseBool = (value) => {
+    if (!value) return false;
+    return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+  };
+  const getSelectedMode = () => {
+    const active = modeRadios.find((radio) => radio.checked);
+    return active ? active.value : "sync";
+  };
+  const updateBadge = (enabled, mode) => {
+    if (!statusBadge) {
+      return;
+    }
+    let label = "Closed";
+    let variant = "bg-secondary";
+    if (enabled) {
+      if (mode === "now") {
+        label = "Now";
+        variant = "bg-success";
+      } else if (mode === "schedule") {
+        label = "Scheduled";
+        variant = "bg-primary";
+      } else {
+        label = "Sync";
+        variant = "bg-info";
+      }
+    }
+    statusBadge.textContent = label;
+    statusBadge.className = `badge text-white ${variant}`;
+  };
+  const updateHint = (enabled, mode) => {
+    if (!timingHint) return;
+    if (!enabled) {
+      timingHint.classList.add("d-none");
+      timingHint.textContent = "";
+      return;
+    }
+    let message = "Same as YouTube plan.";
+    if (mode === "now") {
+      message = "TikTok post will be published immediately.";
+    } else if (mode === "schedule") {
+      message = "TikTok post will be published at the selected time.";
+    }
+    timingHint.textContent = message;
+    timingHint.classList.remove("d-none");
+  };
+  const updateVisibility = () => {
+    const enabled = toggle.checked;
+    const mode = getSelectedMode();
+    if (!enabled) {
+      timingContainer.classList.add("d-none");
+    } else {
+      timingContainer.classList.remove("d-none");
+    }
+    if (!enabled || mode !== "schedule") {
+      scheduleGroup.classList.add("d-none");
+      if (publishInput) {
+        publishInput.value = "";
+      }
+    } else {
+      scheduleGroup.classList.remove("d-none");
+    }
+    updateHint(enabled, mode);
+    updateBadge(enabled, mode);
+  };
+  const reset = () => {
+    toggle.checked = false;
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === "sync";
+    });
+    if (publishInput) {
+      publishInput.value = "";
+    }
+    updateVisibility();
+  };
+  const applyState = ({ enabled, mode, publishAt }) => {
+    toggle.checked = !!enabled;
+    let resolvedMode = (mode || "").toLowerCase();
+    if (!["sync", "now", "schedule"].includes(resolvedMode)) {
+      resolvedMode = publishAt ? "schedule" : "sync";
+    }
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === resolvedMode;
+    });
+    if (publishInput) {
+      if (resolvedMode === "schedule" && publishAt) {
+        publishInput.value = normalizePublishValue ? normalizePublishValue(publishAt) : publishAt;
+      } else {
+        publishInput.value = "";
+      }
+    }
+    updateVisibility();
+  };
+  toggle.addEventListener("change", updateVisibility);
+  modeRadios.forEach((radio) => {
+    radio.addEventListener("change", updateVisibility);
+  });
+  return {
+    reset,
+    updateVisibility,
+    applyState,
+    parseBool,
+  };
+})();
+const facebookModalControls = (() => {
+  const modalEl = document.getElementById("youtubeUploadModal");
+  const reelToggle = document.getElementById("facebookReelToggle");
+  const feedToggle = document.getElementById("facebookFeedToggle");
+  const timingContainer = document.getElementById("facebookTimingContainer");
+  const scheduleGroup = document.getElementById("facebookScheduleGroup");
+  const timingHint = document.getElementById("facebookTimingHint");
+  const publishInput = document.querySelector("input[name='facebook_publish_at']");
+  const statusBadge = document.getElementById("facebookStatusBadge");
+  const modeRadios = Array.from(document.querySelectorAll("input[name='facebook_mode']"));
+  const normalizePublishValue = youtubeModalContext?.normalizePublishValue;
+  if (!modalEl || !reelToggle || !feedToggle || !timingContainer || !scheduleGroup || !timingHint || !statusBadge) {
+    return null;
+  }
+  const parseBool = (value) => {
+    if (!value) return false;
+    return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+  };
+  const getSelectedMode = () => {
+    const active = modeRadios.find((radio) => radio.checked);
+    return active ? active.value : "sync";
+  };
+  const updateBadge = (enabled, mode) => {
+    if (!statusBadge) {
+      return;
+    }
+    let label = "Closed";
+    let variant = "bg-secondary";
+    if (enabled) {
+      if (mode === "now") {
+        label = "Now";
+        variant = "bg-success";
+      } else if (mode === "schedule") {
+        label = "Scheduled";
+        variant = "bg-primary";
+      } else {
+        label = "Sync";
+        variant = "bg-info";
+      }
+    }
+    statusBadge.textContent = label;
+    statusBadge.className = `badge text-white ${variant}`;
+  };
+  const updateHint = (enabled, mode) => {
+    if (!timingHint) return;
+    if (!enabled) {
+      timingHint.classList.add("d-none");
+      timingHint.textContent = "";
+      return;
+    }
+    let message = "Same as YouTube plan.";
+    if (mode === "now") {
+      message = "Facebook post will be published immediately.";
+    } else if (mode === "schedule") {
+      message = "Facebook post will be published at the selected time.";
+    }
+    timingHint.textContent = message;
+    timingHint.classList.remove("d-none");
+  };
+  const updateVisibility = () => {
+    const enabled = reelToggle.checked || feedToggle.checked;
+    const mode = getSelectedMode();
+    if (!enabled) {
+      timingContainer.classList.add("d-none");
+    } else {
+      timingContainer.classList.remove("d-none");
+    }
+    if (!enabled || mode !== "schedule") {
+      scheduleGroup.classList.add("d-none");
+      if (publishInput) {
+        publishInput.value = "";
+      }
+    } else {
+      scheduleGroup.classList.remove("d-none");
+    }
+    updateHint(enabled, mode);
+    updateBadge(enabled, mode);
+  };
+  const reset = () => {
+    reelToggle.checked = false;
+    feedToggle.checked = false;
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === "sync";
+    });
+    if (publishInput) {
+      publishInput.value = "";
+    }
+    updateVisibility();
+  };
+  const applyState = ({ reel, feed, mode, publishAt }) => {
+    reelToggle.checked = !!reel;
+    feedToggle.checked = !!feed;
+    let resolvedMode = (mode || "").toLowerCase();
+    if (!["sync", "now", "schedule"].includes(resolvedMode)) {
+      resolvedMode = publishAt ? "schedule" : "sync";
+    }
+    modeRadios.forEach((radio) => {
+      radio.checked = radio.value === resolvedMode;
+    });
+    if (publishInput) {
+      if (resolvedMode === "schedule" && publishAt) {
+        publishInput.value = normalizePublishValue ? normalizePublishValue(publishAt) : publishAt;
+      } else {
+        publishInput.value = "";
+      }
+    }
+    updateVisibility();
+  };
+  [reelToggle, feedToggle].forEach((toggle) => {
+    toggle.addEventListener("change", updateVisibility);
+  });
+  modeRadios.forEach((radio) => {
+    radio.addEventListener("change", updateVisibility);
+  });
+  return {
+    reset,
+    updateVisibility,
+    applyState,
+    parseBool,
+  };
+})();
+const initSendToYoutubeButtons = () => {
+  const ctx = youtubeModalContext;
+  if (!ctx) {
+    return;
+  }
+  const parseLongTitles = (raw) => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(decodeURIComponent(raw));
+      return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string" && v.trim()) : [];
+    } catch (_) {
+      return [];
+    }
+  };
+  const parseLongChapters = (raw) => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(decodeURIComponent(raw));
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((entry) => ({
+          title: String(entry?.title || "").trim(),
+          start_seconds: Number(entry?.start_seconds || 0),
+        }))
+        .filter((entry) => entry.title);
+    } catch (_) {
+      return [];
+    }
+  };
+  const formatChapterTime = (seconds) => {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (v) => String(v).padStart(2, "0");
+    if (h > 0) {
+      return `${h}:${pad(m)}:${pad(s)}`;
+    }
+    return `${m}:${pad(s)}`;
+  };
+  const buildLongDescription = (titles, chapters = []) => {
+    const clean = (titles || []).map((t) => String(t || "").trim()).filter(Boolean).slice(0, 50);
+    if (!clean.length) {
+      return "";
+    }
+    const chapterLines = (chapters || [])
+      .slice(0, 100)
+      .map((entry) => `${formatChapterTime(entry.start_seconds)} ${entry.title}`)
+      .filter(Boolean);
+
+    const tr = [];
+    tr.push("TR");
+    tr.push("Bu derleme videoda kanalimizda daha once yayinlanan short videolardan secilen bolumler yer almaktadir.");
+    tr.push("");
+    if (chapterLines.length >= 3 && String(chapterLines[0] || "").startsWith("0:00")) {
+      tr.push("Bolumler:");
+      chapterLines.forEach((line) => tr.push(line));
+      tr.push("");
+    }
+    tr.push("Videolar:");
+    clean.forEach((t, i) => tr.push(`${i + 1}. ${t}`));
+    tr.push("");
+    tr.push("Bu icerikler hakkinda daha fazla video icin kanalimiza abone olabilirsiniz.");
+
+    const en = [];
+    en.push("EN");
+    en.push("This compilation includes selected parts from short videos previously published on our channel.");
+    en.push("");
+    if (chapterLines.length >= 3 && String(chapterLines[0] || "").startsWith("0:00")) {
+      en.push("Chapters:");
+      chapterLines.forEach((line) => en.push(line));
+      en.push("");
+    }
+    en.push("Videos:");
+    clean.forEach((t, i) => en.push(`${i + 1}. ${t}`));
+    en.push("");
+    en.push("Subscribe to our channel for more videos about these topics.");
+
+    return `${tr.join("\n")}\n\n${en.join("\n")}`;
+  };
+  document.querySelectorAll(".send-to-youtube-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      ctx.resetAlert();
+      ctx.resetDescriptionStatus();
+      ctx.filenameInput.value = btn.dataset.filename || "";
+      ctx.planIndexInput.value = btn.dataset.planIndex || "";
+      if (btn.dataset.videoPk) {
+        ctx.videoPkInput.value = btn.dataset.videoPk;
+      }
+      ctx.titleInput.value = btn.dataset.title || "";
+      ctx.descriptionInput.value = ctx.decodeDescriptionValue(btn.dataset.description || "");
+      ctx.syncDescriptionCounter();
+      const longTitles = parseLongTitles(btn.dataset.longTitles || "");
+      const longChapters = parseLongChapters(btn.dataset.longChapters || "");
+      if (longTitles.length) {
+        const autoDesc = buildLongDescription(longTitles, longChapters);
+        if (autoDesc) {
+          ctx.descriptionInput.value = autoDesc;
+          ctx.syncDescriptionCounter();
+          btn.dataset.description = ctx.encodeDescriptionValue(autoDesc);
+        }
+      }
+      ctx.publishInput.value = ctx.normalizePublishValue(btn.dataset.publishAt || "");
+      if (!ctx.publishInput.value) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(0, 0, 0, 0);
+        const pad = (num) => String(num).padStart(2, "0");
+        ctx.publishInput.value = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T${pad(tomorrow.getHours())}:${pad(tomorrow.getMinutes())}`;
+      }
+      if (ctx.latestScheduledInfo) {
+        const latestValue = btn.dataset.latestScheduled || "";
+        ctx.latestScheduledInfo.textContent = latestValue
+          ? `Last Planned Content: ${latestValue}`
+          : "not planned yet";
+      }
+      if (instagramModalControls) {
+        const reel = instagramModalControls.parseBool(btn.dataset.instagramReel);
+        const feed = instagramModalControls.parseBool(btn.dataset.instagramFeed);
+        const mode = (btn.dataset.instagramMode || "").toLowerCase();
+        const publishAt = btn.dataset.instagramPublishAt || "";
+        const hasInstagramState = reel || feed || mode || publishAt;
+        if (hasInstagramState) {
+          instagramModalControls.applyState({ reel, feed, mode, publishAt });
+        } else {
+          instagramModalControls.reset();
+        }
+      }
+      if (tiktokModalControls) {
+        const enabled = tiktokModalControls.parseBool(btn.dataset.tiktokEnabled);
+        const mode = (btn.dataset.tiktokMode || "").toLowerCase();
+        const publishAt = btn.dataset.tiktokPublishAt || "";
+        const hasTikTokState = enabled || mode || publishAt;
+        if (hasTikTokState) {
+          tiktokModalControls.applyState({ enabled, mode, publishAt });
+        } else {
+          tiktokModalControls.reset();
+        }
+      }
+      if (facebookModalControls) {
+        const reel = facebookModalControls.parseBool(btn.dataset.facebookReel);
+        const feed = facebookModalControls.parseBool(btn.dataset.facebookFeed);
+        const mode = (btn.dataset.facebookMode || "").toLowerCase();
+        const publishAt = btn.dataset.facebookPublishAt || "";
+        const hasFacebookState = reel || feed || mode || publishAt;
+        if (hasFacebookState) {
+          facebookModalControls.applyState({ reel, feed, mode, publishAt });
+        } else {
+          facebookModalControls.reset();
+        }
+      }
+      if (ctx.ytVideoIdInput) {
+        ctx.ytVideoIdInput.value = btn.dataset.ytVideoId || "";
+      }
+      const actionLabel = btn.dataset.buttonLabel || "Schedule & publish";
+      const descriptionEnabled = btn.dataset.descriptionDisabled !== "1";
+      if (ctx.setDescriptionGeneratorEnabled) {
+        ctx.setDescriptionGeneratorEnabled(descriptionEnabled);
+      }
+      ctx.setActiveSendBtn(btn);
+      if (ctx.syncYoutubeState) {
+        ctx.syncYoutubeState(actionLabel);
+      } else if (ctx.resetSubmitLabel) {
+        ctx.resetSubmitLabel(actionLabel);
+      }
+      ctx.modalInstance.show();
+    });
+  });
+};
+
+const applyCropperPreviewCardWidth = () => {
+  document.querySelectorAll(".cropper-preview-card[data-frame-width]").forEach((card) => {
+    const value = card.dataset.frameWidth;
+    const pixelValue = parseInt(value, 10);
+    if (!Number.isNaN(pixelValue)) {
+      card.style.width = `${pixelValue}px`;
+    }
+  });
+};
+const initCreateLongFromShortsButton = () => {
+  const btn = document.getElementById("create-long-from-shorts-btn");
+  const elapsedEl = document.getElementById("create-long-from-shorts-elapsed");
+  if (!btn) {
+    return;
+  }
+  let elapsedTimerId = null;
+  let startedAt = null;
+  const stopElapsedTimer = () => {
+    if (elapsedTimerId) {
+      clearInterval(elapsedTimerId);
+      elapsedTimerId = null;
+    }
+  };
+  const updateElapsed = () => {
+    if (!elapsedEl || !startedAt) {
+      return;
+    }
+    const total = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const mm = Math.floor(total / 60);
+    const ss = total % 60;
+    elapsedEl.textContent = `Elapsed: ${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  };
+  btn.addEventListener("click", async () => {
+    if (btn.disabled) {
+      return;
+    }
+    const createUrl = btn.dataset.createUrl;
+    if (!createUrl) {
+      return;
+    }
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Creating...';
+    startedAt = Date.now();
+    updateElapsed();
+    stopElapsedTimer();
+    elapsedTimerId = setInterval(updateElapsed, 1000);
+    try {
+      const res = await fetch(createUrl, {
+        method: "POST",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || "Long video could not be created.");
+      }
+      window.location.reload();
+    } catch (err) {
+      alert((err && err.message) ? err.message : "Long video creation failed.");
+      stopElapsedTimer();
+      startedAt = null;
+      if (elapsedEl) {
+        elapsedEl.textContent = "";
+      }
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  });
+};
+const initLongVideoDeleteButtons = () => {
+  document.querySelectorAll(".long-video-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const filename = btn.dataset.filename || "";
+      const deleteUrl = btn.dataset.deleteUrl || "";
+      if (!filename || !deleteUrl) {
+        return;
+      }
+      if (!confirm(`Delete ${filename}?`)) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const res = await fetch(deleteUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({ filename }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.message || "Delete failed.");
+        }
+        window.location.reload();
+      } catch (err) {
+        alert((err && err.message) ? err.message : "Delete failed.");
+        btn.disabled = false;
+      }
+    });
+  });
+};
+document.addEventListener("DOMContentLoaded", () => {
+  initGenerateClipForms();
+  initClipTitleRowAjax();
+  initClipCategoryAjax();
+  initSendToYoutubeButtons();
+  initCreateLongFromShortsButton();
+  initLongVideoDeleteButtons();
+  applyCropperPreviewCardWidth();
+  if (typeof bootstrap !== "undefined") {
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => {
+      new bootstrap.Tooltip(el);
+    });
+  }
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const modalEl = document.getElementById("crop-area-modal");
+  if (!modalEl || typeof bootstrap === "undefined" || typeof Cropper === "undefined") {
+    return;
+  }
+
+  const previewImg = modalEl.querySelector("#cropper-image");
+  const previewLoader = modalEl.querySelector("#cropper-loader");
+  const infoEl = modalEl.querySelector("#cropper-info");
+  const saveBtn = modalEl.querySelector("#crop-save-btn");
+  const previewCanvas = modalEl.querySelector("#crop-preview");
+  const previewCtx = previewCanvas?.getContext("2d");
+  const previewConfig = JSON.parse('{{ PREVIEW_CONFIG | tojson | safe }}');
+  const statusText = document.getElementById("crop-status-text");
+  const chooseBtn = document.getElementById("choose-crop-btn");
+  const saveStatusEl = modalEl.querySelector("#crop-save-status");
+  const staticSelector = modalEl.querySelector(".static-visual-selector");
+  const staticVisualDescription = modalEl.querySelector("#static-visual-description");
+  const staticVisualOptions = staticSelector ? JSON.parse(staticSelector.dataset.staticVisuals || "[]") : [];
+  const createdSelector = modalEl.querySelector(".created-visual-selector");
+  const createdVisualOptions = createdSelector ? JSON.parse(createdSelector.dataset.createdVisuals || "[]") : [];
+  const bgSelector = modalEl.querySelector(".background-visual-selector");
+  const bgVisualOptions = bgSelector ? JSON.parse(bgSelector.dataset.bgVisuals || "[]") : [];
+  const staticVisualMap = new Map(staticVisualOptions.map((option) => [option.key, option]));
+  const createdVisualMap = new Map(createdVisualOptions.map((option) => [option.key, option]));
+  const staticVisualButtons = Array.from(modalEl.querySelectorAll("#static-visual-grid .static-visual-option"));
+  const createdVisualButtons = Array.from(modalEl.querySelectorAll("#created-visual-grid .created-visual-option"));
+  const bgVisualButtons = Array.from(modalEl.querySelectorAll(".bg-visual-option"));
+  const cropAspectSelector = modalEl.querySelector("#crop-aspect-selector");
+  const cropAspectButtons = cropAspectSelector
+    ? Array.from(cropAspectSelector.querySelectorAll("[data-crop-aspect]"))
+    : [];
+  const visualModeButtons = Array.from(modalEl.querySelectorAll("[data-visual-mode]"));
+  const staticVisualStrip = modalEl.querySelector("#static-visual-grid");
+  const createdVisualStrip = modalEl.querySelector("#created-visual-grid");
+  const podcastAudioCard = modalEl.querySelector("#podcast-audio-card");
+  let cropper = null;
+  let naturalSize = { width: 0, height: 0 };
+  let latestTrigger = null;
+  let activeStaticVisualKey = "";
+  let activeBackgroundKey = "bg_1";
+  let activeCropAspect = "landscape";
+  let activeVisualMode = "video";
+  let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
+  const clampRatio = (value) => Math.max(0, Math.min(1, Number(value) || 0));
+  const showLoader = () => previewLoader?.classList.remove("d-none");
+  const hideLoader = () => previewLoader?.classList.add("d-none");
+  const updateInfo = (text) => {
+    if (infoEl) {
+      infoEl.textContent = text;
+    }
+  };
+  const setSaveStatus = (message, variant) => {
+    if (!saveStatusEl) {
+      return;
+    }
+    saveStatusEl.textContent = message || "";
+    saveStatusEl.classList.remove("text-success", "text-danger");
+    if (variant === "success") {
+      saveStatusEl.classList.add("text-success");
+    } else if (variant === "danger") {
+      saveStatusEl.classList.add("text-danger");
+    }
+  };
+  const previewFrame = modalEl.querySelector("#shorts-preview-frame");
+  const previewTitle = modalEl.querySelector("#shorts-preview-title-band");
+  const previewVideo = modalEl.querySelector("#shorts-preview-video");
+  const previewSubtitle = modalEl.querySelector("#shorts-preview-subtitle-band");
+  const settingsContainer = modalEl.querySelector(".short-video-body");
+  const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
+  const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
+  const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
+  const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
+  const podcastAudioState = {
+    audios: [],
+    selectedId: settingsContainer?.dataset.selectedPodcastAudio || "",
+  };
+  const podcastAudioUploadInput = modalEl.querySelector("#podcast-audio-upload-input");
+  const podcastAudioUploadBtn = modalEl.querySelector("#podcast-audio-upload-btn");
+  const podcastAudioSelect = modalEl.querySelector("#podcast-audio-select");
+  const podcastAudioDeleteBtn = modalEl.querySelector("#podcast-audio-delete-btn");
+  const podcastAudioPreview = modalEl.querySelector("#podcast-audio-preview");
+  const podcastAudioStatus = modalEl.querySelector("#podcast-audio-status");
+  const podcastAudioHiddenInput = modalEl.querySelector("#podcastAudioFilename");
+  const podcastShortClipsList = modalEl.querySelector("#podcast-short-clips-list");
+  const podcastShortClipsStatus = modalEl.querySelector("#podcast-short-clips-status");
+  const podcastOverlayShortIdsField = modalEl.querySelector("#podcastOverlayShortIds");
+  const podcastShortClipsSearchInput = modalEl.querySelector("#podcast-short-clips-search");
+  const podcastShortClipState = {
+    clips: [],
+    selectedIds: [],
+    query: "",
+  };
+  try {
+    const initialShortIds = JSON.parse(settingsContainer?.dataset.selectedPodcastShortIds || "[]");
+    if (Array.isArray(initialShortIds)) {
+      podcastShortClipState.selectedIds = initialShortIds
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.startsWith("short:"))
+        .slice(0, 2);
+    }
+  } catch (error) {
+    podcastShortClipState.selectedIds = [];
+  }
+  const setPodcastShortClipStatus = (text, isError = false) => {
+    if (!podcastShortClipsStatus) return;
+    podcastShortClipsStatus.textContent = text || "";
+    podcastShortClipsStatus.classList.toggle("text-danger", !!isError);
+  };
+  const syncPodcastShortClipHiddenField = () => {
+    if (!podcastOverlayShortIdsField) return;
+    podcastOverlayShortIdsField.value = JSON.stringify((podcastShortClipState.selectedIds || []).slice(0, 2));
+  };
+  const renderPodcastShortClipOptions = () => {
+    if (!podcastShortClipsList) return;
+    const q = String(podcastShortClipState.query || "").trim().toLowerCase();
+    const filteredClips = q
+      ? podcastShortClipState.clips.filter((clip) =>
+          String(clip.title || clip.filename || clip.id || "").toLowerCase().includes(q)
+        )
+      : podcastShortClipState.clips;
+    if (!filteredClips.length) {
+      podcastShortClipsList.innerHTML = '<div class="small text-muted">No short clips found in storage.</div>';
+      syncPodcastShortClipHiddenField();
+      return;
+    }
+    const rows = filteredClips.map((clip) => {
+      const id = String(clip.id || "").trim();
+      const checked = podcastShortClipState.selectedIds.includes(id) ? "checked" : "";
+      const safeTitle = String(clip.title || clip.filename || id).replace(/</g, "&lt;");
+      return (
+        `<label class="form-check small m-0">` +
+        `<input class="form-check-input me-1 podcast-short-clip-check" type="checkbox" value="${id}" ${checked}>` +
+        `<span class="form-check-label">${safeTitle}</span>` +
+        `</label>`
+      );
+    });
+    podcastShortClipsList.innerHTML = rows.join("");
+    podcastShortClipsList.querySelectorAll(".podcast-short-clip-check").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const selected = Array.from(
+          podcastShortClipsList.querySelectorAll(".podcast-short-clip-check:checked")
+        ).map((item) => String(item.value || "").trim());
+        if (selected.length > 2) {
+          checkbox.checked = false;
+          setPodcastShortClipStatus("You can select at most 2 short clips.", true);
+          return;
+        }
+        podcastShortClipState.selectedIds = selected;
+        syncPodcastShortClipHiddenField();
+        setPodcastShortClipStatus(selected.length ? `${selected.length} short clip selected.` : "");
+      });
+    });
+    syncPodcastShortClipHiddenField();
+  };
+  podcastShortClipsSearchInput?.addEventListener("input", () => {
+    podcastShortClipState.query = podcastShortClipsSearchInput.value || "";
+    renderPodcastShortClipOptions();
+  });
+  const loadPodcastShortClips = async () => {
+    if (!podcastShortClipsUrl) return;
+    try {
+      const response = await fetch(podcastShortClipsUrl, { credentials: "same-origin" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Short clip list could not be loaded.");
+      podcastShortClipState.clips = Array.isArray(result.clips) ? result.clips : [];
+      const allowedIds = new Set(podcastShortClipState.clips.map((item) => String(item.id || "")));
+      podcastShortClipState.selectedIds = podcastShortClipState.selectedIds.filter((id) => allowedIds.has(id)).slice(0, 2);
+      renderPodcastShortClipOptions();
+    } catch (error) {
+      setPodcastShortClipStatus(error.message || "Short clip list could not be loaded.", true);
+    }
+  };
+  const setPodcastAudioStatus = (text, isError = false) => {
+    if (!podcastAudioStatus) return;
+    podcastAudioStatus.textContent = text || "";
+    podcastAudioStatus.classList.toggle("text-danger", !!isError);
+  };
+  const getSelectedPodcastAudio = () => (
+    podcastAudioState.audios.find((item) => (item.id || "") === (podcastAudioState.selectedId || "")) || null
+  );
+  const syncPodcastAudioPreview = () => {
+    const audio = getSelectedPodcastAudio();
+    if (podcastAudioHiddenInput) {
+      podcastAudioHiddenInput.value = podcastAudioState.selectedId || "";
+    }
+    if (!audio || !audio.url) {
+      podcastAudioPreview?.classList.add("d-none");
+      podcastAudioPreview?.removeAttribute("src");
+      podcastAudioPreview?.load();
+      return;
+    }
+    if (podcastAudioPreview) {
+      podcastAudioPreview.src = audio.url;
+      podcastAudioPreview.classList.remove("d-none");
+    }
+  };
+  const renderPodcastAudioOptions = () => {
+    if (!podcastAudioSelect) return;
+    const options = ['<option value="">No podcast audio</option>'];
+    podcastAudioState.audios.forEach((audio) => {
+      const selected = (audio.id || "") === (podcastAudioState.selectedId || "") ? " selected" : "";
+      const label = (audio.display_name || audio.filename || audio.id || "").replace(/</g, "&lt;");
+      options.push(`<option value="${audio.id}"${selected}>${label}</option>`);
+    });
+    podcastAudioSelect.innerHTML = options.join("");
+    if (!podcastAudioState.audios.some((audio) => (audio.id || "") === (podcastAudioState.selectedId || ""))) {
+      podcastAudioState.selectedId = "";
+      podcastAudioSelect.value = "";
+    }
+    syncPodcastAudioPreview();
+  };
+  const ensureLandscapeForPodcastAudio = () => {
+    if (!podcastAudioState.selectedId || activeVisualMode !== "podcast") return;
+    setActiveCropAspect("landscape");
+  };
+  const loadPodcastAudios = async () => {
+    if (!staticAudiosUrl) return;
+    try {
+      const response = await fetch(staticAudiosUrl, { credentials: "same-origin" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Audio list could not be loaded.");
+      podcastAudioState.audios = Array.isArray(result.audios) ? result.audios : [];
+      renderPodcastAudioOptions();
+      ensureLandscapeForPodcastAudio();
+    } catch (error) {
+      setPodcastAudioStatus(error.message || "Audio list could not be loaded.", true);
+    }
+  };
+  const uploadPodcastAudio = async () => {
+    const file = podcastAudioUploadInput?.files?.[0];
+    if (!file || !staticAudiosUrl) {
+      setPodcastAudioStatus("Please choose an audio file first.", true);
+      return;
+    }
+    if (podcastAudioUploadBtn) podcastAudioUploadBtn.disabled = true;
+    setPodcastAudioStatus("Uploading audio...");
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+      formData.append("label", file.name.replace(/\.[^.]+$/, ""));
+      const response = await fetch(staticAudiosUrl, {
+        method: "POST",
+        body: formData,
+        credentials: "same-origin",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Upload failed.");
+      podcastAudioState.selectedId = result.audio?.id || "";
+      if (podcastAudioUploadInput) podcastAudioUploadInput.value = "";
+      setPodcastAudioStatus("Audio uploaded.");
+      await loadPodcastAudios();
+      if (podcastAudioState.selectedId) {
+        setVisualMode("podcast");
+      }
+    } catch (error) {
+      setPodcastAudioStatus(error.message || "Audio upload failed.", true);
+    } finally {
+      if (podcastAudioUploadBtn) podcastAudioUploadBtn.disabled = false;
+    }
+  };
+  const deleteSelectedPodcastAudio = async () => {
+    const selected = podcastAudioState.selectedId || podcastAudioSelect?.value || "";
+    if (!selected || !staticAudiosUrl) {
+      setPodcastAudioStatus("Please select an audio file first.", true);
+      return;
+    }
+    if (!window.confirm("Delete selected podcast audio?")) return;
+    if (podcastAudioDeleteBtn) podcastAudioDeleteBtn.disabled = true;
+    setPodcastAudioStatus("Deleting audio...");
+    try {
+      const response = await fetch(`${staticAudiosUrl}/${encodeURIComponent(selected)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.error || "Delete failed.");
+      podcastAudioState.selectedId = "";
+      setPodcastAudioStatus("Audio deleted.");
+      await loadPodcastAudios();
+    } catch (error) {
+      setPodcastAudioStatus(error.message || "Audio delete failed.", true);
+    } finally {
+      if (podcastAudioDeleteBtn) podcastAudioDeleteBtn.disabled = false;
+    }
+  };
+  const getActiveBackgroundUrl = () => {
+    const selected = bgVisualOptions.find((opt) => opt.key === activeBackgroundKey);
+    return selected?.image_url || previewConfig.bgUrl || "";
+  };
+  const getOverlayDims = () => {
+    const isPortrait = activeCropAspect === "portrait";
+    return {
+      width: isPortrait ? previewConfig.videoWidthPortrait : previewConfig.videoWidthLandscape,
+      height: isPortrait ? previewConfig.videoHeightPortrait : previewConfig.videoHeightLandscape,
+      y: isPortrait ? previewConfig.videoYPortrait : previewConfig.videoYLandscape,
+    };
+  };
+  const syncPreviewCanvasSize = () => {
+    if (!previewCanvas) {
+      return;
+    }
+    const dims = getOverlayDims();
+    previewCanvas.width = dims.width;
+    previewCanvas.height = dims.height;
+  };
+  syncPreviewCanvasSize();
+  const applyPreviewLayout = () => {
+    const dims = getOverlayDims();
+    if (previewFrame) {
+      previewFrame.style.width = previewConfig.frameWidth + "px";
+      previewFrame.style.height = previewConfig.frameHeight + "px";
+      previewFrame.style.backgroundImage = `url('${getActiveBackgroundUrl()}')`;
+    }
+    if (previewTitle) {
+      previewTitle.style.top = previewConfig.titleY * previewConfig.scale + "px";
+      previewTitle.style.height = previewConfig.titleHeight * previewConfig.scale + "px";
+      previewTitle.style.fontSize = previewConfig.titleHeight * previewConfig.scale * 0.75 + "px";
+    }
+    if (previewVideo) {
+      previewVideo.style.left = previewConfig.videoX * previewConfig.scale + "px";
+      previewVideo.style.top = dims.y * previewConfig.scale + "px";
+      previewVideo.style.width = dims.width * previewConfig.scale + "px";
+      previewVideo.style.height = dims.height * previewConfig.scale + "px";
+    }
+    if (previewSubtitle) {
+      previewSubtitle.style.top = previewConfig.subtitleY * previewConfig.scale + "px";
+      previewSubtitle.style.height = previewConfig.subtitleHeight * previewConfig.scale + "px";
+      previewSubtitle.style.fontSize = previewConfig.subtitleHeight * previewConfig.scale * 0.75 + "px";
+    }
+  };
+  const clearPreviewCanvas = () => {
+    if (!previewCanvas || !previewCtx) {
+      return;
+    }
+    const dims = getOverlayDims();
+    previewCtx.clearRect(0, 0, dims.width, dims.height);
+  };
+  const resetState = () => {
+    if (cropper) {
+      cropper.destroy();
+      cropper = null;
+    }
+    naturalSize = { width: 0, height: 0 };
+    if (previewImg) {
+      previewImg.removeAttribute("src");
+    }
+    clearPreviewCanvas();
+    if (saveBtn) {
+      saveBtn.disabled = true;
+    }
+    setSaveStatus("", "");
+    updateInfo("Waiting for preview…");
+  };
+  const cacheBustUrl = (url) => {
+    if (!url) {
+      return "";
+    }
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}ts=${Date.now()}`;
+  };
+  const isStaticKey = (key) => String(key || "").startsWith("user:");
+  const isCreatedKey = (key) => String(key || "").startsWith("i2v:");
+  const captureVideoPoster = (videoUrl) => new Promise((resolve, reject) => {
+    if (!videoUrl) {
+      reject(new Error("Created video is missing."));
+      return;
+    }
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.crossOrigin = "anonymous";
+    const done = (error, dataUrl) => {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      if (error) {
+        reject(error);
+      } else {
+        resolve(dataUrl);
+      }
+    };
+    video.addEventListener("error", () => done(new Error("Created video preview could not be loaded.")), { once: true });
+    video.addEventListener("loadeddata", () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const width = video.videoWidth || 640;
+        const height = video.videoHeight || 360;
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          done(new Error("Preview context unavailable."));
+          return;
+        }
+        ctx.drawImage(video, 0, 0, width, height);
+        done(null, canvas.toDataURL("image/jpeg", 0.9));
+      } catch (err) {
+        done(new Error("Failed to capture created video frame."));
+      }
+    }, { once: true });
+    video.src = cacheBustUrl(videoUrl);
+  });
+  const prepareForSourceLoad = () => {
+    if (cropper) {
+      cropper.destroy();
+      cropper = null;
+    }
+    naturalSize = { width: 0, height: 0 };
+    clearPreviewCanvas();
+    if (saveBtn) {
+      saveBtn.disabled = true;
+    }
+  };
+
+  const drawStaticPreview = (visual) => {
+    if (!visual || !visual.image_url || !previewCanvas || !previewCtx) {
+      return;
+    }
+    syncPreviewCanvasSize();
+    const dims = getOverlayDims();
+    const staticImg = new Image();
+    staticImg.crossOrigin = "anonymous";
+    staticImg.onload = () => {
+      previewCtx.fillStyle = "#1f1f1f";
+      previewCtx.fillRect(0, 0, dims.width, dims.height);
+      const imgAspect = staticImg.width && staticImg.height ? (staticImg.width / staticImg.height) : 1;
+      const targetAspect = dims.width / dims.height;
+      let drawWidth = dims.width;
+      let drawHeight = dims.height;
+      let offsetX = 0;
+      let offsetY = 0;
+      if (imgAspect > targetAspect) {
+        drawWidth = dims.width;
+        drawHeight = dims.width / imgAspect;
+        offsetY = (dims.height - drawHeight) / 2;
+      } else {
+        drawHeight = dims.height;
+        drawWidth = dims.height * imgAspect;
+        offsetX = (dims.width - drawWidth) / 2;
+      }
+      previewCtx.drawImage(
+        staticImg,
+        0,
+        0,
+        staticImg.width,
+        staticImg.height,
+        offsetX,
+        offsetY,
+        drawWidth,
+        drawHeight
+      );
+    };
+    staticImg.onerror = () => {
+      previewCtx.fillStyle = "#1f1f1f";
+      previewCtx.fillRect(0, 0, dims.width, dims.height);
+    };
+    staticImg.src = visual.image_url;
+  };
+
+  const loadPreviewImage = (url) => {
+    if (!previewImg) {
+      updateInfo("Preview target not found.");
+      return;
+    }
+    if (!url) {
+      updateInfo("Preview not available.");
+      return;
+    }
+    prepareForSourceLoad();
+    showLoader();
+    previewImg.onload = () => {
+      naturalSize.width = previewImg.naturalWidth || 0;
+      naturalSize.height = previewImg.naturalHeight || 0;
+      hideLoader();
+      initCropper(currentPresetRatios);
+    };
+    previewImg.onerror = () => {
+      hideLoader();
+      updateInfo("Preview image could not be loaded.");
+      if (saveBtn) {
+        saveBtn.disabled = true;
+      }
+    };
+    previewImg.src = cacheBustUrl(url);
+  };
+
+  const loadActivePreviewImage = async () => {
+    const selectedStatic = staticVisualMap.get(activeStaticVisualKey);
+    const selectedCreated = createdVisualMap.get(activeStaticVisualKey);
+    const videoPreviewUrl = modalEl.dataset.videoPreviewUrl || "";
+    const imageUrl = typeof selectedStatic?.image_url === "string" ? selectedStatic.image_url : "";
+    const createdVideoUrl = typeof selectedCreated?.video_url === "string" ? selectedCreated.video_url : "";
+    const createdPreviewImageUrl = typeof selectedCreated?.preview_image_url === "string" ? selectedCreated.preview_image_url : "";
+    const sourceUrl = activeVisualMode === "video"
+      ? videoPreviewUrl
+      : ((activeVisualMode === "static" || activeVisualMode === "podcast")
+          ? (imageUrl || videoPreviewUrl)
+          : createdPreviewImageUrl);
+    if (!sourceUrl) {
+      if ((activeVisualMode === "static" || activeVisualMode === "podcast") && selectedStatic) {
+        drawStaticPreview(selectedStatic);
+      } else if (activeVisualMode === "created" && createdVideoUrl) {
+        try {
+          const posterDataUrl = await captureVideoPoster(createdVideoUrl);
+          loadPreviewImage(posterDataUrl);
+          return;
+        } catch (error) {
+          updateInfo(error.message || "Created video preview could not be loaded.");
+        }
+      }
+      updateInfo("Preview not available.");
+      if (saveBtn) {
+        saveBtn.disabled = true;
+      }
+      clearPreviewCanvas();
+      return;
+    }
+    if (activeVisualMode === "created") {
+      if (createdPreviewImageUrl) {
+        loadPreviewImage(createdPreviewImageUrl);
+        return;
+      }
+      try {
+        const posterDataUrl = await captureVideoPoster(createdVideoUrl);
+        loadPreviewImage(posterDataUrl);
+      } catch (error) {
+        updateInfo(error.message || "Created video preview could not be loaded.");
+        if (saveBtn) {
+          saveBtn.disabled = true;
+        }
+        clearPreviewCanvas();
+      }
+      return;
+    }
+    loadPreviewImage(sourceUrl);
+  };
+
+  const updateCropInfo = () => {
+    const visual = staticVisualMap.get(activeStaticVisualKey) || createdVisualMap.get(activeStaticVisualKey);
+    if (!cropper || !naturalSize.width || !naturalSize.height) {
+      if (visual && activeVisualMode === "static") {
+        drawStaticPreview(visual);
+      }
+      return;
+    }
+    const data = cropper.getData(true);
+    if (!data || !Number.isFinite(data.width) || !Number.isFinite(data.height) || data.width <= 0 || data.height <= 0) {
+      return;
+    }
+    const x = clampRatio(data.x / naturalSize.width);
+    const y = clampRatio(data.y / naturalSize.height);
+    const w = clampRatio(data.width / naturalSize.width);
+    const h = clampRatio(data.height / naturalSize.height);
+    currentPresetRatios = { x, y, w, h };
+    const pxWidth = w * naturalSize.width;
+    const pxHeight = h * naturalSize.height;
+    if (infoEl) {
+      if (visual && activeVisualMode === "created") {
+        updateInfo(`Created video ${visual.label}`);
+      } else if (visual && (activeVisualMode === "static" || activeVisualMode === "podcast")) {
+        updateInfo(`Static frame ${visual.label}`);
+      } else {
+        updateInfo("Preview ready");
+      }
+    }
+    drawPreviewFromCropper();
+  };
+
+  const drawPreviewFromCropper = () => {
+    if (!cropper || !previewCanvas || !previewCtx) {
+      return;
+    }
+    const dims = getOverlayDims();
+    if (!dims.width || !dims.height) {
+      return;
+    }
+    const snapshot = cropper.getCroppedCanvas({
+      width: dims.width,
+      height: dims.height,
+    });
+    if (!snapshot || !snapshot.width || !snapshot.height) {
+      return;
+    }
+    syncPreviewCanvasSize();
+    previewCtx.clearRect(0, 0, dims.width, dims.height);
+    try {
+      previewCtx.drawImage(snapshot, 0, 0, dims.width, dims.height);
+    } catch (_) {}
+  };
+
+  const updateStaticVisualDescription = (visual) => {
+    if (!staticVisualDescription) {
+      return;
+    }
+    if (!visual) {
+      staticVisualDescription.textContent = "";
+      return;
+    }
+    if (isCreatedKey(visual.key)) {
+      const duration = Number.isFinite(Number(visual.duration_seconds))
+        ? ` (${Math.round(Number(visual.duration_seconds))} sn)`
+        : "";
+      staticVisualDescription.textContent = `Created video ${visual.label}${duration}`;
+      return;
+    }
+    staticVisualDescription.textContent = `Static frame ${visual.label}: ${visual.description || ""}`;
+  };
+
+  const setActiveStaticVisual = (key) => {
+    const normalizedKey = key || "";
+    activeStaticVisualKey = normalizedKey;
+    staticVisualButtons.forEach((button) => {
+      const matches = (button.dataset.visualKey || "") === normalizedKey;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    createdVisualButtons.forEach((button) => {
+      const matches = (button.dataset.visualKey || "") === normalizedKey;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    const selected = staticVisualMap.get(normalizedKey) || createdVisualMap.get(normalizedKey);
+    updateStaticVisualDescription(selected);
+  };
+  const setVisualMode = (mode) => {
+    const normalized = mode === "static"
+      ? "static"
+      : (mode === "created" ? "created" : (mode === "podcast" ? "podcast" : "video"));
+    activeVisualMode = normalized;
+    visualModeButtons.forEach((button) => {
+      const matches = (button.dataset.visualMode || "") === normalized;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    if (staticVisualStrip) {
+      staticVisualStrip.classList.toggle("d-none", (normalized !== "static" && normalized !== "podcast"));
+    }
+    if (createdVisualStrip) {
+      createdVisualStrip.classList.toggle("d-none", normalized !== "created");
+    }
+    if (podcastAudioCard) {
+      podcastAudioCard.classList.toggle("d-none", normalized !== "podcast");
+    }
+    if (normalized === "podcast") {
+      setActiveCropAspect("landscape");
+      if (!isStaticKey(activeStaticVisualKey) || !staticVisualMap.has(activeStaticVisualKey)) {
+        setActiveStaticVisual("");
+      }
+      const firstStatic = staticVisualButtons.find((btn) => (btn.dataset.visualKey || "") !== "");
+      if (!activeStaticVisualKey && firstStatic) {
+        setActiveStaticVisual(firstStatic.dataset.visualKey || "");
+      }
+    } else if (normalized === "video") {
+      setActiveStaticVisual("");
+    } else if (normalized === "static") {
+      if (!isStaticKey(activeStaticVisualKey) || !staticVisualMap.has(activeStaticVisualKey)) {
+        setActiveStaticVisual("");
+      }
+      const firstStatic = staticVisualButtons.find((btn) => (btn.dataset.visualKey || "") !== "");
+      if (!activeStaticVisualKey && firstStatic) {
+        setActiveStaticVisual(firstStatic.dataset.visualKey || "");
+      }
+    } else {
+      if (!isCreatedKey(activeStaticVisualKey) || !createdVisualMap.has(activeStaticVisualKey)) {
+        setActiveStaticVisual("");
+      }
+      const firstCreated = createdVisualButtons.find((btn) => (btn.dataset.visualKey || "") !== "");
+      if (!activeStaticVisualKey && firstCreated) {
+        setActiveStaticVisual(firstCreated.dataset.visualKey || "");
+      }
+    }
+  };
+  const setActiveBackground = (key) => {
+    const normalizedKey = key || "bg_1";
+    activeBackgroundKey = normalizedKey;
+    bgVisualButtons.forEach((button) => {
+      const matches = (button.dataset.bgVisualKey || "") === normalizedKey;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    if (previewFrame) {
+      previewFrame.style.backgroundImage = `url('${getActiveBackgroundUrl()}')`;
+    }
+  };
+  const setActiveCropAspect = (value) => {
+    let normalized = value === "portrait" ? "portrait" : "landscape";
+    if (activeVisualMode === "podcast" && podcastAudioState.selectedId && normalized !== "landscape") {
+      normalized = "landscape";
+      setPodcastAudioStatus("Podcast audio selected: output format forced to horizontal (16:9).");
+    }
+    activeCropAspect = normalized;
+    cropAspectButtons.forEach((button) => {
+      const matches = (button.dataset.cropAspect || "") === normalized;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    applyPreviewLayout();
+    syncPreviewCanvasSize();
+    if (cropper) {
+      initCropper(currentPresetRatios);
+    } else {
+      drawPreviewFromCropper();
+    }
+  };
+
+  staticVisualButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveStaticVisual(button.dataset.visualKey || "");
+      setVisualMode("static");
+      loadActivePreviewImage();
+    });
+  });
+  createdVisualButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveStaticVisual(button.dataset.visualKey || "");
+      setVisualMode("created");
+      loadActivePreviewImage();
+    });
+  });
+  bgVisualButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveBackground(button.dataset.bgVisualKey || "bg_1");
+    });
+  });
+  visualModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setVisualMode(button.dataset.visualMode || "video");
+      loadActivePreviewImage();
+    });
+  });
+  cropAspectButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveCropAspect(button.dataset.cropAspect || "landscape");
+    });
+  });
+  podcastAudioUploadBtn?.addEventListener("click", uploadPodcastAudio);
+  podcastAudioDeleteBtn?.addEventListener("click", deleteSelectedPodcastAudio);
+  podcastAudioSelect?.addEventListener("change", () => {
+    podcastAudioState.selectedId = podcastAudioSelect.value || "";
+    if (podcastAudioState.selectedId) {
+      setVisualMode("podcast");
+      setActiveCropAspect("landscape");
+    }
+    syncPodcastAudioPreview();
+  });
+
+  setActiveStaticVisual(activeStaticVisualKey);
+  loadPodcastAudios();
+  loadPodcastShortClips();
+
+  const initCropper = (presets) => {
+    if (!previewImg || !previewImg.naturalWidth) {
+      return;
+    }
+    if (cropper) {
+      cropper.destroy();
+    }
+    const dims = getOverlayDims();
+    const overlayAspectRatio = dims.width / dims.height;
+    cropper = new Cropper(previewImg, {
+      aspectRatio: overlayAspectRatio,
+      viewMode: 1,
+      dragMode: "move",
+      background: false,
+      autoCropArea: 1,
+      ready() {
+        naturalSize.width = previewImg.naturalWidth;
+        naturalSize.height = previewImg.naturalHeight;
+        const applyPreset = (ratio) => {
+          if (!ratio || !cropper) return;
+          const presetW = clampRatio(ratio.w);
+          const presetH = clampRatio(ratio.h);
+          if (!presetW || !presetH) {
+            return;
+          }
+          const data = {
+            x: clampRatio(ratio.x) * naturalSize.width,
+            y: clampRatio(ratio.y) * naturalSize.height,
+            width: presetW * naturalSize.width,
+            height: presetH * naturalSize.height,
+          };
+          cropper.setData(data);
+        };
+        applyPreset(presets);
+        if (saveBtn) {
+          saveBtn.disabled = false;
+        }
+        updateCropInfo();
+      },
+      crop() {
+        updateCropInfo();
+      },
+    });
+  };
+
+  modalEl.addEventListener("show.bs.modal", (event) => {
+    const trigger = event?.relatedTarget;
+    if (!trigger) {
+      return;
+    }
+    latestTrigger = trigger;
+    modalEl.dataset.saveUrl = trigger.dataset.saveUrl || modalEl.dataset.saveUrl;
+    const previewUrl = trigger.dataset.previewUrl || "";
+    modalEl.dataset.videoPreviewUrl = previewUrl;
+    const presetRatios = {
+      x: clampRatio(trigger.dataset.cropX),
+      y: clampRatio(trigger.dataset.cropY),
+      w: clampRatio(trigger.dataset.cropW),
+      h: clampRatio(trigger.dataset.cropH),
+    };
+    if (!presetRatios.w || !presetRatios.h) {
+      presetRatios.x = 0;
+      presetRatios.y = 0;
+      presetRatios.w = 1;
+      presetRatios.h = 1;
+    }
+    currentPresetRatios = presetRatios;
+    resetState();
+    applyPreviewLayout();
+    setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
+    setActiveBackground(trigger.dataset.backgroundVisualKey || "bg_1");
+    setActiveCropAspect(trigger.dataset.cropAspect || "landscape");
+    const triggerVisualKey = trigger.dataset.staticVisualKey || "";
+    const preferredMode = (settingsContainer?.dataset.selectedVisualMode || "").toLowerCase();
+    if (preferredMode === "podcast" && podcastAudioState.selectedId) {
+      setVisualMode("podcast");
+    } else if (preferredMode === "created") {
+      setVisualMode("created");
+    } else if (preferredMode === "static") {
+      setVisualMode("static");
+    } else if (preferredMode === "video") {
+      setVisualMode("video");
+    } else if (isCreatedKey(triggerVisualKey)) {
+      setVisualMode("created");
+    } else if (isStaticKey(triggerVisualKey)) {
+      const shouldUsePodcastMode = initialSelectedVisualMode === "podcast" && !!podcastAudioState.selectedId;
+      setVisualMode(shouldUsePodcastMode ? "podcast" : "static");
+    } else {
+      setVisualMode("video");
+    }
+    loadActivePreviewImage();
+  });
+
+  modalEl.addEventListener("hidden.bs.modal", () => {
+    resetState();
+  });
+
+  const saveShortSettings = async () => {
+    if (!settingsSaveUrl || !settingsContainer) {
+      return;
+    }
+    const params = new URLSearchParams();
+    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "title_margin", "title_line_spacing", "title_bg_color", "video_date_text", "video_overlay_offset"].forEach(
+      (name) => {
+        const field = settingsContainer.querySelector(`[name="${name}"]`);
+        if (field) {
+          params.set(name, field.value || "");
+        }
+      },
+    );
+    const subscribeToggle = settingsContainer.querySelector(`[name="enable_subscribe_overlay"]`);
+    if (subscribeToggle) {
+      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
+    }
+    const musicOnlyToggle = settingsContainer.querySelector(`[name="is_music_only"]`);
+    if (musicOnlyToggle) {
+      params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
+    }
+    const podcastAudioField = modalEl.querySelector(`[name="podcast_audio_filename"]`);
+    if (podcastAudioField && activeVisualMode === "podcast") {
+      params.set("podcast_audio_filename", podcastAudioField.value || "");
+    } else {
+      params.set("podcast_audio_filename", "");
+    }
+    if (activeVisualMode === "podcast") {
+      params.set("podcast_overlay_short_ids", JSON.stringify((podcastShortClipState.selectedIds || []).slice(0, 2)));
+    } else {
+      params.set("podcast_overlay_short_ids", "[]");
+    }
+    params.set("visual_mode", activeVisualMode || "video");
+    const response = await fetch(settingsSaveUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: params,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "Settings could not be saved.");
+    }
+    if (settingsContainer) {
+      settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
+    }
+  };
+
+  saveBtn?.addEventListener("click", async () => {
+    if (!cropper || !naturalSize.width || !naturalSize.height) {
+      return;
+    }
+    setSaveStatus("", "");
+    try {
+      setSaveStatus("Saving settings…", "");
+      await saveShortSettings();
+    } catch (err) {
+      updateInfo(err.message || "Settings could not be saved.");
+      setSaveStatus(err.message || "Settings save failed", "danger");
+      return;
+    }
+    const data = cropper.getData(true);
+    const xRatio = clampRatio(data.x / naturalSize.width);
+    const yRatio = clampRatio(data.y / naturalSize.height);
+    const wRatio = clampRatio(data.width / naturalSize.width);
+    const hRatio = clampRatio(data.height / naturalSize.height);
+    const saveUrl = modalEl.dataset.saveUrl || chooseBtn?.dataset.saveUrl;
+    if (!saveUrl) {
+      updateInfo("Save endpoint not configured.");
+      return;
+    }
+    const params = new URLSearchParams();
+    params.append("crop_x_ratio", xRatio.toFixed(6));
+    params.append("crop_y_ratio", yRatio.toFixed(6));
+    params.append("crop_w_ratio", wRatio.toFixed(6));
+    params.append("crop_h_ratio", hRatio.toFixed(6));
+    params.append("static_visual_key", activeStaticVisualKey || "");
+    params.append("background_visual_key", activeBackgroundKey || "bg_1");
+    params.append("crop_aspect", activeCropAspect || "landscape");
+    params.append("visual_mode", activeVisualMode || "video");
+    const originalText = saveBtn.textContent;
+    const savingText = saveBtn.dataset.savingText || "Saving…";
+    saveBtn.disabled = true;
+    saveBtn.textContent = savingText;
+    try {
+      const response = await fetch(saveUrl, {
+        method: "POST",
+        body: params,
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Crop save failed.");
+      }
+      updateInfo(
+        `Saved – x:${xRatio.toFixed(3)} y:${yRatio.toFixed(3)} w:${wRatio.toFixed(3)} h:${hRatio.toFixed(3)}`
+      );
+      setSaveStatus("Saved", "success");
+      if (statusText) {
+        if (activeStaticVisualKey) {
+          if (isCreatedKey(activeStaticVisualKey)) {
+            const visual = createdVisualMap.get(activeStaticVisualKey);
+            statusText.textContent = `Created video ${visual?.label || ""} saved`;
+          } else {
+            const visual = staticVisualMap.get(activeStaticVisualKey);
+            statusText.textContent = `Static visual ${visual?.label || ""} saved`;
+          }
+        } else {
+          statusText.textContent = "Crop area saved";
+        }
+      }
+      if (latestTrigger) {
+        latestTrigger.dataset.cropX = xRatio;
+        latestTrigger.dataset.cropY = yRatio;
+        latestTrigger.dataset.cropW = wRatio;
+        latestTrigger.dataset.cropH = hRatio;
+        latestTrigger.dataset.staticVisualKey = activeStaticVisualKey || "";
+        latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "bg_1";
+        latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
+      }
+      if (chooseBtn) {
+        chooseBtn.dataset.staticVisualKey = activeStaticVisualKey || "";
+        chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "bg_1";
+        chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
+      }
+    } catch (err) {
+      updateInfo(err.message || "Crop could not be saved.");
+      setSaveStatus(err.message || "Save failed", "danger");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
+  });
+});
+</script>
+<script>
+const initRemovePlanEntryAjax = () => {
+  document.querySelectorAll("form[action*='remove_plan_entry']").forEach((form) => {
+    if (form.dataset.removePlanEntryBound === "1") {
+      return;
+    }
+    form.dataset.removePlanEntryBound = "1";
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (form.dataset.ajaxRemoving === "1") {
+        return;
+      }
+      const card = form.closest(".clip-card");
+      if (!card) {
+        return;
+      }
+      form.dataset.ajaxRemoving = "1";
+      const submitBtn = form.querySelector("button[type='submit']");
+      submitBtn?.setAttribute("disabled", "disabled");
+      const params = new URLSearchParams(new FormData(form));
+      try {
+        const response = await fetch(form.action, {
+          method: form.method || "POST",
+          body: params,
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Failed to delete plan section.");
+        }
+        card.style.transition = "opacity 0.32s ease";
+        card.style.opacity = "0";
+        window.setTimeout(() => {
+          card.remove();
+        }, 320);
+      } catch (err) {
+        alert(err.message || "Failed to delete plan section.");
+      } finally {
+        form.dataset.ajaxRemoving = "";
+        submitBtn?.removeAttribute("disabled");
+      }
+    });
+  });
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  initRemovePlanEntryAjax();
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".clip-suggest-title-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const url = button.dataset.suggestUrl;
+      const planIndex = button.dataset.planIndex;
+      const excerpt = button.dataset.excerpt || "";
+      if (!url || !planIndex) {
+        return;
+      }
+      const card = button.closest(".clip-card");
+      const titleInput = card?.querySelector(".clip-title-input");
+      const feedback = card?.querySelector(".clip-title-suggestion-feedback");
+      const previousText = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+      try {
+        const params = new URLSearchParams();
+        params.append("plan_index", planIndex);
+        params.append("excerpt", excerpt);
+        params.append("current_title", titleInput?.value || "");
+        const response = await fetch(url, {
+          method: "POST",
+          body: params,
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Title suggestion could not be created.");
+        }
+        if (titleInput) {
+          titleInput.value = payload.title || titleInput.value;
+        }
+        if (feedback) {
+          feedback.textContent = "New title suggested.";
+          feedback.classList.remove("text-danger");
+          feedback.classList.add("text-success");
+          feedback.classList.remove("d-none");
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.textContent = err.message || "Title suggestion could not be retrieved.";
+          feedback.classList.remove("text-success");
+          feedback.classList.add("text-danger");
+          feedback.classList.remove("d-none");
+        }
+      } finally {
+        button.disabled = false;
+        button.innerHTML = previousText;
+      }
+    });
+  });
+});
+</script>
+<script>
+window.__vsDebugLog = (message) => {
+  try {
+    const panel = document.getElementById("js-debug-panel");
+    if (!panel) return;
+    panel.classList.remove("d-none");
+    const line = `[${new Date().toLocaleTimeString()}] ${String(message || "Unknown error")}`;
+    panel.textContent = panel.textContent ? `${panel.textContent}\n${line}` : line;
+  } catch (_) {}
+};
+window.addEventListener("error", (event) => {
+  const msg = event?.error?.stack || event?.message || "window error";
+  window.__vsDebugLog(msg);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event?.reason;
+  const msg = (reason && (reason.stack || reason.message)) || String(reason || "unhandled rejection");
+  window.__vsDebugLog(msg);
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const toggleBtn = document.getElementById("add-clip-toggle-btn");
+  const panel = document.getElementById("add-clip-panel");
+  if (!toggleBtn || !panel) {
+    return;
+  }
+  toggleBtn.addEventListener("click", () => {
+    const isHidden = panel.classList.toggle("d-none");
+    toggleBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const titleFont = document.getElementById("titleFont");
+  const subtitleFont = document.getElementById("subtitleFont");
+  const titlePreview = document.getElementById("titlePreview");
+  const subtitlePreview = document.getElementById("subtitlePreview");
+
+  const updateTitleFont = () => {
+    if (titlePreview && titleFont) {
+      const option = titleFont.options[titleFont.selectedIndex];
+      const fontFamily = option?.dataset.fontFamily || option?.value || "";
+      titlePreview.style.fontFamily = fontFamily || "inherit";
+    }
+  };
+  const updateSubtitleFont = () => {
+    if (subtitlePreview && subtitleFont) {
+      const option = subtitleFont.options[subtitleFont.selectedIndex];
+      const fontFamily = option?.dataset.fontFamily || option?.value || "";
+      subtitlePreview.style.fontFamily = fontFamily || "inherit";
+    }
+  };
+
+  titleFont?.addEventListener("change", updateTitleFont);
+  subtitleFont?.addEventListener("change", updateSubtitleFont);
+  updateTitleFont();
+  updateSubtitleFont();
+
+  const swatches = Array.from(document.querySelectorAll("#titleBgPopover .short-color-swatch")).filter((s) => s.dataset.color);
+  const hiddenColor = document.getElementById("titleBgColorValue");
+  const hexLabel = document.getElementById("titleBgHex");
+  const titleBgSwatch = document.getElementById("titleBgSwatch");
+  const titleBgTrigger = document.getElementById("titleBgTrigger");
+  const titleBgPopover = document.getElementById("titleBgPopover");
+
+  const normalize = (value) => (value || "").toUpperCase();
+  swatches.forEach((swatch) => {
+    swatch.style.backgroundColor = swatch.dataset.color;
+  });
+  const setActiveSwatch = (color) => {
+    swatches.forEach((s) => {
+      s.classList.toggle("active", normalize(s.dataset.color) === color);
+    });
+  };
+  const applyColor = (value) => {
+    const hex = normalize(value);
+    if (!hex) return;
+    hiddenColor && (hiddenColor.value = hex);
+    hexLabel && (hexLabel.textContent = hex);
+    titlePreview && (titlePreview.style.backgroundColor = hex);
+    titleBgSwatch && (titleBgSwatch.style.backgroundColor = hex);
+    setActiveSwatch(hex);
+  };
+
+  swatches.forEach((swatch) => {
+    swatch.addEventListener("click", () => {
+      applyColor(swatch.dataset.color);
+      titleBgPopover?.classList.add("closed");
+    });
+  });
+
+  titleBgTrigger?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (!titleBgPopover) return;
+    titleBgPopover.classList.toggle("closed");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!titleBgPopover) return;
+    if (titleBgTrigger?.contains(event.target) || titleBgPopover.contains(event.target)) return;
+    titleBgPopover.classList.add("closed");
+  });
+
+  const initialColor = normalize(hiddenColor?.value) || normalize(swatches[0]?.dataset.color);
+  if (initialColor) {
+    applyColor(initialColor);
+  }
+});
+</script>
+{% endblock %}

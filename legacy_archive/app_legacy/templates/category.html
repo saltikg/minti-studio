@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h1>{{ current_category.replace('_',' ').title() }}</h1>
+  <div class="grid">
+    {% for post in posts %}
+      {% include "components/_card.html" %}
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -1,0 +1,289 @@
+{% extends "vs_base.html" %}
+
+{% block title %}My Storage{% endblock %}
+
+{% block content %}
+<div class="vs-storage-page">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <h3 class="mb-0">My Storage</h3>
+    <div class="text-muted small">Downloaded videos stay local. Final short outputs can be local, S3-backed, or both.</div>
+  </div>
+  <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="btn btn-sm btn-outline-primary">
+    Manage subscriptions
+  </a>
+</div>
+
+<div class="storage-stats-wrap mb-3">
+  <div class="row g-3">
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">Total files</div>
+        <div class="vs-stat-value">{{ storage_entries|length }}</div>
+        <div class="storage-progress-spacer"></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">Total usage</div>
+        <div class="vs-stat-value">
+          {% if current_usage %}
+            {{ current_usage.used_label }} / {{ current_usage.limit_label_short }}
+          {% else %}
+            {{ storage_total_size }}
+          {% endif %}
+        </div>
+        {% if current_usage %}
+          <div class="progress storage-progress" style="height:6px;">
+            <div class="progress-bar bg-success"
+                 role="progressbar"
+                 aria-valuenow="{{ current_usage.percent }}"
+                 aria-valuemin="0"
+                 aria-valuemax="100"
+                 style="width: {{ current_usage.percent }}%;">
+            </div>
+          </div>
+        {% else %}
+          <div class="storage-progress-spacer"></div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">Downloaded videos</div>
+        <div class="vs-stat-value">{{ downloaded_total_size }}</div>
+        <div class="storage-progress-spacer"></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">Short clips</div>
+        <div class="vs-stat-value">{{ short_total_size }}</div>
+        <div class="storage-progress-spacer"></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">Local-backed</div>
+        <div class="vs-stat-value">{{ local_backed_total_size }}</div>
+        <div class="storage-progress-spacer"></div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="storage-stat-card vs-card">
+        <div class="vs-card-title mb-1">S3-backed</div>
+        <div class="vs-stat-value">{{ s3_backed_total_size }}</div>
+        <div class="storage-progress-spacer"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="storage-table-card">
+  <div id="storage-alert" class="alert alert-success storage-alert" role="alert"></div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 vs-table">
+      <thead>
+        <tr>
+          <th>
+            {% set title_sort_dir = 'asc' if storage_sort != 'title' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='title', videos_dir=title_sort_dir) }}"
+               class="text-decoration-none">
+              YouTube title
+              {% if storage_sort == 'title' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set type_sort_dir = 'asc' if storage_sort != 'type' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='type', videos_dir=type_sort_dir) }}"
+               class="text-decoration-none">
+              Type
+              {% if storage_sort == 'type' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set backend_sort_dir = 'asc' if storage_sort != 'backend' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='backend', videos_dir=backend_sort_dir) }}"
+               class="text-decoration-none">
+              Source
+              {% if storage_sort == 'backend' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set channel_sort_dir = 'asc' if storage_sort != 'channel' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='channel', videos_dir=channel_sort_dir) }}"
+               class="text-decoration-none">
+              Channel
+              {% if storage_sort == 'channel' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set status_sort_dir = 'asc' if storage_sort != 'status' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='status', videos_dir=status_sort_dir) }}"
+               class="text-decoration-none">
+              Status
+              {% if storage_sort == 'status' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set size_sort_dir = 'asc' if storage_sort != 'size' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='size', videos_dir=size_sort_dir) }}"
+               class="text-decoration-none">
+              Size
+              {% if storage_sort == 'size' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th>
+            {% set downloaded_sort_dir = 'asc' if storage_sort != 'downloaded' or storage_sort_dir == 'desc' else 'desc' %}
+            <a href="{{ url_for('video_shorts_bp.shorts_storage', videos_sort='downloaded', videos_dir=downloaded_sort_dir) }}"
+               class="text-decoration-none">
+              Downloaded date
+              {% if storage_sort == 'downloaded' %}
+                <span>{{ '▲' if storage_sort_dir == 'asc' else '▼' }}</span>
+              {% endif %}
+            </a>
+          </th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for file in storage_entries %}
+          <tr data-file-size="{{ file.size_bytes }}">
+            <td>
+              <span class="col-title" title="{{ file.youtube_title or 'Başlık yok' }}">
+                {{ file.youtube_title or 'Başlık yok' }}
+              </span>
+            </td>
+            <td>
+              <div>
+                {{ file.type_label }}
+              </div>
+            </td>
+            <td>
+              {% set backend = file.storage_backend or 'local' %}
+              {% set backend_class = 'status-completed' if backend == 's3' else 'status-processing' if backend == 'mixed' else 'status-not-started' %}
+              <span class="status-pill {{ backend_class }}">
+                {{ file.storage_backend_label or backend|capitalize }}
+              </span>
+            </td>
+            <td>
+              <div>
+                {{ file.channel_name or "Kanal yok" }}
+              </div>
+            </td>
+            <td>
+              {% set status_class = 'status-completed' if file.status_label == 'completed' else 'status-processing' if file.status_label == 'processing' else 'status-not-started' %}
+              <span class="status-pill {{ status_class }}">
+                {{ file.status_label|default('-', true)|capitalize }}
+              </span>
+            </td>
+            <td>
+              <div>
+                {{ file.size_label }}
+              </div>
+            </td>
+            <td>
+              <div>
+                {{ file.modified }}
+              </div>
+            </td>
+            <td class="text-end d-flex justify-content-end gap-1">
+              {% if file.video_pk %}
+                <a class="storage-action-btn btn-icon"
+                   href="{{ url_for('video_shorts_bp.generate_short', video_pk=file.video_pk) }}"
+                   target="_blank"
+                   rel="noreferrer noopener"
+                   title="Generate short"
+                   aria-label="Generate short">
+                    <span class="material-symbols-outlined" aria-hidden="true">arrow_outward</span>
+                </a>
+              {% endif %}
+              <button type="button"
+                      class="storage-action-btn btn-icon storage-delete-btn"
+                      data-target="{{ file.target_dir }}"
+                      data-video-id="{{ file.video_id }}"
+                      data-filename="{{ file.name }}"
+                      title="Dosyayı sil">
+                <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+                <span class="visually-hidden">Sil</span>
+              </button>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8" class="text-center text-muted py-3">Klasörde dosya yok.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const alertBox = document.getElementById("storage-alert");
+  const showAlert = (message, variant = "success") => {
+    if (!alertBox) return;
+    alertBox.textContent = message;
+    alertBox.className = `alert alert-${variant} storage-alert visible`;
+    setTimeout(() => {
+      alertBox.classList.remove("visible");
+    }, 3000);
+  };
+
+  document.querySelectorAll(".storage-delete-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const videoId = button.getAttribute("data-video-id");
+      const targetDir = button.getAttribute("data-target") || "shorts";
+      if (!confirm("Bu video dosyasını silmek istediğinize emin misiniz?")) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        const formData = new FormData();
+        formData.append("target_dir", targetDir);
+        if (videoId) {
+          formData.append("video_id", videoId);
+        }
+        const filename = button.getAttribute("data-filename");
+        if (filename) {
+          formData.append("filename", filename);
+        }
+        const response = await fetch("{{ url_for('video_shorts_bp.delete_storage_video') }}", {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Silme işlemi başarısız oldu.");
+        }
+        const row = button.closest("tr");
+        if (row) row.remove();
+        showAlert("Video dosyası başarıyla silindi.", "success");
+      } catch (err) {
+        console.error(err);
+        showAlert(err.message || "Sunucu hatası oluştu.", "danger");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

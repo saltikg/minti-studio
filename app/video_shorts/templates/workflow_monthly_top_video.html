@@ -1,0 +1,924 @@
+{% extends "vs_base.html" %}
+{% block title %}Monthly Top Videos{% endblock %}
+{% block extra_styles %}
+<style>
+  .monthly-top-table-wrap {
+    background: rgba(10, 16, 30, 0.72);
+  }
+  .monthly-top-table {
+    --bs-table-bg: transparent;
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
+    --bs-table-hover-bg: rgba(255, 255, 255, 0.06);
+    --bs-table-color: #e8eefc;
+    --bs-table-border-color: rgba(255, 255, 255, 0.08);
+  }
+  .monthly-top-table thead th {
+    color: #f8fbff;
+  }
+  .monthly-top-table .text-muted {
+    color: #e8eefc !important;
+  }
+  .monthly-progress-wrap {
+    display: none;
+  }
+  .monthly-progress-wrap.active {
+    display: block;
+  }
+  .monthly-progress-wrap,
+  .monthly-progress-wrap .small,
+  .monthly-progress-wrap span {
+    color: #ffffff !important;
+  }
+  input[type="month"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(2);
+    opacity: 1;
+  }
+  .generated-video-wrap {
+    position: relative;
+  }
+  .generated-video-meta {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    pointer-events: none;
+  }
+</style>
+{% endblock %}
+
+{% macro num(v) %}
+  {% if v is none %}
+    0
+  {% else %}
+    {{ "{:,}".format(v|int) }}
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Monthly Top Videos</h1>
+  </div>
+</div>
+
+<div class="card shadow-sm vs-card mb-4">
+  <div class="card-header">
+    <strong>Ranking (month gain)</strong>
+  </div>
+  <div class="card-body p-0">
+    <div class="row g-0">
+      <div class="col-12 col-xl-3 border-end border-secondary-subtle p-3">
+        <form method="get" class="row g-3 align-items-end">
+          <div class="col-12">
+            <label class="form-label text-light">Month</label>
+            <input type="month" name="month" value="{{ month_value }}" class="form-control vs-input">
+          </div>
+          <div class="col-12">
+            <label class="form-label text-light">Channel</label>
+            <select name="channel" class="form-select vs-select">
+              {% for option in channel_options %}
+                <option value="{{ option.value }}" {% if option.value == channel_type %}selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label text-light">Top N</label>
+            <select name="top_n" class="form-select vs-select">
+              {% for option in top_n_options %}
+                <option value="{{ option }}" {% if option == top_n %}selected{% endif %}>Top {{ option }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 d-grid">
+            <button type="submit" class="btn vs-btn-solid">Refresh</button>
+          </div>
+        </form>
+      </div>
+      <div class="col-12 col-xl-9">
+        <div class="table-responsive monthly-top-table-wrap">
+          <table class="table table-sm align-middle mb-0 monthly-top-table">
+            <thead>
+              <tr>
+                <th class="ps-3">#</th>
+                <th>Video</th>
+                <th class="text-end">Month Gain</th>
+                <th class="text-end">First Views</th>
+                <th class="text-end pe-3">Last Views</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if top_rows %}
+                {% for row in top_rows %}
+                  <tr class="{% if not row.source_available %}opacity-50{% endif %}">
+                    <td class="ps-3"><strong>{{ row.rank }}</strong></td>
+                    <td>
+                      <div class="d-flex align-items-center gap-2">
+                        {% if row.thumbnail_url %}
+                          {% if row.video_url %}
+                            <a href="{{ row.video_url }}" target="_blank" rel="noopener noreferrer">
+                              <img src="{{ row.thumbnail_url }}" alt="thumb" style="width:72px;height:40px;object-fit:cover;border-radius:6px;">
+                            </a>
+                          {% else %}
+                            <img src="{{ row.thumbnail_url }}" alt="thumb" style="width:72px;height:40px;object-fit:cover;border-radius:6px;">
+                          {% endif %}
+                        {% endif %}
+                        <div>
+                          <div class="fw-semibold">
+                            {% if row.video_url %}
+                              <a href="{{ row.video_url }}" target="_blank" rel="noopener noreferrer" class="text-light text-decoration-none">
+                                {{ row.video_title }}
+                              </a>
+                            {% else %}
+                              {{ row.video_title }}
+                            {% endif %}
+                            {% if not row.source_available %}
+                              <span class="badge bg-warning text-dark ms-2">Indirilemedi</span>
+                            {% endif %}
+                          </div>
+                          <div class="small text-muted">{{ row.channel_type|upper }} · {{ row.video_id }}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="text-end text-success">+{{ num(row.month_gain) }}</td>
+                    <td class="text-end">{{ num(row.first_views) }}</td>
+                    <td class="text-end pe-3">{{ num(row.last_views) }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="5" class="text-center text-muted py-4">No monthly data found.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+        <div class="border-top border-secondary-subtle p-3">
+          <form method="post">
+            <div id="monthlyProgressWrap" class="monthly-progress-wrap mb-3">
+              <div class="d-flex justify-content-between small mb-1">
+                <span>Rendering...</span>
+                <span id="monthlyProgressLabel">0%</span>
+              </div>
+              <div class="progress" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100">
+                <div id="monthlyProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+              </div>
+            </div>
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <input type="hidden" name="channel" value="{{ channel_type }}">
+            <input type="hidden" name="top_n" value="{{ top_n }}">
+            <button id="monthlyCreateBtn" type="submit" class="btn vs-btn-solid w-100" data-clip-count="{{ render_order|length }}" {% if not render_order %}disabled{% endif %}>
+              Generate Video
+            </button>
+          </form>
+          <div id="monthlyCreateMessage" class="small mt-2"></div>
+
+          <div id="monthlyOutputContainer">
+            {% if output_video_url %}
+              <hr>
+              <div class="small text-muted mb-2">Generated file: <code>{{ output_video_filename }}</code></div>
+              <video controls style="width:100%;border-radius:10px;">
+                <source src="{{ output_video_url }}" type="video/mp4">
+              </video>
+              <a href="{{ output_video_url }}" target="_blank" class="btn btn-sm vs-btn-outline mt-2">Open Video</a>
+            {% endif %}
+          </div>
+
+          <div id="monthlySkippedContainer">
+            {% if generation_meta and generation_meta.skipped %}
+              <hr>
+              <div class="small text-muted mb-2">Skipped:</div>
+              <ul class="small mb-0">
+                {% for item in generation_meta.skipped %}
+                  <li>{{ item.title }} ({{ item.video_id }}) - {{ item.reason }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm vs-card mt-4">
+  <div class="card-header">
+    <strong>Generated Videos</strong>
+  </div>
+  <div class="card-body" id="generatedMonthlyList">
+    {% if generated_videos %}
+      <div class="row g-3">
+        {% for item in generated_videos %}
+          <div class="col-12 col-lg-4">
+            <div class="border rounded-3 p-2 h-100">
+              <div class="generated-video-wrap">
+                <div class="generated-video-meta">
+                  <span class="badge text-bg-info">Month: {{ item.month }}</span>
+                  <span class="badge text-bg-secondary">
+                    Videos: {{ item.video_count if item.video_count is not none else '?' }}
+                  </span>
+                </div>
+                <video controls style="width:100%;border-radius:10px;">
+                  <source src="{{ item.url }}" type="video/mp4">
+                </video>
+              </div>
+              <div class="small text-muted mt-2">
+                <code>{{ item.filename }}</code>
+              </div>
+              <div class="small text-light">
+                Created: {{ item.created_at }}
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-danger mt-2 monthly-delete-btn"
+                data-filename="{{ item.filename }}"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn"
+                data-filename="{{ item.filename }}"
+                data-month="{{ item.month }}"
+                data-video-count="{{ item.video_count if item.video_count is not none else '' }}"
+                data-videos="{{ (item.videos or []) | tojson | urlencode }}"
+              >
+                Schedule & Publish
+              </button>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-muted">No generated monthly videos yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal fade" id="youtubeUploadModal" tabindex="-1" aria-labelledby="youtubeUploadModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg gs-modal-dialog">
+    <div class="modal-content gs-modal-content">
+      <div class="modal-header bg-dark text-white border-0">
+        <div class="d-flex align-items-center gap-2">
+          <svg width="26" height="26" viewBox="0 0 26 26" role="presentation" aria-hidden="true">
+            <rect width="26" height="26" rx="6" fill="#FF0000"></rect>
+            <path d="M10 8l8 5-8 5V8z" fill="#fff"></path>
+          </svg>
+          <h5 class="modal-title mb-0" id="youtubeUploadModalLabel">Schedule & Publish</h5>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="youtube-upload-form" method="post">
+        <input type="hidden" name="filename" value="">
+        <div class="modal-body py-4 text-white gs-modal-body">
+          <div id="monthly-publish-feedback" class="alert alert-danger d-none mb-2" role="alert"></div>
+          <div class="row g-3">
+            <div class="col-12 col-lg-8">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-body">
+                  <label class="form-label fw-semibold">Title</label>
+                  <input type="text" name="title" class="form-control mb-3" maxlength="100" required>
+                  <label class="form-label fw-semibold">Description</label>
+                  <textarea name="description" class="form-control" rows="5" maxlength="5000"></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-4 d-flex flex-column gap-3">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-youtube text-danger fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">YouTube</h5>
+                  </div>
+                  <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <div class="form-check form-switch text-white-50">
+                      <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% endif %} {% if not youtube_connected %}disabled{% endif %}>
+                      <label class="form-check-label small" for="youtubeEnableToggle">Enabled</label>
+                    </div>
+                    <span class="badge text-white {{ 'bg-success' if youtube_connected else 'bg-secondary' }}" id="youtubeStatusBadge">Now</span>
+                  </div>
+                </div>
+                <div class="card-body pt-0">
+                  <label class="form-label fw-semibold text-white mb-0">Publish time ({{ user_time_zone }})</label>
+                  <input type="datetime-local" name="publish_at" class="form-control mb-2">
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="instagramSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-instagram text-warning fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Instagram</h5>
+                  </div>
+                  <span class="badge {{ 'bg-success' if instagram_connected else 'bg-secondary' }}" id="instagramStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="instagramReelToggle" name="schedule_instagram_reel" {% if not instagram_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="instagramReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" id="instagramFeedToggle" name="schedule_instagram_feed" {% if not instagram_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="instagramFeedToggle">Share as feed video</label>
+                    </div>
+                  </div>
+                  <div id="instagramTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Instagram scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeSync" value="sync" checked>
+                        <label class="form-check-label" for="instagramModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeNow" value="now">
+                        <label class="form-check-label" for="instagramModeNow">Publish immediately on Instagram</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="instagramModeSchedule" value="schedule">
+                        <label class="form-check-label" for="instagramModeSchedule">Choose a separate Instagram time</label>
+                      </div>
+                    </div>
+                    <div id="instagramScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Instagram publish time ({{ user_time_zone }})</label>
+                      <input type="datetime-local" name="instagram_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="instagramTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="facebookSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-facebook text-primary fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Facebook Page</h5>
+                  </div>
+                  <span class="badge {{ 'bg-success' if facebook_connected else 'bg-secondary' }}" id="facebookStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="facebookReelToggle" name="schedule_facebook_reel" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="facebookReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" id="facebookFeedToggle" name="schedule_facebook_feed" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="facebookFeedToggle">Share as feed video</label>
+                    </div>
+                  </div>
+                  <div id="facebookTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Facebook scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeSync" value="sync" checked>
+                        <label class="form-check-label" for="facebookModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeNow" value="now">
+                        <label class="form-check-label" for="facebookModeNow">Publish immediately on Facebook</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="facebookModeSchedule" value="schedule">
+                        <label class="form-check-label" for="facebookModeSchedule">Choose a separate Facebook time</label>
+                      </div>
+                    </div>
+                    <div id="facebookScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Facebook publish time ({{ user_time_zone }})</label>
+                      <input type="datetime-local" name="facebook_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="facebookTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="tiktokSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <h5 class="mb-0 text-white">TikTok</h5>
+                  </div>
+                  <span class="badge {{ 'bg-success' if tiktok_connected else 'bg-secondary' }}" id="tiktokStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="tiktokToggle" name="schedule_tiktok" {% if not tiktok_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="tiktokToggle">Share to TikTok</label>
+                    </div>
+                  </div>
+                  <div id="tiktokTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">TikTok scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeSync" value="sync" checked>
+                        <label class="form-check-label" for="tiktokModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeNow" value="now">
+                        <label class="form-check-label" for="tiktokModeNow">Publish immediately on TikTok</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="tiktokModeSchedule" value="schedule">
+                        <label class="form-check-label" for="tiktokModeSchedule">Choose a separate TikTok time</label>
+                      </div>
+                    </div>
+                    <div id="tiktokScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">TikTok publish time ({{ user_time_zone }})</label>
+                      <input type="datetime-local" name="tiktok_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="tiktokTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer d-flex justify-content-between py-3 px-4 border-0 align-items-center">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+            <span class="btn-label">Schedule & publish</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const form = document.querySelector('form[method="post"]');
+    if (!form) return;
+    const btn = document.getElementById("monthlyCreateBtn");
+    const progressWrap = document.getElementById("monthlyProgressWrap");
+    const progressBar = document.getElementById("monthlyProgressBar");
+    const progressLabel = document.getElementById("monthlyProgressLabel");
+    const outputContainer = document.getElementById("monthlyOutputContainer");
+    const skippedContainer = document.getElementById("monthlySkippedContainer");
+    const generatedList = document.getElementById("generatedMonthlyList");
+    const messageEl = document.getElementById("monthlyCreateMessage");
+    let progressTimer = null;
+    let progressStartAt = 0;
+
+    function setProgress(value) {
+      const v = Math.max(0, Math.min(100, value));
+      progressBar.style.width = `${v}%`;
+      progressLabel.textContent = `${v}%`;
+      progressBar.setAttribute("aria-valuenow", String(v));
+    }
+
+    function startEstimatedProgress() {
+      if (progressTimer) clearInterval(progressTimer);
+      progressStartAt = Date.now();
+      const clipCount = Math.max(1, parseInt(btn?.getAttribute("data-clip-count") || "1", 10));
+      const estimatedMs = (clipCount * 18000) + 12000; // rough render+concat estimate
+      progressTimer = setInterval(() => {
+        const elapsed = Date.now() - progressStartAt;
+        const ratio = Math.max(0, Math.min(1, elapsed / estimatedMs));
+        let next = Math.round(ratio * 94);
+        const current = parseInt(progressBar.style.width, 10) || 0;
+        if (next <= current) next = Math.min(94, current + 1);
+        setProgress(next);
+      }, 350);
+    }
+
+    function renderSkipped(items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        skippedContainer.innerHTML = "";
+        return;
+      }
+      const rows = items.map((item) =>
+        `<li>${item.title || item.video_id || "-"} (${item.video_id || "-"}) - ${item.reason || "-"}</li>`
+      ).join("");
+      skippedContainer.innerHTML = `
+        <hr>
+        <div class="small text-muted mb-2">Skipped:</div>
+        <ul class="small mb-0">${rows}</ul>
+      `;
+    }
+
+    function renderOutput(url, filename) {
+      if (!url) {
+        outputContainer.innerHTML = "";
+        return;
+      }
+      outputContainer.innerHTML = `
+        <hr>
+        <div class="small text-muted mb-2">Generated file: <code>${filename || ""}</code></div>
+        <video controls style="width:100%;border-radius:10px;">
+          <source src="${url}" type="video/mp4">
+        </video>
+        <a href="${url}" target="_blank" class="btn btn-sm vs-btn-outline mt-2">Open Video</a>
+      `;
+    }
+
+    function renderGeneratedVideos(items) {
+      if (!generatedList) return;
+      if (!Array.isArray(items) || items.length === 0) {
+        generatedList.innerHTML = `<div class="text-muted">No generated monthly videos yet.</div>`;
+        return;
+      }
+      const cards = items.map((item) => `
+        <div class="col-12 col-lg-4">
+          <div class="border rounded-3 p-2 h-100">
+            <div class="generated-video-wrap">
+              <div class="generated-video-meta">
+                <span class="badge text-bg-info">Month: ${item.month || "-"}</span>
+                <span class="badge text-bg-secondary">Videos: ${item.video_count ?? "?"}</span>
+              </div>
+              <video controls style="width:100%;border-radius:10px;">
+                <source src="${item.url}" type="video/mp4">
+              </video>
+            </div>
+            <div class="small text-muted mt-2"><code>${item.filename || ""}</code></div>
+            <div class="small text-light">Created: ${item.created_at || "-"}</div>
+            <button type="button" class="btn btn-sm btn-outline-danger mt-2 monthly-delete-btn" data-filename="${item.filename || ""}">
+              Delete
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn"
+              data-filename="${item.filename || ""}"
+              data-month="${item.month || ""}"
+              data-video-count="${item.video_count ?? ""}"
+              data-videos="${encodeURIComponent(JSON.stringify(item.videos || []))}"
+            >
+              Schedule & Publish
+            </button>
+          </div>
+        </div>
+      `).join("");
+      generatedList.innerHTML = `<div class="row g-3">${cards}</div>`;
+    }
+
+    function parseVideosData(raw) {
+      if (!raw) return [];
+      try {
+        const decoded = decodeURIComponent(raw);
+        const parsed = JSON.parse(decoded);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function limitText(value, maxLen) {
+      const text = (value || "").toString().trim();
+      if (!text) return "";
+      return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text;
+    }
+
+    function buildBilingualDescription(month, videos) {
+      const monthLabel = (month || "").trim() || "selected month";
+      const list = Array.isArray(videos) ? videos.slice(0, 20) : [];
+      const tr = [
+        `${monthLabel} döneminde en çok izlenen videoları sizin için derledik.`,
+        "Videolar ve içerikleri:",
+      ];
+      const en = [
+        `We compiled the most watched videos for ${monthLabel}.`,
+        "Videos and their topics:",
+      ];
+      if (list.length === 0) {
+        tr.push("- Video listesi hazırlanamadı.");
+        en.push("- Video list could not be prepared.");
+      } else {
+        list.forEach((v, idx) => {
+          const title = limitText(v.title || v.video_id || `Video ${idx + 1}`, 110);
+          const content = limitText(v.content_text || title, 180);
+          tr.push(`${idx + 1}. ${title} - ${content}`);
+          en.push(`${idx + 1}. ${title} - ${content}`);
+        });
+      }
+      const finalText = `TR\n${tr.join("\n")}\n\nEN\n${en.join("\n")}`;
+      return finalText.length > 4900 ? `${finalText.slice(0, 4890)}\n...` : finalText;
+    }
+
+    async function deleteGeneratedVideo(filename) {
+      const res = await fetch("/video_shorts/workflow/monthly-top-video/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        body: JSON.stringify({ filename })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || "Delete failed.");
+      }
+      return data;
+    }
+
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      progressWrap.classList.add("active");
+      messageEl.textContent = "";
+      setProgress(2);
+      startEstimatedProgress();
+
+      try {
+        const fd = new FormData(form);
+        const res = await fetch(window.location.pathname + window.location.search, {
+          method: "POST",
+          body: fd,
+          headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+        const data = await res.json();
+        setProgress(100);
+        renderOutput(data.output_video_url, data.output_video_filename);
+        renderSkipped(data.skipped);
+        renderGeneratedVideos(data.generated_videos);
+        messageEl.className = `small mt-2 ${data.ok ? "text-success" : "text-warning"}`;
+        messageEl.textContent = data.message || (data.ok ? "Completed." : "Failed.");
+      } catch (err) {
+        messageEl.className = "small mt-2 text-danger";
+        messageEl.textContent = "Render failed unexpectedly.";
+      } finally {
+        if (progressTimer) clearInterval(progressTimer);
+        setTimeout(() => {
+          progressWrap.classList.remove("active");
+          setProgress(0);
+        }, 800);
+        btn.disabled = false;
+      }
+    });
+
+    const publishModalEl = document.getElementById("youtubeUploadModal");
+    const publishForm = document.getElementById("youtube-upload-form");
+    const publishFeedback = document.getElementById("monthly-publish-feedback");
+    const youtubeEnableToggle = document.getElementById("youtubeEnableToggle");
+    const youtubeStatusBadge = document.getElementById("youtubeStatusBadge");
+    const instagramReelToggle = document.getElementById("instagramReelToggle");
+    const instagramFeedToggle = document.getElementById("instagramFeedToggle");
+    const instagramTimingContainer = document.getElementById("instagramTimingContainer");
+    const instagramScheduleGroup = document.getElementById("instagramScheduleGroup");
+    const instagramTimingHint = document.getElementById("instagramTimingHint");
+    const instagramStatusBadge = document.getElementById("instagramStatusBadge");
+    const facebookReelToggle = document.getElementById("facebookReelToggle");
+    const facebookFeedToggle = document.getElementById("facebookFeedToggle");
+    const facebookTimingContainer = document.getElementById("facebookTimingContainer");
+    const facebookScheduleGroup = document.getElementById("facebookScheduleGroup");
+    const facebookTimingHint = document.getElementById("facebookTimingHint");
+    const facebookStatusBadge = document.getElementById("facebookStatusBadge");
+    const tiktokToggle = document.getElementById("tiktokToggle");
+    const tiktokTimingContainer = document.getElementById("tiktokTimingContainer");
+    const tiktokScheduleGroup = document.getElementById("tiktokScheduleGroup");
+    const tiktokTimingHint = document.getElementById("tiktokTimingHint");
+    const tiktokStatusBadge = document.getElementById("tiktokStatusBadge");
+
+    function selectedMode(name) {
+      const checked = document.querySelector(`input[name='${name}']:checked`);
+      return checked ? checked.value : "sync";
+    }
+
+    function setBadge(el, label, variant) {
+      if (!el) return;
+      el.textContent = label;
+      el.className = `badge text-white ${variant}`;
+    }
+
+    function updateYoutubeState() {
+      if (!youtubeEnableToggle) return;
+      if (youtubeEnableToggle.disabled) {
+        setBadge(youtubeStatusBadge, "Disabled", "bg-secondary");
+        return;
+      }
+      const publishAt = publishForm?.querySelector("[name='publish_at']")?.value || "";
+      if (!youtubeEnableToggle.checked) {
+        setBadge(youtubeStatusBadge, "Disabled", "bg-secondary");
+      } else if (publishAt) {
+        setBadge(youtubeStatusBadge, "Scheduled", "bg-primary");
+      } else {
+        setBadge(youtubeStatusBadge, "Now", "bg-success");
+      }
+    }
+
+    function updateInstagramState() {
+      if (!instagramReelToggle || !instagramFeedToggle) return;
+      const enabled = instagramReelToggle.checked || instagramFeedToggle.checked;
+      const mode = selectedMode("instagram_mode");
+      if (instagramTimingContainer) instagramTimingContainer.classList.toggle("d-none", !enabled);
+      if (instagramScheduleGroup) instagramScheduleGroup.classList.toggle("d-none", !enabled || mode !== "schedule");
+      if (instagramTimingHint) {
+        instagramTimingHint.classList.toggle("d-none", !enabled);
+        instagramTimingHint.textContent = mode === "now"
+          ? "Instagram post will be published immediately."
+          : mode === "schedule"
+            ? "Instagram post will be published at the selected time."
+            : "Will follow the YouTube schedule.";
+      }
+      if (!enabled) {
+        setBadge(instagramStatusBadge, "Disabled", "bg-secondary");
+      } else if (mode === "now") {
+        setBadge(instagramStatusBadge, "Now", "bg-success");
+      } else if (mode === "schedule") {
+        setBadge(instagramStatusBadge, "Scheduled", "bg-primary");
+      } else {
+        setBadge(instagramStatusBadge, "Sync", "bg-info");
+      }
+    }
+
+    function updateFacebookState() {
+      if (!facebookReelToggle || !facebookFeedToggle) return;
+      const enabled = facebookReelToggle.checked || facebookFeedToggle.checked;
+      const mode = selectedMode("facebook_mode");
+      if (facebookTimingContainer) facebookTimingContainer.classList.toggle("d-none", !enabled);
+      if (facebookScheduleGroup) facebookScheduleGroup.classList.toggle("d-none", !enabled || mode !== "schedule");
+      if (facebookTimingHint) {
+        facebookTimingHint.classList.toggle("d-none", !enabled);
+        facebookTimingHint.textContent = mode === "now"
+          ? "Facebook post will be published immediately."
+          : mode === "schedule"
+            ? "Facebook post will be published at the selected time."
+            : "Will follow the YouTube schedule.";
+      }
+      if (!enabled) {
+        setBadge(facebookStatusBadge, "Disabled", "bg-secondary");
+      } else if (mode === "now") {
+        setBadge(facebookStatusBadge, "Now", "bg-success");
+      } else if (mode === "schedule") {
+        setBadge(facebookStatusBadge, "Scheduled", "bg-primary");
+      } else {
+        setBadge(facebookStatusBadge, "Sync", "bg-info");
+      }
+    }
+
+    function updateTiktokState() {
+      if (!tiktokToggle) return;
+      const enabled = tiktokToggle.checked;
+      const mode = selectedMode("tiktok_mode");
+      if (tiktokTimingContainer) tiktokTimingContainer.classList.toggle("d-none", !enabled);
+      if (tiktokScheduleGroup) tiktokScheduleGroup.classList.toggle("d-none", !enabled || mode !== "schedule");
+      if (tiktokTimingHint) {
+        tiktokTimingHint.classList.toggle("d-none", !enabled);
+        tiktokTimingHint.textContent = mode === "now"
+          ? "TikTok post will be published immediately."
+          : mode === "schedule"
+            ? "TikTok post will be published at the selected time."
+            : "Will follow the YouTube schedule.";
+      }
+      if (!enabled) {
+        setBadge(tiktokStatusBadge, "Disabled", "bg-secondary");
+      } else if (mode === "now") {
+        setBadge(tiktokStatusBadge, "Now", "bg-success");
+      } else if (mode === "schedule") {
+        setBadge(tiktokStatusBadge, "Scheduled", "bg-primary");
+      } else {
+        setBadge(tiktokStatusBadge, "Sync", "bg-info");
+      }
+    }
+
+    function initPublishModalDefaults() {
+      if (!publishForm) return;
+      publishForm.querySelector("[name='description']").value = "";
+      const publishAt = publishForm.querySelector("[name='publish_at']");
+      if (publishAt) publishAt.value = "";
+      if (youtubeEnableToggle && !youtubeEnableToggle.disabled) youtubeEnableToggle.checked = true;
+      if (instagramReelToggle && !instagramReelToggle.disabled) instagramReelToggle.checked = false;
+      if (instagramFeedToggle && !instagramFeedToggle.disabled) instagramFeedToggle.checked = false;
+      if (facebookReelToggle && !facebookReelToggle.disabled) facebookReelToggle.checked = false;
+      if (facebookFeedToggle && !facebookFeedToggle.disabled) facebookFeedToggle.checked = false;
+      if (tiktokToggle && !tiktokToggle.disabled) tiktokToggle.checked = false;
+      ["instagram_mode", "facebook_mode", "tiktok_mode"].forEach((name) => {
+        const syncRadio = publishForm.querySelector(`input[name='${name}'][value='sync']`);
+        if (syncRadio) syncRadio.checked = true;
+      });
+      ["instagram_publish_at", "facebook_publish_at", "tiktok_publish_at"].forEach((name) => {
+        const input = publishForm.querySelector(`[name='${name}']`);
+        if (input) input.value = "";
+      });
+      if (publishFeedback) {
+        publishFeedback.classList.add("d-none");
+        publishFeedback.textContent = "";
+      }
+      updateYoutubeState();
+      updateInstagramState();
+      updateFacebookState();
+      updateTiktokState();
+    }
+
+    youtubeEnableToggle?.addEventListener("change", updateYoutubeState);
+    publishForm?.querySelector("[name='publish_at']")?.addEventListener("input", updateYoutubeState);
+    [instagramReelToggle, instagramFeedToggle].forEach((el) => el?.addEventListener("change", updateInstagramState));
+    [facebookReelToggle, facebookFeedToggle].forEach((el) => el?.addEventListener("change", updateFacebookState));
+    tiktokToggle?.addEventListener("change", updateTiktokState);
+    ["instagram_mode", "facebook_mode", "tiktok_mode"].forEach((name) => {
+      document.querySelectorAll(`input[name='${name}']`).forEach((el) => {
+        el.addEventListener("change", () => {
+          if (name === "instagram_mode") updateInstagramState();
+          if (name === "facebook_mode") updateFacebookState();
+          if (name === "tiktok_mode") updateTiktokState();
+        });
+      });
+    });
+
+    if (generatedList) {
+      generatedList.addEventListener("click", async function (e) {
+        const btnEl = e.target.closest(".monthly-delete-btn");
+        const publishBtnEl = e.target.closest(".monthly-publish-btn");
+        if (publishBtnEl) {
+          if (!publishModalEl || typeof bootstrap === "undefined" || !publishForm) return;
+          const modal = bootstrap.Modal.getOrCreateInstance(publishModalEl);
+          const filename = publishBtnEl.getAttribute("data-filename") || "";
+          const month = publishBtnEl.getAttribute("data-month") || "";
+          const videoCount = publishBtnEl.getAttribute("data-video-count") || "";
+          const videos = parseVideosData(publishBtnEl.getAttribute("data-videos") || "");
+          initPublishModalDefaults();
+          publishForm.querySelector("[name='filename']").value = filename;
+          publishForm.querySelector("[name='title']").value = `Top ${videoCount || "N"} Videos - ${month || "Monthly"}`;
+          publishForm.querySelector("[name='description']").value = buildBilingualDescription(month, videos);
+          modal.show();
+          return;
+        }
+        if (!btnEl) return;
+        const filename = (btnEl.getAttribute("data-filename") || "").trim();
+        if (!filename) return;
+        if (!confirm(`Delete ${filename}?`)) return;
+        btnEl.disabled = true;
+        try {
+          const data = await deleteGeneratedVideo(filename);
+          renderGeneratedVideos(data.generated_videos);
+          messageEl.className = "small mt-2 text-success";
+          messageEl.textContent = data.message || "Deleted.";
+        } catch (err) {
+          messageEl.className = "small mt-2 text-warning";
+          messageEl.textContent = err && err.message ? err.message : "Delete failed.";
+          btnEl.disabled = false;
+        }
+      });
+    }
+
+    if (publishForm) {
+      publishForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const fd = new FormData(publishForm);
+        const youtubePublishAt = (fd.get("publish_at") || "").toString();
+        const igMode = (fd.get("instagram_mode") || "sync").toString();
+        const fbMode = (fd.get("facebook_mode") || "sync").toString();
+        const ttMode = (fd.get("tiktok_mode") || "sync").toString();
+        const payload = {
+          filename: fd.get("filename"),
+          title: fd.get("title"),
+          description: fd.get("description"),
+          youtube_enabled: fd.get("youtube_enabled") === "on",
+          publish_at: youtubePublishAt,
+          instagram_reel: fd.get("schedule_instagram_reel") === "on",
+          instagram_feed: fd.get("schedule_instagram_feed") === "on",
+          instagram_mode: igMode,
+          instagram_publish_at: igMode === "schedule" ? (fd.get("instagram_publish_at") || "").toString() : "",
+          facebook_reel: fd.get("schedule_facebook_reel") === "on",
+          facebook_feed: fd.get("schedule_facebook_feed") === "on",
+          facebook_mode: fbMode,
+          facebook_publish_at: fbMode === "schedule" ? (fd.get("facebook_publish_at") || "").toString() : "",
+          tiktok_enabled: fd.get("schedule_tiktok") === "on",
+          tiktok_mode: ttMode,
+          tiktok_publish_at: ttMode === "schedule" ? (fd.get("tiktok_publish_at") || "").toString() : ""
+        };
+        const submitBtn = publishForm.querySelector("button[type='submit']");
+        if (submitBtn) submitBtn.disabled = true;
+        if (publishFeedback) {
+          publishFeedback.classList.add("d-none");
+          publishFeedback.textContent = "";
+        }
+        try {
+          const res = await fetch("/video_shorts/workflow/monthly-top-video/publish", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            throw new Error(data.message || "Publish failed.");
+          }
+          messageEl.className = "small mt-2 text-success";
+          messageEl.textContent = data.message || "Publish queued.";
+          if (publishModalEl && typeof bootstrap !== "undefined") {
+            bootstrap.Modal.getOrCreateInstance(publishModalEl).hide();
+          }
+        } catch (err) {
+          const errMsg = err && err.message ? err.message : "Publish failed.";
+          if (publishFeedback) {
+            publishFeedback.textContent = errMsg;
+            publishFeedback.classList.remove("d-none");
+          } else {
+            messageEl.className = "small mt-2 text-warning";
+            messageEl.textContent = errMsg;
+          }
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}

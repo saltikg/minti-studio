@@ -1,0 +1,50 @@
+<tr id="{{ item.anchor_id }}" data-source-entry-key="{{ item.source_entry_key }}">
+  <td>
+    <div class="fw-semibold">{{ item.title or "-" }}</div>
+    <div class="small text-muted mt-1">Video ID: {{ item.video_id }}</div>
+    {% if item.short_video_id %}
+      <div class="small text-muted">Short ID: {{ item.short_video_id }}</div>
+    {% endif %}
+  </td>
+  <td>{{ item.published_at_label or (item.published_at|fmt_dt if item.published_at else "-") }}</td>
+  <td>
+    {% if item.transcript_preview %}
+      <div>{{ item.transcript_preview }}</div>
+    {% else %}
+      <div class="text-muted">Transcript bulunamadi.</div>
+    {% endif %}
+  </td>
+  <td>
+    {% if item.video_url %}
+      <a class="kb-source-link" href="{{ item.video_url }}" target="_blank" rel="noopener noreferrer">{{ item.video_url }}</a>
+    {% else %}
+      <span class="text-muted">-</span>
+    {% endif %}
+  </td>
+  <td>
+    {% if item.generation_id %}
+      <span class="kb-status-pill">{{ item.generation_status }}</span>
+    {% else %}
+      <span class="kb-status-pill is-muted">hazir degil</span>
+    {% endif %}
+    <div class="small text-muted mt-2">Kaynak: {{ item.source_status }}</div>
+  </td>
+  <td>
+    <div class="d-flex flex-wrap gap-2">
+      {% if item.generation_id %}
+        <button type="button" class="btn btn-sm vs-btn vs-btn-outline" data-kb-open data-source-entry-key="{{ item.source_entry_key }}">Goruntule</button>
+      {% else %}
+        <button type="button" class="btn btn-sm vs-btn vs-btn-primary" data-kb-generate data-source-entry-key="{{ item.source_entry_key }}" data-title="{{ item.title }}">Generate Q&A</button>
+      {% endif %}
+      <button
+        type="button"
+        class="btn btn-sm vs-btn {% if item.is_relevant %}vs-btn-danger{% else %}vs-btn-outline{% endif %}"
+        data-kb-toggle
+        data-source-entry-key="{{ item.source_entry_key }}"
+        data-next-relevant="{% if item.is_relevant %}false{% else %}true{% endif %}"
+      >
+        {% if item.is_relevant %}Gereksiz{% else %}Gerekli Yap{% endif %}
+      </button>
+    </div>
+  </td>
+</tr>

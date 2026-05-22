@@ -1,0 +1,260 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Interviews{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <style>
+    .interviews-page .interviews-table-wrap {
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255,255,255,.02);
+    }
+    .interviews-page .interviews-table th,
+    .interviews-page .interviews-table td {
+      border-color: rgba(255,255,255,.08);
+      vertical-align: middle;
+    }
+    .interviews-page .interviews-table thead th {
+      font-size: .8rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: rgba(255,255,255,.72);
+      background: rgba(255,255,255,.03);
+    }
+    .interviews-page .interviews-table .title-link {
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .interviews-page .interviews-table .title-link:hover {
+      text-decoration: underline;
+    }
+    .interviews-page .tag-input-inline {
+      max-width: 120px;
+      min-height: 26px;
+      padding: .125rem .5rem;
+      font-size: .75rem;
+      line-height: 1.2;
+      border-radius: 999px;
+    }
+    .interviews-page .tag-save-btn {
+      min-height: 26px;
+      min-width: 26px;
+      padding: 0;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .interviews-page .tag-save-btn .material-symbols-outlined {
+      font-size: 16px;
+    }
+    .interviews-page .open-session-btn {
+      min-height: 30px;
+      min-width: 30px;
+      padding: 0;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .interviews-page .open-session-btn .material-symbols-outlined {
+      font-size: 18px;
+    }
+  </style>
+
+  <div class="interviews-page">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+      <h3 class="mb-0">Interviews</h3>
+    </div>
+
+    <div class="card shadow-sm vs-card mb-4">
+      <div class="card-body">
+        <form method="post" action="{{ url_for('video_shorts_bp.interview_interviews_page') }}" class="row g-3">
+          <div class="col-12 col-lg-5">
+            <label class="form-label text-white-50">Interview Title</label>
+            <input name="title" class="form-control vs-input" required maxlength="180" placeholder="Apple 1st Call">
+          </div>
+          <div class="col-12 col-lg-5">
+            <label class="form-label text-white-50">Tags (comma separated)</label>
+            <input name="tags" class="form-control vs-input" maxlength="220" placeholder="Apple, Screening, PM">
+          </div>
+          <div class="col-12 col-lg-2 d-grid">
+            <label class="form-label text-white-50">&nbsp;</label>
+            <button type="submit" class="btn vs-btn vs-btn-primary">Create New Interview Session</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if interviews %}
+      <div class="interviews-table-wrap">
+        <div class="table-responsive">
+          <table class="table interviews-table table-dark table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Interview</th>
+                <th>Created</th>
+                <th>Recordings</th>
+                <th>Tags</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="interviews-grid">
+              {% for item in interviews %}
+                <tr data-interview-id="{{ item.id }}">
+                  <td>
+                    <a
+                      href="{{ url_for('video_shorts_bp.interview_practice_page', interview_id=item.id) }}"
+                      class="title-link"
+                    >
+                      {{ item.title }}
+                    </a>
+                  </td>
+                  <td class="small text-white-50">
+                    {{ item.created_at_pacific }}
+                  </td>
+                  <td>
+                    <span class="badge text-bg-dark">{{ item.recording_count }}</span>
+                  </td>
+                  <td>
+                    <div class="d-flex flex-wrap gap-2 align-items-center" data-tag-list>
+                      {% if item.tags %}
+                        {% for tag in item.tags %}
+                          <span class="badge text-bg-light d-inline-flex align-items-center gap-1">
+                            <span>{{ tag.name }}</span>
+                            <button
+                              type="button"
+                              class="btn btn-sm p-0 border-0 bg-transparent text-dark"
+                              data-remove-tag
+                              data-tag-id="{{ tag.id }}"
+                              aria-label="Remove tag {{ tag.name }}"
+                              style="line-height:1"
+                            >×</button>
+                          </span>
+                        {% endfor %}
+                      {% else %}
+                        <span class="small text-white-50">No tags</span>
+                      {% endif %}
+
+                      <input
+                        type="text"
+                        class="form-control form-control-sm vs-input tag-input-inline"
+                        data-add-tag-input
+                        maxlength="80"
+                        placeholder="+ tag"
+                      >
+                      <button type="button" class="btn btn-sm btn-outline-light tag-save-btn" data-add-tag-btn aria-label="Save tag">
+                        <span class="material-symbols-outlined" aria-hidden="true">check</span>
+                      </button>
+                    </div>
+                  </td>
+                  <td class="text-end">
+                    <a
+                      href="{{ url_for('video_shorts_bp.interview_practice_page', interview_id=item.id) }}"
+                      class="btn btn-sm btn-outline-light open-session-btn"
+                      aria-label="Open session for {{ item.title }}"
+                      title="Open session"
+                    >
+                      <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <div class="small text-white-50">No interviews yet. Create one above.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const grid = document.getElementById("interviews-grid");
+  if (!grid) return;
+
+  const addTag = async (interviewId, tag) => {
+    const url = `/video_shorts/api/interview/interviews/${encodeURIComponent(interviewId)}/tags`;
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ tag }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Tag add failed.");
+  };
+
+  const removeTag = async (interviewId, tagId) => {
+    const url = `/video_shorts/api/interview/interviews/${encodeURIComponent(interviewId)}/tags/${encodeURIComponent(tagId)}`;
+    const res = await fetch(url, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Tag remove failed.");
+  };
+
+  grid.querySelectorAll("[data-add-tag-btn]").forEach((btn) => {
+    const handleAddTag = async () => {
+      const card = btn.closest("[data-interview-id]");
+      if (!card) return;
+      const interviewId = card.getAttribute("data-interview-id") || "";
+      const input = card.querySelector("[data-add-tag-input]");
+      const tag = (input && input.value ? input.value : "").trim();
+      if (!interviewId || !tag) return;
+      btn.disabled = true;
+      try {
+        await addTag(interviewId, tag);
+        window.location.reload();
+      } catch (err) {
+        alert(err.message || "Tag add failed.");
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    btn.addEventListener("click", handleAddTag);
+
+    const card = btn.closest("[data-interview-id]");
+    const input = card ? card.querySelector("[data-add-tag-input]") : null;
+    if (input) {
+      input.addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        await handleAddTag();
+      });
+    }
+  });
+
+  grid.querySelectorAll("[data-remove-tag]").forEach((btn) => {
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = btn.closest("[data-interview-id]");
+      if (!card) return;
+      const interviewId = card.getAttribute("data-interview-id") || "";
+      const tagId = btn.getAttribute("data-tag-id") || "";
+      if (!interviewId || !tagId) return;
+      btn.disabled = true;
+      try {
+        await removeTag(interviewId, tagId);
+        window.location.reload();
+      } catch (err) {
+        alert(err.message || "Tag remove failed.");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+});
+</script>
+{% endblock %}

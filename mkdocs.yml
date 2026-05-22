@@ -1,0 +1,50 @@
+site_name: Minti Product
+site_url: https://mintiproduct.com
+site_description: 'Discover honest product reviews, comparisons, and buying guides.
+  Minti Product helps you choose the best Amazon finds with clear pros, cons, and
+  practical advice.
+
+  '
+site_author: Minti Product Team
+theme:
+  name: material
+  features:
+  - navigation.tabs
+  - navigation.top
+  palette:
+    scheme: default
+    primary: indigo
+    accent: indigo
+  font:
+    text: Roboto
+    code: Roboto Mono
+markdown_extensions:
+- meta
+- tables
+- fenced_code
+- toc:
+    permalink: true
+- md_in_html
+- attr_list
+docs_dir: docs/blogs
+nav:
+- Home: index.md
+- Beauty: beauty/index.md
+- Cell Phones And Accessories: cell_phones_and_accessories/index.md
+- Electronics: electronics/index.md
+- Sports And Outdoors: sports_and_outdoors/index.md
+- Tools And Home Improvement: tools_and_home_improvement/index.md
+- Toys And Games: toys_and_games/index.md
+- Video Games: video_games/index.md
+extra_css:
+- stylesheets/extra.css
+plugins:
+- search
+- redirects
+- social
+extra:
+  analytics:
+    provider: google
+    property: G-RNP6XHEM38
+redirects:
+  the-ultimate-showdown-wireless-controllers-that-stand-the-test-of-time/index.md: video_games/the-ultimate-showdown-wireless-controllers-that-stand-the-test-of-time/index.md

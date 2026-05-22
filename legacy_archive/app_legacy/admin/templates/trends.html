@@ -1,0 +1,120 @@
+{% extends "admin_base.html" %}
+{% block title %}Trends Admin{% endblock %}
+{% block content %}
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0 d-flex align-items-center gap-2">
+    🔥 Daily Trends
+    <span class="badge bg-secondary">{{ trends|length }}</span>
+  </h3>
+
+<form class="d-flex" method="get" action="{{ url_for('admin_bp.daily_trends_page') }}">
+    <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Search trends...">
+    <button class="btn btn-sm btn-outline-primary ms-2">Search</button>
+  </form>
+</div>
+
+<!-- Trend Research Toolbar -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="post" action="{{ url_for('admin_bp.trends_research') }}" class="d-flex gap-2 align-items-center">
+      <input type="hidden" name="locale" value="US">
+      <input type="number" name="limit" class="form-control form-control-sm" style="width:110px" value="20" min="1" max="100" title="Number of trends">
+      <button class="btn btn-outline-secondary btn-sm">Trend Araştır</button>
+      <span class="text-muted small">Google, YouTube, eBay ve sosyal medya trendlerini getirir</span>
+    </form>
+  </div>
+</div>
+
+<!-- Candidate Trends -->
+{% if session.get('trend_candidates') %}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-light py-2"><strong>Aday Trendler</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('admin_bp.save_trend_candidates') }}">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th></th>
+              <th>Topic</th>
+              <th>Source</th>
+              <th>Category</th>
+              <th>Locale</th>
+              <th>Volume</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in session['trend_candidates'] %}
+            <tr>
+              <td><input type="checkbox" name="selected_topic" value="{{ t.topic }}"></td>
+              <td class="fw-semibold">{{ t.topic }}</td>
+              <td><span class="badge bg-light text-dark">{{ t.source }}</span></td>
+              <td><small>{{ t.category }}</small></td>
+              <td><small>{{ t.locale }}</small></td>
+              <td><small>{{ t.volume or '-' }}</small></td>
+              <td><div class="text-truncate" style="max-width:400px">
+                <small class="text-muted" title="{{ t.reason }}">{{ t.reason }}</small>
+              </div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="p-2 text-end">
+        <button class="btn btn-success btn-sm">Kaydet</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<!-- Trends List -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Topic</th>
+            <th>Source</th>
+            <th>Category</th>
+            <th>Volume</th>
+            <th>Locale</th>
+            <th>Detected</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in trends %}
+          <tr>
+            <td class="text-muted">{{ t.id }}</td>
+            <td class="fw-semibold">{{ t.topic }}</td>
+            <td><span class="badge bg-light text-dark">{{ t.source }}</span></td>
+            <td><small>{{ t.category }}</small></td>
+            <td><small>{{ t.volume }}</small></td>
+            <td><small>{{ t.locale }}</small></td>
+            <td><small class="text-muted">{{ t.detected_at }}</small></td>
+            <td class="text-end">
+              <form method="POST" action="{{ url_for('admin_bp.delete_trend', trend_id=t.id) }}"
+                    onsubmit="return confirm('Delete {{ t.topic }}?');" class="d-inline">
+                <button class="btn btn-outline-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if trends|length == 0 %}
+          <tr>
+            <td colspan="8" class="text-center text-muted py-4">No trends found.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

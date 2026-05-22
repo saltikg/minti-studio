@@ -1,0 +1,18 @@
+┌──────────────┬──────────────────────────┐
+│ table_schema │        table_name        │
+│   varchar    │         varchar          │
+├──────────────┼──────────────────────────┤
+│ main         │ blog_posts               │
+│ main         │ categories               │
+│ main         │ idea_products            │
+│ main         │ ideas                    │
+│ main         │ product_media            │
+│ main         │ product_metrics          │
+│ main         │ product_review_summaries │
+│ main         │ product_text             │
+│ main         │ products                 │
+│ main         │ trends_categories        │
+│ main         │ v_products               │
+├──────────────┴──────────────────────────┤
+│ 11 rows                       2 columns │
+└─────────────────────────────────────────┘

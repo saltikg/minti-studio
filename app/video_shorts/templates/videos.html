@@ -1,0 +1,438 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Videos – {{ channel.channel_name }}{% endblock %}
+
+{% block content %}
+
+
+
+<div class="vs-hero vs-card mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <h3 class="fw-bold mb-1 d-flex align-items-center gap-2">
+        Videos for {{ channel.channel_name }}
+        {% if channel.channel_url %}
+          <a href="{{ channel.channel_url }}" target="_blank" class="vs-link" aria-label="Open YouTube channel">
+            <span class="material-symbols-outlined">link</span>
+          </a>
+        {% endif %}
+        <form method="post"
+              action="{{ url_for('video_shorts_bp.set_channel_active', channel_id=channel.channel_id) }}"
+              class="d-inline">
+          {% if channel.is_active %}
+            <input type="hidden" name="is_active" value="0">
+            <button class="vs-btn vs-btn-danger vs-btn-sm">Deactivate</button>
+          {% else %}
+            <input type="hidden" name="is_active" value="1">
+            <button class="vs-btn vs-btn-primary vs-btn-sm">Activate</button>
+          {% endif %}
+        </form>
+      </h3>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('video_shorts_bp.channels_page') }}"
+         class="vs-btn vs-btn-secondary vs-btn-sm">
+        ← Back to Channels
+      </a>
+      <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, fetch=1) }}"
+         class="vs-btn vs-btn-primary vs-btn-sm">
+        🔄 Fetch next batch
+      </a>
+      <form method="get"
+            action="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id) }}"
+            class="d-flex gap-1 vs-fetch-form">
+        <input type="hidden" name="fetch" value="1">
+        <input type="text" name="video_to_fetch" placeholder="Video ID (e.g., abc123)" class="form-control form-control-sm vs-input vs-input-140">
+        <button class="vs-btn vs-btn-primary vs-btn-sm">Fetch Video</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div class="vs-badge"><strong>Status:</strong>
+      {% if channel.is_active %}
+        <span class="badge bg-success">Active</span>
+      {% else %}
+        <span class="badge bg-secondary">Inactive</span>
+      {% endif %}
+    </div>
+    <div class="vs-stats w-100">
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Total</div>
+          <div class="vs-stat-value">{{ channel.total_videos or 0 }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Fetched</div>
+          <div class="vs-stat-value">{{ total_count }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='downloaded', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Downloaded</div>
+          <div class="vs-stat-value">{{ download_ready }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='downloaded_deleted', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Downloaded (deleted)</div>
+          <div class="vs-stat-value">{{ download_ready_deleted }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='pending', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Pending videos</div>
+          <div class="vs-stat-value">{{ download_pending }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='not_needed', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Not needed</div>
+          <div class="vs-stat-value">{{ download_not_needed }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='short', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Shorts</div>
+          <div class="vs-stat-value">{{ download_short }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='irrelevant', dmin='', dmax='') }}">
+          <div class="vs-stat-title">Irrelevant</div>
+          <div class="vs-stat-value">{{ download_irrelevant }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='', dmin='', dmax='', short_filter='not_started') }}">
+          <div class="vs-stat-title">Not started</div>
+          <div class="vs-stat-value">{{ shorts_not_started_count }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='', dmin='', dmax='', short_filter='processing') }}">
+          <div class="vs-stat-title">Processing</div>
+          <div class="vs-stat-value">{{ shorts_processing_count }}</div>
+        </a>
+      </div>
+      <div class="vs-stat-card vs-card">
+        <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir, page=1, q='', dstatus='', dmin='', dmax='', short_filter='completed') }}">
+          <div class="vs-stat-title">Completed</div>
+          <div class="vs-stat-value">{{ shorts_completed_count }}</div>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Progress info #}
+<!-- Video list -->
+<div class="vs-card">
+  <div class="py-0">
+    <div class="vs-controls d-flex flex-wrap align-items-center gap-2">
+      <form method="get"
+            action="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id) }}"
+            class="d-flex flex-wrap align-items-center gap-2">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ sort_dir }}">
+        <input type="hidden" name="page" value="1">
+        <input type="search"
+               name="q"
+               value="{{ search_q }}"
+               class="form-control form-control-sm vs-input vs-input-220"
+               placeholder="Search title...">
+
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <div class="d-flex align-items-center gap-1">
+            <label for="dstatus" class="small mb-0">Download status</label>
+            <select name="dstatus" id="dstatus" class="form-select form-select-sm vs-select">
+              <option value="">All</option>
+            <option value="not_needed" {% if download_filter == 'not_needed' %}selected{% endif %}>Not needed</option>
+            <option value="pending" {% if download_filter == 'pending' %}selected{% endif %}>Pending</option>
+            <option value="downloaded" {% if download_filter == 'downloaded' %}selected{% endif %}>Downloaded</option>
+            <option value="short" {% if download_filter == 'short' %}selected{% endif %}>Short</option>
+            <option value="downloaded_deleted" {% if download_filter == 'downloaded_deleted' %}selected{% endif %}>Downloaded (deleted)</option>
+            <option value="irrelevant" {% if download_filter == 'irrelevant' %}selected{% endif %}>Irrelevant</option>
+            </select>
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <label class="small mb-0">Duration (min)</label>
+            <input type="number" name="dmin" min="0" class="form-control form-control-sm vs-input vs-input-80" placeholder="min" value="{{ duration_min }}">
+            <span class="text-muted">–</span>
+            <input type="number" name="dmax" min="0" class="form-control form-control-sm vs-input vs-input-80" placeholder="max" value="{{ duration_max }}">
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <label class="small mb-0">Video ID</label>
+            <input type="text" name="vid" class="form-control form-control-sm vs-input vs-input-140" placeholder="Video ID" value="{{ video_id_q }}">
+          </div>
+
+        </div>
+
+        <button class="vs-btn vs-btn-secondary">Search</button>
+        <a class="vs-btn vs-btn-danger"
+           href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort=sort, dir=sort_dir) }}">Clear</a>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-body p-0">
+    {% include 'video_shorts_paginate.html' %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 vs-table">
+        <thead>
+          <tr>
+            <th class="vs-col-thumbnail">Thumbnail</th>
+            <th class="vs-col-shorts">Shorts</th>
+            <th class="vs-col-stats">Stats</th>
+            <th class="vs-col-published">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+                Published
+              {% if sort == 'published' %}
+                <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
+              {% endif %}
+              </a>
+            </th>
+            <th class="vs-col-downloaded">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='downloaded', dir='asc' if sort!='downloaded' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+                Downloaded
+              {% if sort == 'downloaded' %}
+                <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
+              {% endif %}
+              </a>
+            </th>
+            <th class="vs-col-status">Status</th>
+            <th class="vs-col-generate">Generate short</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          {% for v in videos %}
+          <tr>
+            <td>
+              {% if v.thumbnail_url %}
+                <img src="{{ v.thumbnail_url }}"
+                     alt="thumb"
+                     class="vs-video-thumb">
+              {% else %}
+                <span class="text-muted small">No thumbnail</span>
+              {% endif %}
+            </td>
+
+            <td class="small">
+              <div class="fw-semibold mb-1">
+                <a class="text-decoration-none vs-link"
+                   href="{{ v.video_url or ('https://www.youtube.com/watch?v='+v.video_id) }}"
+                   target="_blank" rel="noopener">
+                  {{ v.title }}
+                </a>
+              </div>
+            </td>
+
+            <td class="small">
+              <div class="d-flex flex-column gap-1">
+                <div class="text-muted stats-plan-row">
+                  <strong>Plan {{ v.plan_count }} | Video {{ v.created_count }} | Desc {{ v.desc_ready }}</strong>
+                </div>
+                <hr class="stats-plan-divider">
+                <div class="text-muted small d-flex gap-3 flex-nowrap align-items-center vs-nowrap-row">
+                  <span class="text-nowrap">
+                    <i class="bi bi-eye"></i>
+                    {{ v.view_count if v.view_count is not none else '-' }}
+                  </span>
+                  <span class="text-nowrap">
+                    <i class="bi bi-hand-thumbs-up"></i>
+                    {{ v.like_count if v.like_count is not none else '-' }}
+                  </span>
+                  <span class="text-nowrap">
+                    <i class="bi bi-chat-left-text"></i>
+                    {{ v.comment_count if v.comment_count is not none else '-' }}
+                  </span>
+                  <span class="text-nowrap">
+                    <i class="bi bi-clock"></i>
+                    {{ v.duration_seconds // 60 if v.duration_seconds is not none else '-' }}:{{ "%02d"|format(v.duration_seconds % 60) if v.duration_seconds is not none else "00" }}
+                  </span>
+                </div>
+              </div>
+            </td>
+
+            <td class="small text-muted">{{ v.published_at_str }}</td>
+            <td class="small text-muted">
+              {% if v.downloaded_at_str %}
+                {{ v.downloaded_at_str }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+
+            <td class="small text-nowrap">
+              {% if v.short_plan_status %}
+                {% set plan_done = v.short_plan_status == 'completed' %}
+                {% set badge_bg = 'success' if plan_done else 'warning' %}
+                <div class="d-flex flex-column gap-1">
+                  <span class="badge bg-{{ badge_bg }} {% if not plan_done %}text-dark {% endif %}text-uppercase">
+                    {{ v.short_plan_status }}
+                  </span>
+                  <small class="text-muted">
+                    {{ v.created_count|default(0) }}/{{ v.plan_count|default(0) }} clips ready
+                  </small>
+                </div>
+              {% else %}
+                <form method="post"
+                      action="{{ url_for('video_shorts_bp.update_download_status', video_pk=v.id) }}"
+                      class="d-flex align-items-center gap-2">
+                    {% set dstat = (v.download_status or 'not_needed')|lower %}
+                    <select name="download_status"
+                            class="form-select form-select-sm vs-select vs-select-wide"
+                            {% if dstat == 'downloaded' %}disabled{% endif %}>
+                      <option value="not_needed" {% if dstat == 'not_needed' %}selected{% endif %}>Not needed</option>
+                      <option value="pending" {% if dstat == 'pending' %}selected{% endif %}>Pending</option>
+                      <option value="downloaded" {% if dstat == 'downloaded' %}selected{% endif %}>Downloaded</option>
+                      <option value="short" {% if dstat == 'short' %}selected{% endif %}>Short</option>
+                      <option value="irrelevant" {% if dstat == 'irrelevant' %}selected{% endif %}>Irrelevant</option>
+                    </select>
+                    <input type="hidden" name="sort" value="{{ sort }}">
+                    <input type="hidden" name="dir" value="{{ sort_dir }}">
+                    <input type="hidden" name="page" value="{{ page }}">
+                    <input type="hidden" name="q" value="{{ search_q }}">
+                    <input type="hidden" name="dstatus" value="{{ download_filter }}">
+                    <input type="hidden" name="dmin" value="{{ duration_min }}">
+                    <input type="hidden" name="dmax" value="{{ duration_max }}">
+                    {% if dstat == 'downloaded' %}
+                      <span class="text-success" title="Downloaded">✅</span>
+                    {% else %}
+                      <button class="vs-btn vs-btn-secondary" title="Save">
+                        <span class="material-symbols-outlined">save</span>
+                      </button>
+                    {% endif %}
+                  </form>
+              {% endif %}
+            </td>
+
+            <td class="small vs-generate-cell">
+              {% set dstat = (v.download_status or '')|lower %}
+              {% if dstat == 'downloaded' %}
+                <a class="vs-btn vs-btn-primary"
+                   href="{{ url_for('video_shorts_bp.generate_short', video_pk=v.id) }}">
+                  Generate short
+                </a>
+              {% elif dstat == 'downloaded_deleted' %}
+                <div class="d-inline-flex gap-1 flex-nowrap align-items-center">
+                  <a class="vs-btn vs-btn-primary generate-short-warning"
+                     href="#"
+                     data-generate-url="{{ url_for('video_shorts_bp.generate_short', video_pk=v.id) }}"
+                     role="button">
+                    Generate short
+                  </a>
+                  <button type="button"
+                          class="vs-btn vs-btn-danger generate-short-delete"
+                          data-video-id="{{ v.video_id }}"
+                          title="Video File Deleted">
+                    <span class="material-symbols-outlined">scan_delete</span>
+                  </button>
+                </div>
+              {% else %}
+                <button class="vs-btn vs-btn-secondary" disabled title="Download the video first">
+                  Generate short
+                </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+
+          {% if videos|length == 0 %}
+          <tr>
+            <td colspan="7" class="text-center text-muted py-3">
+              No videos in database yet. Click "Fetch next batch" to import.
+            </td>
+          </tr>
+          {% endif %}
+
+        </tbody>
+          </table>
+        </div>
+        {% include 'video_shorts_paginate.html' %}
+      </div>
+    </div>
+
+    <div class="modal fade" id="deletedVideoModal" tabindex="-1" aria-labelledby="deletedVideoModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="deletedVideoModalLabel">Video deleted</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            The original video file has been removed from storage, but you can still inspect the generated short. Press OK to continue or close to cancel.
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="button" class="btn btn-primary" data-action="confirm">OK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  {% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const modalEl = document.getElementById("deletedVideoModal");
+  if (!modalEl) return;
+  const modalInstance = new bootstrap.Modal(modalEl);
+  let targetUrl = "";
+
+  const confirmBtn = modalEl.querySelector("[data-action='confirm']");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+      if (targetUrl) {
+        window.location.href = targetUrl;
+      }
+      modalInstance.hide();
+    });
+  }
+
+  document.querySelectorAll(".generate-short-warning").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      targetUrl = button.getAttribute("data-generate-url") || "";
+      modalInstance.show();
+    });
+  });
+
+  document.querySelectorAll(".generate-short-delete").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const videoId = button.getAttribute("data-video-id");
+      if (!videoId) {
+        return;
+      }
+      if (!confirm("Delete the downloaded file for this video?")) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        const formData = new FormData();
+        formData.append("target_dir", "videos");
+        formData.append("video_id", videoId);
+        const response = await fetch("{{ url_for('video_shorts_bp.delete_storage_video') }}", {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Delete failed.");
+        }
+        window.location.reload();
+      } catch (error) {
+        alert(error.message || "Server error occurred.");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,310 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Social Connect{% endblock %}
+
+{% macro info_item(label, value) -%}
+  {% if value %}
+    <li class="d-flex justify-content-between gap-2">
+      <span class="vs-text-muted">{{ label }}</span>
+      <span class="fw-semibold text-end vs-text-body">{{ value }}</span>
+    </li>
+  {% endif %}
+{%- endmacro %}
+
+{% macro platform_card(key, name, icon_class, description, connected, connect_url, disconnect_url, account, page, connected_at, details, notice=None) -%}
+  <div class="col">
+    <div class="card platform-card h-100 shadow-sm position-relative vs-card">
+      <div class="card-body d-flex flex-column gap-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="d-flex gap-3 align-items-start">
+            {% if connect_url %}
+              <a href="{{ connect_url }}" class="platform-icon-link" aria-label="{{ name }} bağlan">
+                <i class="{{ icon_class }}"></i>
+              </a>
+            {% else %}
+              <div class="platform-icon-link disabled">
+                <i class="{{ icon_class }}"></i>
+              </div>
+            {% endif %}
+            <div>
+              <h5 class="mb-1 vs-card-title">{{ name }}</h5>
+              <p class="vs-text-muted vs-text-small mb-0">{{ description }}</p>
+            </div>
+          </div>
+          <span class="vs-badge {% if connected %}vs-badge-success{% endif %}">
+            {% if connected %}Connected{% else %}Not connected{% endif %}
+          </span>
+        </div>
+
+        {% if notice %}
+          <div class="alert alert-warning small py-2 px-3 mb-0" role="alert">
+            {{ notice }}
+          </div>
+        {% endif %}
+
+        <div class="flex-grow-1">
+          <p class="vs-text-small {% if connected %}text-success{% else %}vs-text-muted{% endif %} mb-2">
+            {% if connected %}Ready to publish.{% else %}Not connected.{% endif %}
+          </p>
+          {% if connected %}
+            <ul class="list-unstyled vs-text-small mb-2">
+              {{ info_item("Account", account) }}
+              {{ info_item("Page", page) }}
+              {{ info_item("Connected", connected_at) }}
+            </ul>
+            {% if details %}
+              <a class="vs-text-small text-decoration-none" data-bs-toggle="collapse" href="#{{ key }}Details" role="button" aria-expanded="false" aria-controls="{{ key }}Details">
+                Details
+              </a>
+              <div class="collapse mt-2" id="{{ key }}Details">
+                <ul class="list-unstyled vs-text-small vs-text-muted mb-0">
+                  {% for item in details %}
+                    {{ info_item(item.label, item.value) }}
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-footer bg-transparent border-0 pt-0">
+        {% if connected %}
+          <div class="d-flex gap-2 flex-wrap">
+            {% if connect_url %}
+              <a class="btn btn-sm vs-btn vs-btn-secondary" href="{{ connect_url }}">Reconnect</a>
+            {% endif %}
+            {% if disconnect_url %}
+              <form method="post" action="{{ disconnect_url }}">
+                <button type="submit" class="btn btn-sm vs-btn vs-btn-danger">Disconnect</button>
+              </form>
+            {% endif %}
+          </div>
+        {% else %}
+          {% if connect_url %}
+            <a class="btn btn-sm vs-btn vs-btn-primary" href="{{ connect_url }}">Connect</a>
+            <a class="stretched-link" href="{{ connect_url }}" aria-label="{{ name }} connect"></a>
+          {% else %}
+            <button class="btn btn-sm vs-btn vs-btn-secondary" disabled>Connect</button>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{%- endmacro %}
+
+{% macro coming_soon_card(name, icon_class) -%}
+  <div class="col">
+    <div class="card platform-card h-100 shadow-sm platform-card-disabled vs-card">
+      <div class="card-body d-flex flex-column gap-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="d-flex gap-3 align-items-start">
+            <div class="platform-icon-link disabled">
+              <i class="{{ icon_class }}"></i>
+            </div>
+            <div>
+              <h6 class="mb-1 vs-card-title">{{ name }}</h6>
+              <p class="vs-text-muted vs-text-small mb-0">Coming soon.</p>
+            </div>
+          </div>
+          <span class="vs-badge">Coming soon</span>
+        </div>
+      </div>
+      <div class="card-footer bg-transparent border-0 pt-0">
+        <button class="btn btn-sm vs-btn vs-btn-secondary" disabled>Connect</button>
+      </div>
+    </div>
+  </div>
+{%- endmacro %}
+
+{% block content %}
+  {% set all_connected = youtube_connected and instagram_connected and (not tiktok_configured or tiktok_connected) %}
+  {% set youtube_account = None %}
+  {% if channel %}
+    {% set youtube_account = "@" ~ (channel.handle or channel.custom_url or channel.title) %}
+  {% endif %}
+  {% set instagram_account = None %}
+  {% if instagram_profile and instagram_profile.username %}
+    {% set instagram_account = "@" ~ instagram_profile.username %}
+  {% elif instagram_info and instagram_info.instagram_username %}
+    {% set instagram_account = "@" ~ instagram_info.instagram_username %}
+  {% endif %}
+  {% set instagram_page = instagram_info.facebook_page_name if instagram_info else None %}
+  {% set facebook_page = facebook_info.page_name if facebook_info else None %}
+  {% set tiktok_account = None %}
+  {% if tiktok_info and tiktok_info.display_name %}
+    {% set tiktok_account = tiktok_info.display_name %}
+  {% elif tiktok_info and tiktok_info.username %}
+    {% set tiktok_account = "@" ~ tiktok_info.username %}
+  {% elif tiktok_info and tiktok_info.open_id %}
+    {% set tiktok_account = tiktok_info.open_id %}
+  {% endif %}
+
+  <div class="card shadow-sm vs-card">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+      <div>
+        <h4 class="mb-0 vs-card-title">Social connections</h4>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        {% if all_connected %}
+          <span class="vs-badge vs-badge-success">All accounts connected</span>
+        {% endif %}
+        <a class="vs-text-small text-decoration-none" href="#" data-bs-toggle="modal" data-bs-target="#socialConnectHelp">
+          Help
+        </a>
+      </div>
+    </div>
+
+    {% if youtube_warning or instagram_warning or tiktok_warning %}
+      <div class="mb-3">
+        {% if youtube_warning %}
+          <div class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
+            {{ youtube_warning }}
+          </div>
+        {% endif %}
+        {% if instagram_warning %}
+          <div class="alert alert-warning py-2 px-3 small" role="alert">
+            {{ instagram_warning }}
+          </div>
+        {% endif %}
+        {% if tiktok_warning %}
+          <div class="alert alert-warning py-2 px-3 small" role="alert">
+            {{ tiktok_warning }}
+          </div>
+        {% endif %}
+        {% if facebook_warning %}
+          <div class="alert alert-warning py-2 px-3 small" role="alert">
+            {{ facebook_warning }}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if youtube_connected and vs_overview_quota and vs_overview_quota.active %}
+      <div class="alert alert-info py-2 px-3 small mb-3" role="alert">
+        Connected, refresh paused until {{ vs_overview_quota.until_utc or '—' }} (UTC) ·
+        {{ vs_overview_quota.until_pst or '—' }} (PST).
+      </div>
+    {% endif %}
+
+    <div class="row g-3 row-cols-1 row-cols-lg-4">
+      {{ platform_card(
+        "youtube",
+        "YouTube",
+        "bi bi-youtube",
+        "Connect to upload short videos.",
+        youtube_connected,
+        youtube_configured and url_for('video_shorts_bp.youtube_authorize') or None,
+        youtube_connected and url_for('video_shorts_bp.youtube_disconnect') or None,
+        youtube_account,
+        None,
+        None,
+        None,
+        None if youtube_configured else "YouTube OAuth settings are missing. Please complete the configuration."
+      ) }}
+
+      {{ platform_card(
+        "instagram",
+        "Instagram",
+        "bi bi-instagram text-danger",
+        "Connect to publish Reels.",
+        instagram_connected,
+        url_for('video_shorts_bp.instagram_authorize'),
+        instagram_connected and url_for('video_shorts_bp.instagram_disconnect') or None,
+        instagram_account,
+        instagram_page,
+        instagram_info.updated_at if instagram_info else None,
+        [
+          {"label": "App ID", "value": instagram_app_id},
+          {"label": "Instagram ID", "value": instagram_business_id},
+          {"label": "Page ID", "value": instagram_info.facebook_page_id if instagram_info else None}
+        ],
+        None
+      ) }}
+
+      {{ platform_card(
+        "tiktok",
+        "TikTok",
+        "bi bi-music-note-beamed",
+        "Connect to publish TikTok videos.",
+        tiktok_connected,
+        tiktok_configured and url_for('video_shorts_bp.tiktok_authorize') or None,
+        tiktok_connected and url_for('video_shorts_bp.tiktok_disconnect') or None,
+        None,
+        None,
+        None,
+        None,
+        None if tiktok_configured else "TikTok OAuth ayarları eksik. Lütfen yapılandırmayı tamamlayın."
+      ) }}
+
+      {{ platform_card(
+        "facebook",
+        "Facebook Page",
+        "bi bi-facebook text-primary",
+        "Connect to publish on a Facebook Page.",
+        facebook_connected,
+        url_for('video_shorts_bp.facebook_connect'),
+        facebook_connected and url_for('video_shorts_bp.facebook_disconnect') or None,
+        None,
+        facebook_page,
+        facebook_info.updated_at if facebook_info else None,
+        [
+          {"label": "App ID", "value": facebook_app_id},
+          {"label": "Page ID", "value": facebook_info.page_id if facebook_info else None},
+          {"label": "FB User ID", "value": facebook_info.fb_user_id if facebook_info else None}
+        ],
+        None
+      ) }}
+    </div>
+
+    <div class="mt-4">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h6 class="mb-0 vs-text-muted">Coming soon platforms</h6>
+      </div>
+      <div class="row g-3 row-cols-2 row-cols-lg-4">
+        {{ coming_soon_card("X", "bi bi-twitter-x") }}
+        {{ coming_soon_card("LinkedIn", "bi bi-linkedin") }}
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="socialConnectHelp" tabindex="-1" aria-labelledby="socialConnectHelpLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content vs-modal">
+        <div class="modal-header vs-modal-header">
+          <h5 class="modal-title vs-modal-title" id="socialConnectHelpLabel">Help</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body vs-modal-body">
+          <div class="mb-3">
+            <h6 class="mb-1 vs-card-title">YouTube</h6>
+            <ol class="vs-text-small ps-3 mb-0">
+              <li>Select your Google account with the Connect button.</li>
+              <li>After granting access, you will return to this page.</li>
+            </ol>
+          </div>
+          <div class="mb-3">
+            <h6 class="mb-1 vs-card-title">Instagram</h6>
+            <ol class="vs-text-small ps-3 mb-0">
+              <li>Select your Facebook account with the Connect button.</li>
+              <li>After approving permissions, the connection will be created.</li>
+            </ol>
+          </div>
+          <div class="mb-3">
+            <h6 class="mb-1 vs-card-title">Facebook Page</h6>
+            <ol class="vs-text-small ps-3 mb-0">
+              <li>Select your Facebook account with the Connect button.</li>
+              <li>Choose the Page you want to publish to.</li>
+            </ol>
+          </div>
+          <div>
+            <h6 class="mb-1 vs-card-title">TikTok</h6>
+            <ol class="vs-text-small ps-3 mb-0">
+              <li>Connect ile TikTok hesabınızı seçin.</li>
+              <li>İzinleri onayladıktan sonra bağlantı oluşturulacaktır.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

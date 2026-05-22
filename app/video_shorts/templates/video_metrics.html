@@ -1,0 +1,1378 @@
+{% extends "vs_base.html" %}
+{% block extra_styles %}
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <style>
+    .flatpickr-day.inRange,
+    .flatpickr-day.nextMonthDay.inRange,
+    .flatpickr-day.prevMonthDay.inRange {
+      background: rgba(45, 212, 191, 0.2) !important;
+      border-color: rgba(45, 212, 191, 0.4) !important;
+      color: #fff !important;
+    }
+    .flatpickr-day.startRange,
+    .flatpickr-day.endRange {
+      background: var(--mint) !important;
+      border-color: var(--mint) !important;
+      color: #021014 !important;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+    }
+    #chartFilters {
+      overflow: visible;
+    }
+    .subscriber-legend {
+      color: #cbd5f5;
+      font-size: 0.9rem;
+    }
+    .subscriber-legend .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    .subscriber-legend .legend-item {
+      cursor: pointer;
+      user-select: none;
+      opacity: 0.9;
+      transition: opacity 0.2s ease;
+    }
+    .subscriber-legend .legend-item.is-hidden {
+      opacity: 0.35;
+    }
+    .subscriber-chart-row .chart-area-card {
+      display: flex;
+      flex-direction: column;
+    }
+    .subscriber-chart-row .chart-canvas-wrap {
+      flex: 1;
+      min-height: 0;
+    }
+    .subscriber-legend .legend-youtube {
+      background: #0ea5e9;
+      box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2);
+    }
+    .subscriber-legend .legend-instagram {
+      background: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+    }
+    .subscriber-legend .legend-facebook {
+      background: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+    .subscriber-legend .legend-tiktok {
+      background: #ec4899;
+      box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.2);
+    }
+  </style>
+{% endblock %}
+
+{% block title %}Daily Video Statistics{% endblock %}
+
+{% macro format_stat(value) %}
+  {% if value is none %}
+    0
+  {% else %}
+    {{ "{:,}".format(value) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro format_change(value) %}
+  {% if value is none or value is undefined %}
+    —
+  {% else %}
+    {{ "{:+,}".format(value) }}
+  {% endif %}
+{% endmacro %}
+
+{% macro render_delta_badge(value) %}
+  {% set change_label = format_change(value) %}
+  {% if value is number %}
+    {% if value > 0 %}
+      <span class="vs-badge vs-badge-success">{{ change_label }}</span>
+    {% elif value < 0 %}
+      <span class="vs-badge vs-badge-danger">{{ change_label }}</span>
+    {% else %}
+      <span class="vs-badge">{{ change_label }}</span>
+    {% endif %}
+  {% else %}
+    {% set string_value = value|string %}
+    {% if string_value.startswith('+') %}
+      <span class="vs-badge vs-badge-success">{{ change_label }}</span>
+    {% elif string_value.startswith('-') %}
+      <span class="vs-badge vs-badge-danger">{{ change_label }}</span>
+    {% else %}
+      <span class="vs-badge">{{ change_label }}</span>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% macro render_top_video_rows(videos, show_facebook=false) %}
+  {% if videos %}
+    {% for video in videos %}
+      <tr>
+        <td class="p-0 pe-3 video-thumb-cell">
+          {% if video.thumbnail_url %}
+            {% if video.video_url %}
+              <a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" title="Open video">
+                <img src="{{ video.thumbnail_url }}" alt="Video thumbnail">
+              </a>
+            {% else %}
+              <img src="{{ video.thumbnail_url }}" alt="Video thumbnail">
+            {% endif %}
+          {% else %}
+            <div class="video-thumb-placeholder"></div>
+          {% endif %}
+        </td>
+        <td>
+          <strong>{{ video.video_title or video.video_id }}</strong>
+        </td>
+        <td class="text-end">{{ format_stat(video.views) }}</td>
+        <td class="text-end">{{ format_stat(video.comments) }}</td>
+        {% if show_facebook %}
+          <td class="text-end">
+            {% if (video.channel_type or '')|lower == 'facebook' %}
+              {{ format_stat(video.views) }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+  {% else %}
+    <tr>
+      <td colspan="{{ 5 if show_facebook else 4 }}" class="text-center text-muted py-4">No videos found for this range.</td>
+    </tr>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+  <div class="stats-page">
+    <div class="video-metric-header mb-4">
+      <div>
+        <div class="d-flex align-items-center gap-3 mb-1">
+          <h1 class="h3 mb-0">Daily Video Statistics</h1>
+          <span class="badge text-bg-dark text-uppercase">DB: {{ db_backend or 'unknown' }}</span>
+          <span class="stats-last-update">
+            Last API update: {{ last_api_at|fmt_dt }}
+          </span>
+        </div>
+      </div>
+    </div>
+    {% if youtube_subscriber_data_missing %}
+      <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+          <span>YouTube subscriber verisi gelmiyor. Daily subscribers grafiği eksik olabilir.</span>
+        </div>
+        <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-sm btn-outline-dark">
+          Social Connect ile tekrar bağla
+        </a>
+      </div>
+    {% endif %}
+
+  {% set range_value = start_date.isoformat() ~ ' / ' ~ end_date.isoformat() %}
+
+  <div class="row g-3 mb-4 stats-grid">
+    <div class="col-sm-6 col-md-4">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">
+            <span class="material-icons me-1 align-middle" aria-hidden="true">visibility</span>
+            Total views
+          </p>
+          <h2 class="h4 range-total" data-key="views">{{ format_stat(range_totals.views) }}</h2>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-md-4">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">
+            <span class="material-icons me-1 align-middle" aria-hidden="true">comment</span>
+            Total comments
+          </p>
+          <h2 class="h4 range-total" data-key="comments">{{ format_stat(range_totals.comments) }}</h2>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-md-4">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">
+            <span class="material-icons me-1 align-middle" aria-hidden="true">thumb_up</span>
+            Total likes
+          </p>
+          <h2 class="h4 range-total" data-key="likes">{{ format_stat(range_totals.likes) }}</h2>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
+    <div class="card-body">
+      <form id="chartFilters" method="get" class="chart-toolbar controls-bar flex-nowrap">
+        <select class="form-select form-select-sm chart-control chart-control-metric vs-select" id="metricSelector" name="metric">
+          <option value="views" {% if selected_metric == 'views' %}selected{% endif %}>Views</option>
+          <option value="comments" {% if selected_metric == 'comments' %}selected{% endif %}>Comments</option>
+          <option value="likes" {% if selected_metric == 'likes' %}selected{% endif %}>Likes</option>
+        </select>
+        <select class="form-select form-select-sm chart-control chart-control-channel vs-select" id="channelFilter" name="channel">
+          {% for option in channel_options %}
+            <option value="{{ option.value }}" {% if option.value == channel_type %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="chart-control chart-control-range">
+          <button class="btn btn-outline-secondary vs-btn dropdown-toggle preset-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            Presets
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end preset-dropdown shadow">
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="today">Today</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="yesterday">Yesterday</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="this_week">This week</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_week">Last week</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_7">Last 7 days</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_28">Last 28 days</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_30">Last 30 days</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_90">Last 90 days</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="all">All data</button></li>
+          </ul>
+          <input type="text" class="form-control form-control-sm vs-input" id="rangePicker" placeholder="Start - End" value="{{ range_value }}">
+        </div>
+        <input type="hidden" name="start" id="rangeStart" value="{{ start_date.isoformat() }}">
+        <input type="hidden" name="end" id="rangeEnd" value="{{ end_date.isoformat() }}">
+      </form>
+      <div class="chart-row mt-3">
+        <div class="chart-card chart-area-card">
+          <div class="chart-canvas-wrap">
+            <canvas id="dailyMetricChart"></canvas>
+          </div>
+        </div>
+        <div class="insights-card vs-card">
+          <div class="card-header d-flex align-items-start justify-content-between gap-3">
+            <div>
+              <p class="vs-card-title mb-1">Top videos</p>
+              <h3 class="insights-title mb-0" id="insightsTitle"></h3>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary vs-btn d-none" id="insightsClear">Clear</button>
+          </div>
+          <div class="table-responsive mt-3">
+            <table class="table table-sm table-borderless mb-0 align-middle vs-table insights-table">
+              <thead>
+                <tr>
+                  <th>Video</th>
+                  <th>Total</th>
+                  <th class="text-end">
+                    <span class="material-icons" aria-hidden="true">visibility</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="insightsList"></tbody>
+            </table>
+          </div>
+          <div class="insights-empty text-muted small text-center d-none py-3" id="insightsEmpty">
+            No video breakdown available for this date.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-sm-6 col-md-3">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">YouTube subscribers</p>
+          <h2 class="h4">{{ format_stat((subscriber_totals or {}).get("youtube")) }}</h2>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">Instagram followers</p>
+          <h2 class="h4">{{ format_stat((subscriber_totals or {}).get("instagram")) }}</h2>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">Facebook page followers</p>
+          <h2 class="h4">{{ format_stat((subscriber_totals or {}).get("facebook")) }}</h2>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+      <div class="card metric-card shadow-sm vs-card">
+        <div class="card-body">
+          <p class="kpi-label vs-card-title mb-1">TikTok followers</p>
+          <h2 class="h4">{{ format_stat((subscriber_totals or {}).get("tiktok")) }}</h2>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4 vs-card">
+    <div class="card-header">
+      Daily subscribers
+    </div>
+    <div class="card-body">
+      <div class="chart-row subscriber-chart-row">
+        <div class="chart-card chart-area-card">
+          <div class="d-flex gap-3 align-items-center justify-content-center mb-2 subscriber-legend" id="subscriberLegend"></div>
+          <div class="chart-canvas-wrap subscriber-chart-wrap">
+            <canvas id="dailySubscriberChart"></canvas>
+          </div>
+        </div>
+        <div class="insights-card vs-card subscriber-delta-card">
+          <div class="card-header d-flex align-items-start justify-content-between gap-3">
+            <div>
+              <p class="vs-card-title mb-0">Audience</p>
+            </div>
+          </div>
+          <div class="card-body pt-0">
+            <div class="table-responsive">
+              <table class="table table-sm table-borderless mb-0 align-middle vs-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th class="text-center"><i class="bi bi-youtube fs-5" aria-hidden="true"></i></th>
+                    <th class="text-center"><i class="bi bi-instagram fs-5" aria-hidden="true"></i></th>
+                    <th class="text-center"><i class="bi bi-facebook fs-5" aria-hidden="true"></i></th>
+                    <th class="text-center"><i class="bi bi-tiktok fs-5" aria-hidden="true"></i></th>
+                  </tr>
+                </thead>
+                <tbody id="subscriberDeltaTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    <div class="card shadow-sm mb-4 vs-card">
+    <div class="card-header">
+      Daily Channel Performance
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle vs-table daily-performance-table">
+        <thead>
+          <tr>
+            <th scope="col">
+              <button type="button" class="btn btn-link p-0 text-decoration-none sort-date" data-sort-direction="desc">
+                Date
+                <span class="material-icons align-middle ms-1 sort-icon" aria-hidden="true">south</span>
+              </button>
+            </th>
+            <th scope="col">Total Views</th>
+            <th scope="col">Comments</th>
+            <th scope="col">Views YouTube</th>
+            <th scope="col">Views Instagram</th>
+            <th scope="col">Likes YouTube</th>
+            <th scope="col">Likes Instagram</th>
+            <th scope="col">
+              <button type="button" class="btn btn-link p-0 text-decoration-none sort-last-update" data-sort-direction="desc">
+                Last update ({{ user_time_zone_label }})
+                <span class="material-icons align-middle ms-1 sort-icon" aria-hidden="true">unfold_more</span>
+              </button>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if daily_totals %}
+            {% for row in daily_totals %}
+              <tr>
+                <td data-date="{{ row.snapshot_date }}">{{ row.snapshot_date }}</td>
+                <td>{{ format_stat(row.views if row.views is not none else 0) }}</td>
+                <td>{{ format_stat(row.comments) }}</td>
+                <td>{{ format_stat(row.youtube_daily_views or 0) }}</td>
+                <td>{{ format_stat(row.instagram_daily_views or 0) }}</td>
+                <td>{{ format_stat(row.youtube_daily_likes or 0) }}</td>
+                <td>{{ format_stat(row.instagram_daily_likes or 0) }}</td>
+                <td data-sort="{{ row.last_updated_epoch or 0 }}">{{ row.last_updated|fmt_dt }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="8" class="text-center text-muted py-4">No data for this range.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center px-3 py-2 daily-performance-pagination">
+      <div class="small page-range"></div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Daily performance pagination">
+        <button type="button" class="btn btn-outline-secondary page-prev" disabled>Prev</button>
+        <button type="button" class="btn btn-outline-secondary page-next" disabled>Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card today-top-card shadow-sm h-100 vs-card">
+        <div class="card-header">
+          Today's Top viewed videos
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle vs-table">
+            <thead>
+              <tr>
+                <th scope="col">Video</th>
+                <th scope="col">Title</th>
+                <th scope="col">
+                  <span class="visually-hidden">Views Δ</span>
+                  <span class="material-icons" aria-hidden="true">visibility</span>
+                </th>
+                <th scope="col">
+                  <span class="visually-hidden">Comments</span>
+                  <span class="material-icons" aria-hidden="true">comment</span>
+                </th>
+                <th scope="col">
+                  <span class="visually-hidden">FB views</span>
+                  <span class="me-1">FB</span>
+                  <span class="material-icons" aria-hidden="true">visibility</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ render_top_video_rows(today_top_videos, true) }}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card weekly-top-card shadow-sm h-100 vs-card">
+        <div class="card-header">
+          This Week Top viewed videos
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle vs-table">
+            <thead>
+              <tr>
+                <th scope="col">Video</th>
+                <th scope="col">Title</th>
+                <th scope="col">
+                  <span class="visually-hidden">Views Δ</span>
+                  <span class="material-icons" aria-hidden="true">visibility</span>
+                </th>
+                <th scope="col">
+                  <span class="visually-hidden">Comments</span>
+                  <span class="material-icons" aria-hidden="true">comment</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {{ render_top_video_rows(week_top_videos) }}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+      <div class="card shadow-sm mb-4 vs-card">
+    <div class="card-header">
+      Video ranking
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle vs-table">
+        <thead>
+          <tr>
+            <th scope="col">Video</th>
+            <th scope="col">Platform</th>
+            <th scope="col">Views Δ</th>
+            <th scope="col">Comments Δ</th>
+            <th scope="col">Likes Δ</th>
+          </tr>
+        </thead>
+        <tbody id="topVideosTable">
+          {% if top_videos %}
+            {% for row in top_videos %}
+              <tr>
+                <td>{{ row.video_title or row.video_id }}</td>
+                <td>{{ row.channel_type }}</td>
+                <td>{{ render_delta_badge(row.views_delta) }}</td>
+                <td>{{ render_delta_badge(row.comments_delta) }}</td>
+                <td>{{ render_delta_badge(row.likes_delta) }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted py-4">No videos found for this range.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    (function () {
+      const metricInfo = {
+        views: { label: "İzlenme", color: "#0d6efd" },
+        comments: { label: "Yorum", color: "#6610f2" },
+        likes: { label: "Beğeni", color: "#198754" },
+      };
+      const chartSeries = {{ chart_series|tojson }};
+      const chartSeriesDelta = {{ chart_series_delta|tojson }};
+      const subscriberSeries = {{ subscriber_series|tojson }};
+      const channelTotals = {{ channel_totals|tojson }};
+      const defaultChannel = "{{ selected_channel }}";
+      const defaultMetric = "{{ selected_metric }}";
+      const metricSelect = document.getElementById("metricSelector");
+      const channelSelect = document.getElementById("channelFilter");
+      const ctx = document.getElementById("dailyMetricChart");
+      const subscriberCtx = document.getElementById("dailySubscriberChart");
+      const totalsEls = document.querySelectorAll(".range-total");
+      const topVideosTable = document.getElementById("topVideosTable");
+      const topVideosTableData = {{ top_table_rows|tojson }};
+      const insightsListEl = document.getElementById("insightsList");
+      const insightsTitleEl = document.getElementById("insightsTitle");
+      const insightsEmptyEl = document.getElementById("insightsEmpty");
+      const insightsClearBtn = document.getElementById("insightsClear");
+      const defaultInsights = {{ default_insights|tojson }};
+      if (!ctx || !metricSelect || !channelSelect) {
+        return;
+      }
+      const axisTickColor = "rgba(255, 255, 255, 0.78)";
+      const axisTextColor = "rgba(255, 255, 255, 0.95)";
+      const gridColor = "rgba(255, 255, 255, 0.08)";
+      const getSeries = (channel) => chartSeriesDelta[channel] || chartSeriesDelta.all || [];
+      const buildLabels = (channel) => getSeries(channel).map((item) => item.date);
+      const buildDataset = (channel, metric) => {
+        const series = getSeries(channel);
+        const info = metricInfo[metric] || metricInfo.views;
+        return {
+          label: info.label,
+          data: series.map((item) => item[`${metric}_delta`] != null ? item[`${metric}_delta`] : 0),
+          backgroundColor: info.color,
+          borderRadius: 4,
+          maxBarThickness: 40,
+        };
+      };
+      const buildStackedViewDatasets = (channel) => {
+        const series = getSeries(channel);
+        return [
+          {
+            label: "YouTube",
+            data: series.map((item) => item.youtube_daily_views != null ? item.youtube_daily_views : 0),
+            backgroundColor: "#0d6efd",
+            borderRadius: 4,
+            maxBarThickness: 40,
+            stack: "views",
+          },
+          {
+            label: "Instagram",
+            data: series.map((item) => item.instagram_daily_views != null ? item.instagram_daily_views : 0),
+            backgroundColor: "#fd7e14",
+            borderRadius: 4,
+            maxBarThickness: 40,
+            stack: "views",
+          },
+        ];
+      };
+      const buildDatasets = (channel, metric) => {
+        if (metric === "views" && channel === "all") {
+          return buildStackedViewDatasets(channel);
+        }
+        return [buildDataset(channel, metric)];
+      };
+      const chart = new Chart(ctx.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: buildLabels(defaultChannel),
+          datasets: buildDatasets(defaultChannel, defaultMetric),
+        },
+        options: {
+          maintainAspectRatio: false,
+          responsive: true,
+          scales: {
+            x: {
+              ticks: {
+                color: axisTickColor,
+                font: { size: 11 },
+                maxTicksLimit: 9,
+              },
+              grid: {
+                color: gridColor,
+                borderColor: "transparent",
+              },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                precision: 0,
+                color: axisTickColor,
+                font: { size: 11 },
+              },
+              grid: {
+                color: "rgba(255, 255, 255, 0.04)",
+                borderDash: [4, 4],
+              },
+              stacked: defaultMetric === "views" && defaultChannel === "all",
+            },
+          },
+          plugins: {
+            legend: {
+              display: defaultMetric === "views" && defaultChannel === "all",
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${context.parsed.y || 0}`,
+              },
+              bodyColor: axisTextColor,
+              titleColor: axisTextColor,
+              backgroundColor: "rgba(15, 23, 42, 0.95)",
+              boxPadding: 6,
+              displayColors: false,
+            },
+          },
+        },
+      });
+      if (subscriberCtx) {
+        const subscriberLegend = document.getElementById("subscriberLegend");
+        const subscriberLabels = subscriberSeries.map((item) => item.date);
+        const getSubscriberTotal = (label, index) => {
+          const row = subscriberSeries[index] || {};
+          const key = (label || "").toLowerCase();
+          if (key.includes("youtube")) {
+            return row.youtube_total;
+          }
+          if (key.includes("instagram")) {
+            return row.instagram_total;
+          }
+          if (key.includes("facebook")) {
+            return row.facebook_total;
+          }
+          if (key.includes("tiktok")) {
+            return row.tiktok_total;
+          }
+          return 0;
+        };
+        const subscriberChart = new Chart(subscriberCtx.getContext("2d"), {
+          type: "line",
+          data: {
+            labels: subscriberLabels,
+            datasets: [
+              {
+                label: "YouTube",
+                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.youtube_net ?? null))),
+                borderColor: "#0ea5e9",
+                backgroundColor: "rgba(14, 165, 233, 0.2)",
+                tension: 0.28,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: "#0b1220",
+                pointBorderColor: "#0ea5e9",
+                pointBorderWidth: 2,
+              },
+              {
+                label: "Instagram",
+                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.instagram_net ?? null))),
+                borderColor: "#f59e0b",
+                backgroundColor: "rgba(245, 158, 11, 0.2)",
+                tension: 0.28,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: "#0b1220",
+                pointBorderColor: "#f59e0b",
+                pointBorderWidth: 2,
+              },
+              {
+                label: "Facebook",
+                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.facebook_net ?? null))),
+                borderColor: "#3b82f6",
+                backgroundColor: "rgba(59, 130, 246, 0.2)",
+                tension: 0.28,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: "#0b1220",
+                pointBorderColor: "#3b82f6",
+                pointBorderWidth: 2,
+              },
+              {
+                label: "TikTok",
+                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.tiktok_net ?? null))),
+                borderColor: "#ec4899",
+                backgroundColor: "rgba(236, 72, 153, 0.2)",
+                tension: 0.28,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: "#0b1220",
+                pointBorderColor: "#ec4899",
+                pointBorderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            maintainAspectRatio: false,
+            responsive: true,
+            plugins: {
+              legend: {
+                display: false,
+              },
+              tooltip: {
+                callbacks: {
+                  label: (context) => {
+                    const delta = context.parsed.y == null ? 0 : context.parsed.y;
+                    const total = getSubscriberTotal(context.dataset.label, context.dataIndex);
+                    return `${context.dataset.label}: ${formatNumber(delta)} (${formatNumber(total)})`;
+                  },
+                },
+                bodyColor: axisTextColor,
+                titleColor: axisTextColor,
+                backgroundColor: "rgba(15, 23, 42, 0.95)",
+                borderColor: "rgba(148, 163, 184, 0.35)",
+                borderWidth: 1,
+                boxPadding: 8,
+                padding: 12,
+                cornerRadius: 10,
+                titleFont: { size: 13, weight: "600" },
+                bodyFont: { size: 15, weight: "500" },
+                displayColors: false,
+              },
+            },
+            scales: {
+              x: {
+                ticks: {
+                  display: true,
+                  color: axisTickColor,
+                  font: { size: 13, weight: "600" },
+                  maxTicksLimit: 9,
+                  padding: 6,
+                },
+                grid: {
+                  color: gridColor,
+                  borderColor: "transparent",
+                },
+              },
+              y: {
+                ticks: {
+                  precision: 0,
+                  color: axisTickColor,
+                  font: { size: 11 },
+                },
+                grid: {
+                  color: "rgba(255, 255, 255, 0.04)",
+                  borderDash: [4, 4],
+                },
+              },
+            },
+          },
+        });
+        const buildSubscriberLegend = (chart) => {
+          if (!subscriberLegend) {
+            return;
+          }
+          subscriberLegend.innerHTML = "";
+          chart.data.datasets.forEach((dataset, index) => {
+            const label = (dataset.label || "").toLowerCase();
+            let iconClass = "bi-instagram";
+            let dotClass = "legend-instagram";
+            if (label.includes("youtube")) {
+              iconClass = "bi-youtube";
+              dotClass = "legend-youtube";
+            } else if (label.includes("facebook")) {
+              iconClass = "bi-facebook";
+              dotClass = "legend-facebook";
+            } else if (label.includes("tiktok")) {
+              iconClass = "bi-tiktok";
+              dotClass = "legend-tiktok";
+            }
+            const item = document.createElement("span");
+            item.className = "d-inline-flex align-items-center gap-2 legend-item";
+            if (!chart.isDatasetVisible(index)) {
+              item.classList.add("is-hidden");
+            }
+            item.innerHTML = `
+              <span class="legend-dot ${dotClass}" aria-hidden="true"></span>
+              <i class="bi ${iconClass} fs-5" aria-hidden="true"></i>
+            `;
+            item.addEventListener("click", () => {
+              chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+              item.classList.toggle("is-hidden");
+              chart.update();
+            });
+            subscriberLegend.appendChild(item);
+          });
+        };
+        buildSubscriberLegend(subscriberChart);
+      }
+      const escapeHtml = (value) => {
+        const str = value == null ? "" : String(value);
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+      };
+
+      const formatNumber = (value) => {
+        if (value == null) {
+          return "0";
+        }
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+          return String(value);
+        }
+        return numeric.toLocaleString("en-US");
+      };
+      const formatDelta = (value) => {
+        if (value == null) {
+          return "—";
+        }
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+          return String(value);
+        }
+        return `${numeric > 0 ? "+" : ""}${numeric.toLocaleString("en-US")}`;
+      };
+      const formatSubscriberDelta = (value) => {
+        const label = formatDelta(value);
+        if (label === "—") {
+          return `<span class="text-muted">${label}</span>`;
+        }
+        const numeric = Number(value);
+        let variant = "";
+        if (!Number.isNaN(numeric)) {
+          if (numeric > 0) {
+            variant = "vs-badge-success";
+          } else if (numeric < 0) {
+            variant = "vs-badge-danger";
+          }
+        }
+        return `<span class="vs-badge ${variant}">${label}</span>`;
+      };
+
+      const renderTopVideosTable = () => {
+        if (!topVideosTable) {
+          return;
+        }
+        const channel = channelSelect.value || "all";
+        const metric = metricSelect.value || "views";
+        const rows = (topVideosTableData || [])
+          .filter((row) => channel === "all" || row.channel_type === channel)
+          .sort((a, b) => (b[metric] || 0) - (a[metric] || 0))
+          .slice(0, 10);
+        if (!rows.length) {
+          topVideosTable.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No videos found for this range.</td></tr>`;
+          return;
+        }
+        topVideosTable.innerHTML = rows
+          .map((row) => {
+            const title = row.video_title || row.video_id || "—";
+            const platform = row.channel_name || row.channel_type || "—";
+            return `
+            <tr>
+              <td>${escapeHtml(title)}</td>
+              <td>${escapeHtml(platform)}</td>
+              <td>${createDeltaBadge(row.views_delta)}</td>
+              <td>${createDeltaBadge(row.comments_delta)}</td>
+              <td>${createDeltaBadge(row.likes_delta)}</td>
+            </tr>
+            `;
+          })
+          .join("");
+      };
+
+      const createDeltaBadge = (value) => {
+        const numeric = Number(value);
+        const badge = (label, variant) => {
+          const suffix = variant ? ` vs-badge-${variant}` : "";
+          return `<span class="vs-badge${suffix}">${label}</span>`;
+        };
+        if (Number.isNaN(numeric)) {
+          return badge(escapeHtml(value));
+        }
+        if (numeric > 0) {
+          return badge(`+${numeric.toLocaleString("en-US")}`, "success");
+        }
+        if (numeric < 0) {
+          return badge(numeric.toLocaleString("en-US"), "danger");
+        }
+        return badge(numeric.toLocaleString("en-US"));
+      };
+
+      const renderInsightRows = (videos) => {
+        if (!insightsListEl) {
+          return "";
+        }
+        return videos
+          .map((video) => {
+            const title = escapeHtml(video.video_title || video.video_id || "—");
+            const thumbImage = video.thumbnail_url
+              ? `<img src="${escapeHtml(video.thumbnail_url)}" alt="Video thumbnail">`
+              : `<div class="insight-thumb-placeholder"></div>`;
+            const thumb = video.video_url
+              ? `<a href="${escapeHtml(video.video_url)}" target="_blank" rel="noopener noreferrer">${thumbImage}</a>`
+              : thumbImage;
+            return `
+              <tr class="insight-row">
+                <td class="insight-thumb-cell">
+                  <div class="insight-thumb">
+                    ${thumb}
+                  </div>
+                </td>
+                <td>
+                  <strong class="insight-title">${title}</strong>
+                  <div class="insight-total-label">Total</div>
+                  <div class="metric-chips mt-1">
+                    <span class="metric-chip">
+                      <span class="material-icons" aria-hidden="true">visibility</span>
+                      ${formatNumber(video.views)}
+                    </span>
+                    <span class="metric-chip">
+                      <span class="material-icons" aria-hidden="true">comment</span>
+                      ${formatNumber(video.comments)}
+                    </span>
+                  </div>
+                </td>
+                <td class="insights-delta-cell text-end">
+                  ${createDeltaBadge(video.views_delta)}
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+      };
+
+      const setInsightsState = (videos, title, showClear, empty = false) => {
+        if (insightsTitleEl) {
+          insightsTitleEl.textContent = title || "";
+        }
+        if (insightsClearBtn) {
+          insightsClearBtn.classList.toggle("d-none", !showClear);
+        }
+        if (insightsEmptyEl) {
+          insightsEmptyEl.classList.toggle("d-none", !empty);
+        }
+        if (insightsListEl) {
+          insightsListEl.innerHTML = empty ? "" : renderInsightRows(videos);
+        }
+      };
+
+      const resetInsights = () => {
+        setInsightsState(defaultInsights, "", false, !defaultInsights.length);
+      };
+
+      if (insightsClearBtn) {
+        insightsClearBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          resetInsights();
+        });
+      }
+
+      const updateTotals = (channel) => {
+        const totals = channelTotals[channel] || channelTotals.all || {};
+        totalsEls.forEach((el) => {
+          const key = el.dataset.key;
+          el.textContent = formatNumber(totals[key]);
+        });
+      };
+      const refreshChart = () => {
+        const channel = channelSelect.value || "all";
+        const metric = metricSelect.value || "views";
+        chart.data.labels = buildLabels(channel);
+        chart.data.datasets = buildDatasets(channel, metric);
+        chart.options.scales.x.stacked = metric === "views" && channel === "all";
+        chart.options.scales.y.stacked = metric === "views" && channel === "all";
+        chart.options.plugins.legend.display = metric === "views" && channel === "all";
+        chart.update();
+        updateTotals(channel);
+        renderTopVideosTable();
+        resetInsights();
+      };
+
+      const subscriberTableEl = document.getElementById("subscriberDeltaTable");
+      const buildSubscriberDeltas = () => {
+        const deltas = [];
+        for (let i = 0; i < subscriberSeries.length; i += 1) {
+          const current = subscriberSeries[i];
+          deltas.push({
+            date: current.date,
+            youtubeTotal: current.youtube_total || 0,
+            youtubeGained: current.youtube_gained,
+            youtubeLost: current.youtube_lost,
+            youtubeNet: current.youtube_net,
+            instagramTotal: current.instagram_total || 0,
+            instagramNet: current.instagram_net,
+            facebookTotal: current.facebook_total || 0,
+            facebookNet: current.facebook_net,
+            tiktokTotal: current.tiktok_total || 0,
+            tiktokNet: current.tiktok_net,
+          });
+        }
+        return deltas.slice(1);
+      };
+      const subscriberDeltas = buildSubscriberDeltas();
+      const renderSubscriberTable = () => {
+        if (!subscriberTableEl) {
+          return;
+        }
+        const rows = subscriberDeltas
+          .slice()
+          .reverse()
+          .slice(0, 10)
+          .map((row) => {
+            return `
+              <tr>
+                <td>${escapeHtml(row.date)}</td>
+                <td class="text-end">${formatSubscriberDelta(row.youtubeNet)}</td>
+                <td class="text-end">${formatSubscriberDelta(row.instagramNet)}</td>
+                <td class="text-end">${formatSubscriberDelta(row.facebookNet)}</td>
+                <td class="text-end">${formatSubscriberDelta(row.tiktokNet)}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        subscriberTableEl.innerHTML = rows || `<tr><td colspan="5" class="text-center text-muted py-3">No data yet.</td></tr>`;
+      };
+      renderSubscriberTable();
+
+      const fetchInsightsForDate = async (dateLabel) => {
+        if (!dateLabel) {
+          return;
+        }
+        try {
+          const url = new URL("{{ url_for('video_shorts_bp.stats_top_videos') }}", window.location.origin);
+          url.searchParams.set("date", dateLabel);
+          url.searchParams.set("channel", channelSelect.value || "all");
+          const response = await fetch(url.toString());
+          if (!response.ok) {
+            throw new Error("Failed to load insights");
+          }
+          const data = await response.json();
+          const title = data.date ? `Top videos for ${data.date}` : "Top videos";
+          if (Array.isArray(data.videos) && data.videos.length) {
+            setInsightsState(data.videos, title, true, false);
+          } else {
+            setInsightsState([], title, true, true);
+          }
+        } catch (error) {
+          setInsightsState([], "Top videos", true, true);
+        }
+      };
+
+      chart.canvas.addEventListener("click", (event) => {
+        const points = chart.getElementsAtEventForMode(event, "nearest", {
+          intersect: true,
+        }, true);
+        if (!points.length) {
+          return;
+        }
+        const clickedIndex = points[0].index;
+        const label = chart.data.labels[clickedIndex];
+        fetchInsightsForDate(label);
+      });
+      metricSelect.addEventListener("change", refreshChart);
+      channelSelect.addEventListener("change", refreshChart);
+      updateTotals(defaultChannel);
+      renderTopVideosTable();
+      resetInsights();
+    })();
+  </script>
+  <script>
+    (function () {
+      const table = document.querySelector(".daily-performance-table");
+      const trigger = document.querySelector(".sort-last-update");
+      const dateTrigger = document.querySelector(".sort-date");
+      const pagination = document.querySelector(".daily-performance-pagination");
+      const pagePrev = pagination?.querySelector(".page-prev");
+      const pageNext = pagination?.querySelector(".page-next");
+      const pageRange = pagination?.querySelector(".page-range");
+      if (!table || !trigger) {
+        return;
+      }
+      const tbody = table.querySelector("tbody");
+      const allRows = Array.from(tbody?.querySelectorAll("tr") || []).filter((row) =>
+        row.querySelector("td[data-date]")
+      );
+      if (!allRows.length) {
+        if (pagination) {
+          pagination.classList.add("d-none");
+        }
+        return;
+      }
+      const pageSize = 20;
+      let currentPage = 1;
+      const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+
+      const updatePagination = () => {
+        if (!pageRange) {
+          return;
+        }
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, allRows.length);
+        pageRange.textContent = `Showing ${startIndex + 1}-${endIndex} of ${allRows.length}`;
+        if (pagePrev) {
+          pagePrev.disabled = currentPage <= 1;
+        }
+        if (pageNext) {
+          pageNext.disabled = currentPage >= totalPages;
+        }
+      };
+
+      const renderPage = () => {
+        if (!tbody) {
+          return;
+        }
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const slice = allRows.slice(startIndex, endIndex);
+        tbody.replaceChildren(...slice);
+        updatePagination();
+      };
+      const getSortValue = (row) => {
+        const cell = row.querySelector("td[data-sort]");
+        if (!cell) {
+          return 0;
+        }
+        const value = Number(cell.dataset.sort);
+        return Number.isNaN(value) ? 0 : value;
+      };
+      const sortRows = (direction) => {
+        allRows.sort((a, b) => {
+          const aValue = getSortValue(a);
+          const bValue = getSortValue(b);
+          return direction === "asc" ? aValue - bValue : bValue - aValue;
+        });
+        currentPage = 1;
+        renderPage();
+      };
+      const updateIcon = (direction) => {
+        const icon = trigger.querySelector(".sort-icon");
+        if (!icon) {
+          return;
+        }
+        icon.textContent = direction === "asc" ? "north" : "south";
+      };
+
+      const neutralIcon = "unfold_more";
+      const setNeutralIcon = (iconEl) => {
+        if (!iconEl) {
+          return;
+        }
+        iconEl.textContent = neutralIcon;
+      };
+
+      trigger.addEventListener("click", () => {
+        const next = trigger.dataset.sortDirection === "asc" ? "desc" : "asc";
+        trigger.dataset.sortDirection = next;
+        sortRows(next);
+        updateIcon(next);
+        setNeutralIcon(dateTrigger?.querySelector(".sort-icon"));
+      });
+
+      if (!dateTrigger) {
+        return;
+      }
+      const getDateValue = (row) => {
+        const cell = row.querySelector("td[data-date]");
+        if (!cell) {
+          return 0;
+        }
+        const raw = cell.dataset.date || "";
+        const parsed = Date.parse(raw);
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+      const sortByDate = (direction) => {
+        allRows.sort((a, b) => {
+          const aValue = getDateValue(a);
+          const bValue = getDateValue(b);
+          return direction === "asc" ? aValue - bValue : bValue - aValue;
+        });
+        currentPage = 1;
+        renderPage();
+      };
+      const updateDateIcon = (direction) => {
+        const icon = dateTrigger.querySelector(".sort-icon");
+        if (!icon) {
+          return;
+        }
+        icon.textContent = direction === "asc" ? "north" : "south";
+      };
+      sortByDate("desc");
+      updateDateIcon("desc");
+      setNeutralIcon(trigger.querySelector(".sort-icon"));
+      renderPage();
+      dateTrigger.addEventListener("click", () => {
+        const next = dateTrigger.dataset.sortDirection === "asc" ? "desc" : "asc";
+        dateTrigger.dataset.sortDirection = next;
+        sortByDate(next);
+        updateDateIcon(next);
+        setNeutralIcon(trigger.querySelector(".sort-icon"));
+      });
+
+      pagePrev?.addEventListener("click", () => {
+        if (currentPage <= 1) {
+          return;
+        }
+        currentPage -= 1;
+        renderPage();
+      });
+
+      pageNext?.addEventListener("click", () => {
+        if (currentPage >= totalPages) {
+          return;
+        }
+        currentPage += 1;
+        renderPage();
+      });
+    })();
+  </script>
+  <script>
+    (function () {
+      const rangePicker = document.getElementById("rangePicker");
+      const startField = document.getElementById("rangeStart");
+      const endField = document.getElementById("rangeEnd");
+      const chartFilters = document.getElementById("chartFilters");
+      const earliestSnapshotIso = "{{ earliest_snapshot.isoformat() }}";
+      const earliestSnapshot = earliestSnapshotIso
+        ? new Date(earliestSnapshotIso)
+        : new Date(startField.value || new Date().toISOString().slice(0, 10));
+      if (!rangePicker || !startField || !endField || !chartFilters) {
+        return;
+      }
+      flatpickr(rangePicker, {
+        mode: "range",
+        dateFormat: "Y-m-d",
+        defaultDate: [startField.value, endField.value],
+        onClose(selectedDates) {
+          if (!selectedDates.length) {
+            return;
+          }
+          const start = selectedDates[0];
+          const end = selectedDates[selectedDates.length - 1];
+          const startIso = start.toISOString().slice(0, 10);
+          const endIso = end.toISOString().slice(0, 10);
+          startField.value = startIso;
+          endField.value = endIso;
+          chartFilters.submit();
+        },
+      });
+    })();
+  </script>
+  <script>
+    (function () {
+      const presetButtons = document.querySelectorAll(".preset-item");
+      const rangePicker = document.getElementById("rangePicker");
+      const startField = document.getElementById("rangeStart");
+      const endField = document.getElementById("rangeEnd");
+      const chartFilters = document.getElementById("chartFilters");
+      if (!presetButtons.length || !startField || !endField || !rangePicker || !chartFilters) {
+        return;
+      }
+
+      const formatIso = (date) => date.toISOString().slice(0, 10);
+
+      const calculateRange = (preset) => {
+        const today = new Date();
+        const normalize = (value) => {
+          const cloned = new Date(value);
+          cloned.setHours(0, 0, 0, 0);
+          return cloned;
+        };
+        const start = normalize(today);
+        let end = normalize(today);
+        switch (preset) {
+          case "yesterday": {
+            const yesterday = new Date(start);
+            yesterday.setDate(start.getDate() - 1);
+            return { start: yesterday, end: yesterday };
+          }
+          case "this_week": {
+            const day = start.getDay();
+            const weekStart = new Date(start);
+            weekStart.setDate(start.getDate() - (day === 0 ? 6 : day - 1));
+            return { start: weekStart, end };
+          }
+          case "last_week": {
+            const day = start.getDay();
+            const weekStart = new Date(start);
+            weekStart.setDate(start.getDate() - (day === 0 ? 7 : day));
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekEnd.getDate() + 6);
+            return { start: weekStart, end: weekEnd };
+          }
+          case "this_month": {
+            const monthStart = new Date(start);
+            monthStart.setDate(1);
+            return { start: monthStart, end };
+          }
+          case "last_7": {
+            const last = new Date(start);
+            last.setDate(start.getDate() - 6);
+            return { start: last, end };
+          }
+          case "last_28": {
+            const last = new Date(start);
+            last.setDate(start.getDate() - 27);
+            return { start: last, end };
+          }
+          case "last_30": {
+            const last = new Date(start);
+            last.setDate(start.getDate() - 29);
+            return { start: last, end };
+          }
+          case "last_90": {
+            const last = new Date(start);
+            last.setDate(start.getDate() - 89);
+            return { start: last, end };
+          }
+          case "all": {
+            const earliest = earliestSnapshot ? new Date(earliestSnapshot) : new Date(start);
+            return { start: earliest, end };
+          }
+          default:
+            return { start, end };
+        }
+      };
+
+      const updateFields = (startDate, endDate) => {
+        const startIso = formatIso(startDate);
+        const endIso = formatIso(endDate);
+        startField.value = startIso;
+        endField.value = endIso;
+        rangePicker.value = `${startIso} / ${endIso}`;
+        chartFilters.submit();
+      };
+
+      const setActivePreset = (name) => {
+        presetButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.datePreset === name);
+        });
+      };
+
+      presetButtons.forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          const preset = button.dataset.datePreset;
+          const { start, end } = calculateRange(preset);
+          updateFields(start, end);
+          setActivePreset(preset);
+        });
+      });
+
+      const currentStart = startField.value;
+      const currentEnd = endField.value;
+      presetButtons.forEach((button) => {
+        const { start, end } = calculateRange(button.dataset.datePreset);
+        if (formatIso(start) === currentStart && formatIso(end) === currentEnd) {
+          setActivePreset(button.dataset.datePreset);
+        }
+      });
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<article class="post" itemscope itemtype="https://schema.org/Article">
+  <h1 itemprop="headline">{{ post.title }}</h1>
+
+  {% if post.author_name and post.date_published %}
+  <div class="post-meta">
+    By <strong itemprop="author">{{ post.author_name }}</strong>
+    on {{ post.date_published.strftime('%B %d, %Y') if post.date_published }}
+  </div>
+  {% endif %}
+
+  {# --- HERO CARD: image left + intro right in a pretty card --- #}
+  {% if post.hero_image_url or post.intro_lead %}
+  <section class="hero-card" role="region" aria-label="Overview">
+    <div class="hero-card-grid">
+      {% if post.hero_image_url %}
+      <figure class="hero-card-media">
+        <img
+          src="{{ post.hero_image_url }}"
+          alt="{{ post.hero_alt }}"
+          class="hero-card-img"
+          loading="lazy" decoding="async">
+      </figure>
+      {% endif %}
+
+      <div class="hero-card-body">
+        <h2 class="hero-card-title">Overview</h2>
+        <div class="hero-card-text">
+          {{ post.intro_lead | safe }}
+        </div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {# --- SUMMARY ROW: Quick Take left, Insights right --- #}
+  {% if post.intro_rest or post.insights_table %}
+  <div class="summary-two-col">
+    <section class="quick-take-col">
+      <div class="intro-text">
+        {{ post.intro_rest | safe }}
+      </div>
+    </section>
+
+    {% if post.insights_table %}
+    <aside class="insights-col" aria-label="What we analyzed for you">
+      {{ post.insights_table | safe }}
+    </aside>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# --- Top 5 table (deal yazılarında route dolduruyor) --- #}
+  {% if post.top5_table %}
+    {{ post.top5_table | safe }}
+  {% endif %}
+
+  {% if post.gallery %}
+    <div class="gallery">{{ post.gallery | safe }}</div>
+  {% endif %}
+
+  {% if post.urunler %}
+    <div class="urunler">{{ post.urunler | safe }}</div>
+  {% endif %}
+
+  {# ==============
+     BUYER'S GUIDE
+     ============== #}
+  {% if post.buyers_guide %}
+    {{ post.buyers_guide | safe }}
+  {% endif %}
+
+  {# --- eBay ürün grid (deal post’larında route gönderiyor) --- #}
+  {% if ebay_products %}
+    {% include "ebay_products.html" %}
+  {% endif %}
+
+  {# =====
+     FAQ
+     ===== #}
+  {% if post.faq %}
+    {{ post.faq | safe }}
+  {% endif %}
+
+  {# --- Conclusion: FAQ tail veya explicit conclusion --- #}
+  {% if post.conclusion %}
+    {{ post.conclusion | safe }}
+  {% endif %}
+
+  {# --- Related links --- #}
+  {% if post.related_links %}
+  <section class="related-posts">
+    <h2>You Might Also Like</h2>
+    <ul>
+      {% for link in post.related_links.related_links %}
+        <li><a href="/{{ link.slug }}/">{{ link.title }}</a></li>
+      {% endfor %}
+    </ul>
+
+    {% if post.related_links.buyers_guide %}
+      <p><strong>Buyer’s Guide:</strong>
+        <a href="/{{ post.related_links.buyers_guide.slug }}/">
+          {{ post.related_links.buyers_guide.title }}
+        </a>
+      </p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <div class="affiliate-disclosure">
+    Our posts may contain affiliate links. As an eBay Partner, we may be compensated if you make a purchase through links on our site.
+  </div>
+</article>
+
+{% if post.author_name and post.author_bio %}
+<div class="author-box">
+  {% if post.author_avatar_url %}
+  <img src="{{ post.author_avatar_url }}" alt="Photo of {{ post.author_name }}" class="author-box-avatar" loading="lazy" decoding="async">
+  {% endif %}
+  <div class="author-box-info">
+    <span class="author-box-label">About the Author</span>
+    <h3 class="author-box-name">{{ post.author_name }}</h3>
+    <p class="author-box-bio">{{ post.author_bio }}</p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

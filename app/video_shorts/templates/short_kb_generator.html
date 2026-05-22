@@ -1,0 +1,520 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Short Q&A Generator{% endblock %}
+
+{% block content %}
+<style>
+  .kb-page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .kb-page-subtitle {
+    color: var(--muted);
+    max-width: 760px;
+  }
+  .kb-card {
+    background: var(--surface-2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+  }
+  .kb-table thead th {
+    color: var(--muted);
+    background: var(--surface-3);
+    border-bottom: 1px solid var(--border);
+  }
+  .kb-table td, .kb-table th {
+    vertical-align: top;
+  }
+  .kb-status-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: rgba(45, 212, 191, 0.12);
+    border: 1px solid rgba(45, 212, 191, 0.35);
+    color: var(--mint);
+  }
+  .kb-status-pill.is-muted {
+    color: var(--muted);
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .kb-nav .nav-link {
+    color: var(--muted);
+  }
+  .kb-nav .nav-link.active {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .kb-modal .form-control,
+  .kb-modal .form-select {
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text);
+  }
+  .kb-modal .modal-content {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .kb-loading-state {
+    display: none;
+    padding: 32px 12px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .kb-loading-state.active {
+    display: block;
+  }
+  .kb-loading-spinner {
+    width: 54px;
+    height: 54px;
+    border-radius: 999px;
+    border: 4px solid rgba(45, 212, 191, 0.16);
+    border-top-color: #67ffe3;
+    border-right-color: #2dd4bf;
+    box-shadow:
+      0 0 0 4px rgba(45, 212, 191, 0.08),
+      0 0 22px rgba(45, 212, 191, 0.55),
+      0 0 42px rgba(103, 255, 227, 0.22);
+    margin: 0 auto 14px;
+    animation: kb-spin 0.72s linear infinite;
+  }
+  .kb-loading-label {
+    color: #8fffe9;
+    text-shadow: 0 0 12px rgba(45, 212, 191, 0.3);
+  }
+  .kb-form-shell.is-loading {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  @keyframes kb-spin {
+    to { transform: rotate(360deg); }
+  }
+  .kb-similar-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .kb-empty {
+    color: var(--muted);
+    padding: 40px 20px;
+    text-align: center;
+  }
+  .kb-source-link {
+    word-break: break-all;
+  }
+  @media (max-width: 900px) {
+    .kb-table {
+      min-width: 960px;
+    }
+    .kb-similar-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="kb-page-header">
+  <div>
+    <h3 class="mb-1">Short Q&A Generator</h3>
+    <div class="kb-page-subtitle">
+      Gerekli short kayitlari yonetin, Q&amp;A taslagi olusturun ve sonucu modal icinde duzenleyin.
+    </div>
+  </div>
+</div>
+
+<div class="card kb-card">
+  <div class="card-body pb-0">
+    <ul class="nav nav-tabs kb-nav" id="kbTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="gerekli-tab" data-bs-toggle="tab" data-bs-target="#gerekli-pane" type="button" role="tab">
+          Gerekli <span class="badge text-bg-secondary ms-1" id="count-gerekli">{{ active_items|length }}</span>
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="gereksiz-tab" data-bs-toggle="tab" data-bs-target="#gereksiz-pane" type="button" role="tab">
+          Gereksiz <span class="badge text-bg-secondary ms-1" id="count-gereksiz">{{ inactive_items|length }}</span>
+        </button>
+      </li>
+    </ul>
+  </div>
+  <div class="tab-content">
+    <div class="tab-pane fade show active" id="gerekli-pane" role="tabpanel">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0 kb-table vs-table">
+          <thead>
+            <tr>
+              <th style="min-width: 240px;">Baslik</th>
+              <th style="min-width: 150px;">
+                <a href="{{ url_for('video_shorts_bp.short_qa_generator', sort='published_at', dir=published_at_sort_dir) }}" class="text-decoration-none text-reset">
+                  Yayin Tarihi {% if sort_key == 'published_at' %}<span class="small text-muted">{% if sort_dir == 'desc' %}↓{% else %}↑{% endif %}</span>{% endif %}
+                </a>
+              </th>
+              <th style="min-width: 260px;">Transcript Ozet</th>
+              <th style="min-width: 180px;">Link</th>
+              <th style="min-width: 130px;">Durum</th>
+              <th style="min-width: 240px;">Islemler</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-gerekli">
+            {% for item in active_items %}
+              {% include "short_kb_generator_row.html" %}
+            {% else %}
+              <tr class="kb-empty-row"><td colspan="6" class="kb-empty">Gosterilecek gerekli short yok.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tab-pane fade" id="gereksiz-pane" role="tabpanel">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0 kb-table vs-table">
+          <thead>
+            <tr>
+              <th style="min-width: 240px;">Baslik</th>
+              <th style="min-width: 150px;">Yayin Tarihi</th>
+              <th style="min-width: 260px;">Transcript Ozet</th>
+              <th style="min-width: 180px;">Link</th>
+              <th style="min-width: 130px;">Durum</th>
+              <th style="min-width: 240px;">Islemler</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-gereksiz">
+            {% for item in inactive_items %}
+              {% include "short_kb_generator_row.html" %}
+            {% else %}
+              <tr class="kb-empty-row"><td colspan="6" class="kb-empty">Gereksiz olarak isaretlenen short yok.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade kb-modal" id="kbItemModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="kbModalTitle">Q&A Taslagi</h5>
+          <div class="small text-muted" id="kbModalMeta"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="kbModalAlert" class="alert d-none" role="alert"></div>
+        <div id="kbModalLoading" class="kb-loading-state">
+          <div class="kb-loading-spinner" aria-hidden="true"></div>
+          <div class="fw-semibold mb-1 kb-loading-label">Q&amp;A taslagi olusturuluyor</div>
+          <div class="small">OpenAI short metnini analiz ediyor. Bu islem birkac saniye surebilir.</div>
+        </div>
+        <div id="kbModalExistingMatch" class="alert alert-warning d-none"></div>
+        <form id="kbModalForm" class="kb-form-shell">
+          <input type="hidden" name="generation_id" id="kbModalGenerationId">
+          <input type="hidden" name="source_entry_key" id="kbModalSourceEntryKey">
+          <div class="mb-3">
+            <label class="form-label">Ana Soru</label>
+            <input class="form-control" type="text" name="main_question" id="kbModalMainQuestion" maxlength="220" required>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Kisa Cevap</label>
+              <textarea class="form-control" name="short_answer" id="kbModalShortAnswer" rows="5" required></textarea>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Tum Transcript</label>
+              <textarea class="form-control" id="kbModalTranscriptFull" rows="8" readonly></textarea>
+              <div class="form-text text-muted">Bu alan sadece kontrol icin gosterilir, kayit sirasinda degismez.</div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Benzer Sorular</label>
+            <div id="kbSimilarQuestions"></div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn vs-btn vs-btn-outline" data-bs-dismiss="modal">Kapat</button>
+        <button type="button" class="btn vs-btn vs-btn-primary" id="kbModalSaveBtn">Taslagi Kaydet</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const kbItemModalEl = document.getElementById("kbItemModal");
+  const kbItemModal = new bootstrap.Modal(kbItemModalEl);
+  const modalAlert = document.getElementById("kbModalAlert");
+  const modalExistingMatch = document.getElementById("kbModalExistingMatch");
+  const modalLoading = document.getElementById("kbModalLoading");
+  const modalTitle = document.getElementById("kbModalTitle");
+  const modalMeta = document.getElementById("kbModalMeta");
+  const modalForm = document.getElementById("kbModalForm");
+  const modalGenerationId = document.getElementById("kbModalGenerationId");
+  const modalSourceEntryKey = document.getElementById("kbModalSourceEntryKey");
+  const modalMainQuestion = document.getElementById("kbModalMainQuestion");
+  const modalShortAnswer = document.getElementById("kbModalShortAnswer");
+  const modalTranscriptFull = document.getElementById("kbModalTranscriptFull");
+  const similarContainer = document.getElementById("kbSimilarQuestions");
+  const modalSaveBtn = document.getElementById("kbModalSaveBtn");
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function setModalAlert(message, type) {
+    if (!message) {
+      modalAlert.className = "alert d-none";
+      modalAlert.textContent = "";
+      return;
+    }
+    modalAlert.className = `alert alert-${type || "info"}`;
+    modalAlert.textContent = message;
+  }
+
+  function setModalLoading(isLoading, message) {
+    modalLoading.classList.toggle("active", Boolean(isLoading));
+    modalForm.classList.toggle("is-loading", Boolean(isLoading));
+    modalSaveBtn.disabled = Boolean(isLoading);
+    if (message) {
+      const textNode = modalLoading.querySelector(".small");
+      if (textNode) textNode.textContent = message;
+    }
+  }
+
+  function renderSimilarQuestions(items) {
+    similarContainer.innerHTML = "";
+    (items || []).forEach((similar) => {
+      const row = document.createElement("div");
+      row.className = "kb-similar-row";
+      row.innerHTML = `
+        <input class="form-control" type="text" name="similar_question_${escapeHtml(similar.id)}" value="${escapeHtml(similar.question)}" maxlength="220" required>
+        <select class="form-select" name="decision_${escapeHtml(similar.id)}">
+          <option value="standalone" ${similar.decision === "standalone" ? "selected" : ""}>Standalone sayfa yap</option>
+          <option value="related" ${similar.decision === "related" ? "selected" : ""}>Sadece related link olsun</option>
+          <option value="rejected" ${similar.decision === "rejected" ? "selected" : ""}>Reddet</option>
+          <option value="pending" ${similar.decision === "pending" ? "selected" : ""}>Beklemede</option>
+        </select>
+      `;
+      similarContainer.appendChild(row);
+    });
+  }
+
+  function fillModal(item) {
+    modalTitle.textContent = item.title || "Q&A Taslagi";
+    modalMeta.textContent = `${item.video_id || ""}${item.short_video_id ? " • " + item.short_video_id : ""}`;
+    modalGenerationId.value = item.generation_id || "";
+    modalSourceEntryKey.value = item.source_entry_key || "";
+    modalMainQuestion.value = item.main_question || "";
+    modalShortAnswer.value = item.short_answer || "";
+    modalTranscriptFull.value = item.transcript_full || "";
+    renderSimilarQuestions(item.similar_questions || []);
+    if (item.existing_match) {
+      modalExistingMatch.classList.remove("d-none");
+      modalExistingMatch.innerHTML = `Benzer mevcut sayfa: <strong>${escapeHtml(item.existing_match.question)}</strong> (${escapeHtml(item.existing_match.page_type)}, similarity=${escapeHtml(item.existing_match.similarity)})`;
+    } else {
+      modalExistingMatch.classList.add("d-none");
+      modalExistingMatch.textContent = "";
+    }
+  }
+
+  function buildRowHtml(item) {
+    const generationCell = item.generation_id
+      ? `<span class="kb-status-pill">${escapeHtml(item.generation_status || "generated")}</span>`
+      : `<span class="kb-status-pill is-muted">hazir degil</span>`;
+    const primaryButton = item.generation_id
+      ? `<button type="button" class="btn btn-sm vs-btn vs-btn-outline" data-kb-open data-source-entry-key="${escapeHtml(item.source_entry_key || "")}">Goruntule</button>`
+      : `<button type="button" class="btn btn-sm vs-btn vs-btn-primary" data-kb-generate data-source-entry-key="${escapeHtml(item.source_entry_key || "")}" data-title="${escapeHtml(item.title || "")}">Generate Q&A</button>`;
+    const toggleLabel = item.is_relevant ? "Gereksiz" : "Gerekli Yap";
+    const toggleClass = item.is_relevant ? "vs-btn-danger" : "vs-btn-outline";
+    const nextRelevant = item.is_relevant ? "false" : "true";
+    return `
+      <tr id="${escapeHtml(item.anchor_id || "")}" data-source-entry-key="${escapeHtml(item.source_entry_key || "")}">
+        <td>
+          <div class="fw-semibold">${escapeHtml(item.title || "-")}</div>
+          <div class="small text-muted mt-1">Video ID: ${escapeHtml(item.video_id || "")}</div>
+          ${item.short_video_id ? `<div class="small text-muted">Short ID: ${escapeHtml(item.short_video_id)}</div>` : ""}
+        </td>
+        <td>${escapeHtml(item.published_at_label || "-")}</td>
+        <td>${item.transcript_preview ? `<div>${escapeHtml(item.transcript_preview)}</div>` : `<div class="text-muted">Transcript bulunamadi.</div>`}</td>
+        <td>${item.video_url ? `<a class="kb-source-link" href="${escapeHtml(item.video_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.video_url)}</a>` : `<span class="text-muted">-</span>`}</td>
+        <td>${generationCell}<div class="small text-muted mt-2">Kaynak: ${escapeHtml(item.source_status || "")}</div></td>
+        <td>
+          <div class="d-flex flex-wrap gap-2">
+            ${primaryButton}
+            <button type="button" class="btn btn-sm vs-btn ${toggleClass}" data-kb-toggle data-source-entry-key="${escapeHtml(item.source_entry_key || "")}" data-next-relevant="${nextRelevant}">${toggleLabel}</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function ensureEmptyState(tbodyId, message) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    const realRows = Array.from(tbody.querySelectorAll("tr")).filter((row) => !row.classList.contains("kb-empty-row"));
+    const emptyRow = tbody.querySelector(".kb-empty-row");
+    if (realRows.length === 0 && !emptyRow) {
+      const tr = document.createElement("tr");
+      tr.className = "kb-empty-row";
+      tr.innerHTML = `<td colspan="6" class="kb-empty">${message}</td>`;
+      tbody.appendChild(tr);
+    } else if (realRows.length > 0 && emptyRow) {
+      emptyRow.remove();
+    }
+  }
+
+  function updateCounts() {
+    document.getElementById("count-gerekli").textContent = document.querySelectorAll("#tbody-gerekli tr[data-source-entry-key]").length;
+    document.getElementById("count-gereksiz").textContent = document.querySelectorAll("#tbody-gereksiz tr[data-source-entry-key]").length;
+    ensureEmptyState("tbody-gerekli", "Gosterilecek gerekli short yok.");
+    ensureEmptyState("tbody-gereksiz", "Gereksiz olarak isaretlenen short yok.");
+  }
+
+  function upsertRow(item) {
+    item.published_at_label = item.published_at ? new Date(item.published_at).toLocaleString() : "-";
+    item.anchor_id = item.anchor_id || `kb-entry-${(item.source_entry_key || "").replace(/[^a-zA-Z0-9]/g, "-")}`;
+    const html = buildRowHtml(item);
+    const targetId = item.is_relevant ? "tbody-gerekli" : "tbody-gereksiz";
+    const otherId = item.is_relevant ? "tbody-gereksiz" : "tbody-gerekli";
+    const target = document.getElementById(targetId);
+    const otherExisting = document.querySelector(`#${otherId} tr[data-source-entry-key="${CSS.escape(item.source_entry_key)}"]`);
+    if (otherExisting) otherExisting.remove();
+    let existing = document.querySelector(`#${targetId} tr[data-source-entry-key="${CSS.escape(item.source_entry_key)}"]`);
+    if (existing) {
+      existing.outerHTML = html;
+    } else {
+      target.insertAdjacentHTML("beforeend", html);
+    }
+    updateCounts();
+  }
+
+  async function fetchJson(url, options) {
+    const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      ...options
+    });
+    const data = await response.json();
+    if (!response.ok || data.success === false) {
+      throw new Error(data.message || "Islem basarisiz.");
+    }
+    return data;
+  }
+
+  document.addEventListener("click", async (event) => {
+    const generateBtn = event.target.closest("[data-kb-generate]");
+    const openBtn = event.target.closest("[data-kb-open]");
+    const toggleBtn = event.target.closest("[data-kb-toggle]");
+
+    if (generateBtn) {
+      event.preventDefault();
+      setModalAlert("Q&A taslagi olusturuluyor...", "info");
+      setModalLoading(true, "OpenAI short metnini analiz ediyor. Bu islem birkac saniye surebilir.");
+      modalExistingMatch.classList.add("d-none");
+      similarContainer.innerHTML = "";
+      modalMainQuestion.value = "";
+      modalShortAnswer.value = "";
+      modalTranscriptFull.value = "";
+      modalGenerationId.value = "";
+      modalSourceEntryKey.value = generateBtn.dataset.sourceEntryKey || "";
+      modalTitle.textContent = generateBtn.dataset.title || "Q&A Taslagi";
+      modalMeta.textContent = "";
+      kbItemModal.show();
+      try {
+        const formData = new FormData();
+        formData.append("source_entry_key", generateBtn.dataset.sourceEntryKey || "");
+        const data = await fetchJson("{{ url_for('video_shorts_bp.generate_short_qa') }}", {
+          method: "POST",
+          body: formData
+        });
+        fillModal(data.item);
+        upsertRow(data.item);
+        setModalAlert(data.message, "success");
+      } catch (error) {
+        setModalAlert(error.message, "danger");
+      } finally {
+        setModalLoading(false);
+      }
+      return;
+    }
+
+    if (openBtn) {
+      event.preventDefault();
+      setModalAlert("", "");
+      try {
+        setModalLoading(true, "Kayit yukleniyor...");
+        const data = await fetchJson(`{{ url_for('video_shorts_bp.short_qa_generator_item') }}?source_entry_key=${encodeURIComponent(openBtn.dataset.sourceEntryKey || "")}`);
+        fillModal(data.item);
+        kbItemModal.show();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        setModalLoading(false);
+      }
+      return;
+    }
+
+    if (toggleBtn) {
+      event.preventDefault();
+      const formData = new FormData();
+      formData.append("source_entry_key", toggleBtn.dataset.sourceEntryKey || "");
+      formData.append("is_relevant", toggleBtn.dataset.nextRelevant || "true");
+      try {
+        const data = await fetchJson("{{ url_for('video_shorts_bp.set_short_qa_relevance') }}", {
+          method: "POST",
+          body: formData
+        });
+        upsertRow(data.item);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  });
+
+  document.getElementById("kbModalSaveBtn").addEventListener("click", async function () {
+    const generationId = modalGenerationId.value;
+    if (!generationId) {
+      setModalAlert("Once Generate Q&A calistirin.", "warning");
+      return;
+    }
+    const form = document.getElementById("kbModalForm");
+    const formData = new FormData(form);
+    try {
+      setModalLoading(true, "Taslak kaydediliyor...");
+      const data = await fetchJson(`/video_shorts/knowledge-base/generations/${encodeURIComponent(generationId)}/save`, {
+        method: "POST",
+        body: formData
+      });
+      fillModal(data.item);
+      upsertRow(data.item);
+      setModalAlert(data.message, "success");
+    } catch (error) {
+      setModalAlert(error.message, "danger");
+    } finally {
+      setModalLoading(false);
+    }
+  });
+
+  updateCounts();
+</script>
+{% endblock %}

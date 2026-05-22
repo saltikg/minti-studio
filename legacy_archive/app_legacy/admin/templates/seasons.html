@@ -1,0 +1,208 @@
+{% extends "admin_base.html" %}
+{% block title %}Seasons Admin{% endblock %}
+{% block content %}
+
+<!-- Header + Search -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0 d-flex align-items-center gap-2">
+    🎄 Seasons
+    <span class="badge bg-secondary">{{ seasons|length }}</span>
+  </h3>
+
+  <form class="d-flex" method="get" action="{{ url_for('admin_bp.seasons_page') }}">
+    <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Search">
+    <button class="btn btn-sm btn-outline-primary ms-2">Search</button>
+  </form>
+</div>
+
+<!-- Add Season -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin_bp.seasons_page') }}">
+      <div class="row g-2">
+        <div class="col-md-4">
+          <input name="season_name" class="form-control form-control-sm" placeholder="Season name (e.g. christmas-2025)" required>
+        </div>
+        <div class="col-md-2">
+          <input name="season_group" class="form-control form-control-sm" value="seasonal" placeholder="Group">
+        </div>
+        <div class="col-md-2">
+          <input name="start_date" class="form-control form-control-sm" placeholder="Start yyyy-mm-dd">
+        </div>
+        <div class="col-md-2">
+          <input name="end_date" class="form-control form-control-sm" placeholder="End yyyy-mm-dd">
+        </div>
+        <div class="col-md-2 d-grid">
+          <button class="btn btn-success btn-sm">Add Season</button>
+        </div>
+      </div>
+
+      <div class="mt-2">
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#advancedFields" role="button" aria-expanded="false" aria-controls="advancedFields">
+          More fields
+        </a>
+      </div>
+
+      <div class="collapse mt-2" id="advancedFields">
+        <div class="row g-2 mb-2">
+          <div class="col-md-2">
+            <input name="locale" class="form-control form-control-sm" value="US" placeholder="Locale">
+          </div>
+          <div class="col-md-10">
+            <input name="reason" class="form-control form-control-sm" placeholder="Reason">
+          </div>
+        </div>
+        <textarea name="seeds_json" class="form-control form-control-sm mb-2" rows="2" placeholder='["seed1","seed2"]'></textarea>
+        <textarea name="theme_tokens" class="form-control form-control-sm mb-2" rows="2" placeholder='["theme1","theme2"]'></textarea>
+        <textarea name="type_tokens" class="form-control form-control-sm" rows="2" placeholder='["type1","type2"]'></textarea>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Research toolbar -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="post" action="{{ url_for('admin_bp.seasons_research') }}" class="d-flex gap-2 align-items-center">
+      <input type="hidden" name="locale" value="US">
+      <input type="number" name="window_days" class="form-control form-control-sm" style="width:110px" value="14" min="0" max="60" title="Start window in days">
+      <button class="btn btn-outline-secondary btn-sm">Sezon Araştır</button>
+      <span class="text-muted small">Bugün aktif veya {{ 14 }} gün içinde başlayanları getirir</span>
+    </form>
+  </div>
+</div>
+
+<!-- Candidates -->
+{% if session.get('season_candidates') %}
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-light py-2"><strong>Aday Sezonlar</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('admin_bp.save_season_candidates') }}">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle table-responsive-stack">
+          <thead class="table-light">
+            <tr>
+              <th></th>
+              <th>Name</th>
+              <th>Group</th>
+              <th>Window</th>
+              <th>Locale</th>
+              <th>Seeds</th>
+              <th>Theme</th>
+              <th>Type</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in session['season_candidates'] %}
+            <tr>
+              <td data-label=""><input type="checkbox" name="selected_name" value="{{ c.season_name }}"></td>
+              <td data-label="Name" class="fw-semibold">
+                <div class="name-title">{{ c.season_name }}</div>
+              </td>
+              <td data-label="Group"><span class="badge bg-light text-dark">{{ c.season_group }}</span></td>
+              <td data-label="Window"><small>{{ c.start_date }} to {{ c.end_date }}</small></td>
+              <td data-label="Locale"><small>{{ c.locale }}</small></td>
+              <td data-label="Seeds">
+                <div class="text-truncate" style="max-width:200px">
+                  <small class="mono" title="{{ c.seeds_json }}">{{ c.seeds_json|tojson|safe }}</small>
+                </div>
+              </td>
+              <td data-label="Theme">
+                <div class="text-truncate" style="max-width:200px">
+                  <small class="mono" title="{{ c.theme_tokens }}">{{ c.theme_tokens|tojson|safe }}</small>
+                </div>
+              </td>
+              <td data-label="Type">
+                <div class="text-truncate" style="max-width:180px">
+                  <small class="mono" title="{{ c.type_tokens }}">{{ c.type_tokens|tojson|safe }}</small>
+                </div>
+              </td>
+              <td data-label="Reason">
+                <div class="text-truncate" style="max-width:420px">
+                  <small class="text-muted" title="{{ c.reason }}">{{ c.reason }}</small>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="p-2 text-end">
+        <button class="btn btn-success btn-sm">Kaydet</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<!-- Seasons list -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 table-responsive-stack">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Group</th>
+            <th>Window</th>
+            <th>Locale</th>
+            <th>Seeds</th>
+            <th>Theme</th>
+            <th>Type</th>
+            <th>Created</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in seasons %}
+          <tr>
+            <td data-label="ID" class="text-muted">{{ s.id }}</td>
+            <td data-label="Name" class="fw-semibold">
+              <div class="name-title">{{ s.season_name }}</div>
+              {% if s.reason %}
+                <div class="text-truncate" style="max-width:540px">
+                  <small class="text-muted" title="{{ s.reason }}">{{ s.reason }}</small>
+                </div>
+              {% endif %}
+            </td>
+            <td data-label="Group"><span class="badge bg-light text-dark">{{ s.season_group }}</span></td>
+            <td data-label="Window"><small>{{ s.start_date }} to {{ s.end_date }}</small></td>
+            <td data-label="Locale"><small>{{ s.locale }}</small></td>
+            <td data-label="Seeds">
+              <div class="text-truncate" style="max-width:200px">
+                <small class="mono" title="{{ s.seeds_json }}">{{ s.seeds_json }}</small>
+              </div>
+            </td>
+            <td data-label="Theme">
+              <div class="text-truncate" style="max-width:200px">
+                <small class="mono" title="{{ s.theme_tokens }}">{{ s.theme_tokens }}</small>
+              </div>
+            </td>
+            <td data-label="Type">
+              <div class="text-truncate" style="max-width:180px">
+                <small class="mono" title="{{ s.type_tokens }}">{{ s.type_tokens }}</small>
+              </div>
+            </td>
+            <td data-label="Created" class="text-muted"><small>{{ s.created_at }}</small></td>
+            <td data-label="Actions" class="text-end">
+              <form method="POST" action="{{ url_for('admin_bp.delete_season', season_id=s.id) }}"
+                    onsubmit="return confirm('Delete {{ s.season_name }}?');" class="d-inline">
+                <button class="btn btn-outline-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if seasons|length == 0 %}
+          <tr>
+            <td colspan="10" class="text-center text-muted py-4">No seasons found.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

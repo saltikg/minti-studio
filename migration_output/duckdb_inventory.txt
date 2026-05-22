@@ -1,0 +1,83 @@
+DuckDB Inventory
+
+Base Tables:
+- main.authors
+- main.blog_contents
+- main.blog_posts
+- main.blog_preflight_decisions
+- main.categories
+- main.categories_tree
+- main.categories_tree_new
+- main.content_plan
+- main.daily_trends
+- main.facebook_oauth_tokens
+- main.facebook_page_tokens
+- main.google_trends_score
+- main.idea_products
+- main.idea_rules_deal
+- main.ideas
+- main.instagram_oauth_pending
+- main.instagram_oauth_tokens
+- main.llm_decisions_log
+- main.product_enrichment
+- main.product_media
+- main.product_media_new
+- main.product_metrics
+- main.product_metrics_ebay
+- main.product_review_summaries
+- main.product_text
+- main.products
+- main.sd_brand_categories
+- main.sd_brands
+- main.sd_categories
+- main.sd_decisions
+- main.sd_errors
+- main.sd_item_enrichment
+- main.sd_items
+- main.sd_publications
+- main.sd_run_stats
+- main.sd_runs
+- main.sd_seed_brands
+- main.season_phrases
+- main.seasons
+- main.sources
+- main.tiktok_oauth_tokens
+- main.trend_feed_snapshot
+- main.trend_ideas
+- main.trend_instagram_posts
+- main.trend_publications
+- main.trend_topics
+- main.trends_categories
+- main.youtube_captions
+- main.youtube_channels
+- main.youtube_trend_ideas
+- main.youtube_videos
+
+Views:
+- main.v_candidate_brands
+- main.v_products
+
+Indexes:
+- main | blog_contents | idx_blog_contents_slug | False | CREATE INDEX idx_blog_contents_slug ON blog_contents(slug);
+- main | blog_contents | idx_blog_contents_updated_at | False | CREATE INDEX idx_blog_contents_updated_at ON blog_contents(updated_at);
+- main | blog_posts | idx_blog_posts_published | False | CREATE INDEX idx_blog_posts_published ON blog_posts(date_published);
+- main | blog_posts | idx_blog_posts_published_date | False | CREATE INDEX idx_blog_posts_published_date ON blog_posts(date_published);
+- main | categories_tree | idx_categories_tree_parent | False | CREATE INDEX idx_categories_tree_parent ON categories_tree(parent_slug);
+- main | categories_tree | idx_categories_tree_sort | False | CREATE INDEX idx_categories_tree_sort ON categories_tree(parent_slug, sort_order);
+- main | idea_products | idx_idea_products_idea | False | CREATE INDEX idx_idea_products_idea ON idea_products(idea_id);
+- main | idea_products | ux_idea_products_key | True | CREATE UNIQUE INDEX ux_idea_products_key ON idea_products(idea_id, parent_asin);
+- main | product_enrichment | idx_enrichment_updated | False | CREATE INDEX idx_enrichment_updated ON product_enrichment(updated_at);
+- main | product_enrichment | idx_product_metrics_updated | False | CREATE INDEX idx_product_metrics_updated ON product_enrichment(updated_at);
+- main | products | idx_products_brand | False | CREATE INDEX idx_products_brand ON products(brand);
+- main | season_phrases | idx_season_phrases_kept | False | CREATE INDEX idx_season_phrases_kept ON season_phrases(season_id, kept);
+- main | season_phrases | idx_season_phrases_season | False | CREATE INDEX idx_season_phrases_season ON season_phrases(season_id);
+- main | season_phrases | uq_season_phrase | True | CREATE UNIQUE INDEX uq_season_phrase ON season_phrases(season_id, phrase);
+- main | seasons | idx_seasons_dates | False | CREATE INDEX idx_seasons_dates ON seasons(start_date, end_date);
+- main | seasons | idx_seasons_name | False | CREATE INDEX idx_seasons_name ON seasons((lower(season_name)));
+- main | trend_topics | ux_trend_topics_slug | True | CREATE UNIQUE INDEX ux_trend_topics_slug ON trend_topics(slug);
+- main | youtube_captions | idx_youtube_captions_video | False | CREATE INDEX idx_youtube_captions_video ON youtube_captions(video_id);
+- main | youtube_channels | idx_youtube_channels_active | False | CREATE INDEX idx_youtube_channels_active ON youtube_channels(is_active);
+- main | youtube_trend_ideas | idx_youtube_trend_ideas_date | False | CREATE INDEX idx_youtube_trend_ideas_date ON youtube_trend_ideas(idea_date);
+- main | youtube_trend_ideas | idx_youtube_trend_ideas_status | False | CREATE INDEX idx_youtube_trend_ideas_status ON youtube_trend_ideas(status);
+- main | youtube_videos | idx_youtube_videos_channel | False | CREATE INDEX idx_youtube_videos_channel ON youtube_videos(channel_id);
+- main | youtube_videos | idx_youtube_videos_published | False | CREATE INDEX idx_youtube_videos_published ON youtube_videos(published_at);

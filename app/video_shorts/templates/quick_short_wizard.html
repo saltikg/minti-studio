@@ -1,0 +1,365 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Quick Short{% endblock %}
+
+{% block content %}
+<style>
+.vs-quick-dark .qs-hero {
+  border-radius: 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+  color: var(--text);
+}
+.vs-quick-dark .qs-stepper {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.vs-quick-dark .qs-step {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.85rem;
+  text-align: center;
+  color: var(--muted);
+}
+.vs-quick-dark .qs-step.active {
+  border-color: var(--border-soft);
+  background: rgba(45, 212, 191, 0.08);
+  font-weight: 600;
+  color: var(--text);
+}
+.vs-quick-dark .qs-subtitle {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.vs-quick-dark .qs-card {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  padding: 18px;
+}
+.vs-quick-dark .qs-card form {
+  color: var(--text);
+}
+.vs-quick-dark .qs-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.vs-quick-dark .qs-meta-item {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px;
+  background: var(--surface-2);
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.vs-quick-dark .qs-meta-item strong {
+  color: var(--muted);
+}
+.vs-quick-dark .qs-card .form-label,
+.vs-quick-dark .qs-card .form-text {
+  color: var(--muted);
+}
+.vs-quick-dark .qs-card .form-control,
+.vs-quick-dark .qs-card .form-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+}
+.vs-quick-dark .qs-card .form-control:focus,
+.vs-quick-dark .qs-card .form-select:focus {
+  border-color: var(--mint);
+  box-shadow: 0 0 0 0.2rem rgba(45, 212, 191, 0.35);
+  outline: none;
+}
+.vs-quick-dark .btn-warning {
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  border-color: transparent;
+  color: #031018;
+}
+.vs-quick-dark .btn-outline-secondary {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text);
+  background: transparent;
+}
+.vs-quick-dark .btn-outline-secondary:hover {
+  color: var(--mint);
+  border-color: var(--mint);
+}
+.vs-quick-dark .qs-progress {
+  display: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 10px;
+}
+.vs-quick-dark .qs-progress-bar {
+  width: 0%;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--mint-2), var(--mint));
+  transition: width 0.15s ease;
+}
+.vs-quick-dark .qs-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.vs-quick-dark .qs-success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.vs-quick-dark .qs-success-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  font-size: 1.1rem;
+}
+</style>
+
+<div class="vs-quick-dark">
+<div class="qs-hero mb-3">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <h3 class="fw-bold mb-1">Create your first short</h3>
+      <div class="qs-subtitle">Quick start with a single YouTube URL or upload a file.</div>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap gap-2 mt-2">
+    <a href="{{ url_for('video_shorts_bp.quick_short', flow='youtube') }}"
+       class="btn btn-sm {% if flow != 'upload' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
+      YouTube URL
+    </a>
+    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload') }}"
+       class="btn btn-sm {% if flow == 'upload' and upload_kind != 'music' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
+      Upload from device
+    </a>
+    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind='music') }}"
+       class="btn btn-sm {% if flow == 'upload' and upload_kind == 'music' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
+      Upload pseudo music video
+    </a>
+    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind='podcast') }}"
+       class="btn btn-sm {% if flow == 'upload' and upload_kind == 'podcast' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
+      Upload podcast video
+    </a>
+  </div>
+  <div class="qs-stepper">
+    {% if flow == 'upload' %}
+      <div class="qs-step {% if upload_step == 'upload' %}active{% endif %}">1. Upload</div>
+      <div class="qs-step {% if upload_step == 'metadata' %}active{% endif %}">2. Details</div>
+    {% else %}
+      <div class="qs-step {% if step == 1 %}active{% endif %}">1. URL</div>
+      <div class="qs-step {% if step == 2 %}active{% endif %}">2. Review</div>
+      <div class="qs-step {% if step == 3 %}active{% endif %}">3. Create</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if flow == 'upload' %}
+  {% if upload_step == 'upload' %}
+    <div class="qs-card">
+      <form id="upload-form" method="post" action="{{ url_for('video_shorts_bp.quick_short', flow='upload') }}" enctype="multipart/form-data" class="d-flex flex-column gap-3">
+        <div>
+          <label class="form-label">
+            {% if upload_kind == 'music' %}
+              Upload pseudo music video
+            {% elif upload_kind == 'podcast' %}
+              Upload podcast source video
+            {% else %}
+              Upload media file
+            {% endif %}
+          </label>
+          <input type="file" name="video_file" class="form-control" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*" required>
+          <div class="form-text">
+            Max 500MB. Video: mp4, mov, mkv. Audio: mp3, wav, m4a, aac, ogg, flac.
+            {% if upload_kind == 'music' %}This will be saved as a music-only source for generate.{% endif %}
+            {% if upload_kind == 'podcast' %}This will be saved under Podcast channel and open generate after upload.{% endif %}
+          </div>
+        </div>
+        <input type="hidden" name="flow" value="upload">
+        <input type="hidden" name="upload_kind" value="{{ upload_kind or 'video' }}">
+        <input type="hidden" name="action" value="upload">
+        <div id="upload-progress" class="qs-progress">
+          <div class="qs-progress-bar" id="upload-progress-bar"></div>
+          <div class="qs-progress-meta">
+            <span id="upload-progress-text">0%</span>
+            <span id="upload-progress-bytes">0 MB / 0 MB</span>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-warning">Upload file</button>
+          <a href="{{ url_for('video_shorts_bp.channels_page') }}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  {% elif upload_step == 'metadata' %}
+    <div class="qs-card">
+      <div class="qs-success mb-2">
+        <span class="qs-success-icon"><i class="bi bi-check-lg"></i></span>
+        <span>
+          {% if upload_kind == 'music' %}
+            Pseudo music video uploaded successfully
+          {% elif upload_kind == 'podcast' %}
+            Podcast source video uploaded successfully
+          {% else %}
+            File uploaded successfully
+          {% endif %}
+        </span>
+      </div>
+      <div class="qs-meta">
+        <div class="qs-meta-item"><strong>Size (MB)</strong><br>{{ upload_meta.size_mb if upload_meta else '-' }}</div>
+        <div class="qs-meta-item"><strong>Duration (s)</strong><br>{{ upload_meta.duration_seconds if upload_meta else '-' }}</div>
+      </div>
+      <form method="post" class="mt-3 d-flex flex-column gap-2">
+        <div>
+          <label class="form-label">Set a title for your video</label>
+          <input type="text" name="title" class="form-control" value="{{ upload_meta.title if upload_meta else '' }}" required>
+        </div>
+        <input type="hidden" name="flow" value="upload">
+        <input type="hidden" name="upload_kind" value="{{ upload_kind or 'video' }}">
+        <input type="hidden" name="action" value="metadata">
+        <input type="hidden" name="video_pk" value="{{ uploaded_video_pk or '' }}">
+        <div class="d-flex gap-2">
+          <button class="btn btn-dark">Open generate</button>
+          <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind=upload_kind) }}" class="btn btn-outline-secondary">Back</a>
+        </div>
+      </form>
+    </div>
+  {% endif %}
+{% elif step == 1 %}
+  <div class="qs-card">
+    <form method="post" class="d-flex flex-column gap-3">
+      <div>
+        <label class="form-label">YouTube video URL</label>
+        <input type="url" name="video_url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required value="{{ video_url or '' }}">
+        <div class="form-text">The video should be no longer than 25 minutes.</div>
+      </div>
+      <input type="hidden" name="flow" value="youtube">
+      <input type="hidden" name="action" value="validate">
+      <div class="d-flex gap-2">
+        <button class="btn btn-warning">Continue</button>
+        <a href="{{ url_for('video_shorts_bp.channels_page') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% elif step == 2 and meta %}
+  <div class="qs-card">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      {% if meta.thumbnail_url %}
+        <img src="{{ meta.thumbnail_url }}" alt="Video thumbnail" style="width: 160px; border-radius: 10px; border: 1px solid #e5e7eb;">
+      {% endif %}
+      <div>
+        <div class="fw-semibold">{{ meta.title }}</div>
+        <div class="text-white">Channel: {{ meta.channel_title }}</div>
+      </div>
+    </div>
+    <div class="qs-meta">
+      <div class="qs-meta-item"><strong>Video ID</strong><br>{{ meta.video_id }}</div>
+      <div class="qs-meta-item"><strong>Duration (s)</strong><br>{{ meta.duration_seconds or '-' }}</div>
+      <div class="qs-meta-item"><strong>Publish date</strong><br>{{ meta.published_at or '-' }}</div>
+    </div>
+    <form method="post" class="mt-3 d-flex gap-2">
+      <input type="hidden" name="flow" value="youtube">
+      <input type="hidden" name="action" value="confirm">
+      <input type="hidden" name="video_url" value="{{ video_url }}">
+      <button class="btn btn-warning">Continue</button>
+      <a href="{{ url_for('video_shorts_bp.quick_short') }}" class="btn btn-outline-secondary">Back</a>
+    </form>
+  </div>
+{% elif step == 3 %}
+  <div class="qs-card">
+    <h5 class="fw-semibold">Ready to go?</h5>
+    <p class="text-white mb-3">
+      The video will be queued for download. Since the local downloader runs hourly,
+      you might see a "Downloading" status.
+    </p>
+    <form method="post" class="d-flex gap-2">
+      <input type="hidden" name="flow" value="youtube">
+      <input type="hidden" name="action" value="create">
+      <input type="hidden" name="video_id" value="{{ video_id }}">
+      <button class="btn btn-dark">Create short</button>
+      <a href="{{ url_for('video_shorts_bp.quick_short') }}" class="btn btn-outline-secondary">Back</a>
+    </form>
+  </div>
+{% endif %}
+</div>
+{% if flow == 'upload' %}
+<script>
+(() => {
+  const form = document.getElementById("upload-form");
+  if (!form) return;
+  const progressWrap = document.getElementById("upload-progress");
+  const progressBar = document.getElementById("upload-progress-bar");
+  const progressText = document.getElementById("upload-progress-text");
+  const progressBytes = document.getElementById("upload-progress-bytes");
+
+  const formatMb = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(form);
+    const file = form.querySelector("input[name='video_file']")?.files?.[0];
+    if (!file) {
+      form.submit();
+      return;
+    }
+
+    progressWrap.style.display = "block";
+    progressBar.style.width = "0%";
+    progressText.textContent = "0%";
+    progressBytes.textContent = `0 MB / ${formatMb(file.size)}`;
+
+    const xhr = new XMLHttpRequest();
+    const actionUrl = form.getAttribute("action") || window.location.href;
+    xhr.open(form.method || "POST", actionUrl, true);
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) {
+        progressText.textContent = "Uploading...";
+        return;
+      }
+      const percent = Math.round((e.loaded / e.total) * 100);
+      progressBar.style.width = `${percent}%`;
+      progressText.textContent = `${percent}%`;
+      progressBytes.textContent = `${formatMb(e.loaded)} / ${formatMb(e.total)}`;
+    };
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status >= 200 && xhr.status < 400) {
+        const responseUrl = xhr.responseURL;
+        if (responseUrl && responseUrl !== window.location.href) {
+          window.location.assign(responseUrl);
+          return;
+        }
+        document.open();
+        document.write(xhr.responseText);
+        document.close();
+        return;
+      }
+      progressText.textContent = "Upload failed.";
+    };
+    xhr.send(formData);
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

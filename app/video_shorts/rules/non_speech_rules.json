@@ -1,0 +1,57 @@
+{
+  "keywords": [
+    "[music]",
+    "music",
+    "muzik",
+    "alkis",
+    "applause",
+    "silence",
+    "sessizlik",
+    "kahkaha",
+    "laughter",
+    "noise",
+    "background noise",
+    "sfx",
+    "sound effect",
+    "efekt"
+  ],
+  "non_speech_keywords": [],
+  "regex_patterns": [
+    "^\\s*\\[music\\]\\s*$",
+    "^\\s*\\[applause\\]\\s*$",
+    "^\\s*\\[laughter\\]\\s*$",
+    "^\\s*\\[noise\\]\\s*$",
+    "^\\s*\\[silence\\]\\s*$",
+    "^\\s*\\[sfx\\]\\s*$",
+    "^\\s*[\\u266a\\u266b]+\\s*$"
+  ],
+  "non_speech_regex_patterns": [],
+  "min_chars": 3,
+  "min_speech_chars": 3,
+  "max_single_word_chars": 2,
+  "max_non_speech_ratio": 0.4,
+  "max_non_speech_ratio_inside_clip": 0.05,
+  "qa_keywords": [
+    "soru",
+    "soran",
+    "dinleyici",
+    "kardesimiz"
+  ],
+  "conjunction_prefixes": [
+    "ama",
+    "fakat",
+    "cunku",
+    "ve",
+    "binaenaleyh",
+    "lakin",
+    "ancak"
+  ],
+  "qa_max_seconds": 10.0,
+  "padding_seconds": 10.0,
+  "min_clip_seconds": 25.0,
+  "max_clip_seconds": 60.0,
+  "qa_max_question_seconds": 10.0,
+  "target_clip_count_default": 10,
+  "max_per_label": 3,
+  "max_per_block": 2
+}

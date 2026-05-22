@@ -1,0 +1,39 @@
+# m h  dom mon dow   command
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin:/home/ubuntu/amazon_scraper/venv/bin
+PYTHONUNBUFFERED=1
+BASE_URL=https://mintiproduct.com
+WEB_ROOT=/var/www/html
+
+
+#0 */4 * * * cd /home/ubuntu/blog-factory && /home/ubuntu/blog-factory/.venv/bin/python src/daily_job.py >> /home/ubuntu/blog-factory/logs/daily_job.log 2>&1
+
+
+# Thanksgiving – her 12 saatte bir
+0 */12 * * * /home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/ebay/2-ebay_products_ingest.py --season-name thanksgiving-2025 >> /home/ubuntu/blog-factory/logs/ingest_thanksgiving.log 2>&1
+
+# Halloween – her 8 saatte bir (çakışmayı önlemek için 5. dakikada)
+5 */8 * * * /home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/ebay/2-ebay_products_ingest.py --season-name halloween-2025 >> /home/ubuntu/blog-factory/logs/ingest_halloween.log 2>&1
+
+# Watches (Seiko) – her 6 saatte bir (10. dakikada)
+#10 */6 * * * /home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/ebay/2-ebay_products_ingest.py --season-name seiko-2025 >> /home/ubuntu/blog-factory/logs/ingest_watches.log 2>&1
+
+
+# Watches (random) – her 6 saatte bir, çakışma önleme ile
+40 */8 * * * /usr/bin/flock -n /tmp/ebay_watches.lock -c "/home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/ebay/watches_ingest_random.py >> /home/ubuntu/blog-factory/logs/ingest_watches_random.log 2>&1"
+0 * * * * cp /home/ubuntu/blog-factory/warehouse/blog_factory.duckdb /home/ubuntu/blog-factory/warehouse/blog_factory_ro.duckdb
+
+# Special Deals – her 6 saatte bir (farklı markalar ve kategoriler)
+15 */12 * * * /usr/bin/flock -n /tmp/ebay_specialdeals.lock -c "/home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/ebay/2-ebay_products_ingest.py --deal-mode 2 >> /home/ubuntu/blog-factory/logs/ingest_special_deals.log 2>&1"
+
+# Trend Runner – her 2 saatte bir (LLM tabanlı trend blog üretimi)
+5 */6 * * * /usr/bin/flock -n /tmp/trend_runner.lock -c "/home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/trends/trend_runner.py --max-per-run 1 >> /home/ubuntu/blog-factory/logs/trend_runner.log 2>&1"
+
+#sitemap olusturulma satiri 12 saatte bir 
+0 */12 * * * /home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/generate_sitemap.py >> /home/ubuntu/blog-factory/logs/sitemap_cron.log 2>&1
+
+#instagram postu olusturuluyor
+20 */8 * * * /usr/bin/flock -n /tmp/trend_instagram.lock -c '/bin/sleep $(/usr/bin/shuf -i 0-300 -n 1); /home/ubuntu/blog-factory/.venv/bin/python /home/ubuntu/blog-factory/src/trends/trend_instagram.py --max-per-run 1 --slides 5 --content-type post >> /home/ubuntu/blog-factory/logs/trend_instagram.log 2>&1'
+
+# Social queues + metrics (YouTube/Instagram/TikTok)
+*/10 * * * * /usr/bin/flock /tmp/social_all.lock -c "cd /home/ubuntu/blog-factory && PYTHONPATH=/home/ubuntu/blog-factory /home/ubuntu/blog-factory/.venv/bin/python app/video_shorts/tasks/run_social_jobs.py --max-instagram 5 --max-tiktok 5 --comments-limit 25 >> /home/ubuntu/blog-factory/logs/social_all.log 2>&1"

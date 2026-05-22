@@ -1,0 +1,45 @@
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+}
+table img {
+  object-fit: cover;
+  border: 1px solid #ddd;
+}
+
+.list-group-item.active {
+  background-color: #198754 !important; /* Bootstrap 'success' tonu */
+  border-color: #198754 !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.list-group-item-action:hover {
+  background-color: #f8f9fa;
+}
+
+@media (max-width: 768px) {
+  .table-responsive-stack thead {
+    display: none;
+  }
+  .table-responsive-stack tr {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  .table-responsive-stack td {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border: none;
+    border-bottom: 1px solid #eee;
+  }
+  .table-responsive-stack td:before {
+    content: attr(data-label);
+    font-weight: bold;
+    margin-right: 1rem;
+  }
+  .table-responsive-stack td:last-child {
+    border-bottom: none;
+  }
+}

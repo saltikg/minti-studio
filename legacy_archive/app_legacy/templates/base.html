@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Minti Product{% endblock %}</title>
+  
+  <!-- Verification Tags -->
+  <meta name='impact-site-verification' value='8ff6528a-611b-4fb9-9ba3-1dcc2fbe429c'>
+  <meta name="google-site-verification" content="YOUR_GOOGLE_VERIFICATION_CODE_HERE">
+
+  <!-- Google Tag Manager -->
+  <script>
+    (function(w,d,s,l,i){
+      w[l]=w[l]||[];
+      w[l].push({'gtm.start': new Date().getTime(), event:'gtm.js'});
+      var f=d.getElementsByTagName(s)[0],
+          j=d.createElement(s),
+          dl=l!='dataLayer'?'&l='+l:'';
+      j.async=true;
+      j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;
+      f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer','GTM-5NQLCS4X');
+  </script>
+  <!-- End Google Tag Manager -->
+
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-RNP6XHEM38"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-RNP6XHEM38');
+  </script>
+  <!-- End Google Analytics 4 -->
+
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- ✅ Canonical Tag -->
+  {% if request %}
+    <link rel="canonical" href="{{ request.url }}">
+  {% endif %}
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/vs_theme.css') }}">
+  <script src="{{ url_for('static', filename='js/site.js') }}" defer></script>
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+</head>
+<body class="app-shell vs-app" data-theme="dark">
+  <!-- MOBILE + DESKTOP NAV -->
+
+  <header class="site-header">
+  <div class="nav-bar">
+    <!-- brand -->
+    <a class="brand" href="/">Minti</a>
+
+    <!-- hamburger (sadece mobilde görünecek) -->
+    <button class="nav-toggle" aria-label="Menu" aria-expanded="false" id="mobileMenuButton">☰</button>
+
+    <!-- nav links -->
+    <nav class="nav-links" id="mainNavLinks">
+      <ul>
+        {% for item in NAV_MENU %}
+          {% set has_children = item.children and item.children|length > 0 %}
+
+          {% if has_children %}
+            <li class="has-sub">
+              <a href="/{{ item.slug }}/" class="toplink">
+                <span class="toplink-label">{{ item.name }}</span>
+                <span class="toplink-caret">▾</span>
+              </a>
+
+              <ul class="sub-menu">
+                {% for ch in item.children %}
+                  {% if item.slug == 'seasonal' %}
+                    <li><a href="/season/{{ ch.slug }}/" class="sub-link">{{ ch.name }}</a></li>
+                  {% else %}
+                    <li><a href="/{{ ch.slug }}/" class="sub-link">{{ ch.name }}</a></li>
+                  {% endif %}
+                {% else %}
+                  <li class="sub-empty">No items</li>
+                {% endfor %}
+              </ul>
+            </li>
+          {% else %}
+            <li>
+              <a href="/{{ item.slug }}/" class="toplink nochild">
+                <span class="toplink-label">{{ item.name }}</span>
+              </a>
+            </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </nav>
+  </div>
+</header>
+
+
+  <main class="container site-main">
+    {% block content %}{% endblock %}
+  </main>
+
+<footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <span>© Minti Product</span>
+        <div class="footer-links">
+          <a href="{{ url_for('bp.about_page') }}">About Us</a>
+          <a href="{{ url_for('bp.ethics_policy_page') }}">Ethics Policy</a>
+          <a href="{{ url_for('bp.privacy_policy_page') }}">Privacy Policy</a>
+          <a href="{{ url_for('bp.terms_of_service_page') }}">Terms of Service</a>
+          <a href="{{ url_for('bp.authors_page') }}">Our Authors</a>
+        </div>
+      </div>
+      <div class="footer-mini">
+        <small>
+          Need help? Email <a href="mailto:support@mintiproduct.com">support@mintiproduct.com</a>
+          · <a href="{{ url_for('bp.privacy_policy_page') }}">Privacy</a>
+        </small>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

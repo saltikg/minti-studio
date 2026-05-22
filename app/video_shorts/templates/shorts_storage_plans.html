@@ -1,0 +1,403 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Plan & Storage{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
+  <div>
+    <h3 class="mb-1 vs-card-title">Plan &amp; Storage</h3>
+    <div class="vs-text-muted vs-text-small">Pick a plan that fits your workflow.</div>
+    <div class="vs-text-muted vs-text-small">Storage is used for generated shorts and exports.</div>
+    <div class="vs-text-muted vs-text-small">When you reach your limit, new exports are paused until you upgrade or delete files.</div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <div class="billing-toggle btn-group btn-group-sm" role="group" aria-label="Billing cycle">
+      <input type="radio" class="btn-check" name="billingCycle" id="billingMonthly" autocomplete="off" checked>
+      <label class="btn vs-btn vs-btn-secondary" for="billingMonthly">Monthly</label>
+      <input type="radio" class="btn-check" name="billingCycle" id="billingYearly" autocomplete="off">
+      <label class="btn vs-btn vs-btn-secondary" for="billingYearly">Yearly</label>
+    </div>
+  </div>
+</div>
+
+{% if is_admin %}
+  <div class="alert alert-info mb-4">Admin controls are available in the usage cards below.</div>
+{% endif %}
+
+<div class="row g-3 mb-2" id="plans">
+  {% for plan in plans %}
+    {% set is_selected_plan = vs_current_user and vs_current_user.plan_id == plan.plan_id %}
+    {% set tier_label = "Starter" %}
+    {% set estimate = "Estimated: ~130 shorts" %}
+    {% set monthly_price = 9 %}
+    {% if plan.plan_id == "plan_free" %}
+      {% set tier_label = "Free" %}
+      {% set estimate = "Estimated: ~130 shorts" %}
+      {% set monthly_price = 0 %}
+    {% elif plan.plan_id == "plan_10gb" %}
+      {% set tier_label = "Creator" %}
+      {% set estimate = "Estimated: ~650 shorts" %}
+      {% set monthly_price = 19 %}
+    {% elif plan.plan_id == "plan_100gb" %}
+      {% set tier_label = "Studio" %}
+      {% set estimate = "Estimated: ~6,500 shorts" %}
+      {% set monthly_price = 49 %}
+    {% endif %}
+    {% set yearly_total = 90 %}
+    {% if plan.plan_id == "plan_free" %}
+      {% set yearly_total = 0 %}
+    {% elif plan.plan_id == "plan_10gb" %}
+      {% set yearly_total = 180 %}
+    {% elif plan.plan_id == "plan_100gb" %}
+      {% set yearly_total = 450 %}
+    {% endif %}
+    {% set yearly_monthly = yearly_total / 12 %}
+    <div class="col-sm-6 col-lg-3">
+      <div class="card shadow-sm h-100 position-relative plan-card {% if is_selected_plan %}plan-card-selected{% endif %}">
+        {% if is_selected_plan %}
+          <div class="vs-badge vs-badge-success text-uppercase fw-semibold position-absolute top-0 start-50 translate-middle px-3 py-1 plan-badge">
+            Current plan
+          </div>
+        {% endif %}
+        <div class="card-body text-center pt-4 d-flex flex-column gap-3 plan-card-body">
+          <div>
+            <div class="plan-name mb-1">{{ tier_label }}</div>
+            <div class="plan-price">
+              <div
+                class="price-amount"
+                data-monthly="{{ monthly_price }}"
+                data-yearly="{{ yearly_total }}"
+                data-yearly-monthly="{{ '%.2f'|format(yearly_monthly) }}">
+                ${{ monthly_price }}
+              </div>
+              <div class="price-period">per month</div>
+            </div>
+            <div class="vs-text-muted vs-text-small">{{ plan.quota_label }} storage</div>
+            <div class="vs-text-muted vs-text-small">Best for: {{ tier_label }}</div>
+          </div>
+          <ul class="plan-bullets text-start">
+            <li>
+              <i class="bi bi-check-circle"></i>
+              <span>
+                {{ estimate }}
+                <span class="vs-text-muted" title="Estimate based on typical short length. Actual usage depends on video length and bitrate.">
+                  <i class="bi bi-info-circle"></i>
+                </span>
+              </span>
+            </li>
+            {% if tier_label == "Free" %}
+              <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Basic scheduling (YouTube + Instagram)</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Watermark on exports</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 30</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+            {% elif tier_label == "Starter" %}
+              <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+              <li><i class="bi bi-check-circle"></i><span>No watermark on exports</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 200</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+            {% elif tier_label == "Creator" %}
+              <li><i class="bi bi-check-circle"></i><span>Starter + more storage</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+            {% elif tier_label == "Studio" %}
+              <li><i class="bi bi-check-circle"></i><span>Creator + more storage</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+            {% endif %}
+          </ul>
+          <div class="plan-actions">
+            {% if is_selected_plan %}
+              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
+            {% elif is_admin %}
+              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Admin only</button>
+            {% else %}
+              <button
+                type="button"
+                class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
+                data-bs-toggle="modal"
+                data-bs-target="#planConfirmModal"
+                data-plan-id="{{ plan.plan_id }}"
+                data-plan-name="{{ tier_label }}"
+                data-plan-quota="{{ plan.quota_label }}"
+                data-price-monthly="{{ monthly_price }}"
+                data-price-yearly="{{ yearly_total }}">
+                {% if tier_label == "Free" %}
+                  Start free
+                {% elif tier_label == "Starter" %}
+                  Upgrade to Starter
+                {% elif tier_label == "Creator" %}
+                  Upgrade to Creator
+                {% else %}
+                  Upgrade to Studio
+                {% endif %}
+              </button>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3 mb-3" id="usage-section">
+  {% for user in users %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card shadow-sm h-100 usage-card vs-card" data-user-id="{{ user.id }}" data-usage-percent="{{ user.percent }}">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+              <div class="vs-card-title">Your usage</div>
+            </div>
+            <span class="vs-badge">{{ user.plan_label }}</span>
+          </div>
+          {% if user.percent >= 95 %}
+            <span class="vs-badge vs-badge-danger mb-2 d-inline-flex">Critical usage</span>
+          {% elif user.percent >= 80 %}
+            <span class="vs-badge vs-badge-warning mb-2 d-inline-flex">Usage warning</span>
+          {% endif %}
+          <div class="vs-text-body mb-2">Used {{ user.used_label }} of {{ user.limit_label }}</div>
+          <div class="progress mb-3 usage-progress">
+            <div class="progress-bar {% if user.percent > 80 %}bg-danger{% elif user.percent > 60 %}bg-warning{% else %}bg-success{% endif %}"
+                 role="progressbar"
+                 aria-valuenow="{{ user.percent }}"
+                 aria-valuemin="0"
+                 aria-valuemax="100"
+                 style="width: {{ user.percent }}%;">
+            </div>
+          </div>
+          <div class="vs-text-muted vs-text-small mb-3">Includes exports and uploaded source files.</div>
+          <div class="d-flex">
+            <a class="btn btn-sm vs-btn vs-btn-primary w-100" href="#plans">Upgrade</a>
+          </div>
+          {% if is_admin %}
+            <div class="mt-3">
+              <a class="vs-text-small text-decoration-none" data-bs-toggle="collapse" href="#adminPlanControls{{ loop.index }}" role="button" aria-expanded="false" aria-controls="adminPlanControls{{ loop.index }}">
+                Advanced
+              </a>
+              <div class="collapse mt-2" id="adminPlanControls{{ loop.index }}">
+                <form method="post" class="row g-2 align-items-end">
+                  <input type="hidden" name="user_id" value="{{ user.id }}">
+                  <div class="col-md-6">
+                    <label class="form-label vs-card-title mb-1">Plan</label>
+                    <select name="plan_id" class="form-select form-select-sm vs-select">
+                      <option value="">Select plan</option>
+                      {% for plan in plans %}
+                        <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
+                          {{ plan.label }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
+                    <input type="text"
+                           name="custom_limit"
+                           class="form-control form-control-sm vs-input"
+                           value="{{ user.custom_limit_gb }}">
+                  </div>
+                  <div class="col-md-2">
+                    <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="col-12">
+      <div class="alert alert-info">No users yet. Create users via the CLI task before assigning subscriptions.</div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="modal fade" id="storageLimitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title vs-modal-title">Storage almost full</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <p class="mb-2">You're at 95%+ of your storage limit.</p>
+        <p class="vs-text-muted mb-0">Your latest shorts are saved. Upgrade to keep generating or delete files to free up space.</p>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <a class="btn vs-btn vs-btn-primary" href="#plans">Upgrade</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="planConfirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <h5 class="modal-title vs-modal-title">Confirm plan change</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <div class="vs-modal-lead" id="planConfirmTitle"></div>
+        <div class="vs-modal-grid mt-3">
+          <div class="vs-modal-item">
+            <div class="vs-modal-key">Price</div>
+            <div class="vs-modal-price" id="planConfirmPrice"></div>
+            <div class="vs-modal-sub" id="planConfirmBilling"></div>
+          </div>
+          <div class="vs-modal-item">
+            <div class="vs-modal-key">Storage</div>
+            <div class="vs-modal-value" id="planConfirmStorage"></div>
+          </div>
+          <div class="vs-modal-item">
+            <div class="vs-modal-key">Current plan</div>
+            <div class="vs-modal-value" id="planConfirmCurrent"></div>
+          </div>
+        </div>
+        <div class="vs-modal-hint mt-3">You can change this later.</div>
+      </div>
+      <div class="modal-footer vs-modal-footer">
+        <button type="button" class="btn vs-btn vs-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" id="planConfirmForm" class="m-0" action="{{ url_for('video_shorts_bp.shorts_storage_plans') }}">
+          <input type="hidden" name="plan_id" id="planConfirmPlanId">
+          <button type="submit" class="btn vs-btn vs-btn-primary" id="planConfirmSubmit">Confirm</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const monthlyToggle = document.getElementById("billingMonthly");
+    const yearlyToggle = document.getElementById("billingYearly");
+    const monthlyLabel = document.querySelector("label[for='billingMonthly']");
+    const yearlyLabel = document.querySelector("label[for='billingYearly']");
+    const priceBlocks = document.querySelectorAll(".plan-price");
+    const planButtons = document.querySelectorAll(".plan-select-btn");
+    const planModalEl = document.getElementById("planConfirmModal");
+    const storageLimitModalEl = document.getElementById("storageLimitModal");
+    const planTitleEl = document.getElementById("planConfirmTitle");
+    const planPriceEl = document.getElementById("planConfirmPrice");
+    const planBillingEl = document.getElementById("planConfirmBilling");
+    const planStorageEl = document.getElementById("planConfirmStorage");
+    const planCurrentEl = document.getElementById("planConfirmCurrent");
+    const planIdInput = document.getElementById("planConfirmPlanId");
+    const confirmForm = document.getElementById("planConfirmForm");
+    const confirmBtn = document.getElementById("planConfirmSubmit");
+
+    const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
+    const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
+
+    function setBillingCycle(isYearly) {
+      priceBlocks.forEach((block) => {
+        const amountEl = block.querySelector(".price-amount");
+        const periodEl = block.querySelector(".price-period");
+        const yearlyNote = block.querySelector(".price-yearly-note");
+        if (!amountEl || !periodEl) {
+          return;
+        }
+        const monthly = amountEl.dataset.monthly;
+        const yearly = amountEl.dataset.yearly;
+
+        if (isYearly) {
+          amountEl.textContent = `$${yearly}`;
+          periodEl.textContent = "per year";
+          if (yearlyNote) {
+            yearlyNote.classList.remove("d-none");
+          }
+        } else {
+          amountEl.textContent = `$${monthly}`;
+          periodEl.textContent = "per month";
+          if (yearlyNote) {
+            yearlyNote.classList.add("d-none");
+          }
+        }
+      });
+
+    }
+
+    if (monthlyToggle && yearlyToggle) {
+      monthlyToggle.addEventListener("change", () => setBillingCycle(false));
+      yearlyToggle.addEventListener("change", () => setBillingCycle(true));
+    }
+    if (monthlyLabel) {
+      monthlyLabel.addEventListener("click", () => setBillingCycle(false));
+    }
+    if (yearlyLabel) {
+      yearlyLabel.addEventListener("click", () => setBillingCycle(true));
+    }
+    setBillingCycle(yearlyToggle && yearlyToggle.checked);
+
+    planButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const isYearly = yearlyToggle && yearlyToggle.checked;
+        const planName = button.dataset.planName;
+        const planQuota = button.dataset.planQuota;
+        const monthlyPrice = button.dataset.priceMonthly;
+        const yearlyPrice = button.dataset.priceYearly;
+        const displayPrice = isYearly ? yearlyPrice : monthlyPrice;
+        const displayPeriod = isYearly ? "per year" : "per month";
+
+        if (planTitleEl) {
+          planTitleEl.textContent = `Switch to ${planName}?`;
+        }
+        if (planPriceEl) {
+          planPriceEl.textContent = `$${displayPrice}`;
+        }
+        if (planBillingEl) {
+          planBillingEl.textContent = displayPeriod;
+        }
+        if (planStorageEl) {
+          planStorageEl.textContent = planQuota;
+        }
+        if (planCurrentEl) {
+          const currentPlanName =
+            document.querySelector(".plan-card-selected .plan-name")?.textContent?.trim() || "None";
+          planCurrentEl.textContent = currentPlanName;
+        }
+        if (planIdInput) {
+          planIdInput.value = button.dataset.planId;
+        }
+        if (planModal) {
+          planModal.show();
+        }
+      });
+    });
+
+    if (confirmForm && confirmBtn) {
+      confirmForm.addEventListener("submit", () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Saving…";
+      });
+    }
+
+    document.querySelectorAll("[data-scroll-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = document.querySelector(button.dataset.scrollTarget);
+        if (target) {
+          window.location.hash = button.dataset.scrollTarget;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
+
+    const currentUserId = "{{ current_user_id or '' }}";
+    if (storageLimitModal) {
+        const usageCards = Array.from(document.querySelectorAll(".usage-card"));
+        const currentCard = usageCards.find((card) => card.dataset.userId === currentUserId) || usageCards[0];
+        if (currentCard) {
+          const percent = Number(currentCard.dataset.usagePercent || 0);
+          if (percent >= 95) {
+            storageLimitModal.show();
+          }
+        }
+    }
+  })();
+</script>
+{% endblock %}

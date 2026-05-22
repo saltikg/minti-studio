@@ -1,0 +1,439 @@
+.vs-publishing-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.vs-publishing-page .publishing-filter-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+}
+
+.vs-publishing-page .publishing-filter-body {
+  padding: 1.3rem;
+}
+
+.vs-publishing-page .publishing-filter-actions .form-select,
+.vs-publishing-page .publishing-filter-actions .form-control {
+  min-height: 40px;
+}
+
+.vs-publishing-page .publishing-filter-actions .btn {
+  min-height: 40px;
+}
+
+.vs-publishing-page .kpi-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 0.75rem 0.85rem;
+  text-align: center;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.vs-publishing-page .kpi-card-active {
+  border-color: rgba(45, 212, 191, 0.8);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.25);
+}
+
+.vs-publishing-page .kpi-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.vs-publishing-page .kpi-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  border: none;
+  background: transparent;
+  width: 100%;
+}
+
+.vs-publishing-page .kpi-link {
+  cursor: pointer;
+}
+
+.vs-publishing-page .kpi-spacer {
+  height: 6px;
+  margin-top: 0.5rem;
+}
+
+.vs-publishing-page .pending-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 200, 0.25);
+  background: rgba(0, 255, 200, 0.08);
+  color: rgba(0, 255, 200, 0.95);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.vs-publishing-page .publishing-pending-bar {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.vs-publishing-page .shorts-thumb-wrapper {
+  position: relative;
+  display: inline-block;
+  min-width: 96px;
+  max-width: 96px;
+}
+
+.vs-publishing-page .shorts-thumb,
+.vs-publishing-page .shorts-thumb-video,
+.vs-publishing-page .shorts-thumb-placeholder {
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.vs-publishing-page .shorts-thumb-video {
+  display: block;
+  background-color: #000;
+}
+
+.vs-publishing-page .shorts-meta small {
+  display: block;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.vs-publishing-page .shorts-meta-stats span i {
+  font-size: 0.9rem;
+}
+
+.vs-publishing-page .shorts-thumb-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.vs-publishing-page .shorts-thumb-placeholder.placeholder-icon-only {
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.vs-publishing-page .shorts-thumb-placeholder.placeholder-icon-only .material-symbols-outlined {
+  font-size: 36px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.vs-publishing-page .short-row-pending {
+  border-left: 4px solid rgba(249, 115, 22, 0.8);
+  background: rgba(249, 115, 22, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.15);
+}
+
+.vs-publishing-page .short-title .pending-indicator {
+  display: inline-flex;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f97316;
+  margin-right: 6px;
+}
+
+.vs-publishing-page .short-title .pending-indicator.d-none {
+  display: none !important;
+}
+
+.vs-publishing-page .short-comment-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.vs-publishing-page .comment-badge {
+  font-size: 0.7rem;
+  border-radius: 999px;
+  padding: 2px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.vs-publishing-page .comment-badge.pending {
+  background: #fff4e6;
+  color: #9a3412;
+}
+
+.vs-publishing-page .comment-badge.pending.zero {
+  opacity: 0.55;
+}
+
+.vs-publishing-page .comment-badge.total {
+  background: #eef2ff;
+  color: #1e1b4b;
+}
+
+.vs-publishing-page .comment-badge.total.zero {
+  opacity: 0.55;
+}
+
+.vs-publishing-page .comment-alert-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #dc3545;
+  border-radius: 50%;
+  display: inline-flex;
+}
+
+.vs-publishing-page .short-comments-btn {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vs-publishing-page .short-comments-btn-default {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.vs-publishing-page .short-comments-btn-pending {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+}
+
+.vs-publishing-page .short-comments-btn-unread {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+}
+
+.vs-publishing-page .comment-card.list-group-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text) !important;
+}
+
+.vs-app #shortCommentsList .list-group-item,
+.vs-app #instagramCommentsList .list-group-item {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text) !important;
+}
+
+.vs-publishing-page .shorts-calendar-wrapper {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+}
+
+.vs-publishing-page .calendar-card {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.vs-publishing-page .shorts-calendar {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.vs-publishing-page .shorts-calendar-weekdays,
+.vs-publishing-page .shorts-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.vs-publishing-page .shorts-calendar-weekdays span {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.vs-publishing-page .shorts-calendar-day {
+  min-height: 44px;
+  padding: 2px;
+  border-radius: 6px;
+  position: relative;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.vs-publishing-page .shorts-calendar-day.today {
+  border-color: var(--mint-2);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.4);
+}
+
+.vs-publishing-page .shorts-calendar-day.selected {
+  border-color: var(--mint);
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.12);
+}
+
+.vs-publishing-page .shorts-calendar-day.muted {
+  opacity: 0.6;
+}
+
+.vs-publishing-page .shorts-calendar-date {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.vs-publishing-page .calendar-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+  display: inline-flex;
+  margin-right: 2px;
+  color: var(--text-2);
+}
+
+.vs-publishing-page .youtube-scheduled,
+.vs-publishing-page .instagram-scheduled,
+.vs-publishing-page .tiktok-scheduled,
+.vs-publishing-page .facebook-scheduled {
+  color: var(--warning);
+}
+
+.vs-publishing-page .youtube-published,
+.vs-publishing-page .instagram-published,
+.vs-publishing-page .tiktok-published,
+.vs-publishing-page .facebook-published {
+  color: var(--mint);
+}
+
+.vs-publishing-page .shorts-calendar-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.vs-publishing-page .shorts-calendar-nav:hover {
+  border-color: rgba(45, 212, 191, 0.35);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+}
+
+.vs-publishing-page .shorts-calendar-nav .material-symbols-outlined {
+  font-size: 18px;
+  color: var(--text-1);
+}
+
+.vs-publishing-page .shorts-thumb-status {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  color: var(--warning);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none !important;
+  box-shadow: none;
+  padding: 0;
+}
+
+.vs-publishing-page .shorts-thumb-status .material-symbols-outlined {
+  font-size: 22px;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.85);
+}
+
+.vs-publishing-page .instagram-comments-btn {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vs-publishing-page .instagram-comments-btn.instagram-comments-new {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+}
+
+.vs-publishing-page .instagram-comments-btn.instagram-comments-flagged {
+  border-color: rgba(249, 115, 22, 0.6);
+  background: rgba(249, 115, 22, 0.15);
+  color: #ffedd5;
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.25);
+}
+
+.vs-publishing-page .facebook-comments-btn {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vs-publishing-page .facebook-comments-btn.facebook-comments-new {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+}
+
+.vs-publishing-page .comment-flag {
+  display: inline-flex;
+  align-items: center;
+  color: #ef4444;
+  font-size: 0.85rem;
+  margin-left: 6px;
+}
+.vs-publishing-page .shorts-calendar-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+}

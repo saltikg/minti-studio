@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if hero_slides and hero_slides|length > 0 %}
+
+<div class="hero-slider-wrapper">
+  <section class="hero-slider" aria-label="Featured posts">
+    
+    <div class="hs-track" id="hsTrack">
+      {% for s in hero_slides %}
+      <article
+  id="slide-{{ loop.index0 }}"
+  class="hs-slide{% if loop.index0 == 0 %} is-active{% endif %}"
+  data-index="{{ loop.index0 }}"
+>
+  <div class="hs-inner">
+
+    <!-- SOL: görsel -->
+    <div class="hs-media">
+      <img src="{{ s.image }}" alt="{{ s.title }}">
+    </div>
+
+    <!-- SAĞ: metin / cam kutu -->
+    <div class="hs-text-col">
+      <div class="hs-frame">
+        <a href="{{ s.url }}" class="hs-title-link">
+          <h1 class="hs-headline">{{ s.title }}</h1>
+        </a>
+        <a href="{{ s.url }}" class="hs-cta">Read More</a>
+      </div>
+    </div>
+
+    <a class="hs-hit" href="{{ s.url }}"></a>
+  </div>
+</article>
+
+      
+      {% endfor %}
+    </div>
+
+    <!-- Dots -->
+    <div class="hs-dots" id="hsDots" role="tablist" aria-label="Hero slides pagination">
+      {% for s in hero_slides %}
+      <button class="hs-dot{% if loop.index0 == 0 %} is-active{% endif %}"
+              data-go="{{ loop.index0 }}" role="tab"
+              aria-selected="{{ 'true' if loop.index0==0 else 'false' }}"
+              aria-controls="slide-{{ loop.index0 }}"></button>
+      {% endfor %}
+    </div>
+
+    <!-- Arrows -->
+    <button class="hs-arrow hs-prev" id="hsPrev" aria-label="Previous slide">‹</button>
+    <button class="hs-arrow hs-next" id="hsNext" aria-label="Next slide">›</button>
+
+  </section>
+</div>
+
+{% endif %}
+
+
+<h1>Latest Blogs</h1>
+<div class="grid">
+  {% for post in posts %}
+    {% include "components/_card.html" %}
+  {% endfor %}
+</div>
+
+
+{# SLIDER JS #}
+<script>
+(function(){
+  var track = document.getElementById('hsTrack');
+  if (!track) return;
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.hs-slide'));
+  var dots   = Array.prototype.slice.call(document.querySelectorAll('.hs-dot'));
+  var prev   = document.getElementById('hsPrev');
+  var next   = document.getElementById('hsNext');
+
+  if (!slides.length) return;
+
+  // aktif slide index
+  var i = slides.findIndex(function(s){
+    return s.classList.contains('is-active');
+  });
+  if (i < 0) i = 0;
+
+  var timer = null;
+  var AUTOPLAY = 5000; // ms
+
+  function setActive(n){
+    // eskiyi temizle
+    slides[i].classList.remove('is-active');
+    if (dots[i]) {
+      dots[i].classList.remove('is-active');
+      dots[i].setAttribute('aria-selected', 'false');
+    }
+
+    // yeni index
+    i = (n + slides.length) % slides.length;
+
+    // yeniyi işaretle
+    slides[i].classList.add('is-active');
+    if (dots[i]) {
+      dots[i].classList.add('is-active');
+      dots[i].setAttribute('aria-selected', 'true');
+    }
+  }
+
+  function go(n){
+    setActive(n);
+    restart();
+  }
+  function nextSlide(){ go(i+1); }
+  function prevSlide(){ go(i-1); }
+
+  function restart(){
+    if (timer) clearInterval(timer);
+    if (slides.length > 1) {
+      timer = setInterval(nextSlide, AUTOPLAY);
+    }
+  }
+
+  // dots tıklama
+  dots.forEach(function(d){
+    d.addEventListener('click', function(){
+      var idx = parseInt(d.dataset.go, 10) || 0;
+      go(idx);
+    });
+  });
+
+  // oklar
+  if (prev) prev.addEventListener('click', prevSlide);
+  if (next) next.addEventListener('click', nextSlide);
+
+  // swipe (touch)
+  var x0 = null;
+  track.addEventListener('touchstart', function(e){
+    x0 = e.touches[0].clientX;
+  }, {passive:true});
+  track.addEventListener('touchend', function(e){
+    if (x0 == null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 40) {
+      if (dx > 0) { prevSlide(); } else { nextSlide(); }
+    }
+    x0 = null;
+  }, {passive:true});
+
+  // eğer tek slayt varsa dots & oklar gereksiz
+  if (slides.length < 2) {
+    var dotsWrap = document.getElementById('hsDots');
+    if (dotsWrap) dotsWrap.remove();
+    if (prev) prev.remove();
+    if (next) next.remove();
+  }
+
+  restart();
+})();
+</script>
+
+{% endblock %}

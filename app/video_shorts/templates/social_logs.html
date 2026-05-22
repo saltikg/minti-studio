@@ -1,0 +1,118 @@
+{% extends "vs_base.html" %}
+
+{% block content %}
+<div class="container-fluid vs-content">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h2 class="mb-1">Social Jobs Logs</h2>
+      <p class="text-white mb-0">Latest errors from the social jobs runner.</p>
+    </div>
+    <div class="text-white small text-end">
+      <div>Last start: {{ last_run.started_at or '—' }}</div>
+      <div>Last done: {{ last_run.finished_at or '—' }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('video_shorts_bp.shorts_social_logs', limit=200) }}">200 lines</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('video_shorts_bp.shorts_social_logs', limit=500) }}">500 lines</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('video_shorts_bp.shorts_social_logs', limit=1000) }}">1000 lines</a>
+    </div>
+  </div>
+
+  {% if vs_overview_quota and vs_overview_quota.active %}
+    <div class="alert vs-alert-danger d-flex flex-column gap-1">
+      <div class="fw-semibold">YouTube quota mode active</div>
+      <div class="small">
+        Cooldown until: {{ vs_overview_quota.until_utc or '—' }} (UTC) ·
+        {{ vs_overview_quota.until_pst or '—' }} (PST)
+      </div>
+      <div class="small">
+        Reason: {{ vs_overview_quota.last_error_reason or 'unknown' }}
+        (code {{ vs_overview_quota.last_error_code or '—' }})
+        {% if vs_overview_quota.legacy_record %}
+          · legacy cooldown record
+        {% endif %}
+      </div>
+      <div class="small">
+        Message: {{ vs_overview_quota.last_error_message or '—' }}
+      </div>
+      <div class="small">
+        TTL: {{ vs_overview_quota.ttl_minutes }} min ·
+        Max videos: {{ vs_overview_quota.max_videos }} ·
+        Last cache update:
+        {% if vs_overview_quota.cache_last_fetched_utc %}
+          {{ vs_overview_quota.cache_last_fetched_utc }} (UTC) ·
+          {{ vs_overview_quota.cache_last_fetched_pst }} (PST)
+        {% else %}
+          None (no successful fetch yet)
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card vs-card shadow-sm">
+    <div class="card-body">
+      <div class="text-white small mb-2">File: {{ log_path }}</div>
+      {% if rows %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0 vs-comments-table">
+            <thead>
+              <tr>
+                <th>Date/Time</th>
+                <th><i class="bi bi-instagram"></i></th>
+                <th><i class="bi bi-tiktok"></i></th>
+                <th><i class="bi bi-facebook"></i></th>
+                <th><i class="bi bi-youtube"></i> <i class="bi bi-chat-dots"></i></th>
+                <th><i class="bi bi-instagram"></i> <i class="bi bi-chat-dots"></i></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr>
+                  <td>{{ row.timestamp }}</td>
+                  <td>
+                    {% if row.instagram %}
+                      <div class="vs-log-error">{{ row.instagram }}</div>
+                    {% else %}
+                      <i class="bi bi-check-lg text-success"></i>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.tiktok %}
+                      <div class="vs-log-error">{{ row.tiktok }}</div>
+                    {% else %}
+                      <i class="bi bi-check-lg text-success"></i>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.facebook %}
+                      <div class="vs-log-error">{{ row.facebook }}</div>
+                    {% else %}
+                      <i class="bi bi-check-lg text-success"></i>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.youtube_comments %}
+                      <div class="vs-log-error">{{ row.youtube_comments }}</div>
+                    {% else %}
+                      <i class="bi bi-check-lg text-success"></i>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if row.instagram_comments %}
+                      <div class="vs-log-error">{{ row.instagram_comments }}</div>
+                    {% else %}
+                      <i class="bi bi-check-lg text-success"></i>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-white">No log entries yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

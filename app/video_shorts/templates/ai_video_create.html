@@ -1,0 +1,750 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Create Video{% endblock %}
+
+{% block content %}
+<style>
+  .ai-create-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(10, 16, 30, 0.78);
+  }
+  .ai-upload-note {
+    font-size: 0.84rem;
+    color: rgba(232, 238, 252, 0.62);
+  }
+  .ai-video-item {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 18px;
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    gap: 18px;
+  }
+  .ai-video-item + .ai-video-item {
+    margin-top: 0;
+  }
+  .ai-video-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .ai-video-meta {
+    color: rgba(232, 238, 252, 0.62);
+    font-size: 0.84rem;
+  }
+  .ai-video-title {
+    color: #fff;
+  }
+  .ai-upload-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 320px) minmax(260px, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .ai-video-preview-shell {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(22, 28, 48, 0.95), rgba(7, 12, 24, 0.98));
+    aspect-ratio: 9 / 16;
+  }
+  .ai-video-preview-shell video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: #050812;
+  }
+  .ai-video-preview-empty {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(232, 238, 252, 0.58);
+    font-size: 0.95rem;
+  }
+  .ai-video-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .ai-video-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .ai-icon-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .ai-upload-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 8, 18, 0.72);
+    backdrop-filter: blur(3px);
+  }
+  .ai-upload-overlay.is-visible {
+    display: flex;
+  }
+  .ai-upload-overlay-card {
+    min-width: 280px;
+    max-width: 420px;
+    padding: 24px 26px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(10, 16, 30, 0.96);
+    text-align: center;
+    color: #fff;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  }
+  #aiVideoPublishModal .gs-modal-dialog {
+    max-width: 1240px;
+  }
+  #aiVideoPublishModal .gs-modal-content {
+    background: linear-gradient(180deg, rgba(12, 18, 32, 0.99), rgba(8, 12, 24, 0.995));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+  }
+  #aiVideoPublishModal .modal-header {
+    background: transparent !important;
+  }
+  #aiVideoPublishModal .gs-modal-body,
+  #aiVideoPublishModal .modal-footer {
+    background: transparent;
+  }
+  #aiVideoPublishModal .card {
+    background: rgba(13, 18, 30, 0.96) !important;
+    border: 1px solid rgba(255, 255, 255, 0.07) !important;
+    border-radius: 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+  #aiVideoPublishModal .card-header {
+    background: transparent !important;
+    border-bottom: 0 !important;
+    padding: 1rem 1rem 0.25rem;
+  }
+  #aiVideoPublishModal .card-body {
+    background: transparent !important;
+    padding: 0.9rem 1rem 1rem;
+  }
+  #aiVideoPublishModal .form-control,
+  #aiVideoPublishModal .form-control:focus {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    color: #fff !important;
+    box-shadow: none !important;
+  }
+  #aiVideoPublishModal .form-control::placeholder {
+    color: rgba(255, 255, 255, 0.46);
+  }
+  #aiVideoPublishModal .badge.bg-secondary {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+  #aiVideoPublishModal .badge.bg-info {
+    background: #0dcaf0 !important;
+    color: #fff !important;
+  }
+  #aiVideoPublishModal .badge.bg-primary {
+    background: #0d6efd !important;
+  }
+  #aiVideoPublishModal .badge.bg-success {
+    background: #198754 !important;
+  }
+  .ai-publish-main-col {
+    flex: 0 0 auto;
+    width: 42%;
+  }
+  .ai-publish-side-col {
+    flex: 0 0 auto;
+    width: 58%;
+  }
+  .ai-publish-side-stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-content: start;
+  }
+  .ai-publish-side-stack .card {
+    height: 100%;
+  }
+  @media (max-width: 991.98px) {
+    .ai-upload-toolbar {
+      grid-template-columns: 1fr;
+    }
+    .ai-video-grid {
+      grid-template-columns: 1fr;
+    }
+    .ai-video-item {
+      grid-template-columns: 1fr;
+    }
+    .ai-publish-main-col,
+    .ai-publish-side-col {
+      width: 100%;
+    }
+    .ai-publish-side-stack {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div id="ai-upload-overlay" class="ai-upload-overlay" aria-hidden="true">
+  <div class="ai-upload-overlay-card">
+    <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
+    <div class="mt-3 fw-semibold">Uploading AI video…</div>
+    <div class="ai-upload-note mt-2">Please wait. Large files can take a while.</div>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+  <div>
+    <h3 class="mb-1">Create Video</h3>
+  </div>
+  {% if vs_current_brand %}
+    <span class="badge text-bg-dark">{{ vs_current_brand.name }}</span>
+  {% endif %}
+</div>
+
+<div class="card shadow-sm vs-card ai-create-card mb-4">
+  <div class="card-body">
+    <form id="ai-upload-form" method="post" enctype="multipart/form-data" class="ai-upload-toolbar">
+      <div>
+        <input type="text" name="title" class="form-control vs-input" maxlength="140" placeholder="Video Title" required>
+      </div>
+      <div>
+        <input type="file" name="video_file" class="form-control vs-input" accept=".mp4,.mov,.mkv,video/mp4,video/quicktime,video/x-matroska" required>
+      </div>
+      <div>
+        <button type="submit" class="btn vs-btn vs-btn-primary" id="ai-upload-submit">Upload Video</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm vs-card ai-create-card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <h5 class="card-title vs-card-title mb-1">Uploaded AI Videos</h5>
+      </div>
+      <span class="badge text-bg-dark">{{ items|length }} total</span>
+    </div>
+
+    <div class="ai-video-grid">
+      {% for item in items %}
+        <div class="ai-video-item">
+          <div>
+            <div class="ai-video-preview-shell">
+              {% if item.clip_url %}
+                <video controls preload="metadata" playsinline>
+                  <source src="{{ item.clip_url }}" type="video/mp4">
+                </video>
+              {% else %}
+                <div class="ai-video-preview-empty">Preview unavailable</div>
+              {% endif %}
+            </div>
+            <div class="ai-video-preview-actions">
+              {% if item.clip_url %}
+                <a href="{{ item.clip_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-light ai-icon-btn" title="Open video" aria-label="Open video">
+                  <i class="bi bi-box-arrow-up-right"></i>
+                </a>
+              {% endif %}
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-danger ai-icon-btn js-delete-ai-video"
+                data-ai-id="{{ item.id }}"
+                data-ai-title="{{ item.title }}"
+                title="Delete video"
+                aria-label="Delete video"
+              >
+                <i class="bi bi-trash3"></i>
+              </button>
+            </div>
+          </div>
+          <div>
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+              <div>
+                <div class="fw-semibold fs-5 ai-video-title">{{ item.title }}</div>
+                <div class="ai-video-meta mt-1">AI Video ID: {{ item.video_id }}</div>
+                <div class="ai-video-meta">Duration: {{ item.duration_seconds or 0 }}s</div>
+                {% if item.youtube_video_id %}
+                  <div class="ai-video-meta">YouTube ID: {{ item.youtube_video_id }}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="ai-video-actions">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-light js-open-ai-publish"
+                data-bs-toggle="modal"
+                data-bs-target="#aiVideoPublishModal"
+                data-ai-id="{{ item.id }}"
+                data-ai-title="{{ item.title }}"
+                data-ai-description="{{ item.description }}"
+                data-ai-youtube-status="{{ item.youtube_status }}"
+              >
+                Schedule &amp; Publish
+              </button>
+            </div>
+          </div>
+        </div>
+      {% else %}
+        <div class="ai-video-item">
+          <div class="ai-video-meta">No uploaded AI videos for this brand yet.</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="aiVideoPublishModal" tabindex="-1" aria-labelledby="aiVideoPublishModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl gs-modal-dialog">
+    <div class="modal-content gs-modal-content">
+      <div class="modal-header bg-dark text-white border-0">
+        <div class="d-flex align-items-center gap-2">
+          <svg width="26" height="26" viewBox="0 0 26 26" role="presentation" aria-hidden="true">
+            <rect width="26" height="26" rx="6" fill="#FF0000"></rect>
+            <path d="M10 8l8 5-8 5V8z" fill="#fff"></path>
+          </svg>
+          <h5 class="modal-title mb-0" id="aiVideoPublishModalLabel">Schedule &amp; Publish</h5>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="ai-video-publish-form" method="post">
+        <div class="modal-body py-4 text-white gs-modal-body">
+          <div id="ai-video-publish-feedback" class="alert alert-danger d-none mb-2" role="alert"></div>
+          <div class="row g-3 align-items-start">
+            <div class="col-12 ai-publish-main-col">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-body">
+                  <label class="form-label fw-semibold" for="ai-video-title-input">Title</label>
+                  <input type="text" id="ai-video-title-input" name="title" class="form-control mb-3" maxlength="100" required>
+                  <label class="form-label fw-semibold" for="ai-video-description-input">Description</label>
+                  <textarea id="ai-video-description-input" name="description" class="form-control" rows="5" maxlength="5000"></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 ai-publish-side-col">
+              <div class="ai-publish-side-stack">
+              <div class="card bg-dark text-white border border-secondary-subtle">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-youtube text-danger fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">YouTube</h5>
+                  </div>
+                  <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <div class="form-check form-switch text-white-50">
+                      <input class="form-check-input" type="checkbox" id="aiYoutubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% endif %} {% if not youtube_connected %}disabled{% endif %}>
+                      <label class="form-check-label small" for="aiYoutubeEnableToggle">Enabled</label>
+                    </div>
+                    <span class="badge text-white bg-success" id="aiYoutubeStatusBadge">Now</span>
+                  </div>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not youtube_connected %}
+                    <div class="small text-warning mb-2">YouTube account is not connected for this brand.</div>
+                  {% endif %}
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <label class="form-label fw-semibold text-white mb-0">Publish time ({{ user_time_zone_label }})</label>
+                  </div>
+                  <input type="datetime-local" name="publish_at" class="form-control mb-2">
+                  <div class="form-text text-white-50" id="ai-youtube-latest-scheduled">
+                    {% if channel_latest_scheduled_display %}
+                      Last scheduled publish: {{ channel_latest_scheduled_display }}
+                    {% else %}
+                      No scheduled videos yet.
+                    {% endif %}
+                  </div>
+                  <div id="aiYoutubeDisabledHint" class="small text-warning mt-2 d-none">This clip will not be sent to YouTube.</div>
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="aiInstagramSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-instagram text-warning fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Instagram</h5>
+                  </div>
+                  <span class="badge bg-secondary" id="aiInstagramStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not instagram_connected %}
+                    <div class="small text-warning mb-2">
+                      Instagram account is not connected. Please connect it in
+                      <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                    </div>
+                  {% endif %}
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="aiInstagramReelToggle" name="schedule_instagram_reel" {% if not instagram_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiInstagramReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" id="aiInstagramFeedToggle" name="schedule_instagram_feed" {% if not instagram_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiInstagramFeedToggle">Share as feed video</label>
+                    </div>
+                    <div class="form-check mt-2">
+                      <input class="form-check-input" type="checkbox" id="aiInstagramRequeue" name="force_requeue_instagram">
+                      <label class="form-check-label" for="aiInstagramRequeue">Force requeue if already published</label>
+                    </div>
+                  </div>
+                  <div id="aiInstagramTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Instagram scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="aiInstagramModeSync" value="sync" checked>
+                        <label class="form-check-label" for="aiInstagramModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="aiInstagramModeNow" value="now">
+                        <label class="form-check-label" for="aiInstagramModeNow">Publish immediately on Instagram</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="instagram_mode" id="aiInstagramModeSchedule" value="schedule">
+                        <label class="form-check-label" for="aiInstagramModeSchedule">Choose a separate Instagram time</label>
+                      </div>
+                    </div>
+                    <div id="aiInstagramScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Instagram publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="instagram_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="aiInstagramTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="aiFacebookSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-facebook text-primary fs-4" aria-hidden="true"></i>
+                    <h5 class="mb-0 text-white">Facebook Page</h5>
+                  </div>
+                  <span class="badge bg-secondary" id="aiFacebookStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not facebook_connected %}
+                    <div class="small text-warning mb-2">
+                      Facebook Page is not connected. Please connect it in
+                      <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                    </div>
+                  {% endif %}
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="aiFacebookReelToggle" name="schedule_facebook_reel" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiFacebookReelToggle">Share as Reel</label>
+                    </div>
+                    <div class="form-check form-switch mt-2">
+                      <input class="form-check-input" type="checkbox" id="aiFacebookFeedToggle" name="schedule_facebook_feed" {% if not facebook_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiFacebookFeedToggle">Share as feed video</label>
+                    </div>
+                  </div>
+                  <div id="aiFacebookTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">Facebook scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="aiFacebookModeSync" value="sync" checked>
+                        <label class="form-check-label" for="aiFacebookModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="aiFacebookModeNow" value="now">
+                        <label class="form-check-label" for="aiFacebookModeNow">Publish immediately on Facebook</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="facebook_mode" id="aiFacebookModeSchedule" value="schedule">
+                        <label class="form-check-label" for="aiFacebookModeSchedule">Choose a separate Facebook time</label>
+                      </div>
+                    </div>
+                    <div id="aiFacebookScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">Facebook publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="facebook_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="aiFacebookTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+
+              <div class="card bg-dark text-white border border-secondary-subtle" id="aiTiktokSettingsCard">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                  <div class="d-flex align-items-center gap-2">
+                    <h5 class="mb-0 text-white">TikTok</h5>
+                  </div>
+                  <span class="badge bg-secondary" id="aiTiktokStatusBadge">Disabled</span>
+                </div>
+                <div class="card-body pt-0">
+                  {% if not tiktok_connected %}
+                    <div class="small text-warning mb-2">
+                      TikTok is not connected. Please connect it in
+                      <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                    </div>
+                  {% endif %}
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="aiTiktokToggle" name="schedule_tiktok" {% if not tiktok_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiTiktokToggle">Share to TikTok</label>
+                    </div>
+                    <div class="form-check mt-2">
+                      <input class="form-check-input" type="checkbox" id="aiTiktokRequeue" name="force_requeue_tiktok" {% if not tiktok_connected %}disabled{% endif %}>
+                      <label class="form-check-label" for="aiTiktokRequeue">Force requeue if already published</label>
+                    </div>
+                  </div>
+                  <div id="aiTiktokTimingContainer" class="d-none">
+                    <label class="form-label fw-semibold">TikTok scheduling mode</label>
+                    <div class="d-flex flex-column gap-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="aiTiktokModeSync" value="sync" checked>
+                        <label class="form-check-label" for="aiTiktokModeSync">Publish at the same time as YouTube</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="aiTiktokModeNow" value="now">
+                        <label class="form-check-label" for="aiTiktokModeNow">Publish immediately on TikTok</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tiktok_mode" id="aiTiktokModeSchedule" value="schedule">
+                        <label class="form-check-label" for="aiTiktokModeSchedule">Choose a separate TikTok time</label>
+                      </div>
+                    </div>
+                    <div id="aiTiktokScheduleGroup" class="mt-3 d-none">
+                      <label class="form-label mb-1">TikTok publish time ({{ user_time_zone_label }})</label>
+                      <input type="datetime-local" name="tiktok_publish_at" class="form-control">
+                    </div>
+                  </div>
+                  <div id="aiTiktokTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
+                </div>
+              </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer d-flex justify-content-between py-3 px-4 border-0 align-items-center">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2" id="ai-publish-submit">
+            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M23.498 6.186a2.88 2.88 0 0 0-2.03-2.03C19.408 3.5 12 3.5 12 3.5s-7.408 0-9.468.656a2.88 2.88 0 0 0-2.03 2.03C.5 8.23.5 12 .5 12s0 3.77.002 5.814a2.88 2.88 0 0 0 2.03 2.03C4.592 21.5 12 21.5 12 21.5s7.408 0 9.468-.656a2.88 2.88 0 0 0 2.03-2.03C23.5 15.77 23.5 12 23.5 12s0-3.77-.002-5.814zM9.75 16.5v-9l6.5 4.5-6.5 4.5z"/>
+            </svg>
+            <span class="btn-label">Schedule &amp; publish</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const uploadForm = document.getElementById('ai-upload-form');
+    const uploadOverlay = document.getElementById('ai-upload-overlay');
+    const uploadSubmit = document.getElementById('ai-upload-submit');
+    const form = document.getElementById('ai-video-publish-form');
+    const feedback = document.getElementById('ai-video-publish-feedback');
+    const titleInput = document.getElementById('ai-video-title-input');
+    const descriptionInput = document.getElementById('ai-video-description-input');
+    const publishSubmit = document.getElementById('ai-publish-submit');
+    const youtubePublishInput = form.querySelector('input[name="publish_at"]');
+    const youtubeEnableToggle = document.getElementById('aiYoutubeEnableToggle');
+    const youtubeStatusBadge = document.getElementById('aiYoutubeStatusBadge');
+    const youtubeDisabledHint = document.getElementById('aiYoutubeDisabledHint');
+    const instagramReelToggle = document.getElementById('aiInstagramReelToggle');
+    const instagramFeedToggle = document.getElementById('aiInstagramFeedToggle');
+    const instagramStatusBadge = document.getElementById('aiInstagramStatusBadge');
+    const instagramTimingContainer = document.getElementById('aiInstagramTimingContainer');
+    const instagramTimingHint = document.getElementById('aiInstagramTimingHint');
+    const instagramScheduleGroup = document.getElementById('aiInstagramScheduleGroup');
+    const facebookReelToggle = document.getElementById('aiFacebookReelToggle');
+    const facebookFeedToggle = document.getElementById('aiFacebookFeedToggle');
+    const facebookStatusBadge = document.getElementById('aiFacebookStatusBadge');
+    const facebookTimingContainer = document.getElementById('aiFacebookTimingContainer');
+    const facebookTimingHint = document.getElementById('aiFacebookTimingHint');
+    const facebookScheduleGroup = document.getElementById('aiFacebookScheduleGroup');
+    const tiktokToggle = document.getElementById('aiTiktokToggle');
+    const tiktokStatusBadge = document.getElementById('aiTiktokStatusBadge');
+    const tiktokTimingContainer = document.getElementById('aiTiktokTimingContainer');
+    const tiktokTimingHint = document.getElementById('aiTiktokTimingHint');
+    const tiktokScheduleGroup = document.getElementById('aiTiktokScheduleGroup');
+
+    function selectedRadioValue(name, fallback) {
+      const checked = form.querySelector(`input[name="${name}"]:checked`);
+      return checked ? checked.value : fallback;
+    }
+
+    function updateYoutubeUi() {
+      const enabled = !!youtubeEnableToggle?.checked;
+      const scheduled = !!youtubePublishInput?.value;
+      youtubeStatusBadge.textContent = !enabled ? 'Off' : (scheduled ? 'Planned' : 'Now');
+      youtubeStatusBadge.className = `badge text-white ${!enabled ? 'bg-secondary' : (scheduled ? 'bg-primary' : 'bg-success')}`;
+      if (youtubeDisabledHint) youtubeDisabledHint.classList.toggle('d-none', enabled);
+    }
+
+    function updateInstagramUi() {
+      const enabled = !!instagramReelToggle?.checked || !!instagramFeedToggle?.checked;
+      const mode = selectedRadioValue('instagram_mode', 'sync');
+      instagramStatusBadge.textContent = enabled ? (mode === 'schedule' ? 'Scheduled' : mode === 'now' ? 'Now' : 'Sync') : 'Closed';
+      instagramStatusBadge.className = `badge text-white ${enabled ? (mode === 'schedule' ? 'bg-primary' : mode === 'now' ? 'bg-success' : 'bg-info') : 'bg-secondary'}`;
+      if (instagramTimingContainer) instagramTimingContainer.classList.toggle('d-none', !enabled);
+      if (instagramTimingHint) {
+        instagramTimingHint.classList.toggle('d-none', !enabled);
+        instagramTimingHint.textContent = mode === 'now'
+          ? 'Instagram post will be published immediately.'
+          : mode === 'schedule'
+            ? 'Instagram post will be published at the selected time.'
+            : 'Same as YouTube plan.';
+      }
+      if (instagramScheduleGroup) instagramScheduleGroup.classList.toggle('d-none', !enabled || mode !== 'schedule');
+    }
+
+    function updateFacebookUi() {
+      const enabled = !!facebookReelToggle?.checked || !!facebookFeedToggle?.checked;
+      const mode = selectedRadioValue('facebook_mode', 'sync');
+      facebookStatusBadge.textContent = enabled ? (mode === 'schedule' ? 'Scheduled' : mode === 'now' ? 'Now' : 'Sync') : 'Closed';
+      facebookStatusBadge.className = `badge text-white ${enabled ? (mode === 'schedule' ? 'bg-primary' : mode === 'now' ? 'bg-success' : 'bg-info') : 'bg-secondary'}`;
+      if (facebookTimingContainer) facebookTimingContainer.classList.toggle('d-none', !enabled);
+      if (facebookTimingHint) {
+        facebookTimingHint.classList.toggle('d-none', !enabled);
+        facebookTimingHint.textContent = mode === 'now'
+          ? 'Facebook post will be published immediately.'
+          : mode === 'schedule'
+            ? 'Facebook post will be published at the selected time.'
+            : 'Same as YouTube plan.';
+      }
+      if (facebookScheduleGroup) facebookScheduleGroup.classList.toggle('d-none', !enabled || mode !== 'schedule');
+    }
+
+    function updateTiktokUi() {
+      const enabled = !!tiktokToggle?.checked;
+      const mode = selectedRadioValue('tiktok_mode', 'sync');
+      tiktokStatusBadge.textContent = enabled ? (mode === 'schedule' ? 'Scheduled' : mode === 'now' ? 'Now' : 'Sync') : 'Closed';
+      tiktokStatusBadge.className = `badge text-white ${enabled ? (mode === 'schedule' ? 'bg-primary' : mode === 'now' ? 'bg-success' : 'bg-info') : 'bg-secondary'}`;
+      if (tiktokTimingContainer) tiktokTimingContainer.classList.toggle('d-none', !enabled);
+      if (tiktokTimingHint) {
+        tiktokTimingHint.classList.toggle('d-none', !enabled);
+        tiktokTimingHint.textContent = mode === 'now'
+          ? 'TikTok post will be published immediately.'
+          : mode === 'schedule'
+            ? 'TikTok post will be published at the selected time.'
+            : 'Same as YouTube plan.';
+      }
+      if (tiktokScheduleGroup) tiktokScheduleGroup.classList.toggle('d-none', !enabled || mode !== 'schedule');
+    }
+
+    if (uploadForm) {
+      uploadForm.addEventListener('submit', () => {
+        if (uploadOverlay) uploadOverlay.classList.add('is-visible');
+        if (uploadSubmit) uploadSubmit.disabled = true;
+      });
+    }
+
+    document.querySelectorAll('.js-open-ai-publish').forEach((button) => {
+      button.addEventListener('click', () => {
+        const aiId = button.dataset.aiId || '';
+        const title = button.dataset.aiTitle || '';
+        const description = button.dataset.aiDescription || '';
+        form.action = `{{ url_for('video_shorts_bp.ai_video_publish', ai_video_id='__ID__') }}`.replace('__ID__', aiId);
+        titleInput.value = title;
+        descriptionInput.value = description;
+        feedback.classList.add('d-none');
+        feedback.textContent = '';
+        updateYoutubeUi();
+        updateInstagramUi();
+        updateFacebookUi();
+        updateTiktokUi();
+      });
+    });
+
+    [
+      youtubeEnableToggle,
+      youtubePublishInput,
+      instagramReelToggle,
+      instagramFeedToggle,
+      facebookReelToggle,
+      facebookFeedToggle,
+      tiktokToggle,
+      ...form.querySelectorAll('input[name="instagram_mode"], input[name="facebook_mode"], input[name="tiktok_mode"]')
+    ].forEach((input) => {
+      if (!input) return;
+      input.addEventListener('change', () => {
+        updateYoutubeUi();
+        updateInstagramUi();
+        updateFacebookUi();
+        updateTiktokUi();
+      });
+    });
+
+    updateYoutubeUi();
+    updateInstagramUi();
+    updateFacebookUi();
+    updateTiktokUi();
+
+    document.querySelectorAll('.js-delete-ai-video').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const aiId = button.dataset.aiId || '';
+        const title = button.dataset.aiTitle || 'this video';
+        if (!aiId) return;
+        if (!window.confirm(`Delete "${title}"? This will remove the video from the app and storage.`)) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          const response = await fetch(`{{ url_for('video_shorts_bp.ai_video_delete', ai_video_id='__ID__') }}`.replace('__ID__', aiId), {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || 'Video could not be deleted.');
+          }
+          window.location.reload();
+        } catch (error) {
+          window.alert(error.message || 'Video could not be deleted.');
+          button.disabled = false;
+        }
+      });
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      feedback.classList.add('d-none');
+      feedback.textContent = '';
+      if (publishSubmit) {
+        publishSubmit.disabled = true;
+        const spinner = publishSubmit.querySelector('.spinner-border');
+        if (spinner) spinner.classList.remove('d-none');
+      }
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || 'Publish workflow could not be created.');
+        }
+        window.location.reload();
+      } catch (error) {
+        feedback.textContent = error.message || 'Publish workflow could not be created.';
+        feedback.classList.remove('d-none');
+      } finally {
+        if (publishSubmit) {
+          publishSubmit.disabled = false;
+          const spinner = publishSubmit.querySelector('.spinner-border');
+          if (spinner) spinner.classList.add('d-none');
+        }
+      }
+    });
+  })();
+</script>
+{% endblock %}

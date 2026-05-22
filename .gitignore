@@ -1,0 +1,51 @@
+# Env & secrets
+.env
+
+# Virtual env / caches / IDE
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.vscode/
+.cache/
+
+# Generated / data / logs
+warehouse/
+data/
+data_archive/
+logs/
+tmp/
+output/
+models/
+docs/blogs/
+docs/indexes/
+instagram_out/
+*.duckdb
+*.db
+*.sqlite
+*.csv
+*.jsonl
+*.parquet
+*.log
+*.mp4
+*.mp3
+*.wav
+
+# Build artifacts
+site/
+dist/
+build/
+
+# Video shorts artifacts
+app/video_shorts/static/shorts/
+app/video_shorts/videos/
+app/video_shorts/templates/cookies.txt
+
+
+# User-generated & static media (should live in S3, not git)
+app/video_shorts/static/user_podcasts/
+app/video_shorts/static/user_images/
+app/video_shorts/static/transitions/
+*.m4a
+*.mov

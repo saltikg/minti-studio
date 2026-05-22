@@ -1,0 +1,74 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Kategoriler{% endblock %}
+
+{% block content %}
+  <div class="container-fluid">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div>
+        <h3 class="mb-1">Kategoriler</h3>
+        <div class="vs-text-body">Generate short sayfasinda gorunen kategorileri yonet.</div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4 vs-card">
+      <div class="card-body">
+        <form method="post" class="row g-2 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label vs-card-title">Yeni kategori</label>
+            <input type="text" name="name" class="form-control vs-input" placeholder="Orn: Education" maxlength="60" required>
+          </div>
+          <div class="col-auto">
+            <button type="submit" class="btn vs-btn vs-btn-primary d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined" aria-hidden="true">add_circle</span>
+              <span>Kaydet</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-header">Mevcut kategoriler</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 vs-table">
+          <thead>
+            <tr>
+              <th>Ad</th>
+              <th>Olusturma</th>
+              <th class="text-end">Islemler</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if categories %}
+              {% for category in categories %}
+                <tr>
+                  <td>
+                    <form method="post" action="{{ url_for('video_shorts_bp.update_category', category_id=category.id) }}" class="d-flex gap-2 align-items-center">
+                      <input type="text" name="name" value="{{ category.name }}" class="form-control form-control-sm vs-input" maxlength="60" required>
+                      <button type="submit" class="btn btn-sm vs-btn vs-btn-primary d-flex align-items-center justify-content-center" title="Kaydet">
+                        <span class="material-symbols-outlined" aria-hidden="true">save</span>
+                      </button>
+                    </form>
+                  </td>
+                  <td>{{ category.created_at or "-" }}</td>
+                  <td class="text-end">
+                    <form method="post" action="{{ url_for('video_shorts_bp.delete_category', category_id=category.id) }}" class="d-inline">
+                      <button type="submit" class="btn btn-sm vs-btn vs-btn-danger d-inline-flex align-items-center justify-content-center" title="Sil" data-confirm-message="Kategoriyi silmek istediginize emin misiniz?">
+                        <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="3" class="text-center py-4">Henuz kategori yok.</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

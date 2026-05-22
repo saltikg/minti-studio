@@ -1,0 +1,439 @@
+{% extends "vs_marketing_base.html" %}
+
+{% block title %}MintiStudio{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .vs-home {
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  .vs-home .section-title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-bottom: 1.25rem;
+  }
+
+  .vs-home .hero-title {
+    font-size: clamp(2.2rem, 3.8vw, 3.4rem);
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 0.75rem;
+  }
+
+  .vs-home .hero-subtitle {
+    color: var(--text-2);
+    font-size: 1.05rem;
+    margin: 0;
+  }
+
+  .vs-home .hero-meta {
+    color: var(--text-2);
+    font-size: 0.9rem;
+    margin-top: 0.65rem;
+  }
+
+  .vs-home .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .vs-home .hero-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    margin-bottom: 0.75rem;
+  }
+
+  .vs-home .hero-label-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--mint);
+    box-shadow: 0 0 12px rgba(45, 212, 191, 0.55);
+  }
+
+  .vs-home .preview-card {
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: linear-gradient(160deg, rgba(45, 212, 191, 0.08), rgba(17, 24, 39, 0.9));
+  }
+
+  .vs-home .preview-title {
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+
+  .vs-home .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .vs-home .kpi-card {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 0.75rem;
+  }
+
+  .vs-home .kpi-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-2);
+  }
+
+  .vs-home .kpi-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+  }
+
+  .vs-home .bar-chart {
+    display: grid;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+    align-items: end;
+    gap: 6px;
+    height: 86px;
+    margin-top: 0.9rem;
+  }
+
+  .vs-home .bar {
+    height: var(--h);
+    border-radius: 10px 10px 4px 4px;
+    background: linear-gradient(180deg, rgba(45, 212, 191, 0.9), rgba(45, 212, 191, 0.15));
+  }
+
+  .vs-home .top-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .vs-home .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    font-size: 0.85rem;
+  }
+
+  .vs-home .top-title {
+    color: var(--text-1);
+    font-weight: 600;
+  }
+
+  .vs-home .card-title-small {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+  }
+
+  .vs-home .card-copy {
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .vs-home .step-card {
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .vs-home .step-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(45, 212, 191, 0.35);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+  }
+
+  .vs-home .step-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(45, 212, 191, 0.12);
+    color: var(--mint);
+    margin-bottom: 0.85rem;
+  }
+
+  .vs-home .hooks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.85rem;
+  }
+
+  .vs-home .hook-card .card-body {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-1);
+  }
+
+  .vs-home .tag-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    color: var(--text-2);
+  }
+
+  .vs-home .cta-card {
+    border-radius: 20px;
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    background: linear-gradient(120deg, rgba(45, 212, 191, 0.12), rgba(15, 23, 42, 0.95));
+  }
+
+  .vs-home .cta-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  .vs-home .cta-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vs-home">
+  <section class="vs-home-hero">
+    <div class="row g-4 align-items-center">
+      <div class="col-lg-6">
+        <div class="hero-label">
+          <span class="hero-label-dot"></span>
+          MintiStudio
+        </div>
+        <h1 class="hero-title">Publish daily without the chaos</h1>
+        <p class="hero-subtitle">
+          Connect sources, generate shorts, schedule posts, and track winners from one dashboard.
+        </p>
+        <div class="hero-meta">Content ops panel for creators and solopreneurs. Not a video editor.</div>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.quick_short') }}">
+            Create your first short
+          </a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('video_shorts_bp.channels_page') }}">
+            Connect a source
+          </a>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card preview-card">
+          <div class="card-body">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <div class="preview-title">Dashboard preview</div>
+              <span class="badge">Live</span>
+            </div>
+            <div class="kpi-row">
+              <div class="kpi-card">
+                <div class="kpi-label">Views</div>
+                <div class="kpi-value">24.8k</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Shorts</div>
+                <div class="kpi-value">42</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Scheduled</div>
+                <div class="kpi-value">18</div>
+              </div>
+            </div>
+            <div class="bar-chart">
+              <span class="bar" style="--h: 35%;"></span>
+              <span class="bar" style="--h: 55%;"></span>
+              <span class="bar" style="--h: 40%;"></span>
+              <span class="bar" style="--h: 70%;"></span>
+              <span class="bar" style="--h: 60%;"></span>
+              <span class="bar" style="--h: 80%;"></span>
+              <span class="bar" style="--h: 50%;"></span>
+              <span class="bar" style="--h: 65%;"></span>
+              <span class="bar" style="--h: 45%;"></span>
+              <span class="bar" style="--h: 75%;"></span>
+            </div>
+            <div class="top-list">
+              <div class="top-row">
+                <span class="top-title">Top videos</span>
+                <span class="text-muted">Last 7 days</span>
+              </div>
+              <div class="top-row">
+                <span class="top-title">AI hooks that win</span>
+                <span class="text-muted">8.4k</span>
+              </div>
+              <div class="top-row">
+                <span class="top-title">30-min creator stack</span>
+                <span class="text-muted">6.2k</span>
+              </div>
+              <div class="top-row">
+                <span class="top-title">Best shorts pipeline</span>
+                <span class="text-muted">5.7k</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Built for creator ops</h2>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="card-title-small">Momentum</div>
+            <p class="card-copy">Build a daily posting rhythm.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="card-title-small">Speed</div>
+            <p class="card-copy">Shorten the path from idea to publish.</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="card-title-small">Clarity</div>
+            <p class="card-copy">See what wins (winners + drivers).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Your pipeline, end-to-end</h2>
+    <div class="row g-3">
+      <div class="col-md-6 col-lg-3">
+        <a class="card h-100 text-decoration-none step-card" href="{{ url_for('video_shorts_bp.channels_page') }}">
+          <div class="card-body">
+            <div class="step-icon">
+              <span class="material-symbols-outlined">subscriptions</span>
+            </div>
+            <div class="card-title-small">Sources</div>
+            <p class="card-copy">Connect YouTube and bring in videos.</p>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <a class="card h-100 text-decoration-none step-card" href="{{ url_for('video_shorts_bp.quick_short') }}">
+          <div class="card-body">
+            <div class="step-icon">
+              <span class="material-symbols-outlined">auto_awesome</span>
+            </div>
+            <div class="card-title-small">Shorts</div>
+            <p class="card-copy">Generate shorts from your source content.</p>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <a class="card h-100 text-decoration-none step-card" href="{{ url_for('video_shorts_bp.shorts_overview') }}">
+          <div class="card-body">
+            <div class="step-icon">
+              <span class="material-symbols-outlined">schedule</span>
+            </div>
+            <div class="card-title-small">Publishing</div>
+            <p class="card-copy">Schedule and publish to YouTube + Instagram.</p>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <a class="card h-100 text-decoration-none step-card" href="{{ url_for('video_shorts_bp.video_stats_page') }}">
+          <div class="card-body">
+            <div class="step-icon">
+              <span class="material-symbols-outlined">insights</span>
+            </div>
+            <div class="card-title-small">Analytics</div>
+            <p class="card-copy">Track winners and top drivers.</p>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">The daily shorts mindset</h2>
+    <div class="hooks-grid">
+      <div class="card hook-card"><div class="card-body">"Her gun 1 short, sistemle."</div></div>
+      <div class="card hook-card"><div class="card-body">"Fikir yoksa trend var."</div></div>
+      <div class="card hook-card"><div class="card-body">"Sadece uretme, seri uret."</div></div>
+      <div class="card hook-card"><div class="card-body">"Dagitim da icerde: schedule + publish."</div></div>
+      <div class="card hook-card"><div class="card-body">"Bir video, birden cok short."</div></div>
+      <div class="card hook-card"><div class="card-body">"En iyi calisani bul, ona benzerini uret."</div></div>
+      <div class="card hook-card"><div class="card-body">"Creator ops: kaynak, uretim, dagitim, analiz."</div></div>
+      <div class="card hook-card"><div class="card-body">"30 dakikada 7 gunluk icerik."</div></div>
+      <div class="card hook-card"><div class="card-body">"Tek panel: YouTube + Instagram."</div></div>
+      <div class="card hook-card"><div class="card-body">"Icerik fabrikan: manual kaos yok."</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="card-title-small">For creators</div>
+            <ul class="tag-list">
+              <li>Daily Shorts Engine</li>
+              <li>Trends to Shorts to Publish</li>
+              <li>Automate your content pipeline</li>
+              <li>From source to scheduled post</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="card-title-small">For solopreneurs</div>
+            <ul class="tag-list">
+              <li>Run your business, content runs itself</li>
+              <li>Daily video marketing with less effort</li>
+              <li>Record, repurpose, schedule</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card cta-card">
+      <div class="card-body d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3">
+        <div>
+          <div class="cta-title">Ready to build momentum?</div>
+        </div>
+        <div class="cta-actions">
+          <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.quick_short') }}">
+            Create your first short
+          </a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('video_shorts_bp.channels_page') }}">
+            Connect a source
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

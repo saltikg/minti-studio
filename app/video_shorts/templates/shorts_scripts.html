@@ -1,0 +1,59 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Short Scripts{% endblock %}
+
+{% block content %}
+<div class="vs-hero mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <h3 class="fw-bold mb-1">Short Scripts</h3>
+      <div class="text-muted small">Toplam short: {{ total_shorts }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body">
+    {% if not rows %}
+      <div class="text-muted">Henuz olusturulmus short bulunamadi.</div>
+    {% else %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 50%;">Uzun video scripti</th>
+              <th style="width: 50%;">Segment zamanlari</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>
+                  <div class="gs-code" style="max-height: 320px; overflow:auto; white-space: pre-wrap;">
+                    {% if row.long_segments %}
+                      {% for seg in row.long_segments %}
+                        {{ seg.idx_label }} | {{ seg.start_label or "-" }} - {{ seg.end_label or "-" }} | {{ seg.text }}{% if not loop.last %}{{ "\n" }}{% endif %}
+                      {% endfor %}
+                    {% else %}
+                      {{ row.long_text }}
+                    {% endif %}
+                  </div>
+                </td>
+                <td>
+                  {% for short in row.shorts %}
+                    <div class="mb-3 pb-2 border-bottom">
+                      <div style="white-space: pre-wrap;">
+                        start_idx: {{ short.start_idx or "-" }} | end_idx: {{ short.end_idx or "-" }} | {{ short.text }}
+                      </div>
+                    </div>
+                  {% endfor %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

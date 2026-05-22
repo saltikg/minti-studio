@@ -1,0 +1,728 @@
+:is(.web, .web-landing) {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+:is(.web, .web-landing) .vs-web-topnav {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  height: 72px;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  background: rgba(11, 15, 20, 0.85);
+}
+
+:is(.web, .web-landing) .vs-web-nav-inner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-web-brand {
+  color: var(--mint);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+:is(.web, .web-landing) .vs-web-brand:hover {
+  color: var(--mint-2);
+}
+
+:is(.web, .web-landing) .vs-web-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: #041018;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-web-toggler {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+  background: transparent;
+}
+
+:is(.web, .web-landing) .vs-web-toggler-icon {
+  width: 20px;
+  height: 2px;
+  background: var(--text);
+  display: block;
+  position: relative;
+}
+
+:is(.web, .web-landing) .vs-web-toggler-icon::before,
+:is(.web, .web-landing) .vs-web-toggler-icon::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 20px;
+  height: 2px;
+  background: var(--text);
+}
+
+:is(.web, .web-landing) .vs-web-toggler-icon::before {
+  top: -6px;
+}
+
+:is(.web, .web-landing) .vs-web-toggler-icon::after {
+  top: 6px;
+}
+
+:is(.web, .web-landing) .vs-web-nav-collapse {
+  flex: 1;
+  justify-content: space-between;
+  align-items: center;
+}
+
+:is(.web, .web-landing) .vs-web-nav-center {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+:is(.web, .web-landing) .vs-web-nav-link {
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+}
+
+:is(.web, .web-landing) .vs-web-nav-link:hover,
+:is(.web, .web-landing) .vs-web-nav-link:focus {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:is(.web, .web-landing) .vs-web-dropdown {
+  background: rgba(11, 15, 20, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.5rem;
+  min-width: 220px;
+  box-shadow: 0 18px 35px rgba(0, 0, 0, 0.65);
+}
+
+:is(.web, .web-landing) .vs-web-dropdown .dropdown-item {
+  color: var(--text);
+  font-weight: 600;
+  padding: 0.45rem 0.75rem;
+  border-radius: 10px;
+}
+
+:is(.web, .web-landing) .vs-web-dropdown .dropdown-item:hover,
+:is(.web, .web-landing) .vs-web-dropdown .dropdown-item:focus {
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--mint);
+}
+
+:is(.web, .web-landing) .vs-web-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-web-btn-ghost {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text);
+  background: transparent;
+}
+
+:is(.web, .web-landing) .vs-web-btn-ghost:hover {
+  border-color: var(--mint);
+  color: var(--mint);
+  background: rgba(45, 212, 191, 0.08);
+}
+
+:is(.web, .web-landing) .vs-web-btn-primary {
+  background: linear-gradient(135deg, var(--mint-2), var(--mint));
+  color: #050b13;
+  border-radius: 999px;
+  border: none;
+  box-shadow: 0 6px 18px rgba(45, 212, 191, 0.35);
+}
+
+:is(.web, .web-landing) .vs-web-btn-primary:hover {
+  background: linear-gradient(135deg, var(--mint), var(--mint-2));
+}
+
+:is(.web, .web-landing) .vs-web-page {
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
+}
+
+:is(.web, .web-landing) .vs-web-landing {
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
+}
+
+:is(.web, .web-landing) .vs-web-hero-title {
+  font-size: clamp(2.2rem, 3.8vw, 3.4rem);
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-web-hero-subtitle {
+  color: var(--text-2);
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+:is(.web, .web-landing) .vs-web-hero-meta {
+  color: var(--text-2);
+  font-size: 0.9rem;
+  margin-top: 0.65rem;
+}
+
+:is(.web, .web-landing) .vs-web-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-web-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-web-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--mint);
+  box-shadow: 0 0 12px rgba(45, 212, 191, 0.55);
+}
+
+:is(.web, .web-landing) .vs-web-section-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+:is(.web, .web-landing) .vs-web-card-copy {
+  color: var(--text-2);
+  margin: 0;
+}
+
+:is(.web, .web-landing) .vs-web-price-card,
+:is(.web, .web-landing) .vs-web-how-card,
+:is(.web, .web-landing) .vs-web-ops-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+}
+
+:is(.web, .web-landing) .vs-web-price-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 0.4rem;
+}
+
+:is(.web, .web-landing) .vs-web-price-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 0.6rem;
+}
+
+:is(.web, .web-landing) .price-period {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 0.25rem;
+}
+
+:is(.web, .web-landing) .vs-web-billing-toggle .btn {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-1);
+}
+
+:is(.web, .web-landing) .vs-web-billing-toggle .btn-check:checked + .btn {
+  background: var(--mint);
+  border-color: var(--mint);
+  color: #0b1120;
+}
+
+:is(.web, .web-landing) .vs-web-price-note {
+  margin-top: 0.65rem;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+
+:is(.web, .web-landing) .vs-web-ops-title,
+:is(.web, .web-landing) .vs-web-card-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  color: var(--text-1);
+}
+
+:is(.web, .web-landing) .vs-web-ops-copy {
+  color: var(--text-2);
+  margin: 0;
+}
+
+:is(.web, .web-landing) .vs-web-cta-card {
+  border-radius: 20px;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  background: linear-gradient(120deg, rgba(45, 212, 191, 0.12), rgba(15, 23, 42, 0.95));
+}
+
+:is(.web, .web-landing) .vs-web-cta-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+:is(.web, .web-landing) .vs-web-cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-web-footer {
+  margin-top: 4rem;
+  border-top: 1px solid var(--border);
+  background: rgba(7, 10, 15, 0.92);
+}
+
+:is(.web, .web-landing) .vs-web-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2.5rem 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-web-footer-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--mint);
+  font-weight: 700;
+}
+
+:is(.web, .web-landing) .vs-web-footer-links {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+:is(.web, .web-landing) .vs-web-footer-link {
+  color: var(--text-2);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+:is(.web, .web-landing) .vs-web-footer-link:hover,
+:is(.web, .web-landing) .vs-web-footer-link:focus {
+  color: var(--mint);
+}
+
+:is(.web, .web-landing) .vs-web-footer-meta {
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+:is(.web, .web-landing) .vs-daily-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 3.5rem 2.5rem;
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.35), rgba(6, 182, 212, 0.12));
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+:is(.web, .web-landing) .vs-youtube-hero {
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.3), rgba(251, 146, 60, 0.18));
+}
+
+:is(.web, .web-landing) .vs-instagram-hero {
+  background: linear-gradient(135deg, rgba(190, 24, 93, 0.26), rgba(59, 130, 246, 0.2));
+}
+
+:is(.web, .web-landing) .vs-consistency-hero {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(45, 212, 191, 0.18));
+}
+
+:is(.web, .web-landing) .vs-daily-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 4px 4px;
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+:is(.web, .web-landing) .vs-daily-hero-bg {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(45, 212, 191, 0.35), transparent 70%);
+  top: -140px;
+  right: -120px;
+  filter: blur(10px);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+:is(.web, .web-landing) .vs-youtube-hero-bg {
+  background: radial-gradient(circle, rgba(251, 146, 60, 0.4), transparent 70%);
+}
+
+:is(.web, .web-landing) .vs-instagram-hero-bg {
+  background: radial-gradient(circle, rgba(236, 72, 153, 0.45), transparent 70%);
+}
+
+:is(.web, .web-landing) .vs-consistency-hero-bg {
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.45), transparent 70%);
+}
+
+:is(.web, .web-landing) .vs-daily-subhead {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 0.6rem;
+}
+
+:is(.web, .web-landing) .vs-daily-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-daily-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--text-1);
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+:is(.web, .web-landing) .vs-daily-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-glass-card {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(16px);
+}
+
+:is(.web, .web-landing) .vs-daily-card-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 0.9rem;
+}
+
+:is(.web, .web-landing) .vs-daily-bullets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+  color: var(--text-2);
+}
+
+:is(.web, .web-landing) .vs-daily-bullets li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+:is(.web, .web-landing) .vs-daily-bullets i {
+  color: var(--mint);
+  margin-top: 0.15rem;
+}
+
+:is(.web, .web-landing) .vs-daily-timeline {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  padding-top: 1.5rem;
+}
+
+:is(.web, .web-landing) .vs-daily-timeline::before {
+  content: "";
+  position: absolute;
+  top: 32px;
+  left: 6%;
+  right: 6%;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.35);
+}
+
+:is(.web, .web-landing) .vs-daily-step {
+  padding: 1.4rem;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+:is(.web, .web-landing) .vs-daily-step.is-active {
+  border-color: rgba(45, 212, 191, 0.8);
+  box-shadow: 0 20px 50px rgba(45, 212, 191, 0.18);
+  transform: translateY(-4px);
+}
+
+:is(.web, .web-landing) .vs-youtube-library .vs-daily-step.is-active {
+  border-color: rgba(251, 146, 60, 0.8);
+  box-shadow: 0 20px 50px rgba(251, 146, 60, 0.18);
+}
+
+:is(.web, .web-landing) .vs-instagram-reels .vs-daily-step.is-active {
+  border-color: rgba(236, 72, 153, 0.85);
+  box-shadow: 0 20px 50px rgba(236, 72, 153, 0.2);
+}
+
+:is(.web, .web-landing) .vs-creator-consistency .vs-daily-step.is-active {
+  border-color: rgba(16, 185, 129, 0.85);
+  box-shadow: 0 20px 50px rgba(16, 185, 129, 0.2);
+}
+
+:is(.web, .web-landing) .vs-daily-step-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--mint);
+  font-size: 1.2rem;
+}
+
+:is(.web, .web-landing) .vs-daily-step-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+:is(.web, .web-landing) .vs-daily-step p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+:is(.web, .web-landing) .vs-daily-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+:is(.web, .web-landing) .vs-daily-feature {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1.2rem;
+  border-radius: 18px;
+}
+
+:is(.web, .web-landing) .vs-daily-feature i {
+  color: var(--mint);
+  font-size: 1.2rem;
+}
+
+:is(.web, .web-landing) .vs-daily-feature-title {
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+:is(.web, .web-landing) .vs-daily-feature p {
+  margin: 0.3rem 0 0;
+  color: var(--text-2);
+  font-size: 0.95rem;
+}
+
+:is(.web, .web-landing) .vs-daily-dashboard {
+  padding: 1.5rem;
+  border-radius: 22px;
+}
+
+:is(.web, .web-landing) .vs-daily-tabs {
+  display: inline-flex;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 1.2rem;
+}
+
+:is(.web, .web-landing) .vs-daily-tab {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+
+:is(.web, .web-landing) .vs-daily-tab.is-active {
+  background: rgba(45, 212, 191, 0.2);
+  color: var(--text-1);
+  border: 1px solid rgba(45, 212, 191, 0.6);
+}
+
+:is(.web, .web-landing) .vs-daily-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+:is(.web, .web-landing) .vs-daily-panel {
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+:is(.web, .web-landing) .vs-daily-panel-title {
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+:is(.web, .web-landing) .vs-daily-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  color: var(--text-2);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+:is(.web, .web-landing) .vs-daily-row:last-child {
+  border-bottom: none;
+}
+
+:is(.web, .web-landing) .vs-daily-chip {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--text-1);
+  background: rgba(148, 163, 184, 0.2);
+}
+
+:is(.web, .web-landing) .vs-daily-chip-success {
+  background: rgba(34, 197, 94, 0.25);
+  color: #a7f3d0;
+}
+
+:is(.web, .web-landing) .vs-daily-chip-warning {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fde68a;
+}
+
+:is(.web, .web-landing) .vs-daily-final-cta {
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  background: linear-gradient(120deg, rgba(45, 212, 191, 0.12), rgba(15, 23, 42, 0.85));
+}
+
+:is(.web, .web-landing) .vs-daily-cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+@media (min-width: 992px) {
+  :is(.web, .web-landing) .vs-web-nav-collapse {
+    display: flex !important;
+  }
+}
+
+@media (max-width: 991px) {
+  :is(.web, .web-landing) .vs-web-nav-collapse {
+    width: 100%;
+    margin-top: 0.75rem;
+    gap: 1rem;
+  }
+
+  :is(.web, .web-landing) .vs-web-nav-center {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  :is(.web, .web-landing) .vs-web-nav-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  :is(.web, .web-landing) .vs-web-footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  :is(.web, .web-landing) .vs-daily-hero {
+    padding: 2.5rem 1.5rem;
+  }
+
+  :is(.web, .web-landing) .vs-daily-timeline {
+    grid-template-columns: 1fr;
+    padding-top: 0.5rem;
+  }
+
+  :is(.web, .web-landing) .vs-daily-timeline::before {
+    top: 20px;
+    bottom: 20px;
+    left: 20px;
+    right: auto;
+    width: 1px;
+    height: auto;
+  }
+
+  :is(.web, .web-landing) .vs-daily-step {
+    padding-left: 2.5rem;
+  }
+
+  :is(.web, .web-landing) .vs-daily-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :is(.web, .web-landing) .vs-daily-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 575px) {
+  :is(.web, .web-landing) .vs-daily-feature-grid {
+    grid-template-columns: 1fr;
+  }
+}

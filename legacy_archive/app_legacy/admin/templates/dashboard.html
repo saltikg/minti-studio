@@ -1,0 +1,55 @@
+{% extends "admin_base.html" %}
+{% block title %}Duplicate Blog Posts{% endblock %}
+{% block content %}
+<h3>Duplicate Blog Posts ({{ posts|length }})</h3>
+
+<form method="POST" action="{{ url_for('admin_bp.bulk_delete') }}">
+  <button class="btn btn-danger mb-3" type="submit">Delete Selected</button>
+      <span class="text-muted small ms-2">
+        (Each duplicate group has multiple copies — delete only <strong>one</strong> to keep one version alive)
+      </span>
+
+  <div class="table-responsive">
+    <table class="table table-bordered align-middle">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all"></th>
+          <th>Image</th>
+          <th>Title</th>
+          <th>Slug</th>
+          <th>Date</th>
+          <th>Delete</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in posts %}
+        <tr>
+          <td><input type="checkbox" name="selected_ids" value="{{ p.idea_id }}"></td>
+          <td><img src="{{ p.image or '/assets/no-image.jpg' }}" width="80" class="rounded"></td>
+          <td>
+            <a href="https://mintiproduct.com/{{ p.slug }}" target="_blank" class="text-decoration-none text-primary fw-semibold">
+              {{ p.title }}
+            </a>
+          </td>
+
+          <td>{{ p.slug }}</td>
+          <td>{{ p.updated_at.strftime('%Y-%m-%d') if p.updated_at else '' }}</td>
+          
+          <td>
+            <form method="POST" action="{{ url_for('admin_bp.delete_post', idea_id=p.idea_id) }}" onsubmit="return confirm('Delete this post?');">
+              <button class="btn btn-sm btn-outline-danger">🗑</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+document.getElementById('select-all').addEventListener('click', function(e) {
+  document.querySelectorAll('input[name="selected_ids"]').forEach(chk => chk.checked = e.target.checked);
+});
+</script>
+{% endblock %}

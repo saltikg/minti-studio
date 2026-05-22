@@ -1,0 +1,171 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Voices{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <style>
+    .voices-page .voices-card {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 12px;
+    }
+    .voices-page .voices-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+  </style>
+
+  <div class="voices-page">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+      <h3 class="mb-0">Voices</h3>
+      <button id="voices-refresh-btn" type="button" class="btn btn-outline-light">Refresh</button>
+    </div>
+
+    <div id="voices-status" class="small text-white-50 mb-3"></div>
+
+    <div id="voices-empty" class="small text-white-50">No saved recordings yet.</div>
+    <div id="voices-list" class="voices-grid"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const refreshBtn = document.getElementById("voices-refresh-btn");
+  const statusEl = document.getElementById("voices-status");
+  const emptyEl = document.getElementById("voices-empty");
+  const listEl = document.getElementById("voices-list");
+
+  const DB_NAME = "voice_practice_db";
+  const STORE_NAME = "recordings";
+  const urlMap = new Map();
+
+  const esc = (s) => String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  const setStatus = (msg, isError = false) => {
+    statusEl.textContent = msg || "";
+    statusEl.classList.toggle("text-danger", !!isError);
+  };
+
+  const fmtDate = (isoText) => {
+    const dt = new Date(isoText || "");
+    if (Number.isNaN(dt.getTime())) return "-";
+    return dt.toLocaleString();
+  };
+
+  const openDb = () => new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB is not available in this browser."));
+      return;
+    }
+    const req = window.indexedDB.open(DB_NAME, 1);
+    req.onerror = () => reject(req.error || new Error("DB open failed."));
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+  });
+
+  const getAllRows = async () => {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onerror = () => reject(req.error || new Error("Load failed."));
+      req.onsuccess = () => {
+        const rows = Array.isArray(req.result) ? req.result : [];
+        rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        resolve(rows);
+      };
+      tx.oncomplete = () => db.close();
+    });
+  };
+
+  const deleteRow = async (id) => {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.delete(id);
+      req.onerror = () => reject(req.error || new Error("Delete failed."));
+      req.onsuccess = () => resolve();
+      tx.oncomplete = () => db.close();
+    });
+  };
+
+  const renderRows = async () => {
+    urlMap.forEach((url) => URL.revokeObjectURL(url));
+    urlMap.clear();
+    listEl.innerHTML = "";
+
+    try {
+      const rows = await getAllRows();
+      emptyEl.classList.toggle("d-none", rows.length > 0);
+      if (!rows.length) {
+        setStatus("");
+        return;
+      }
+
+      rows.forEach((row) => {
+        const id = Number(row.id || 0);
+        const wrapper = document.createElement("div");
+        wrapper.className = "voices-card";
+
+        const audioUrl = URL.createObjectURL(row.audio_blob);
+        urlMap.set(id, audioUrl);
+
+        const transcriptPreview = (row.transcript || "").trim().slice(0, 260);
+        wrapper.innerHTML = `
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <div class="small text-white-50">${esc(fmtDate(row.created_at))}</div>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-delete-id="${id}">Delete</button>
+          </div>
+          <div class="small mb-2">${esc(row.note || "No note")}</div>
+          <audio controls preload="none" src="${audioUrl}" class="w-100 mb-2"></audio>
+          <div class="small text-white-50">${esc(transcriptPreview || "No transcript")}</div>
+        `;
+        listEl.appendChild(wrapper);
+      });
+
+      listEl.querySelectorAll("[data-delete-id]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = Number(btn.getAttribute("data-delete-id") || "0");
+          if (!id) return;
+          if (!window.confirm("Delete this recording?")) return;
+          btn.disabled = true;
+          setStatus("Deleting...");
+          try {
+            await deleteRow(id);
+            setStatus("Deleted.");
+            await renderRows();
+          } catch (err) {
+            setStatus(err.message || "Delete failed.", true);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    } catch (err) {
+      setStatus(err.message || "Could not load recordings.", true);
+    }
+  };
+
+  refreshBtn.addEventListener("click", async () => {
+    await renderRows();
+  });
+
+  renderRows();
+});
+</script>
+{% endblock %}

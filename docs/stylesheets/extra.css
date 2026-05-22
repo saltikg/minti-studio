@@ -1,0 +1,168 @@
+/* Genel tablo düzeni */
+.cmp-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.95rem;
+}
+
+/* İçerik alanını daha geniş yap (desktop) */
+.md-main__inner {
+  max-width: 1200px;   /* default 800px civarıdır */
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+/* Menü barını her zaman en üstte sabitle */
+.md-header, .md-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.hero-banner {
+  text-align: center;
+  padding: 80px 20px;
+  background: linear-gradient(135deg, #f0f4ff, #ffffff);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.hero-banner h1 {
+  font-size: 2.4rem;
+  margin-bottom: 20px;
+  color: #2c3e50;
+}
+
+.hero-banner p {
+  font-size: 1.2rem;
+  margin-bottom: 30px;
+  color: #555;
+}
+
+.hero-banner .md-button {
+  margin: 0 10px;
+}
+
+
+/* Mobile için tabloyu yatay scroll yap */
+.cmp-table {
+  overflow-x: auto;
+}
+
+.cmp-table table {
+  width: 100%;
+  min-width: 600px; /* daralınca kaydırmalı olsun */
+  display: block;
+}
+
+/* Blog listesi grid */
+.md-content ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.md-content ul li {
+  list-style: none;
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+/* Mobile uyumu */
+@media (max-width: 768px) {
+  body {
+    font-size: 16px;  /* default genelde 14px oluyor */
+    line-height: 1.6;
+  }
+
+  .cmp-table td.img img {
+    width: 48px;
+    height: 48px;
+  }
+
+  .cmp-table td.cta a {
+    padding: 8px 12px;
+    font-size: 0.9rem;
+  }
+}
+/* Sağ TOC sabit olsun */
+.md-sidebar--secondary {
+  position: sticky;
+  top: 80px; /* header yüksekliğine göre ayarla */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+
+.cmp-table th,
+.cmp-table td {
+  border: 1px solid #e0e0e0;
+  padding: 10px;
+  vertical-align: top;
+  text-align: left;
+}
+
+/* Başlık satırını vurgula */
+.cmp-table thead th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+  text-align: center;
+}
+
+/* Görsel hücresi */
+.cmp-table td.img {
+  width: 90px;
+  text-align: center;
+}
+
+.cmp-table td.img img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Ürün ismi */
+.cmp-table td.name a {
+  font-weight: 500;
+  color: #0073e6;
+  text-decoration: none;
+}
+
+.cmp-table td.name a:hover {
+  text-decoration: underline;
+}
+
+/* Pros & Cons */
+.cmp-table td.pros ul,
+.cmp-table td.cons ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.cmp-table td.pros li {
+  color: #155724;
+}
+
+.cmp-table td.cons li {
+  color: #721c24;
+}
+
+/* CTA buton */
+.cmp-table td.cta a {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #0073e6;
+  color: #fff;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.cmp-table td.cta a:hover {
+  background: #005bb5;
+}

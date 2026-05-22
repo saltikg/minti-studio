@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Admin - MintiProduct{% endblock %}</title>
+
+  <!-- Bootstrap -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="{{ url_for('admin_bp.static', filename='admin.css') }}">
+  <link rel="shortcut icon" href="{{ url_for('video_shorts_bp.static', filename='img/favicon-admin.ico') }}">
+
+  <!-- SEO / Index Protection -->
+  <meta name="robots" content="noindex, nofollow">
+</head>
+<body class="bg-light">
+
+  <!-- Top Navbar -->
+  <nav class="navbar navbar-dark bg-dark px-3">
+    <a class="navbar-brand text-light" href="{{ url_for('admin_bp.dashboard') }}">Minti Admin</a>
+    <a href="{{ url_for('admin_bp.logout') }}" class="btn btn-sm btn-outline-light">Logout</a>
+  </nav>
+
+  <!-- Main Layout -->
+  <div class="container-fluid my-4">
+    <div class="row">
+      <!-- Sidebar -->
+      <aside class="col-md-3 col-lg-2 mb-4">
+        <div class="list-group shadow-sm">
+
+          <!-- Existing Core Pages -->
+          <a href="{{ url_for('admin_bp.dashboard') }}"
+             class="list-group-item list-group-item-action {% if request.path == '/admin/' %}active{% endif %}">
+            🧩 Duplicate Contents
+          </a>
+
+          <a href="{{ url_for('admin_bp.all_contents') }}"
+             class="list-group-item list-group-item-action {% if '/admin/all' in request.path %}active{% endif %}">
+            📚 All Contents
+          </a>
+
+          <a href="{{ url_for('admin_bp.stats') }}"
+             class="list-group-item list-group-item-action {% if '/admin/stats' in request.path %}active{% endif %}">
+            📈 Stats
+          </a>
+
+          <!-- Divider -->
+          <div class="list-group-item text-muted small bg-light">
+            --- Definitions & Settings ---
+          </div>
+          <a href="{{ url_for('admin_bp.daily_trends_page') }}"
+             class="list-group-item list-group-item-action {% if request.endpoint == 'admin_bp.daily_trends_page' %}active{% endif %}">
+            🔍 Trends
+          </a>
+
+          {# YouTube group with collapsible submenu #}
+          <div class="list-group-item p-0 border-0">
+            <button
+              class="list-group-item list-group-item-action d-flex justify-content-between align-items-center border-0"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#youtubeMenu"
+              aria-expanded="{% if request.endpoint in ['admin_bp.youtube_trends_page', 'admin_bp.youtube_channels_page'] %}true{% else %}false{% endif %}"
+              aria-controls="youtubeMenu">
+              📺 YouTube
+              <span class="small text-muted">▾</span>
+            </button>
+            <div id="youtubeMenu"
+                 class="collapse {% if request.endpoint in ['admin_bp.youtube_trends_page', 'admin_bp.youtube_channels_page'] %}show{% endif %}">
+              <a href="{{ url_for('admin_bp.youtube_trends_page') }}"
+                 class="list-group-item list-group-item-action ps-4 {% if request.endpoint == 'admin_bp.youtube_trends_page' %}active{% endif %}">
+                Trends
+              </a>
+              <a href="{{ url_for('admin_bp.youtube_channels_page') }}"
+                 class="list-group-item list-group-item-action ps-4 {% if request.endpoint == 'admin_bp.youtube_channels_page' %}active{% endif %}">
+                Channels
+              </a>
+            </div>
+          </div>
+
+
+
+          <a href="{{ url_for('admin_bp.seasons_page') }}"
+   class="list-group-item list-group-item-action {% if '/admin/seasons' in request.path %}active{% endif %}">
+  🎄 Seasons
+</a>
+
+
+        {# <a href="{{ url_for('admin_bp.brands') }}">Brands</a> 
+
+             class="list-group-item list-group-item-action {% if '/admin/brands' in request.path %}active{% endif %}">
+            🏷️ Brands
+          </a>#}
+
+          <!-- Divider -->
+          <div class="list-group-item text-muted small bg-light">
+            --- Experimental / Idea Tools ---
+          </div>
+
+          <a href="{{ url_for('admin_bp.idea_planner_dashboard', _external=False) }}"
+   class="list-group-item list-group-item-action {% if '/admin/idea-planner' in request.path %}active{% endif %}">
+   💡 Idea Planner
+</a>
+
+
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="col-md-9 col-lg-10">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for cat, msg in messages %}
+            <div class="alert alert-{{cat}} alert-dismissible fade show" role="alert">
+              {{ msg }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+          {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
