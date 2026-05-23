@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import requests
 from typing import Dict, List, Optional
 
@@ -16,6 +17,42 @@ from src.trends.instagram_tokens import get_instagram_credentials
 
 class InstagramActionError(RuntimeError):
     pass
+
+
+def _extract_graph_error_message(resp: requests.Response) -> str:
+    body = (resp.text or "").strip()
+    try:
+        payload = resp.json() if body else {}
+    except ValueError:
+        payload = {}
+
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return body or f"Instagram Graph API request failed with status {resp.status_code}."
+
+    message = (error.get("message") or "").strip()
+    code = error.get("code")
+    error_type = error.get("type")
+
+    if code == 10:
+        return (
+            "Instagram yorum/etkileşim izni yok. Meta token'i "
+            "`instagram_manage_comments` ve ilgili page izinleriyle yeniden bağlayın."
+        )
+
+    if message:
+        return message
+
+    return json.dumps(
+        {
+            "error": {
+                "message": message or "Instagram Graph API request failed.",
+                "code": code,
+                "type": error_type,
+            }
+        },
+        ensure_ascii=False,
+    )
 
 
 def _extract_instagram_replies(comment: Dict[str, object]) -> List[Dict[str, object]]:
@@ -173,7 +210,7 @@ def _graph_request(method: str, path: str, token: str, *, params=None, data=None
     params["access_token"] = token
     resp = requests.request(method, url, params=params, data=data, timeout=20)
     if resp.status_code >= 400:
-        raise InstagramActionError(resp.text)
+        raise InstagramActionError(_extract_graph_error_message(resp))
     return resp.json() if resp.text else {}
 
 
