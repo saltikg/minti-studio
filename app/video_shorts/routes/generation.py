@@ -7216,6 +7216,7 @@ def instagram_oauth_callback():
             "page_id": page.get("id"),
             "page_name": page.get("name"),
             "page_access_token": page.get("access_token"),
+            "user_access_token": long_token,
             "instagram_business_account_id": ig_account.get("id"),
             "instagram_username": ig_account.get("username"),
             "has_instagram": bool(ig_account.get("id")),
@@ -7273,21 +7274,22 @@ def instagram_oauth_callback():
 
     if len(ig_ready_pages) == 1:
         choice = ig_ready_pages[0]
+        selected_token = choice.get("user_access_token") or choice.get("page_access_token")
         current_app.logger.info(
             "Instagram OAuth auto_select page_id=%s ig_id=%s token_present=%s",
             choice.get("page_id"),
             choice.get("instagram_business_account_id"),
-            bool(choice.get("page_access_token")),
+            bool(selected_token),
         )
         profile = None
         if not choice.get("instagram_username"):
             profile = _fetch_instagram_profile(
-                choice.get("page_access_token"), choice.get("instagram_business_account_id")
+                selected_token, choice.get("instagram_business_account_id")
             )
         choice_username = choice.get("instagram_username") or (profile or {}).get("username")
         store_instagram_token(
             user_id=user_id,
-            page_access_token=choice["page_access_token"],
+            page_access_token=selected_token,
             instagram_business_account_id=choice["instagram_business_account_id"],
             instagram_username=choice_username,
             facebook_page_id=choice["page_id"] or "",
@@ -7380,7 +7382,8 @@ def instagram_select_page():
         if not choice.get("instagram_business_account_id"):
             flash("Bu Facebook sayfasına bağlı Instagram hesabı yok; lütfen başka bir sayfa seçin.", "warning")
             return redirect(url_for("video_shorts_bp.instagram_select_page"))
-        if not choice.get("page_access_token"):
+        selected_token = choice.get("user_access_token") or choice.get("page_access_token")
+        if not selected_token:
             flash("Seçilen sayfa için access token alınamadı; bağlantıyı yeniden başlatın.", "danger")
             return redirect(url_for("video_shorts_bp.social_connect"))
 
@@ -7389,19 +7392,19 @@ def instagram_select_page():
             current_user["id"],
             choice.get("page_id"),
             choice.get("instagram_business_account_id"),
-            bool(choice.get("page_access_token")),
+            bool(selected_token),
             bool(choice.get("instagram_business_account_id")),
         )
 
         profile = None
         if not choice.get("instagram_username"):
             profile = _fetch_instagram_profile(
-                choice.get("page_access_token"), choice.get("instagram_business_account_id")
+                selected_token, choice.get("instagram_business_account_id")
             )
         choice_username = choice.get("instagram_username") or (profile or {}).get("username")
         store_instagram_token(
             user_id=current_user["id"],
-            page_access_token=choice["page_access_token"],
+            page_access_token=selected_token,
             instagram_business_account_id=choice["instagram_business_account_id"],
             instagram_username=choice_username,
             facebook_page_id=choice.get("page_id") or "",
