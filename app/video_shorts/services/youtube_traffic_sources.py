@@ -17,6 +17,7 @@ from app.video_shorts.services.youtube_oauth import (
 logger = logging.getLogger(__name__)
 
 RAW_TRAFFIC_TABLE = "raw_yt_traffic_sources"
+RAW_RETENTION_TABLE = "raw_yt_video_retention"
 BATCH_SIZE = 20
 MAX_RESULTS = 200
 INTER_BATCH_SLEEP_SECONDS = 0.8
@@ -33,6 +34,25 @@ VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (snapshot_date, video_id, traffic_source_type)
 DO UPDATE SET
     views = EXCLUDED.views,
+    fetched_at = EXCLUDED.fetched_at
+"""
+RETENTION_UPSERT_SQL = f"""
+INSERT INTO {RAW_RETENTION_TABLE} (
+    snapshot_date,
+    video_id,
+    views,
+    average_view_duration_seconds,
+    average_view_percentage,
+    subscribers_gained,
+    fetched_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (snapshot_date, video_id)
+DO UPDATE SET
+    views = EXCLUDED.views,
+    average_view_duration_seconds = EXCLUDED.average_view_duration_seconds,
+    average_view_percentage = EXCLUDED.average_view_percentage,
+    subscribers_gained = EXCLUDED.subscribers_gained,
     fetched_at = EXCLUDED.fetched_at
 """
 
@@ -104,6 +124,8 @@ def _execute_query_with_retry(
     end_date: date,
     batch: Sequence[str],
     start_index: int,
+    metrics: str,
+    dimensions: str,
 ):
     attempt = 0
     while True:
@@ -114,8 +136,8 @@ def _execute_query_with_retry(
                     ids="channel==MINE",
                     startDate=start_date.isoformat(),
                     endDate=end_date.isoformat(),
-                    metrics="views",
-                    dimensions="day,video,insightTrafficSourceType",
+                    metrics=metrics,
+                    dimensions=dimensions,
                     filters="video==" + ",".join(batch),
                     maxResults=MAX_RESULTS,
                     startIndex=start_index,
@@ -137,6 +159,24 @@ def _execute_query_with_retry(
             attempt += 1
 
 
+def _parse_int(value: object) -> Optional[int]:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_float(value: object) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_rows(payload_rows: Sequence[Sequence[object]], fetched_at: datetime) -> List[Tuple[object, ...]]:
     rows: List[Tuple[object, ...]] = []
     for raw_row in payload_rows:
@@ -145,16 +185,37 @@ def _normalize_rows(payload_rows: Sequence[Sequence[object]], fetched_at: dateti
         snapshot_date, video_id, traffic_source_type, views = raw_row[:4]
         if not snapshot_date or not video_id or not traffic_source_type:
             continue
-        try:
-            view_count = int(views)
-        except (TypeError, ValueError):
-            view_count = 0
         rows.append(
             (
                 date.fromisoformat(str(snapshot_date)),
                 str(video_id).strip(),
                 str(traffic_source_type).strip(),
-                view_count,
+                _parse_int(views),
+                fetched_at,
+            )
+        )
+    return rows
+
+
+def _normalize_retention_rows(
+    payload_rows: Sequence[Sequence[object]],
+    fetched_at: datetime,
+) -> List[Tuple[object, ...]]:
+    rows: List[Tuple[object, ...]] = []
+    for raw_row in payload_rows:
+        if len(raw_row) < 6:
+            continue
+        snapshot_date, video_id, views, avg_duration, avg_percentage, subscribers_gained = raw_row[:6]
+        if not snapshot_date or not video_id:
+            continue
+        rows.append(
+            (
+                date.fromisoformat(str(snapshot_date)),
+                str(video_id).strip(),
+                _parse_int(views),
+                _parse_float(avg_duration),
+                _parse_float(avg_percentage),
+                _parse_int(subscribers_gained),
                 fetched_at,
             )
         )
@@ -169,6 +230,7 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
         result = {
             "videos": 0,
             "rows_written": 0,
+            "retention_rows_written": 0,
             "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",
         }
         log.info("YouTube traffic sources skipped result=%s", result)
@@ -179,6 +241,7 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
         result = {
             "videos": len(video_ids),
             "rows_written": 0,
+            "retention_rows_written": 0,
             "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",
         }
         log.warning("YouTube traffic sources skipped: no valid OAuth token result=%s", result)
@@ -186,6 +249,7 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
 
     fetched_at = datetime.utcnow()
     write_rows: List[Tuple[object, ...]] = []
+    retention_write_rows: List[Tuple[object, ...]] = []
     for batch in _chunked(video_ids, BATCH_SIZE):
         start_index = 1
         while True:
@@ -195,18 +259,38 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
                 end_date=end_date,
                 batch=batch,
                 start_index=start_index,
+                metrics="views",
+                dimensions="day,video,insightTrafficSourceType",
             )
             payload_rows = response.get("rows") or []
             write_rows.extend(_normalize_rows(payload_rows, fetched_at))
             if len(payload_rows) < MAX_RESULTS:
                 break
             start_index += len(payload_rows)
+        start_index = 1
+        while True:
+            retention_response = _execute_query_with_retry(
+                analytics,
+                start_date=resolved_start_date,
+                end_date=end_date,
+                batch=batch,
+                start_index=start_index,
+                metrics="views,averageViewDuration,averageViewPercentage,subscribersGained",
+                dimensions="day,video",
+            )
+            retention_payload_rows = retention_response.get("rows") or []
+            retention_write_rows.extend(_normalize_retention_rows(retention_payload_rows, fetched_at))
+            if len(retention_payload_rows) < MAX_RESULTS:
+                break
+            start_index += len(retention_payload_rows)
         time.sleep(INTER_BATCH_SLEEP_SECONDS)
 
     conn = get_db()
     try:
         if write_rows:
             conn.executemany(UPSERT_SQL, write_rows)
+        if retention_write_rows:
+            conn.executemany(RETENTION_UPSERT_SQL, retention_write_rows)
         conn.commit()
     except Exception:
         try:
@@ -220,6 +304,7 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
     result = {
         "videos": len(video_ids),
         "rows_written": len(write_rows),
+        "retention_rows_written": len(retention_write_rows),
         "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",
     }
     log.info("YouTube traffic sources ingest result=%s", result)
