@@ -76,6 +76,14 @@ def _resolve_window(start_date: Optional[date] = None) -> Tuple[date, date]:
     return start_date, end_date
 
 
+def _date_chunks(start: date, end: date, chunk_days: int = 30):
+    current = start
+    while current <= end:
+        chunk_end = min(current + timedelta(days=chunk_days - 1), end)
+        yield current, chunk_end
+        current = chunk_end + timedelta(days=1)
+
+
 def _load_video_ids() -> List[str]:
     conn = get_db_readonly()
     try:
@@ -123,7 +131,6 @@ def _execute_query_with_retry(
     start_date: date,
     end_date: date,
     batch: Sequence[str],
-    start_index: int,
     metrics: str,
     dimensions: str,
 ):
@@ -140,7 +147,6 @@ def _execute_query_with_retry(
                     dimensions=dimensions,
                     filters="video==" + ",".join(batch),
                     maxResults=MAX_RESULTS,
-                    startIndex=start_index,
                 )
                 .execute()
             )
@@ -250,40 +256,29 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
     fetched_at = datetime.utcnow()
     write_rows: List[Tuple[object, ...]] = []
     retention_write_rows: List[Tuple[object, ...]] = []
-    for batch in _chunked(video_ids, BATCH_SIZE):
-        start_index = 1
-        while True:
+    for chunk_start, chunk_end in _date_chunks(resolved_start_date, end_date):
+        for batch in _chunked(video_ids, BATCH_SIZE):
             response = _execute_query_with_retry(
                 analytics,
-                start_date=resolved_start_date,
-                end_date=end_date,
+                start_date=chunk_start,
+                end_date=chunk_end,
                 batch=batch,
-                start_index=start_index,
                 metrics="views",
                 dimensions="day,video,insightTrafficSourceType",
             )
             payload_rows = response.get("rows") or []
             write_rows.extend(_normalize_rows(payload_rows, fetched_at))
-            if len(payload_rows) < MAX_RESULTS:
-                break
-            start_index += len(payload_rows)
-        start_index = 1
-        while True:
             retention_response = _execute_query_with_retry(
                 analytics,
-                start_date=resolved_start_date,
-                end_date=end_date,
+                start_date=chunk_start,
+                end_date=chunk_end,
                 batch=batch,
-                start_index=start_index,
                 metrics="views,averageViewDuration,averageViewPercentage,subscribersGained",
                 dimensions="day,video",
             )
             retention_payload_rows = retention_response.get("rows") or []
             retention_write_rows.extend(_normalize_retention_rows(retention_payload_rows, fetched_at))
-            if len(retention_payload_rows) < MAX_RESULTS:
-                break
-            start_index += len(retention_payload_rows)
-        time.sleep(INTER_BATCH_SLEEP_SECONDS)
+            time.sleep(INTER_BATCH_SLEEP_SECONDS)
 
     conn = get_db()
     try:
