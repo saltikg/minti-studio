@@ -9,6 +9,8 @@ __pycache__/
 .idea/
 .vscode/
 .cache/
+*.pyc
+.env
 
 # Generated / data / logs
 warehouse/
