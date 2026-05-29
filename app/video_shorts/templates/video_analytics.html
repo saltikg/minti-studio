@@ -530,6 +530,18 @@
           const trafficMatch = trafficRows.find((traffic) => Number(traffic.days_since_publish) === day);
           return trafficMatch ? Number(trafficMatch.views || 0) : 0;
         });
+        const totalViews = lifecycleRows.reduce((sum, rowItem) => sum + Number(rowItem.daily_views || 0), 0);
+        const threshold = totalViews * 0.90;
+        let cumulative = 0;
+        let cutoffDay = 7;
+        for (const rowItem of lifecycleRows) {
+          cumulative += Number(rowItem.daily_views || 0);
+          if (cumulative >= threshold) {
+            cutoffDay = Number(rowItem.days_since_publish || 0) + 3;
+            break;
+          }
+        }
+        const xMax = Math.max(7, Math.min(30, cutoffDay));
 
         const detailRow = document.createElement("tr");
         detailRow.className = "video-analytics-detail-row";
@@ -613,6 +625,7 @@
             },
             scales: {
               x: {
+                max: xMax,
                 title: {
                   display: true,
                   text: "Days Since Publish",
