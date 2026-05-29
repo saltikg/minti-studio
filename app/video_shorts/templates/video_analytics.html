@@ -1,0 +1,169 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Video Analytics{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .video-analytics-page {
+      padding-top: 0.25rem;
+    }
+    .video-analytics-page .page-title {
+      font-size: 1.9rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .video-analytics-page .page-subtitle {
+      color: rgba(226, 232, 240, 0.7);
+    }
+    .video-analytics-page .vs-card {
+      border: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .video-analytics-table {
+      margin-bottom: 0;
+    }
+    .video-analytics-table th,
+    .video-analytics-table td {
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .video-analytics-table .title-cell {
+      min-width: 280px;
+      max-width: 420px;
+      white-space: normal;
+      color: #f8fafc;
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    .video-analytics-table .metric-cell {
+      font-variant-numeric: tabular-nums;
+    }
+    .video-analytics-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.28rem 0.62rem;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .video-analytics-badge.discovery-algorithm {
+      background: rgba(249, 115, 22, 0.18);
+      color: #fdba74;
+      border: 1px solid rgba(249, 115, 22, 0.32);
+    }
+    .video-analytics-badge.discovery-demand {
+      background: rgba(34, 197, 94, 0.18);
+      color: #86efac;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .video-analytics-badge.discovery-mixed {
+      background: rgba(148, 163, 184, 0.16);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+    }
+    .video-analytics-badge.retention-high {
+      background: rgba(34, 197, 94, 0.18);
+      color: #86efac;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .video-analytics-badge.retention-mid {
+      background: rgba(250, 204, 21, 0.16);
+      color: #fde68a;
+      border: 1px solid rgba(250, 204, 21, 0.28);
+    }
+    .video-analytics-badge.retention-low {
+      background: rgba(239, 68, 68, 0.16);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.28);
+    }
+    .video-analytics-empty {
+      padding: 3.5rem 1rem;
+      text-align: center;
+      color: rgba(226, 232, 240, 0.68);
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="video-analytics-page">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+      <div>
+        <h1 class="page-title mb-1">Video Analytics</h1>
+        <p class="page-subtitle mb-0">Performance summary for published videos.</p>
+      </div>
+      {% if brand_id %}
+        <span class="badge text-bg-dark">Brand ID: {{ brand_id }}</span>
+      {% endif %}
+    </div>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-body p-0">
+        {% if videos %}
+          <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle video-analytics-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Publish Date</th>
+                  <th>Total Views</th>
+                  <th>Algorithm %</th>
+                  <th>Search %</th>
+                  <th>Subscriber %</th>
+                  <th>Discovery Label</th>
+                  <th>Retention %</th>
+                  <th>Retention Tier</th>
+                  <th>Duration (sec)</th>
+                  <th>Ever Looped</th>
+                  <th>Subs Gained</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for video in videos %}
+                  {% set discovery_class = 'discovery-mixed' %}
+                  {% if video.discovery_label == 'algorithm_driven' %}
+                    {% set discovery_class = 'discovery-algorithm' %}
+                  {% elif video.discovery_label == 'demand_driven' %}
+                    {% set discovery_class = 'discovery-demand' %}
+                  {% endif %}
+                  {% set retention_class = 'retention-low' %}
+                  {% if video.retention_tier == 'high' %}
+                    {% set retention_class = 'retention-high' %}
+                  {% elif video.retention_tier == 'mid' %}
+                    {% set retention_class = 'retention-mid' %}
+                  {% endif %}
+                  <tr>
+                    <td class="title-cell">{{ video.generated_title or video.youtube_video_id or 'Untitled' }}</td>
+                    <td class="metric-cell">{{ video.publish_date or '—' }}</td>
+                    <td class="metric-cell">{{ "{:,}".format(video.total_views or 0) }}</td>
+                    <td class="metric-cell">{{ "{:.1f}%".format(video.algorithm_pct or 0) }}</td>
+                    <td class="metric-cell">{{ "{:.1f}%".format(video.search_pct or 0) }}</td>
+                    <td class="metric-cell">{{ "{:.1f}%".format(video.subscriber_pct or 0) }}</td>
+                    <td>
+                      <span class="video-analytics-badge {{ discovery_class }}">
+                        {{ (video.discovery_label or 'mixed')|replace('_', ' ') }}
+                      </span>
+                    </td>
+                    <td class="metric-cell">{{ "{:.1f}%".format(video.avg_retention_pct or 0) }}</td>
+                    <td>
+                      <span class="video-analytics-badge {{ retention_class }}">
+                        {{ video.retention_tier or 'low' }}
+                      </span>
+                    </td>
+                    <td class="metric-cell">{{ video.video_duration_sec or video.avg_duration_sec or 0 }}</td>
+                    <td class="metric-cell">{% if video.ever_looped %}🔁{% else %}—{% endif %}</td>
+                    <td class="metric-cell">{{ "{:+,}".format(video.total_subs_gained or 0) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="video-analytics-empty">
+            No video analytics rows found.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endblock %}

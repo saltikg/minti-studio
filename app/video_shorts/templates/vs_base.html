@@ -104,6 +104,13 @@
             <span>Dashboard V2</span>
           </a>
 
+          <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">insights</span>
+            <span>Video Analytics</span>
+          </a>
+
           <a href="{{ url_for('video_shorts_bp.workflow_monthly_top_video') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
                     {% if '/video_shorts/workflow/monthly-top-video' in request.path %}active{% endif %}">
