@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 
-from flask import render_template, request
+from flask import abort, jsonify, render_template, request
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id
@@ -19,6 +20,7 @@ SORT_COLUMN_MAP = {
     "search_pct": "search_pct",
     "subscriber_pct": "subscriber_pct",
 }
+VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _rows_to_dict(cursor):
@@ -138,3 +140,47 @@ def video_analytics_page():
         )
     finally:
         conn.close()
+
+
+@video_shorts_bp.route("/video-analytics/lifecycle/<video_id>", methods=["GET"])
+def video_lifecycle_api(video_id):
+    if not VIDEO_ID_PATTERN.fullmatch(video_id or ""):
+        abort(400)
+
+    conn = get_db_readonly()
+    try:
+        cursor = conn.execute(
+            """
+            SELECT days_since_publish, daily_views, snapshot_date::text
+            FROM analytics.fct_video_lifecycle
+            WHERE video_id = ?
+            ORDER BY days_since_publish
+            """,
+            [video_id],
+        )
+        lifecycle_rows = _rows_to_dict(cursor)
+
+        cursor2 = conn.execute(
+            """
+            SELECT
+                l.days_since_publish,
+                t.traffic_source_type,
+                SUM(t.views) AS views
+            FROM analytics.fct_video_lifecycle l
+            JOIN analytics.raw_yt_traffic_sources t
+                ON t.video_id = l.video_id
+               AND t.snapshot_date = l.snapshot_date
+            WHERE l.video_id = ?
+            GROUP BY l.days_since_publish, t.traffic_source_type
+            ORDER BY l.days_since_publish, views DESC
+            """,
+            [video_id],
+        )
+        traffic_rows = _rows_to_dict(cursor2)
+    finally:
+        conn.close()
+
+    return jsonify({
+        "lifecycle": lifecycle_rows,
+        "traffic": traffic_rows,
+    })
