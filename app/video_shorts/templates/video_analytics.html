@@ -329,6 +329,7 @@
             <table class="table table-dark table-hover align-middle video-analytics-table">
               <thead>
                 <tr>
+                  <th>Lifecycle</th>
                   <th>Title</th>
                   <th>{{ sort_link('effective_publish_at', 'Publish Date') }}</th>
                   <th>{{ sort_link('total_views', 'Total Views') }}</th>
@@ -341,7 +342,6 @@
                   <th>Duration (sec)</th>
                   <th>Ever Looped</th>
                   <th>Subs Gained</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -359,6 +359,17 @@
                     {% set retention_class = 'retention-mid' %}
                   {% endif %}
                   <tr data-video-id="{{ video.youtube_video_id }}">
+                    <td class="video-analytics-action-cell">
+                      <button
+                        type="button"
+                        class="video-analytics-lifecycle-btn lifecycle-btn"
+                        data-video-id="{{ video.youtube_video_id }}"
+                        title="Show lifecycle"
+                        aria-label="Show lifecycle"
+                      >
+                        📈
+                      </button>
+                    </td>
                     <td class="title-cell">{{ video.generated_title or video.youtube_video_id or 'Untitled' }}</td>
                     <td class="metric-cell">{{ video.publish_date or '—' }}</td>
                     <td class="metric-cell">{{ "{:,}".format(video.total_views or 0) }}</td>
@@ -379,17 +390,6 @@
                     <td class="metric-cell">{{ video.video_duration_sec or video.avg_duration_sec or 0 }}</td>
                     <td class="metric-cell">{% if video.ever_looped %}🔁{% else %}—{% endif %}</td>
                     <td class="metric-cell">{{ "{:+,}".format(video.total_subs_gained or 0) }}</td>
-                    <td class="video-analytics-action-cell">
-                      <button
-                        type="button"
-                        class="video-analytics-lifecycle-btn lifecycle-btn"
-                        data-video-id="{{ video.youtube_video_id }}"
-                        title="Show lifecycle"
-                        aria-label="Show lifecycle"
-                      >
-                        📈
-                      </button>
-                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
