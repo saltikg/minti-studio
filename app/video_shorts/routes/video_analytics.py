@@ -167,7 +167,7 @@ def video_lifecycle_api(video_id):
                 t.traffic_source_type,
                 SUM(t.views) AS views
             FROM analytics.fct_video_lifecycle l
-            JOIN analytics.raw_yt_traffic_sources t
+            JOIN main.raw_yt_traffic_sources t
                 ON t.video_id = l.video_id
                AND t.snapshot_date = l.snapshot_date
             WHERE l.video_id = ?
