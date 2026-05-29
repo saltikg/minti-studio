@@ -537,10 +537,14 @@
         return lifecycleRows.slice(0, 14).map((item) => {
           const day = Number(item.days_since_publish || 0);
           const topSource = topSourceMap.get(day);
+          const views = Number(item.daily_views || 0);
+          const topSourceViews = topSource ? Number(topSource.views || 0) : 0;
           return {
             day,
-            views: Number(item.daily_views || 0),
+            views,
             source: topSource ? topSource.type : "—",
+            topSourceViews,
+            sourceShare: views > 0 ? (topSourceViews / views) * 100 : 0,
           };
         });
       }
@@ -549,11 +553,7 @@
         const lifecycleRows = payload.lifecycle || [];
         const trafficRows = payload.traffic || [];
         const topSourceRows = buildTopSourceRows(lifecycleRows, trafficRows);
-        const topSourceViews = lifecycleRows.map((item) => {
-          const day = Number(item.days_since_publish || 0);
-          const trafficMatch = trafficRows.find((traffic) => Number(traffic.days_since_publish) === day);
-          return trafficMatch ? Number(trafficMatch.views || 0) : 0;
-        });
+        const topSourceRowMap = new Map(topSourceRows.map((item) => [item.day, item]));
         const totalViews = lifecycleRows.reduce((sum, rowItem) => sum + Number(rowItem.daily_views || 0), 0);
         const threshold = totalViews * 0.90;
         let cumulative = 0;
@@ -582,6 +582,7 @@
                       <th>Day</th>
                       <th>Views</th>
                       <th>Top Source</th>
+                      <th>Source Share %</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -590,6 +591,7 @@
                         <td>${item.day}</td>
                         <td>${item.views.toLocaleString()}</td>
                         <td>${escapeHtml(item.source)}</td>
+                        <td>${item.sourceShare.toFixed(1)}%</td>
                       </tr>
                     `).join("")}
                   </tbody>
@@ -616,15 +618,7 @@
                 yAxisID: "y",
                 tension: 0.25,
                 pointRadius: 2,
-              },
-              {
-                label: "Top Source Views",
-                data: topSourceViews,
-                borderColor: "#f59e0b",
-                backgroundColor: "rgba(245, 158, 11, 0.16)",
-                yAxisID: "y1",
-                tension: 0.2,
-                pointRadius: 2,
+                pointHoverRadius: 4,
               },
             ],
           },
@@ -644,6 +638,22 @@
               legend: {
                 labels: {
                   color: "#cbd5e1",
+                },
+              },
+              tooltip: {
+                callbacks: {
+                  afterBody(context) {
+                    const day = Number(context[0]?.label || 0);
+                    const topSource = topSourceRowMap.get(day);
+                    if (!topSource) {
+                      return [];
+                    }
+                    return [
+                      `Top Source: ${topSource.source}`,
+                      `Top Source Views: ${topSource.topSourceViews.toLocaleString()}`,
+                      `Top Source Share: ${topSource.sourceShare.toFixed(1)}%`,
+                    ];
+                  },
                 },
               },
             },
@@ -669,15 +679,6 @@
                 },
                 grid: {
                   color: "rgba(148, 163, 184, 0.12)",
-                },
-              },
-              y1: {
-                position: "right",
-                ticks: {
-                  color: "#fbbf24",
-                },
-                grid: {
-                  drawOnChartArea: false,
                 },
               },
             },
