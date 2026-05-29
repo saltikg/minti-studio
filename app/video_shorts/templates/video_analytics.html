@@ -59,6 +59,10 @@
     .video-analytics-table {
       margin-bottom: 0;
     }
+    .video-analytics-page .table-responsive {
+      overflow-x: auto;
+      overflow-y: visible;
+    }
     .video-analytics-table th,
     .video-analytics-table td {
       vertical-align: middle;
@@ -159,6 +163,11 @@
       border-color: rgba(45, 212, 191, 0.32);
       color: #f8fafc;
     }
+    .video-analytics-page .card,
+    .video-analytics-page .card-body,
+    .video-analytics-page .card-footer {
+      overflow: visible;
+    }
     .video-analytics-summary {
       color: rgba(226, 232, 240, 0.72);
       font-size: 0.9rem;
@@ -188,10 +197,12 @@
       padding: 0;
       border-top: 0;
       background: rgba(2, 6, 23, 0.9);
+      overflow: visible;
     }
     .video-analytics-detail-shell {
       padding: 1rem 1.1rem 1.2rem;
       border-top: 1px solid rgba(148, 163, 184, 0.12);
+      overflow: visible;
     }
     .video-analytics-detail-loading,
     .video-analytics-detail-error {
@@ -201,9 +212,11 @@
     .video-analytics-detail-chart {
       height: 250px;
       margin-bottom: 1rem;
+      min-width: 720px;
     }
     .video-analytics-detail-table {
       margin-bottom: 0;
+      width: 100%;
     }
     .video-analytics-detail-table th,
     .video-analytics-detail-table td {
@@ -225,6 +238,9 @@
     @media (max-width: 767.98px) {
       .video-analytics-date-grid {
         grid-template-columns: 1fr;
+      }
+      .video-analytics-detail-chart {
+        min-width: 560px;
       }
     }
   </style>
