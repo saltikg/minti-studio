@@ -51,3 +51,5 @@ app/video_shorts/static/user_images/
 app/video_shorts/static/transitions/
 *.m4a
 *.mov
+
+venv/
