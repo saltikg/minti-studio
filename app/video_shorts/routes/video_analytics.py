@@ -51,9 +51,9 @@ def _normalize_filters():
     if discovery_label not in DISCOVERY_LABEL_OPTIONS:
         discovery_label = ""
 
-    sort_by = (request.args.get("sort_by") or "total_views").strip().lower()
+    sort_by = (request.args.get("sort_by") or "effective_publish_at").strip().lower()
     if sort_by not in SORT_COLUMN_MAP:
-        sort_by = "total_views"
+        sort_by = "effective_publish_at"
 
     sort_dir = (request.args.get("sort_dir") or "desc").strip().lower()
     if sort_dir not in {"asc", "desc"}:
@@ -76,7 +76,6 @@ def video_analytics_page():
     conn = get_db_readonly()
     try:
         where_clauses = [
-            "total_views > 0",
             "effective_publish_at::date BETWEEN ? AND ?",
         ]
         params = [start_date.isoformat(), end_date.isoformat()]
