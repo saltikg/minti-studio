@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import abort, jsonify, render_template, request
 
@@ -12,6 +14,9 @@ from app.video_shorts.services.db import get_db_readonly
 
 PAGE_SIZE = 25
 DISCOVERY_LABEL_OPTIONS = {"algorithm_driven", "demand_driven", "mixed"}
+DBT_RUN_RESULTS_PATH = Path("/home/ubuntu/apps/dbt/minti_dbt/target/run_results.json")
+DBT_LOG_PATH = Path("/home/ubuntu/apps/dbt/logs/dbt.log")
+DEFAULT_TIME_ZONE = "America/Los_Angeles"
 SORT_COLUMN_MAP = {
     "total_views": "total_views",
     "avg_retention_pct": "avg_retention_pct",
@@ -38,6 +43,29 @@ def _parse_date_param(value):
             return datetime.fromisoformat(value).date()
         except ValueError:
             return None
+
+
+def _latest_dbt_update_utc():
+    latest = None
+    for path in (DBT_RUN_RESULTS_PATH, DBT_LOG_PATH):
+        try:
+            candidate = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if latest is None or candidate > latest:
+            latest = candidate
+    return latest
+
+
+def _format_dbt_last_run_label(timestamp, tz_name):
+    if timestamp is None:
+        return "DBT Last Run: unavailable"
+    try:
+        local_tz = ZoneInfo((tz_name or DEFAULT_TIME_ZONE).strip() or DEFAULT_TIME_ZONE)
+    except Exception:
+        local_tz = ZoneInfo(DEFAULT_TIME_ZONE)
+    local_time = timestamp.astimezone(local_tz)
+    return f"DBT Last Run: {local_time.strftime('%Y-%m-%d %H:%M %Z')}"
 
 
 def _normalize_filters():
@@ -72,6 +100,10 @@ def video_analytics_page():
     brand_id = current_brand_id()
     start_date, end_date, discovery_label, sort_by, sort_dir, page = _normalize_filters()
     sort_col = SORT_COLUMN_MAP[sort_by]
+    dbt_last_run_label = _format_dbt_last_run_label(
+        _latest_dbt_update_utc(),
+        request.cookies.get("timezone") or DEFAULT_TIME_ZONE,
+    )
 
     conn = get_db_readonly()
     try:
@@ -136,6 +168,7 @@ def video_analytics_page():
             total_count=total_count,
             total_pages=total_pages,
             page_size=PAGE_SIZE,
+            dbt_last_run_label=dbt_last_run_label,
         )
     finally:
         conn.close()

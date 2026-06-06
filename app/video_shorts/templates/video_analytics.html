@@ -338,7 +338,10 @@
       </div>
       <div class="text-end">
         {% if brand_id %}
-          <div class="mb-2"><span class="badge text-bg-dark">Brand ID: {{ brand_id }}</span></div>
+          <div class="mb-2 d-flex flex-wrap justify-content-end gap-2">
+            <span class="badge text-bg-dark">Brand ID: {{ brand_id }}</span>
+            <span class="badge text-bg-secondary">{{ dbt_last_run_label }}</span>
+          </div>
         {% endif %}
         <div class="video-analytics-summary">
           Showing {{ videos|length }} of {{ total_count }} videos
