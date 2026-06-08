@@ -344,7 +344,6 @@ def get_channel_metadata(channel_url: str):
     Yeni tam tarama mimarisinde bunu kullanacağız.
     """
 
-    _require_api_key()
     url = channel_url.strip()
 
     # Önce mümkünse channel_id çıkarmaya çalış
