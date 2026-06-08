@@ -25,6 +25,14 @@ def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
     return 8_000_000_000_000_000 + (value % 999_999_999_999_999)
 
 
+def _next_channel_id(conn) -> int:
+    row = conn.execute("SELECT COALESCE(MAX(channel_id), 0) + 1 FROM youtube_channels").fetchone()
+    try:
+        return int(row[0]) if row else 1
+    except Exception:
+        return 1
+
+
 def _format_channel_timestamp(value, tz_name: str) -> str:
     if not value:
         return ""
@@ -166,9 +174,9 @@ def channels_page():
 
     # ----- POST: add channel -----
     if request.method == "POST":
-        channel_name = request.form.get("channel_name")
-        channel_url = request.form.get("channel_url")
-        notes = request.form.get("notes")
+        channel_name = (request.form.get("channel_name") or "").strip()
+        channel_url = (request.form.get("channel_url") or "").strip()
+        notes = (request.form.get("notes") or "").strip() or None
 
         if not channel_name or not channel_url:
             flash("Channel name and URL are required.", "danger")
@@ -176,12 +184,32 @@ def channels_page():
 
         conn = get_db()
         owner_id = current_user["id"] if current_user else None
+        existing = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id IS NOT DISTINCT FROM ?
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND (
+                lower(channel_url) = lower(?)
+                OR lower(channel_name) = lower(?)
+              )
+            LIMIT 1
+            """,
+            [owner_id, brand_id, channel_url, channel_name],
+        ).fetchone()
+        if existing:
+            conn.close()
+            flash("This channel already exists.", "warning")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+
+        next_channel_id = _next_channel_id(conn)
         conn.execute(
             """
-            INSERT INTO youtube_channels (channel_name, channel_url, notes, owner_user_id, brand_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO youtube_channels (channel_id, channel_name, channel_url, notes, owner_user_id, brand_id, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, true)
             """,
-            [channel_name, channel_url, notes, owner_id, brand_id],
+            [next_channel_id, channel_name, channel_url, notes, owner_id, brand_id],
         )
         conn.commit()
         conn.close()
