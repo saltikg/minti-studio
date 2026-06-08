@@ -141,7 +141,6 @@ def extract_channel_id(channel_url: str):
     - https://www.youtube.com/@NadirKilicOfficial
     """
 
-    _require_api_key()
     url = channel_url.strip()
 
     # 1) /channel/UCxxxxxx formatı
