@@ -2368,7 +2368,7 @@ def videos_page(channel_id):
                             v["title"],
                             v["published_at"],
                             v["thumbnail_url"],
-                            0,  # default: captions off
+                            False,  # default: captions off
                             stats.get("duration_seconds"),
                             stats.get("view_count"),
                             stats.get("like_count"),
@@ -3764,9 +3764,9 @@ def bulk_update_transcripts(channel_id):
             continue
 
     conn = get_db()
-    # reset all to 0 for this channel
+    # reset all to false for this channel
     conn.execute(
-        "UPDATE youtube_videos SET fetch_transcript = 0 WHERE channel_id = ?",
+        "UPDATE youtube_videos SET fetch_transcript = FALSE WHERE channel_id = ?",
         [channel_id],
     )
 
@@ -3775,11 +3775,12 @@ def bulk_update_transcripts(channel_id):
         placeholders = ",".join("?" * len(selected_ids))
         params = [channel_id] + selected_ids
         conn.execute(
-            f"UPDATE youtube_videos SET fetch_transcript = 1 WHERE channel_id = ? AND id IN ({placeholders})",
+            f"UPDATE youtube_videos SET fetch_transcript = TRUE WHERE channel_id = ? AND id IN ({placeholders})",
             params,
         )
         updated = len(selected_ids)
 
+    conn.commit()
     conn.close()
     flash(f"Caption readiness updated for {updated} video(s).", "success")
     return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
