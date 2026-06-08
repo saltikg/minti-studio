@@ -10,7 +10,7 @@ from google.auth.exceptions import RefreshError
 
 from app.video_shorts.services.youtube_oauth import get_access_token, list_stored_refresh_tokens
 
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
 class YoutubeApiError(Exception):
@@ -21,8 +21,102 @@ class YoutubeApiError(Exception):
 
 
 def _require_api_key():
-    if not YOUTUBE_API_KEY:
+    if not _youtube_api_key():
         raise YoutubeApiError("YOUTUBE_API_KEY is not set in environment")
+
+
+def _youtube_api_key() -> str:
+    return (os.environ.get("YOUTUBE_API_KEY") or "").strip()
+
+
+def _candidate_oauth_user_ids(preferred_user_id: Optional[str] = None) -> List[Optional[str]]:
+    candidates: List[Optional[str]] = []
+    seen = set()
+
+    def _add(value: Optional[str]) -> None:
+        normalized = (str(value).strip() if value is not None else None)
+        key = normalized or "__default__"
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(normalized)
+
+    _add(preferred_user_id)
+    _add(None)
+    for token_info in list_stored_refresh_tokens():
+        if token_info.get("reauth_required"):
+            continue
+        _add(token_info.get("user_id"))
+    return candidates
+
+
+def _youtube_get_json(
+    endpoint: str,
+    params: Dict[str, Any],
+    *,
+    timeout: int = 10,
+    user_id: Optional[str] = None,
+    require_auth: bool = True,
+) -> Dict[str, Any]:
+    api_key = _youtube_api_key()
+    last_error: Optional[Exception] = None
+    url = f"{YOUTUBE_API_BASE}/{endpoint}"
+
+    if api_key:
+        try:
+            resp = requests.get(url, params={**params, "key": api_key}, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json() or {}
+        except requests.RequestException as exc:
+            last_error = exc
+
+    for candidate_user_id in _candidate_oauth_user_ids(user_id):
+        try:
+            access_token = get_access_token(user_id=candidate_user_id)
+        except (RefreshError, requests.RequestException) as exc:
+            last_error = exc
+            continue
+        except Exception as exc:
+            last_error = exc
+            continue
+        if not access_token:
+            continue
+        try:
+            resp = requests.get(
+                url,
+                params=params,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=timeout,
+            )
+            if resp.status_code == 401:
+                last_error = YoutubeApiError("YouTube OAuth token is not available", status_code=401)
+                continue
+            resp.raise_for_status()
+            return resp.json() or {}
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+
+    if api_key:
+        if isinstance(last_error, requests.HTTPError):
+            payload = None
+            response = getattr(last_error, "response", None)
+            if response is not None:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = None
+            raise YoutubeApiError(
+                f"YouTube request failed: {last_error}",
+                status_code=getattr(response, "status_code", None),
+                payload=payload,
+            ) from last_error
+        if last_error is not None:
+            raise YoutubeApiError(f"YouTube request failed: {last_error}") from last_error
+
+    if require_auth:
+        raise YoutubeApiError("YOUTUBE_API_KEY veya aktif YouTube OAuth baglantisi gerekli")
+    return {}
 
 
 def _youtube_videos_list_response(video_ids: List[str]) -> Dict[str, Any]:
@@ -30,57 +124,12 @@ def _youtube_videos_list_response(video_ids: List[str]) -> Dict[str, Any]:
     if not chunk:
         return {}
     ids_param = ",".join(chunk)
-    url = (
-        "https://www.googleapis.com/youtube/v3/videos"
-        f"?part=snippet,contentDetails,statistics&id={ids_param}"
+    return _youtube_get_json(
+        "videos",
+        {"part": "snippet,contentDetails,statistics", "id": ids_param},
+        timeout=10,
+        require_auth=False,
     )
-    if YOUTUBE_API_KEY:
-        resp = requests.get(f"{url}&key={YOUTUBE_API_KEY}", timeout=10)
-        try:
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            payload = None
-            try:
-                payload = resp.json()
-            except Exception:
-                payload = None
-            raise YoutubeApiError(
-                f"YouTube stats fetch failed: {exc}",
-                status_code=resp.status_code,
-                payload=payload,
-            ) from exc
-        return resp.json() or {}
-
-    for token_info in list_stored_refresh_tokens():
-        if token_info.get("reauth_required"):
-            continue
-        access_token = get_access_token(user_id=token_info.get("user_id"))
-        if not access_token:
-            continue
-        try:
-            resp = requests.get(
-                url,
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=10,
-            )
-            if resp.status_code == 401:
-                continue
-            resp.raise_for_status()
-            return resp.json() or {}
-        except requests.HTTPError as exc:
-            payload = None
-            try:
-                payload = resp.json()
-            except Exception:
-                payload = None
-            raise YoutubeApiError(
-                f"YouTube stats fetch failed: {exc}",
-                status_code=resp.status_code,
-                payload=payload,
-            ) from exc
-        except (requests.RequestException, RefreshError):
-            continue
-    return {}
 
 
 def extract_channel_id(channel_url: str):
@@ -103,25 +152,13 @@ def extract_channel_id(channel_url: str):
     if "@" in url:
         username = url.split("@")[-1].split("/")[0]
         # Newer param (handles)
-        api_url = (
-            "https://www.googleapis.com/youtube/v3/channels"
-            f"?part=id&forHandle={username}&key={YOUTUBE_API_KEY}"
-        )
-        resp = requests.get(api_url)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _youtube_get_json("channels", {"part": "id", "forHandle": username})
         items = data.get("items", [])
         if items:
             return items[0]["id"]
 
         # Fallback: legacy username lookup (eski hesaplar için)
-        legacy_url = (
-            "https://www.googleapis.com/youtube/v3/channels"
-            f"?part=id&forUsername={username}&key={YOUTUBE_API_KEY}"
-        )
-        resp = requests.get(legacy_url)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _youtube_get_json("channels", {"part": "id", "forUsername": username})
         items = data.get("items", [])
         if items:
             return items[0]["id"]
@@ -170,7 +207,7 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
     data = _youtube_videos_list_response([video_id])
     items = data.get("items") or []
     if not items:
-        if not YOUTUBE_API_KEY:
+        if not _youtube_api_key():
             has_oauth_token = any(
                 not token_info.get("reauth_required")
                 for token_info in list_stored_refresh_tokens()
@@ -223,18 +260,15 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
 def fetch_channel_subscriber_counts(channel_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
     if not channel_ids:
         return {}
-    _require_api_key()
     results: Dict[str, Dict[str, Optional[str]]] = {}
     chunk_size = 50
     for i in range(0, len(channel_ids), chunk_size):
         chunk = channel_ids[i : i + chunk_size]
-        url = (
-            "https://www.googleapis.com/youtube/v3/channels"
-            f"?part=snippet,statistics&id={','.join(chunk)}&key={YOUTUBE_API_KEY}"
+        payload = _youtube_get_json(
+            "channels",
+            {"part": "snippet,statistics", "id": ",".join(chunk)},
+            timeout=10,
         )
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        payload = resp.json()
         for item in payload.get("items", []):
             channel_id = item.get("id")
             if not channel_id:
@@ -262,20 +296,15 @@ def fetch_videos(channel_id: str, max_results: int = 20):
     bunu bozmayalım, mevcut kullanım devam edebilsin.
     """
 
-    _require_api_key()
-
-    search_url = (
-        "https://www.googleapis.com/youtube/v3/search"
-        f"?key={YOUTUBE_API_KEY}"
-        f"&channelId={channel_id}"
-        "&part=snippet,id"
-        "&order=date"
-        f"&maxResults={max_results}"
+    r = _youtube_get_json(
+        "search",
+        {
+            "channelId": channel_id,
+            "part": "snippet,id",
+            "order": "date",
+            "maxResults": max_results,
+        },
     )
-
-    resp = requests.get(search_url)
-    resp.raise_for_status()
-    r = resp.json()
     items = r.get("items", [])
 
     videos = []
@@ -328,14 +357,12 @@ def get_channel_metadata(channel_url: str):
         params = {
             "part": "contentDetails,statistics",
             "id": channel_id,
-            "key": YOUTUBE_API_KEY,
         }
     else:
         # Diğer durumlarda extract_channel_id ile dene (handle öncelikli)
         channel_id = extract_channel_id(url)
         params = {
             "part": "contentDetails,statistics",
-            "key": YOUTUBE_API_KEY,
         }
         if channel_id:
             params["id"] = channel_id
@@ -350,9 +377,7 @@ def get_channel_metadata(channel_url: str):
                     username = url.split("/user/")[-1].split("/")[0]
                     params["forUsername"] = username
 
-    resp = requests.get("https://www.googleapis.com/youtube/v3/channels", params=params)
-    resp.raise_for_status()
-    data = resp.json()
+    data = _youtube_get_json("channels", params)
 
     items = data.get("items", [])
     if not items:
@@ -385,20 +410,15 @@ def fetch_playlist_items_batch(playlist_id: str, page_token: str = None, max_res
     }
     """
 
-    _require_api_key()
-
     params = {
         "part": "contentDetails,snippet",
         "playlistId": playlist_id,
         "maxResults": max_results,
-        "key": YOUTUBE_API_KEY,
     }
     if page_token:
         params["pageToken"] = page_token
 
-    resp = requests.get("https://www.googleapis.com/youtube/v3/playlistItems", params=params)
-    resp.raise_for_status()
-    data = resp.json()
+    data = _youtube_get_json("playlistItems", params)
 
     videos = []
 
@@ -529,7 +549,7 @@ def fetch_video_comments(
 
     if moderation_status:
         return _fetch_video_comments_oauth(video_id, max_results, moderation_status, user_id=user_id)
-    if YOUTUBE_API_KEY:
+    if _youtube_api_key():
         try:
             return _fetch_video_comments_api_key(video_id, max_results)
         except YoutubeApiError:
@@ -646,14 +666,12 @@ def _fetch_video_comments_api_key(video_id: str, max_results: int):
         "maxResults": max_results,
         "textFormat": "plainText",
         "order": "time",
-        "key": YOUTUBE_API_KEY,
     }
     try:
-        resp = requests.get("https://www.googleapis.com/youtube/v3/commentThreads", params=params, timeout=10)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise YoutubeApiError(f"YouTube comments fetch failed: {exc}")
-    items = resp.json().get("items") or []
+        payload = _youtube_get_json("commentThreads", params, timeout=10)
+    except YoutubeApiError as exc:
+        raise YoutubeApiError(f"YouTube comments fetch failed: {exc}") from exc
+    items = payload.get("items") or []
     return _parse_comments(items, video_id, "published")
 
 
