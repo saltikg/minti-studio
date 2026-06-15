@@ -30,6 +30,7 @@ from app.video_shorts.services.brands import (
     list_user_brands,
     load_brand_context,
     set_active_brand_for_user,
+    set_default_brand_for_user,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.youtube_oauth import build_oauth_flow, is_reauth_required, store_refresh_token
@@ -195,6 +196,7 @@ def _guard_video_shorts():
         "video_shorts_bp.serve_media",
         "video_shorts_bp.home",
         "video_shorts_bp.switch_brand",
+        "video_shorts_bp.set_default_brand",
         "video_shorts_bp.create_brand",
     }
     if request.endpoint in allowed:
@@ -662,6 +664,22 @@ def switch_brand():
         flash("Brand bulunamadı.", "warning")
     else:
         session["vs_brand_id"] = brand["id"]
+    nxt = _normalize_next_url(request.form.get("next")) or request.referrer or url_for("video_shorts_bp.channels_page")
+    return redirect(nxt)
+
+
+@video_shorts_bp.route("/brands/default", methods=["POST"])
+def set_default_brand():
+    current_user = _current_user()
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    brand_id = (request.form.get("brand_id") or "").strip()
+    brand = set_default_brand_for_user(current_user["id"], brand_id)
+    if not brand:
+        flash("Brand bulunamadı.", "warning")
+    else:
+        session["vs_brand_id"] = brand["id"]
+        flash(f"{brand['name']} default brand yapildi.", "success")
     nxt = _normalize_next_url(request.form.get("next")) or request.referrer or url_for("video_shorts_bp.channels_page")
     return redirect(nxt)
 

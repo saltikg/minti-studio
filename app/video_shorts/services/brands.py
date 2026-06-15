@@ -138,6 +138,15 @@ def get_brand_for_user(conn, user_id: str, brand_id: Optional[str]) -> Optional[
     }
 
 
+def _clear_default_brand_for_user(conn, user_id: str) -> None:
+    if not user_id:
+        return
+    conn.execute(
+        f"UPDATE {BRAND_TABLE} SET is_default = false, updated_at = now() WHERE owner_user_id = ?",
+        [user_id],
+    )
+
+
 def create_brand(
     conn,
     *,
@@ -149,10 +158,7 @@ def create_brand(
     brand_name = (name or "").strip() or "Default Brand"
     if make_default:
         try:
-            conn.execute(
-                f"UPDATE {BRAND_TABLE} SET is_default = false, updated_at = now() WHERE owner_user_id = ?",
-                [user_id],
-            )
+            _clear_default_brand_for_user(conn, user_id)
         except Exception:
             pass
     conn.execute(
@@ -176,8 +182,9 @@ def create_brand(
 
 
 def _default_brand_name(user_name: Optional[str]) -> str:
-    if user_name:
-        return f"{str(user_name).strip()}'s Brand"
+    cleaned_name = str(user_name or "").strip()
+    if cleaned_name:
+        return f"{cleaned_name}'s Brand"
     return "Default Brand"
 
 
@@ -306,6 +313,28 @@ def set_active_brand_for_user(user_id: str, brand_id: str) -> Optional[Dict[str,
         )
         conn.commit()
         return brand
+    finally:
+        conn.close()
+
+
+def set_default_brand_for_user(user_id: str, brand_id: str) -> Optional[Dict[str, object]]:
+    conn = get_db()
+    try:
+        ensure_brand_schema(conn)
+        brand = get_brand_for_user(conn, user_id, brand_id)
+        if not brand:
+            return None
+        _clear_default_brand_for_user(conn, user_id)
+        conn.execute(
+            f"UPDATE {BRAND_TABLE} SET is_default = true, updated_at = now() WHERE id = ? AND owner_user_id = ?",
+            [brand_id, user_id],
+        )
+        conn.execute(
+            "UPDATE shorts_users SET last_brand_id = ?, updated_at = now() WHERE id = ?",
+            [brand_id, user_id],
+        )
+        conn.commit()
+        return get_brand_for_user(conn, user_id, brand_id)
     finally:
         conn.close()
 
