@@ -659,11 +659,12 @@ def switch_brand():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     brand_id = (request.form.get("brand_id") or "").strip()
-    brand = set_active_brand_for_user(current_user["id"], brand_id)
+    brand = set_default_brand_for_user(current_user["id"], brand_id)
     if not brand:
         flash("Brand bulunamadı.", "warning")
     else:
         session["vs_brand_id"] = brand["id"]
+        flash(f"{brand['name']} aktif ve default brand yapildi.", "success")
     nxt = _normalize_next_url(request.form.get("next")) or request.referrer or url_for("video_shorts_bp.channels_page")
     return redirect(nxt)
 

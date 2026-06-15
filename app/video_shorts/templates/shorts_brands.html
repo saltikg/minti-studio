@@ -21,9 +21,6 @@
   .vs-brand-switch-btn:focus {
     color: #f8fbff;
   }
-  .vs-brand-default-btn {
-    white-space: nowrap;
-  }
   .vs-brand-meta {
     color: rgba(232, 238, 252, 0.62) !important;
   }
@@ -35,7 +32,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
           <div>
             <h5 class="card-title vs-card-title mb-1">Brands</h5>
-            <p class="mb-0 text-secondary small">Active brand is your current workspace. Default brand is the one used automatically on future sessions.</p>
+            <p class="mb-0 text-secondary small">Click a brand to make it both active and default.</p>
           </div>
           <span class="badge text-bg-dark">{{ brands|length }} total</span>
         </div>
@@ -52,9 +49,9 @@
                     <div class="small vs-brand-meta">{{ brand.slug or brand.id }}</div>
                     <div class="small text-secondary mt-1">
                       {% if current_brand and brand.id == current_brand.id %}
-                        Currently active workspace
+                        Currently active and default workspace
                       {% else %}
-                        Click to use this workspace now
+                        Click to make this your active and default workspace
                       {% endif %}
                     </div>
                   </button>
@@ -65,13 +62,6 @@
                   {% endif %}
                   {% if current_brand and brand.id == current_brand.id %}
                     <span class="badge text-bg-primary">Active</span>
-                  {% endif %}
-                  {% if not brand.is_default %}
-                    <form method="post" action="{{ url_for('video_shorts_bp.set_default_brand') }}" class="m-0">
-                      <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
-                      <input type="hidden" name="brand_id" value="{{ brand.id }}">
-                      <button type="submit" class="btn btn-sm btn-outline-light vs-brand-default-btn">Make Default</button>
-                    </form>
                   {% endif %}
                 </div>
               </div>

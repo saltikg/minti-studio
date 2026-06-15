@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app.video_shorts.config import FFMPEG_BIN, FFMPEG_TIMEOUT, SHORTS_DIR, VIDEOS_DIR
+from app.video_shorts.config import FFMPEG_BIN, FFMPEG_TIMEOUT, S3_BUCKET_NAME, SHORTS_DIR, VIDEOS_DIR
 from app.video_shorts.services.storage import get_media_storage
 
 
@@ -56,19 +56,27 @@ def _resolve_source_video(video_id: str):
     if local_path and local_path.exists():
         return local_path, False
 
-    storage = get_media_storage()
-    if getattr(storage, "backend_name", "local") != "s3":
-        return None, False
+    storages = []
+    primary_storage = get_media_storage()
+    storages.append(primary_storage)
+    if getattr(primary_storage, "backend_name", "local") != "s3" and S3_BUCKET_NAME:
+        try:
+            storages.append(get_media_storage("s3"))
+        except Exception:
+            logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
 
     for suffix in (".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
         key = f"videos/{video_id}{suffix}"
-        try:
-            if storage.exists(key):
-                logger.info("source video resolved from s3 video_id=%s key=%s", video_id, key)
-                return storage.download_to_temp(key), True
-        except Exception:
-            logger.exception("source video s3 download failed video_id=%s key=%s", video_id, key)
-            continue
+        for storage in storages:
+            if getattr(storage, "backend_name", "local") != "s3":
+                continue
+            try:
+                if storage.exists(key):
+                    logger.info("source video resolved from s3 video_id=%s key=%s", video_id, key)
+                    return storage.download_to_temp(key), True
+            except Exception:
+                logger.exception("source video s3 download failed video_id=%s key=%s", video_id, key)
+                continue
     return None, False
 
 

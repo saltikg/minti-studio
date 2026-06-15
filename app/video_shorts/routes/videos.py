@@ -2341,6 +2341,7 @@ def videos_page(channel_id):
                     stats_map = fetch_video_stats([v["video_id"] for v in to_process])
 
             imported = 0
+            already_in_channel = 0
             imported_lengths = []
 
             for v in to_process:
@@ -2348,8 +2349,8 @@ def videos_page(channel_id):
                 published_dt = _normalize_timestamp(v.get("published_at"))
 
                 exists = conn.execute(
-                    "SELECT 1 FROM youtube_videos WHERE video_id = ?",
-                    [video_id],
+                    "SELECT 1 FROM youtube_videos WHERE channel_id = ? AND video_id = ?",
+                    [channel_id, video_id],
                 ).fetchone()
 
                 stats = stats_map.get(video_id, {})
@@ -2385,6 +2386,7 @@ def videos_page(channel_id):
                     if published_dt:
                         existing_publish_map[video_id] = published_dt
                 else:
+                    already_in_channel += 1
                     # Varsa, eksik istatistikleri güncelle
                     if any(stats.get(k) is not None for k in ["duration_seconds", "view_count", "like_count", "comment_count"]):
                         conn.execute(
@@ -2457,7 +2459,14 @@ def videos_page(channel_id):
                     "success",
                 )
             else:
-                if imported == 0 and not video_to_fetch:
+                if video_to_fetch:
+                    if imported > 0:
+                        flash(f"Imported 1 video: {video_to_fetch}{duration_note}.", "success")
+                    elif already_in_channel > 0:
+                        flash("This video is already imported for this channel.", "info")
+                    else:
+                        flash("No video was imported for this request.", "warning")
+                elif imported == 0:
                     flash("No missing videos found in uploads playlist.", "info")
                 else:
                     flash(f"Imported {imported} videos from playlist batch{duration_note}.", "success")
