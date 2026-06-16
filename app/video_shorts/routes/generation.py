@@ -3247,19 +3247,7 @@ def generate_short(video_pk):
     static_visual_label = active_static_visual["label"] if active_static_visual else None
     created_visual_label = active_created_visual["label"] if active_created_visual else None
     selected_visual_label = static_visual_label or created_visual_label
-    bg_visual_options = []
-    for entry in BACKGROUND_VISUAL_PRESETS:
-        cloned = dict(entry)
-        filename = cloned.get("image_filename")
-        if filename:
-            safe_name = Path(filename).name
-            static_candidate = STATIC_IMG_DIR / safe_name
-            if static_candidate.exists():
-                cloned["image_url"] = url_for("video_shorts_bp.static", filename=f"img/{safe_name}")
-            else:
-                cloned["image_url"] = url_for("video_shorts_bp.serve_media", filename=safe_name)
-        bg_visual_options.append(cloned)
-    bg_visual_options.extend(user_background_visual_options)
+    bg_visual_options = list(user_background_visual_options)
     bg_visual_map = {opt["key"]: opt for opt in bg_visual_options}
     video_background_visual_key = video.get("background_visual_key")
     active_bg_visual = bg_visual_map.get(video_background_visual_key)

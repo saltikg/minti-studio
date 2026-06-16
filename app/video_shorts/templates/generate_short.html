@@ -993,6 +993,9 @@
                   </button>
                 {% endfor %}
               </div>
+              {% if not bg_visual_options %}
+                <div class="small text-warning mt-2">Please upload a background image from Static Images.</div>
+              {% endif %}
             </div>
           </div>
           <div class="control-group static-visual-selector" data-static-visuals='{{ static_visual_options | tojson | safe }}' style="flex: 1 1 700px; min-width: 560px; padding: 10px 12px;">
@@ -3242,7 +3245,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let naturalSize = { width: 0, height: 0 };
   let latestTrigger = null;
   let activeStaticVisualKey = "";
-  let activeBackgroundKey = "bg_1";
+  let activeBackgroundKey = "";
   let activeCropAspect = "landscape";
   let activeVisualMode = "video";
   let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
@@ -3877,7 +3880,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const setActiveBackground = (key) => {
-    const normalizedKey = key || "bg_1";
+    const normalizedKey = key || "";
     activeBackgroundKey = normalizedKey;
     bgVisualButtons.forEach((button) => {
       const matches = (button.dataset.bgVisualKey || "") === normalizedKey;
@@ -3925,7 +3928,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   bgVisualButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      setActiveBackground(button.dataset.bgVisualKey || "bg_1");
+      setActiveBackground(button.dataset.bgVisualKey || "");
     });
   });
   visualModeButtons.forEach((button) => {
@@ -4024,7 +4027,7 @@ document.addEventListener("DOMContentLoaded", () => {
     resetState();
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
-    setActiveBackground(trigger.dataset.backgroundVisualKey || "bg_1");
+    setActiveBackground(trigger.dataset.backgroundVisualKey || "");
     setActiveCropAspect(trigger.dataset.cropAspect || "landscape");
     const triggerVisualKey = trigger.dataset.staticVisualKey || "";
     const preferredMode = (settingsContainer?.dataset.selectedVisualMode || "").toLowerCase();
@@ -4130,7 +4133,7 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("crop_w_ratio", wRatio.toFixed(6));
     params.append("crop_h_ratio", hRatio.toFixed(6));
     params.append("static_visual_key", activeStaticVisualKey || "");
-    params.append("background_visual_key", activeBackgroundKey || "bg_1");
+    params.append("background_visual_key", activeBackgroundKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
     const originalText = saveBtn.textContent;
@@ -4173,12 +4176,12 @@ document.addEventListener("DOMContentLoaded", () => {
         latestTrigger.dataset.cropW = wRatio;
         latestTrigger.dataset.cropH = hRatio;
         latestTrigger.dataset.staticVisualKey = activeStaticVisualKey || "";
-        latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "bg_1";
+        latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
         latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
       }
       if (chooseBtn) {
         chooseBtn.dataset.staticVisualKey = activeStaticVisualKey || "";
-        chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "bg_1";
+        chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
       }
     } catch (err) {
