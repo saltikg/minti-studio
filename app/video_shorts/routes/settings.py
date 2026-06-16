@@ -512,19 +512,22 @@ def static_images_page():
             label = Path(filename).stem[:40] if filename else "Image"
 
         try:
+            image_id = str(uuid4())
             logger.info(
-                "static image upload db insert begin user_id=%s stored_name=%s category_id=%s use_as_background=%s",
+                "static image upload db insert begin user_id=%s image_id=%s stored_name=%s category_id=%s use_as_background=%s",
                 current_user.get("id"),
+                image_id,
                 stored_name,
                 category_id,
                 use_as_background,
             )
             conn.execute(
                 """
-                INSERT INTO shorts_static_images (user_id, brand_id, category_id, use_as_background, label, filename, file_size, file_ext, is_active, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, now())
+                INSERT INTO shorts_static_images (id, user_id, brand_id, category_id, use_as_background, label, filename, file_size, file_ext, is_active, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, now())
                 """,
                 [
+                    image_id,
                     current_user["id"],
                     brand_id,
                     category_id,
