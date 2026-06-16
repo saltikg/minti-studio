@@ -1,5 +1,6 @@
 import logging
 import time
+from uuid import uuid4
 
 import duckdb
 
@@ -867,10 +868,10 @@ def ensure_static_image_categories_schema(
             try:
                 conn.execute(
                     """
-                    INSERT INTO shorts_static_image_categories (user_id, brand_id, name, is_active)
-                    VALUES (?, ?, ?, true)
+                    INSERT INTO shorts_static_image_categories (id, user_id, brand_id, name, is_active)
+                    VALUES (?, ?, ?, ?, true)
                     """,
-                    [owner_id, brand_id, "Genel"],
+                    [str(uuid4()), owner_id, brand_id, "Genel"],
                 )
             except Exception:
                 pass

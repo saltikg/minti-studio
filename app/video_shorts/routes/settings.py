@@ -354,13 +354,14 @@ def static_images_page():
                 flash(message, "warning")
                 return redirect(url_for("video_shorts_bp.static_images_page"))
 
+            category_id = str(uuid4())
             row = conn.execute(
                 """
-                INSERT INTO shorts_static_image_categories (user_id, brand_id, name, is_active, updated_at)
-                VALUES (?, ?, ?, true, now())
+                INSERT INTO shorts_static_image_categories (id, user_id, brand_id, name, is_active, updated_at)
+                VALUES (?, ?, ?, ?, true, now())
                 RETURNING id, name
                 """,
-                [current_user.get("id"), brand_id, name],
+                [category_id, current_user.get("id"), brand_id, name],
             ).fetchone()
             conn.commit()
             conn.close()
