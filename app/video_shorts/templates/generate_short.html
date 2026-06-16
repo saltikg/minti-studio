@@ -3491,9 +3491,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (podcastAudioDeleteBtn) podcastAudioDeleteBtn.disabled = false;
     }
   };
+  const hasBackgroundOption = (key) => bgVisualOptions.some((opt) => (opt.key || "") === String(key || ""));
   const getActiveBackgroundUrl = () => {
     const selected = bgVisualOptions.find((opt) => opt.key === activeBackgroundKey);
-    return selected?.image_url || previewConfig.bgUrl || "";
+    return selected?.image_url || "";
   };
   const getOverlayDims = () => {
     const isPortrait = activeCropAspect === "portrait";
@@ -3517,7 +3518,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (previewFrame) {
       previewFrame.style.width = previewConfig.frameWidth + "px";
       previewFrame.style.height = previewConfig.frameHeight + "px";
-      previewFrame.style.backgroundImage = `url('${getActiveBackgroundUrl()}')`;
+      const bgUrl = getActiveBackgroundUrl();
+      previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
     }
     if (previewTitle) {
       previewTitle.style.top = previewConfig.titleY * previewConfig.scale + "px";
@@ -3880,7 +3882,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const setActiveBackground = (key) => {
-    const normalizedKey = key || "";
+    const normalizedKey = hasBackgroundOption(key) ? String(key || "") : "";
     activeBackgroundKey = normalizedKey;
     bgVisualButtons.forEach((button) => {
       const matches = (button.dataset.bgVisualKey || "") === normalizedKey;
@@ -3888,7 +3890,8 @@ document.addEventListener("DOMContentLoaded", () => {
       button.setAttribute("aria-pressed", matches ? "true" : "false");
     });
     if (previewFrame) {
-      previewFrame.style.backgroundImage = `url('${getActiveBackgroundUrl()}')`;
+      const bgUrl = getActiveBackgroundUrl();
+      previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
     }
   };
   const setActiveCropAspect = (value) => {
