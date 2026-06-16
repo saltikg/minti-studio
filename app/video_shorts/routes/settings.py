@@ -1,10 +1,16 @@
 import json
 import logging
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 from flask import flash, jsonify, redirect, render_template, request, url_for, g
 from werkzeug.utils import secure_filename
+try:
+    from PIL import Image, UnidentifiedImageError
+except ImportError:  # pragma: no cover
+    Image = None
+    UnidentifiedImageError = Exception
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import SHORTS_DIR, STATIC_IMAGE_MAX_BYTES, STATIC_USER_IMAGES_DIR
@@ -21,6 +27,8 @@ from app.video_shorts.services.storage import get_media_storage
 
 
 logger = logging.getLogger(__name__)
+_BACKGROUND_CATEGORY_MARKERS = ("background", "backgrounds", "arka plan", "arkaplan")
+_BACKGROUND_REQUIRED_SIZE = (720, 1280)
 
 
 def _brand_prompt_key(user_id: str | None, brand_id: str | None) -> str:
@@ -30,6 +38,14 @@ def _brand_prompt_key(user_id: str | None, brand_id: str | None) -> str:
 
 def _user_image_storage_key(user_id: str, filename: str) -> str:
     return f"user_images/{user_id}/{Path(filename).name}"
+
+
+def _is_background_category_name(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    compact = " ".join(text.split())
+    return any(marker in compact for marker in _BACKGROUND_CATEGORY_MARKERS)
 
 
 def _user_image_public_url(user_id: str, filename: str) -> str:
@@ -468,6 +484,37 @@ def static_images_page():
             data = upload.read()
             if not data:
                 raise ValueError("empty upload")
+            category_name = category[1] if len(category) > 1 else None
+            if _is_background_category_name(category_name) and Image is not None:
+                try:
+                    with Image.open(BytesIO(data)) as img:
+                        image_size = tuple(img.size)
+                except (UnidentifiedImageError, OSError, ValueError):
+                    logger.warning(
+                        "static image upload validation failed user_id=%s reason=invalid_image_for_background filename=%s",
+                        current_user.get("id"),
+                        filename,
+                    )
+                    conn.close()
+                    message = "Background gorselleri icin gecerli bir PNG, JPG veya WEBP dosyasi yukleyin."
+                    if wants_json:
+                        return jsonify(success=False, message=message), 400
+                    flash(message, "warning")
+                    return redirect(url_for("video_shorts_bp.static_images_page"))
+                if image_size != _BACKGROUND_REQUIRED_SIZE:
+                    logger.warning(
+                        "static image upload validation failed user_id=%s reason=background_wrong_size filename=%s size=%s required=%s",
+                        current_user.get("id"),
+                        filename,
+                        image_size,
+                        _BACKGROUND_REQUIRED_SIZE,
+                    )
+                    conn.close()
+                    message = "Background kategorisi icin gorsel boyutu 720x1280 olmali."
+                    if wants_json:
+                        return jsonify(success=False, message=message), 400
+                    flash(message, "warning")
+                    return redirect(url_for("video_shorts_bp.static_images_page"))
             logger.info(
                 "static image upload put_bytes begin user_id=%s key=%s content_type=%s payload_size=%s",
                 current_user.get("id"),

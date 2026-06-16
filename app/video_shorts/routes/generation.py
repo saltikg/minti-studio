@@ -542,6 +542,7 @@ def _update_storage_asset_label(file_key: str, label: Optional[str]) -> None:
 
 
 _ALLOWED_STATIC_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+_BACKGROUND_CATEGORY_MARKERS = ("background", "backgrounds", "arka plan", "arkaplan")
 
 
 def _user_media_storage_key(kind: str, user_id: str, filename: str) -> str:
@@ -568,6 +569,54 @@ def _legacy_media_path(kind: str, user_id: str, filename: str) -> Path:
     if kind == "image":
         return (STATIC_USER_IMAGES_DIR / user_id / clean_name).resolve()
     return (STATIC_USER_AUDIO_DIR / user_id / clean_name).resolve()
+
+
+def _is_background_category_name(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    compact = " ".join(text.split())
+    return any(marker in compact for marker in _BACKGROUND_CATEGORY_MARKERS)
+
+
+def _resolve_user_static_image_path(
+    image_id: str,
+    *,
+    expected_owner_user_id: Optional[str] = None,
+    expected_brand_id: Optional[str] = None,
+) -> Optional[Path]:
+    clean_image_id = str(image_id or "").strip()
+    if not clean_image_id:
+        return None
+    conn_images = get_db_readonly()
+    try:
+        row = conn_images.execute(
+            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ?",
+            [clean_image_id],
+        ).fetchone()
+    finally:
+        conn_images.close()
+    if not row or not row[1]:
+        return None
+    owner_id, filename, owner_brand_id = row[0], row[1], row[2]
+    if expected_owner_user_id and owner_id and owner_id != expected_owner_user_id:
+        current_app.logger.warning(
+            "Static image owner mismatch for image_id=%s owner=%s expected_owner=%s",
+            clean_image_id,
+            owner_id,
+            expected_owner_user_id,
+        )
+        return None
+    if expected_brand_id and owner_brand_id and owner_brand_id != expected_brand_id:
+        current_app.logger.warning(
+            "Static image brand mismatch for image_id=%s owner_brand=%s expected_brand=%s",
+            clean_image_id,
+            owner_brand_id,
+            expected_brand_id,
+        )
+        return None
+    candidate = STATIC_USER_IMAGES_DIR / owner_id / filename
+    return candidate if candidate.exists() else None
 
 
 def _legacy_image_to_video_path(job_id: str) -> Path:
@@ -3082,6 +3131,7 @@ def generate_short(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
 
     static_visual_options = []
+    user_background_visual_options = []
     created_visual_options = []
     if current_user:
         conn_images = get_db_readonly()
@@ -3089,10 +3139,12 @@ def generate_short(video_pk):
         try:
             rows = conn_images.execute(
                 """
-                SELECT id, label, filename
-                FROM shorts_static_images
+                SELECT i.id, i.label, i.filename, c.name
+                FROM shorts_static_images i
+                LEFT JOIN shorts_static_image_categories c
+                  ON c.id = i.category_id AND c.user_id = i.user_id
                 WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
-                ORDER BY created_at
+                ORDER BY i.created_at
                 """,
                 [current_user.get("id"), brand_id],
             ).fetchall()
@@ -3124,6 +3176,15 @@ def generate_short(video_pk):
                     "image_url": image_url,
                 }
             )
+            if _is_background_category_name(row[3] if len(row) > 3 else None):
+                user_background_visual_options.append(
+                    {
+                        "key": f"userbg:{row[0]}",
+                        "label": row[1] or f"BG{idx}",
+                        "image_url": image_url,
+                        "description": row[3] or "User background",
+                    }
+                )
         for idx, row in enumerate(job_rows, start=1):
             job_id = str(row[0] or "").strip()
             output_url = str(row[1] or "").strip()
@@ -3209,6 +3270,7 @@ def generate_short(video_pk):
             else:
                 cloned["image_url"] = url_for("video_shorts_bp.serve_media", filename=safe_name)
         bg_visual_options.append(cloned)
+    bg_visual_options.extend(user_background_visual_options)
     bg_visual_map = {opt["key"]: opt for opt in bg_visual_options}
     video_background_visual_key = video.get("background_visual_key")
     active_bg_visual = bg_visual_map.get(video_background_visual_key)
@@ -9989,14 +10051,29 @@ def autoclip_video(video_pk):
             if static_fallback.exists():
                 bg_path = static_fallback
         if bg_visual_key:
-            bg_match = next(
-                (entry for entry in BACKGROUND_VISUAL_PRESETS if entry.get("key") == bg_visual_key),
-                None,
-            )
-            if bg_match and bg_match.get("image_filename"):
-                safe_name = Path(bg_match["image_filename"]).name
-                candidate = STATIC_IMG_DIR / safe_name
-                bg_path = candidate if candidate.exists() else (VIDEOS_DIR / safe_name)
+            if bg_visual_key.startswith("userbg:"):
+                bg_image_id = bg_visual_key.split(":", 1)[1]
+                user_bg_path = _resolve_user_static_image_path(
+                    bg_image_id,
+                    expected_owner_user_id=video_owner_user_id,
+                    expected_brand_id=current_brand_id(),
+                )
+                if user_bg_path:
+                    bg_path = user_bg_path
+                else:
+                    current_app.logger.warning(
+                        "Background image missing for key=%s",
+                        bg_visual_key,
+                    )
+            else:
+                bg_match = next(
+                    (entry for entry in BACKGROUND_VISUAL_PRESETS if entry.get("key") == bg_visual_key),
+                    None,
+                )
+                if bg_match and bg_match.get("image_filename"):
+                    safe_name = Path(bg_match["image_filename"]).name
+                    candidate = STATIC_IMG_DIR / safe_name
+                    bg_path = candidate if candidate.exists() else (VIDEOS_DIR / safe_name)
         bgcover_exists = bg_path.exists()
         clip_trim_start = adj_start
         clip_trim_end = adj_end
