@@ -126,6 +126,27 @@
       .static-upload-submit {
         min-height: 44px;
       }
+      .static-flag-box {
+        min-height: 44px;
+        padding: 0.7rem 0.85rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .static-flag-box .form-check {
+        margin-bottom: 0;
+      }
+      .static-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.18rem 0.45rem;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        letter-spacing: 0.02em;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.1);
+      }
       @media (max-width: 991.98px) {
         .static-upload-card {
           padding: 14px;
@@ -136,7 +157,7 @@
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
         <h3 class="mb-1">Static Images</h3>
-        <div class="vs-text-body static-page-subtitle">Manage the images you can use in the crop modal. Images in a category named "Backgrounds" or "Arka Plan" also appear in the generate screen background selector.</div>
+        <div class="vs-text-body static-page-subtitle">Manage the images you can use in the crop modal. Any image marked as background also appears in the generate screen background selector.</div>
         <div class="vs-text-body static-page-subtitle">Current background preset size is 720x1280. This is the recommended size for uploaded background images.</div>
       </div>
     </div>
@@ -161,7 +182,7 @@
                 <div id="static-file-meta" class="static-file-meta"></div>
               </div>
               <div class="form-text">Maksimum 5MB (PNG, JPG, WEBP).</div>
-              <div class="form-text">If category is "Backgrounds" or "Arka Plan", recommended size is 720x1280.</div>
+              <div class="form-text">Background olarak kullanacaksaniz onerilen boyut 720x1280.</div>
             </div>
           </div>
           <div class="col-12 col-lg-3">
@@ -192,6 +213,15 @@
             <div class="static-field">
               <label class="form-label vs-card-title">Label</label>
               <input type="text" name="label" class="form-control vs-input static-input" maxlength="60" placeholder="Orn: my-background">
+            </div>
+            <div class="static-field">
+              <label class="form-label vs-card-title">Generate background</label>
+              <div class="static-flag-box">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch" id="static-use-as-background" name="use_as_background" value="1">
+                  <label class="form-check-label" for="static-use-as-background">Generate ekraninda background secenegine ekle</label>
+                </div>
+              </div>
             </div>
           </div>
           <div class="col-12 col-lg-2">
@@ -228,6 +258,9 @@
                       <span>{{ image.label or 'Image' }}</span>
                       <span data-static-image-dimensions> (-)</span>
                     </div>
+                    {% if image.use_as_background %}
+                      <div class="static-badge">Background</div>
+                    {% endif %}
                     <div>
                       <label class="form-label small text-white-50 mb-1">Kategori</label>
                       <select
@@ -241,6 +274,19 @@
                           <option value="{{ category.id }}" {% if category.id == image.category_id %}selected{% endif %}>{{ category.name }}</option>
                         {% endfor %}
                       </select>
+                    </div>
+                    <div>
+                      <label class="form-label small text-white-50 mb-1">Generate background</label>
+                      <div class="form-check form-switch">
+                        <input
+                          class="form-check-input"
+                          type="checkbox"
+                          role="switch"
+                          data-image-background-toggle
+                          data-update-url="{{ url_for('video_shorts_bp.update_static_image_background', image_id=image.id) }}"
+                          {% if image.use_as_background %}checked{% endif %}
+                        >
+                      </div>
                     </div>
                     <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="mt-auto">
                       <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Gorseli kaldirmak istediginize emin misiniz?">
@@ -278,6 +324,7 @@
   const categoryAddBtn = document.getElementById("static-category-add-btn");
   const categoryNewName = document.getElementById("static-category-new-name");
   const imageCategorySelects = document.querySelectorAll("[data-image-category-select]");
+  const imageBackgroundToggles = document.querySelectorAll("[data-image-background-toggle]");
   const fileInput = document.getElementById("static-image-file-input");
   const pickFileBtn = document.getElementById("static-pick-file-btn");
   const dropzone = document.getElementById("static-dropzone");
@@ -501,6 +548,40 @@
         selectEl.value = selectEl.dataset.prevValue || "";
       } finally {
         selectEl.disabled = false;
+      }
+    });
+  });
+
+  imageBackgroundToggles.forEach((toggleEl) => {
+    toggleEl.dataset.prevChecked = toggleEl.checked ? "1" : "0";
+    toggleEl.addEventListener("change", async () => {
+      const updateUrl = toggleEl.dataset.updateUrl;
+      if (!updateUrl) {
+        toggleEl.checked = toggleEl.dataset.prevChecked === "1";
+        return;
+      }
+      const formData = new FormData();
+      formData.append("use_as_background", toggleEl.checked ? "1" : "0");
+      toggleEl.disabled = true;
+      try {
+        const response = await fetch(updateUrl, {
+          method: "POST",
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) {
+          showError(payload?.message || "Background ayari kaydedilemedi.");
+          toggleEl.checked = toggleEl.dataset.prevChecked === "1";
+          return;
+        }
+        toggleEl.dataset.prevChecked = toggleEl.checked ? "1" : "0";
+        window.location.reload();
+      } catch (err) {
+        showError("Background ayarinda baglanti hatasi oldu.");
+        toggleEl.checked = toggleEl.dataset.prevChecked === "1";
+      } finally {
+        toggleEl.disabled = false;
       }
     });
   });

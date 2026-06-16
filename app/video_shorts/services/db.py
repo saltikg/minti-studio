@@ -741,6 +741,7 @@ def ensure_static_images_schema(conn) -> None:
             user_id VARCHAR NOT NULL,
             brand_id VARCHAR,
             category_id UUID,
+            use_as_background BOOLEAN DEFAULT false,
             label VARCHAR,
             filename VARCHAR NOT NULL,
             file_size BIGINT,
@@ -760,6 +761,11 @@ def ensure_static_images_schema(conn) -> None:
     if "category_id" not in cols:
         try:
             conn.execute("ALTER TABLE shorts_static_images ADD COLUMN category_id UUID")
+        except Exception:
+            pass
+    if "use_as_background" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_static_images ADD COLUMN use_as_background BOOLEAN DEFAULT false")
         except Exception:
             pass
     if "brand_id" not in cols:
@@ -787,11 +793,30 @@ def ensure_static_images_schema(conn) -> None:
         pass
     try:
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shorts_static_images_background ON shorts_static_images(user_id, use_as_background)"
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
             """
             UPDATE shorts_static_images
             SET category_id = NULL
             WHERE category_id IS NOT NULL
               AND category_id NOT IN (SELECT id FROM shorts_static_image_categories)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            UPDATE shorts_static_images AS i
+            SET use_as_background = true
+            FROM shorts_static_image_categories AS c
+            WHERE i.category_id = c.id
+              AND COALESCE(i.use_as_background, false) = false
+              AND lower(trim(coalesce(c.name, ''))) IN ('background', 'backgrounds', 'arka plan', 'arkaplan')
             """
         )
     except Exception:

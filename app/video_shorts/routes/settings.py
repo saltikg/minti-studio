@@ -21,7 +21,6 @@ from app.video_shorts.services.storage import get_media_storage
 
 
 logger = logging.getLogger(__name__)
-_BACKGROUND_CATEGORY_MARKERS = ("background", "backgrounds", "arka plan", "arkaplan")
 
 
 def _brand_prompt_key(user_id: str | None, brand_id: str | None) -> str:
@@ -31,14 +30,6 @@ def _brand_prompt_key(user_id: str | None, brand_id: str | None) -> str:
 
 def _user_image_storage_key(user_id: str, filename: str) -> str:
     return f"user_images/{user_id}/{Path(filename).name}"
-
-
-def _is_background_category_name(value: str | None) -> bool:
-    text = str(value or "").strip().lower()
-    if not text:
-        return False
-    compact = " ".join(text.split())
-    return any(marker in compact for marker in _BACKGROUND_CATEGORY_MARKERS)
 
 
 def _user_image_public_url(user_id: str, filename: str) -> str:
@@ -379,6 +370,12 @@ def static_images_page():
         )
         label = (request.form.get("label") or "").strip()
         category_id = (request.form.get("category_id") or "").strip()
+        use_as_background = (request.form.get("use_as_background") or "").strip().lower() in {
+            "1",
+            "true",
+            "on",
+            "yes",
+        }
         if not category_id:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=missing_category",
@@ -516,20 +513,22 @@ def static_images_page():
 
         try:
             logger.info(
-                "static image upload db insert begin user_id=%s stored_name=%s category_id=%s",
+                "static image upload db insert begin user_id=%s stored_name=%s category_id=%s use_as_background=%s",
                 current_user.get("id"),
                 stored_name,
                 category_id,
+                use_as_background,
             )
             conn.execute(
                 """
-                INSERT INTO shorts_static_images (user_id, brand_id, category_id, label, filename, file_size, file_ext, is_active, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, true, now())
+                INSERT INTO shorts_static_images (user_id, brand_id, category_id, use_as_background, label, filename, file_size, file_ext, is_active, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, now())
                 """,
                 [
                     current_user["id"],
                     brand_id,
                     category_id,
+                    use_as_background,
                     label,
                     stored_name,
                     size_bytes,
@@ -563,7 +562,7 @@ def static_images_page():
 
     rows = conn.execute(
         """
-        SELECT i.id, i.label, i.filename, i.created_at, i.file_size, c.id, c.name
+        SELECT i.id, i.label, i.filename, i.created_at, i.file_size, c.id, c.name, COALESCE(i.use_as_background, false)
         FROM shorts_static_images i
         LEFT JOIN shorts_static_image_categories c
           ON c.id = i.category_id AND c.user_id = i.user_id
@@ -593,6 +592,7 @@ def static_images_page():
                 "file_size": row[4],
                 "category_id": str(row[5]) if row[5] else "",
                 "category_name": row[6] or "",
+                "use_as_background": bool(row[7]) if len(row) > 7 else False,
                 "image_url": _user_image_public_url(current_user.get("id"), row[2]),
             }
         )
@@ -663,6 +663,48 @@ def update_static_image_category(image_id):
         success=True,
         category={"id": str(category_row[0]), "name": category_row[1]},
     ), 200
+
+
+@video_shorts_bp.route("/settings/static-images/<image_id>/background", methods=["POST"])
+def update_static_image_background(image_id):
+    current_user = getattr(g, "vs_current_user", None)
+    brand_id = current_brand_id()
+    if not current_user:
+        return jsonify(success=False, message="Unauthorized."), 401
+
+    conn = get_db()
+    ensure_brand_schema(conn)
+    ensure_static_images_schema(conn)
+
+    image_row = conn.execute(
+        """
+        SELECT id
+        FROM shorts_static_images
+        WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+        """,
+        [image_id, current_user.get("id"), brand_id],
+    ).fetchone()
+    if not image_row:
+        conn.close()
+        return jsonify(success=False, message="Gorsel bulunamadi."), 404
+
+    use_as_background = (request.form.get("use_as_background") or "").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    conn.execute(
+        """
+        UPDATE shorts_static_images
+        SET use_as_background = ?, updated_at = now()
+        WHERE id = ? AND user_id = ? AND brand_id = ?
+        """,
+        [use_as_background, image_id, current_user.get("id"), brand_id],
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(success=True, use_as_background=use_as_background), 200
 
 
 @video_shorts_bp.route("/settings/static-images/<image_id>/delete", methods=["POST"])

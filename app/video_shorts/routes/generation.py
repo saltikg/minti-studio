@@ -542,7 +542,6 @@ def _update_storage_asset_label(file_key: str, label: Optional[str]) -> None:
 
 
 _ALLOWED_STATIC_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
-_BACKGROUND_CATEGORY_MARKERS = ("background", "backgrounds", "arka plan", "arkaplan")
 
 
 def _user_media_storage_key(kind: str, user_id: str, filename: str) -> str:
@@ -569,14 +568,6 @@ def _legacy_media_path(kind: str, user_id: str, filename: str) -> Path:
     if kind == "image":
         return (STATIC_USER_IMAGES_DIR / user_id / clean_name).resolve()
     return (STATIC_USER_AUDIO_DIR / user_id / clean_name).resolve()
-
-
-def _is_background_category_name(value: Any) -> bool:
-    text = str(value or "").strip().lower()
-    if not text:
-        return False
-    compact = " ".join(text.split())
-    return any(marker in compact for marker in _BACKGROUND_CATEGORY_MARKERS)
 
 
 def _resolve_user_static_image_path(
@@ -3139,10 +3130,8 @@ def generate_short(video_pk):
         try:
             rows = conn_images.execute(
                 """
-                SELECT i.id, i.label, i.filename, c.name
+                SELECT i.id, i.label, i.filename, COALESCE(i.use_as_background, false)
                 FROM shorts_static_images i
-                LEFT JOIN shorts_static_image_categories c
-                  ON c.id = i.category_id AND c.user_id = i.user_id
                 WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
                 ORDER BY i.created_at
                 """,
@@ -3176,13 +3165,13 @@ def generate_short(video_pk):
                     "image_url": image_url,
                 }
             )
-            if _is_background_category_name(row[3] if len(row) > 3 else None):
+            if bool(row[3]) if len(row) > 3 else False:
                 user_background_visual_options.append(
                     {
                         "key": f"userbg:{row[0]}",
                         "label": row[1] or f"BG{idx}",
                         "image_url": image_url,
-                        "description": row[3] or "User background",
+                        "description": "User background",
                     }
                 )
         for idx, row in enumerate(job_rows, start=1):
