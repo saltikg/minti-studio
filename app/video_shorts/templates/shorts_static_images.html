@@ -136,6 +136,9 @@
       .static-flag-box .form-check {
         margin-bottom: 0;
       }
+      .static-flag-box .form-check-label {
+        color: #fff;
+      }
       .static-badge {
         display: inline-flex;
         align-items: center;
@@ -157,8 +160,6 @@
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
         <h3 class="mb-1">Static Images</h3>
-        <div class="vs-text-body static-page-subtitle">Manage the images you can use in the crop modal. Any image marked as background also appears in the generate screen background selector.</div>
-        <div class="vs-text-body static-page-subtitle">Current background preset size is 720x1280. This is the recommended size for uploaded background images.</div>
       </div>
     </div>
 
@@ -182,7 +183,6 @@
                 <div id="static-file-meta" class="static-file-meta"></div>
               </div>
               <div class="form-text">Maksimum 5MB (PNG, JPG, WEBP).</div>
-              <div class="form-text">Background olarak kullanacaksaniz onerilen boyut 720x1280.</div>
             </div>
           </div>
           <div class="col-12 col-lg-3">
@@ -219,7 +219,7 @@
               <div class="static-flag-box">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" role="switch" id="static-use-as-background" name="use_as_background" value="1">
-                  <label class="form-check-label" for="static-use-as-background">Generate ekraninda background secenegine ekle</label>
+                  <label class="form-check-label" for="static-use-as-background">Generate ekraninda background secenegine ekle (suggested image size: 720x1280)</label>
                 </div>
               </div>
             </div>
