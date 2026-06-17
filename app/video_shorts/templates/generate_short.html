@@ -1099,6 +1099,10 @@
             <div class="short-settings compact-row">
               <div class="short-settings-section">
                 <div class="short-settings-row single">
+                <div class="preview-control">
+                  <span class="preview-control-label">Preview</span>
+                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Title&nbsp;Preview</div>
+                </div>
                 <div class="font-preview-group tight">
                   {% if title_font_options %}
                   <select name="font" id="titleFont" class="form-select form-select-sm">
@@ -1107,7 +1111,6 @@
                     {% endfor %}
                   </select>
                   {% endif %}
-                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Title&nbsp;Preview</div>
                 </div>
                 <div class="input-group-inline compact">
                   <span>Size</span>
@@ -1177,13 +1180,16 @@
               </div>
               <div class="short-settings-section">
                 <div class="short-settings-row single">
+                <div class="preview-control">
+                  <span class="preview-control-label">Preview</span>
+                  <div id="subtitlePreview" class="short-font-preview">Subtitle&nbsp;Preview</div>
+                </div>
                 <div class="font-preview-group tight">
                   <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
                     {% for f in sub_fonts %}
                       <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
                     {% endfor %}
                   </select>
-                  <div id="subtitlePreview" class="short-font-preview">Subtitle&nbsp;Preview</div>
                 </div>
                 <div class="short-bg-trigger" id="subtitleTextColorTrigger">
                   <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
@@ -1240,20 +1246,21 @@
                          min="0"
                          max="1200">
                 </div>
+                  <div class="short-toggle-group">
                   {% if brand_subscribe_overlay_available %}
-                    <div class="form-check form-switch">
+                    <div class="form-check form-switch mb-0">
                       <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
                       <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
                     </div>
-                  {% else %}
-                    <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
                   {% endif %}
-                </div>
-                <div class="short-settings-row single">
                   <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
                     <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
                   </div>
+                  </div>
+                  {% if not brand_subscribe_overlay_available %}
+                    <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
+                  {% endif %}
                 </div>
               </div>
             </div>

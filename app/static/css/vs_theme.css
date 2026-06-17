@@ -1842,10 +1842,30 @@ a:hover {
   width: 100%;
   grid-column: 1 / -1;
 }
+.preview-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  flex: 0 0 170px;
+}
+.preview-control-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
 .font-preview-group.tight {
   min-width: 0;
   max-width: none;
   flex: 1 1 220px;
+}
+.short-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
 }
 .input-group-inline {
   display: flex;
@@ -2648,7 +2668,7 @@ a:hover {
 
 .vs-app #crop-area-modal .top-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(190px, 0.95fr) minmax(170px, 0.78fr) minmax(340px, 1.35fr);
   gap: 14px;
   align-items: flex-start;
 }
@@ -2671,7 +2691,7 @@ a:hover {
   border-radius: 14px;
   padding: 12px;
   background: var(--surface-2);
-  min-height: 128px;
+  min-height: 122px;
   height: 100%;
 }
 
@@ -2728,7 +2748,7 @@ a:hover {
 
 .vs-app #crop-area-modal #background-visual-grid {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -2739,8 +2759,8 @@ a:hover {
   overflow: hidden;
   padding: 6px;
   background: rgba(255, 255, 255, 0.04);
-  width: 74px;
-  height: 52px;
+  width: 64px;
+  height: 46px;
 }
 
 .vs-app #crop-area-modal .background-visual-selector .static-visual-option img {
@@ -2796,6 +2816,10 @@ a:hover {
   flex: 0 0 auto;
   justify-content: center;
   white-space: nowrap;
+}
+
+.vs-app #crop-area-modal .static-visual-selector {
+  min-width: 0;
 }
 
 .vs-app #crop-area-modal .visual-mode-btn.active {
