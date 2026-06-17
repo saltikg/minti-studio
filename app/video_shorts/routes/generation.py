@@ -570,6 +570,14 @@ def _legacy_media_path(kind: str, user_id: str, filename: str) -> Path:
     return (STATIC_USER_AUDIO_DIR / user_id / clean_name).resolve()
 
 
+def _user_image_public_url(user_id: str, filename: str) -> str:
+    key = _user_media_storage_key("image", user_id, filename)
+    storage = get_media_storage()
+    local_path = STATIC_USER_IMAGES_DIR / user_id / Path(filename).name
+    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
+    return resolved.public_url or get_media_storage("local").public_url(key)
+
+
 def _resolve_user_static_image_path(
     image_id: str,
     *,
@@ -3154,10 +3162,7 @@ def generate_short(video_pk):
         finally:
             conn_images.close()
         for idx, row in enumerate(rows, start=1):
-            image_url = url_for(
-                "video_shorts_bp.static",
-                filename=f"user_images/{current_user.get('id')}/{row[2]}",
-            )
+            image_url = _user_image_public_url(current_user.get("id"), row[2])
             static_visual_options.append(
                 {
                     "key": f"user:{row[0]}",
