@@ -7,6 +7,9 @@ from typing import Any, Dict, Optional, Tuple
 from flask import current_app
 
 from app.video_shorts.config import (
+    DEFAULT_SUBTITLE_BG_ALPHA,
+    DEFAULT_SUBTITLE_BG_COLOR,
+    DEFAULT_SUBTITLE_TEXT_ALPHA,
     DEFAULT_TITLE_BG_COLOR,
     DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_TITLE_MARGIN,
@@ -104,6 +107,23 @@ def _hex_to_ass_color(hex_code: Optional[str], default: str = "#FFFFFF") -> str:
     gg = value[2:4]
     bb = value[4:6]
     return f"&H00{bb}{gg}{rr}"
+
+
+def _hex_to_ass_color_with_alpha(
+    hex_code: Optional[str],
+    alpha_percent: Optional[int],
+    default: str = "#FFFFFF",
+    default_alpha: int = 100,
+) -> str:
+    value = (hex_code or default).lstrip("#").upper()
+    if len(value) != 6 or any(ch not in "0123456789ABCDEF" for ch in value):
+        value = default.lstrip("#").upper()
+    opacity = _normalize_alpha_percent(alpha_percent, default_alpha)
+    ass_alpha = max(0, min(255, round(255 * (1 - (opacity / 100)))))
+    rr = value[0:2]
+    gg = value[2:4]
+    bb = value[4:6]
+    return f"&H{ass_alpha:02X}{bb}{gg}{rr}"
 
 
 def _normalize_alpha_percent(value: Optional[int], default: int = DEFAULT_TITLE_BG_ALPHA) -> int:
@@ -341,6 +361,9 @@ def _compose_with_background(
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
+    subtitle_bg_color: Optional[str] = None,
+    subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
+    subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
 ):
     if not bg_path.exists():
         raise FileNotFoundError(f"Background image not found: {bg_path}")
@@ -399,8 +422,8 @@ def _compose_with_background(
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
-            "BackColour=&H00000000,"
+            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
             "BorderStyle=4,"
             "Outline=1,"
             "Shadow=0,"
@@ -482,6 +505,9 @@ def _compose_trimmed_with_background(
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
+    subtitle_bg_color: Optional[str] = None,
+    subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
+    subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
     video_date_text: Optional[str] = None,
     subscribe_overlay_enabled: bool = False,
     subscribe_overlay_path: Optional[Path] = None,
@@ -615,8 +641,8 @@ def _compose_trimmed_with_background(
             clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
             style = (
                 f"Fontsize={safe_subtitle_font_size},"
-                f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
-                "BackColour=&H00000000,"
+                f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+                f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
                 "BorderStyle=4,"
                 "Outline=1,"
                 "Shadow=0,"
@@ -1178,8 +1204,8 @@ def _compose_trimmed_with_background(
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
-            "BackColour=&H00000000,"
+            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
             "BorderStyle=4,"
             "Outline=1,"
             "Shadow=0,"
@@ -1350,7 +1376,20 @@ def _compose_trimmed_with_background(
                     pass
 
 
-def _cut_clip(src: Path, start: float, end: float, out_path: Path, subtitle_path: Path = None, subtitle_font: str = "DejaVu Sans", subtitle_font_size: int = 10, subtitle_margin: int = SUB_MARGIN_DEFAULT):
+def _cut_clip(
+    src: Path,
+    start: float,
+    end: float,
+    out_path: Path,
+    subtitle_path: Path = None,
+    subtitle_font: str = "DejaVu Sans",
+    subtitle_font_size: int = 10,
+    subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    subtitle_text_color: Optional[str] = None,
+    subtitle_bg_color: Optional[str] = None,
+    subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
+    subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
+):
     duration = max(end - start, 1.0)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_ffmpeg = _resolve_ffmpeg()
@@ -1379,8 +1418,8 @@ def _cut_clip(src: Path, start: float, end: float, out_path: Path, subtitle_path
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
-            "BackColour=&H00000000,"
+            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
             "BorderStyle=4,"
             "Outline=1,"
             "Shadow=0,"
