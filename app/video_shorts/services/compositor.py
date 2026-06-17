@@ -36,6 +36,7 @@ VIDEO_OVERLAY_TOP_OFFSET = DEFAULT_VIDEO_OVERLAY_OFFSET
 PODCAST_LANDSCAPE_WIDTH = 1280
 PODCAST_LANDSCAPE_HEIGHT = 720
 VIDEO_DATE_BOTTOM_MARGIN = 250
+DEFAULT_VIDEO_DATE_TOP = VIDEO_TARGET_HEIGHT - VIDEO_DATE_BOTTOM_MARGIN - 24
 TITLE_WRAP_LENGTH = 35
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
 
@@ -514,6 +515,7 @@ def _compose_trimmed_with_background(
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
     subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
     video_date_text: Optional[str] = None,
+    video_date_top: Optional[int] = None,
     subscribe_overlay_enabled: bool = False,
     subscribe_overlay_path: Optional[Path] = None,
     crop_settings: Optional[Dict[str, float]] = None,
@@ -664,12 +666,17 @@ def _compose_trimmed_with_background(
             if date_txt:
                 date_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
                 date_textfile = _write_debug_textfile(date_txt)
+                try:
+                    date_top = int(video_date_top if video_date_top is not None else DEFAULT_VIDEO_DATE_TOP)
+                except (TypeError, ValueError):
+                    date_top = DEFAULT_VIDEO_DATE_TOP
+                date_top = max(0, min(target_height - 80, date_top))
                 filter_parts.append(
                     f"{final_label}drawtext="
                     f"fontfile='{_escape_ass_path(Path(date_font_file))}':"
                     f"textfile='{_escape_ass_path(date_textfile)}':"
                     "x=(w-text_w)/2:"
-                    f"y=main_h-text_h-{VIDEO_DATE_BOTTOM_MARGIN}:"
+                    f"y={date_top}:"
                     "fontsize=24:"
                     "fontcolor=white:"
                     "box=1:"
@@ -1227,7 +1234,12 @@ def _compose_trimmed_with_background(
         if date_txt:
             date_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             date_font_size = 24
-            date_y_expr = f"main_h-text_h-{VIDEO_DATE_BOTTOM_MARGIN}"
+            try:
+                date_top = int(video_date_top if video_date_top is not None else DEFAULT_VIDEO_DATE_TOP)
+            except (TypeError, ValueError):
+                date_top = DEFAULT_VIDEO_DATE_TOP
+            date_top = max(0, min(target_height - 80, date_top))
+            date_y_expr = str(date_top)
             date_box_color = "black@0.6"
             date_textfile = _write_debug_textfile(date_txt)
             date_drawtext = (

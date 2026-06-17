@@ -289,6 +289,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("subtitle_bg_alpha", "INTEGER", DEFAULT_SUBTITLE_BG_ALPHA),
         ("subtitle_text_alpha", "INTEGER", DEFAULT_SUBTITLE_TEXT_ALPHA),
         ("video_date_text", "VARCHAR", None),
+        ("video_date_top", "INTEGER", 1006),
         ("subscribe_overlay_enabled", "BOOLEAN", True),
         ("is_music_only", "BOOLEAN", False),
         ("static_visual_key", "VARCHAR", None),
