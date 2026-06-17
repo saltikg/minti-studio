@@ -973,7 +973,7 @@ def video_stats_page():
             WHERE 1 = 1{chart_clause}
             GROUP BY s.channel_type
             """,
-            chart_params,
+            [*chart_params, *chart_params[2:]],
         )
         totals_list = _rows_to_dict(total_cursor)
         channel_totals: Dict[str, Mapping[str, int]] = {}
