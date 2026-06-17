@@ -1818,12 +1818,40 @@ a:hover {
 }
 .short-settings.compact-row {
   padding: 0;
+  margin-top: 0;
 }
 .short-settings-row.single {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+}
+.short-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.short-settings-section-wide {
+  width: 100%;
+}
+.short-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.short-section-header span {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fafafa;
+  letter-spacing: 0.02em;
+}
+.short-section-header small {
+  color: var(--text-2);
+  font-size: 12px;
 }
 .font-preview-group.tight {
   min-width: 180px;
@@ -2415,13 +2443,19 @@ a:hover {
   transform: rotate(180deg);
 }
 .short-video-settings-heading {
-  padding: 0 16px;
+  padding: 16px 16px 0;
   color: #0d6efd;
   font-size: 18px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: none;
   display: block;
+}
+.short-video-settings-subtitle {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 400;
 }
 
 /* Generate page: align with main dark theme */
@@ -2641,7 +2675,7 @@ a:hover {
 
 .vs-app #crop-area-modal .top-controls {
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) 240px 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px;
   align-items: flex-start;
 }
@@ -2664,7 +2698,8 @@ a:hover {
   border-radius: 14px;
   padding: 14px 16px;
   background: var(--surface-2);
-  min-height: 140px;
+  min-height: 156px;
+  height: 100%;
 }
 
 .vs-app #crop-area-modal .control-group label {
@@ -2679,6 +2714,13 @@ a:hover {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.vs-app #crop-area-modal .control-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-2);
 }
 
 .vs-app #crop-area-modal .aspect-card {
@@ -2686,12 +2728,13 @@ a:hover {
   border-radius: 12px;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.04);
-  min-width: 168px;
+  min-width: 0;
   text-align: left;
   display: flex;
   align-items: center;
   gap: 12px;
   height: 72px;
+  flex: 1 1 0;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
@@ -2719,7 +2762,7 @@ a:hover {
 .vs-app #crop-area-modal #background-visual-grid {
   display: flex;
   gap: 10px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .vs-app #crop-area-modal .background-visual-selector .static-visual-option {
@@ -2729,8 +2772,8 @@ a:hover {
   overflow: hidden;
   padding: 6px;
   background: rgba(255, 255, 255, 0.04);
-  width: 112px;
-  height: 72px;
+  width: 86px;
+  height: 60px;
 }
 
 .vs-app #crop-area-modal .background-visual-selector .static-visual-option img {
@@ -2768,18 +2811,22 @@ a:hover {
 .vs-app #crop-area-modal .visual-mode-buttons {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .vs-app #crop-area-modal .visual-mode-btn {
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 8px 14px;
+  border-radius: 12px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.04);
   font-size: 13px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--text);
+  min-height: 44px;
+  flex: 1 1 calc(50% - 10px);
+  justify-content: center;
 }
 
 .vs-app #crop-area-modal .visual-mode-btn.active {
@@ -2789,6 +2836,10 @@ a:hover {
 }
 
 .vs-app #crop-area-modal .static-visual-strip {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
   margin-top: 12px;
   display: flex;
   gap: 10px;
@@ -2796,6 +2847,13 @@ a:hover {
   overflow-x: auto;
   max-width: 100%;
   min-width: 0;
+}
+
+.vs-app #crop-area-modal .visual-mode-detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .vs-app #crop-area-modal .static-visual-strip .static-visual-option {
