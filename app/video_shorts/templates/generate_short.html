@@ -1089,9 +1089,6 @@
           <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
         </div>
         <div class="short-video-settings">
-          <div class="short-video-settings-heading">
-            <span>Short video settings</span>
-          </div>
           <div class="short-video-body"
                data-save-url="{{ url_for('video_shorts_bp.save_short_settings', video_pk=video.id) }}"
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
@@ -1101,9 +1098,6 @@
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
             <div class="short-settings compact-row">
               <div class="short-settings-section">
-                <div class="short-section-header">
-                  <span>Title</span>
-                </div>
                 <div class="short-settings-row single">
                 <div class="font-preview-group tight">
                   {% if title_font_options %}
@@ -1113,7 +1107,7 @@
                     {% endfor %}
                   </select>
                   {% endif %}
-                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Font&nbsp;Preview</div>
+                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Title&nbsp;Preview</div>
                 </div>
                 <div class="input-group-inline compact">
                   <span>Size</span>
@@ -1182,9 +1176,6 @@
                 </div>
               </div>
               <div class="short-settings-section">
-                <div class="short-section-header">
-                  <span>Subtitle</span>
-                </div>
                 <div class="short-settings-row single">
                 <div class="font-preview-group tight">
                   <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
@@ -1192,7 +1183,7 @@
                       <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
                     {% endfor %}
                   </select>
-                  <div id="subtitlePreview" class="short-font-preview">Font&nbsp;Preview</div>
+                  <div id="subtitlePreview" class="short-font-preview">Subtitle&nbsp;Preview</div>
                 </div>
                 <div class="short-bg-trigger" id="subtitleTextColorTrigger">
                   <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
@@ -1231,9 +1222,6 @@
                 </div>
               </div>
               <div class="short-settings-section short-settings-section-wide">
-                <div class="short-section-header">
-                  <span>Extra overlays</span>
-                </div>
                 <div class="short-settings-row single">
                 <div class="input-group-inline compact">
                   <span>Video date</span>

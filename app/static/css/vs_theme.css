@@ -1817,6 +1817,9 @@ a:hover {
   color: #10B981;
 }
 .short-settings.compact-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   padding: 0;
   margin-top: 0;
 }
@@ -1837,21 +1840,12 @@ a:hover {
 }
 .short-settings-section-wide {
   width: 100%;
-}
-.short-section-header {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.short-section-header span {
-  font-size: 13px;
-  font-weight: 700;
-  color: #fafafa;
-  letter-spacing: 0.02em;
+  grid-column: 1 / -1;
 }
 .font-preview-group.tight {
-  min-width: 180px;
-  max-width: 220px;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 220px;
 }
 .input-group-inline {
   display: flex;
@@ -2438,15 +2432,6 @@ a:hover {
 .short-video-settings[open] summary svg {
   transform: rotate(180deg);
 }
-.short-video-settings-heading {
-  padding: 16px 16px 0;
-  color: #0d6efd;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  display: block;
-}
 /* Generate page: align with main dark theme */
 .gs-header {
   background: var(--surface-2);
@@ -2462,8 +2447,7 @@ a:hover {
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
 }
 
-.gs-card h5,
-.short-video-settings-heading {
+.gs-card h5 {
   color: #fafafa;
 }
 
@@ -2665,7 +2649,7 @@ a:hover {
 .vs-app #crop-area-modal .top-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 24px;
+  gap: 14px;
   align-items: flex-start;
 }
 
@@ -2685,9 +2669,9 @@ a:hover {
 .vs-app #crop-area-modal .control-group {
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 14px 16px;
+  padding: 12px;
   background: var(--surface-2);
-  min-height: 156px;
+  min-height: 128px;
   height: 100%;
 }
 
@@ -2701,7 +2685,7 @@ a:hover {
 
 .vs-app #crop-area-modal .control-group .controls {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -2744,7 +2728,7 @@ a:hover {
 
 .vs-app #crop-area-modal #background-visual-grid {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -2755,8 +2739,8 @@ a:hover {
   overflow: hidden;
   padding: 6px;
   background: rgba(255, 255, 255, 0.04);
-  width: 86px;
-  height: 60px;
+  width: 74px;
+  height: 52px;
 }
 
 .vs-app #crop-area-modal .background-visual-selector .static-visual-option img {
@@ -2793,7 +2777,7 @@ a:hover {
 
 .vs-app #crop-area-modal .visual-mode-buttons {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: nowrap;
   overflow-x: auto;
 }
@@ -2801,14 +2785,14 @@ a:hover {
 .vs-app #crop-area-modal .visual-mode-btn {
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   background: rgba(255, 255, 255, 0.04);
   font-size: 13px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--text);
-  min-height: 38px;
+  min-height: 34px;
   flex: 0 0 auto;
   justify-content: center;
   white-space: nowrap;
@@ -2837,8 +2821,17 @@ a:hover {
 .vs-app #crop-area-modal .visual-mode-detail-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 992px) {
+  .short-settings.compact-row {
+    grid-template-columns: 1fr;
+  }
+  .short-settings-section-wide {
+    grid-column: auto;
+  }
 }
 
 .vs-app #crop-area-modal .static-visual-strip .static-visual-option {
