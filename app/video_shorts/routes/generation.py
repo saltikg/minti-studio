@@ -10148,6 +10148,10 @@ def autoclip_video(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
+    video_title_text_align = _normalize_title_text_align(
+        session.get("vs_title_text_align") or video_title_text_align,
+        "center",
+    )
     if not brand_subscribe_overlay_path:
         video_subscribe_overlay = False
     try:
