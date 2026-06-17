@@ -994,7 +994,10 @@
                 {% endfor %}
               </div>
               {% if not bg_visual_options %}
-                <div class="small text-warning mt-2">Please upload a background image from Static Images.</div>
+                <div class="small text-warning mt-2">
+                  Please upload a background image from
+                  <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Static Images</a>.
+                </div>
               {% endif %}
             </div>
           </div>
