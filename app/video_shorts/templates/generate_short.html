@@ -4554,16 +4554,16 @@ document.addEventListener("DOMContentLoaded", function () {
   };
   const applyTitleAlignPreview = () => {
     const align = titleTextAlignInput?.value || "center";
-    const justify = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
     const textAlign = align === "left" ? "left" : align === "right" ? "right" : "center";
     if (titlePreview) {
-      titlePreview.style.justifyContent = justify;
       titlePreview.style.textAlign = textAlign;
     }
     const previewTitle = document.getElementById("shorts-preview-title-band");
     if (previewTitle) {
-      previewTitle.style.justifyContent = justify;
       previewTitle.style.textAlign = textAlign;
+      previewTitle.style.left = align === "left" ? "24px" : align === "right" ? "auto" : "50%";
+      previewTitle.style.right = align === "right" ? "24px" : "auto";
+      previewTitle.style.transform = align === "center" ? "translateX(-50%)" : "none";
     }
   };
   const applySubtitlePreview = () => {

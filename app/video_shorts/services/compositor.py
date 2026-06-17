@@ -141,7 +141,7 @@ def _title_visual_y(base_y: int, font_size: int) -> int:
     return max(0, int(base_y) - offset)
 
 
-def _title_x_expr(align: Optional[str], padding: int = 40) -> str:
+def _title_x_expr(align: Optional[str], padding: int = 88) -> str:
     mode = str(align or "center").strip().lower()
     if mode == "left":
         return str(int(padding))
