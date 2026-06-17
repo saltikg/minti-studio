@@ -1762,6 +1762,9 @@ a:hover {
   box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.8);
   transform: none;
 }
+.short-bg-popover .short-color-custom {
+  grid-column: 1 / -1;
+}
 .short-bg-popover .short-color-swatch.empty {
   visibility: hidden;
 }
