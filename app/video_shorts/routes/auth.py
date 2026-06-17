@@ -685,6 +685,50 @@ def set_default_brand():
     return redirect(nxt)
 
 
+@video_shorts_bp.route("/account")
+def account_page():
+    current_user = _current_user()
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+
+    account_items = [
+        {
+            "title": "Connected Accounts",
+            "subtitle": "Manage YouTube, Instagram, Facebook and TikTok connections",
+            "icon": "public",
+            "href": url_for("video_shorts_bp.social_connect"),
+        },
+        {
+            "title": "Plan and Storage",
+            "subtitle": "Review quota, plan and storage usage",
+            "icon": "workspace_premium",
+            "href": url_for("video_shorts_bp.shorts_storage_plans"),
+        },
+        {
+            "title": "User Profile",
+            "subtitle": "Update profile and account details",
+            "icon": "account_circle",
+            "href": url_for("video_shorts_bp.profile"),
+        },
+        {
+            "title": "Brand",
+            "subtitle": "Switch and manage your brands",
+            "icon": "storefront",
+            "href": url_for("video_shorts_bp.brands_page"),
+        },
+    ]
+    if current_user.get("role") == "admin":
+        account_items.append(
+            {
+                "title": "Logs",
+                "subtitle": "Review social publishing and quota logs",
+                "icon": "list_alt",
+                "href": url_for("video_shorts_bp.shorts_social_logs"),
+            }
+        )
+    return render_template("shorts_account.html", account_items=account_items)
+
+
 @video_shorts_bp.route("/brands")
 def brands_page():
     current_user = _current_user()

@@ -153,8 +153,6 @@
             <span>My Storage</span>
           </a>
 
-          <div class="sidebar-section-label">SETTINGS</div>
-
           <a href="{{ url_for('video_shorts_bp.settings_page') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
                     {% if '/settings' in request.path or '/image-to-video' in request.path %}active{% endif %}">
@@ -196,47 +194,20 @@
           </a>
           {% endif %}
 
-          <div class="sidebar-section-label">ACCOUNT</div>
-
-          <a href="{{ url_for('video_shorts_bp.social_connect') }}"
+          <a href="{{ url_for('video_shorts_bp.account_page') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/social' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">public</span>
-            <span>Connected Accounts</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/shorts/storage/plans' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">workspace_premium</span>
-            <span>Plan and Storage</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.profile') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/profile' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">account_circle</span>
-            <span>User Profile</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.brands_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/brands' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">storefront</span>
-            <span>Brand</span>
-          </a>
-
-          {% if vs_current_user and vs_current_user.get('role') == 'admin' %}
-          <a href="{{ url_for('video_shorts_bp.shorts_social_logs') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/shorts/social-logs' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">list_alt</span>
-            <span>Logs</span>
+                    {% if '/video_shorts/account' in request.path
+                          or '/video_shorts/social' in request.path
+                          or '/shorts/storage/plans' in request.path
+                          or '/video_shorts/profile' in request.path
+                          or '/video_shorts/brands' in request.path
+                          or '/video_shorts/shorts/social-logs' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">manage_accounts</span>
+            <span>Account</span>
             {% if vs_overview_quota and vs_overview_quota.active %}
               <span class="badge text-bg-warning ms-auto">Quota</span>
             {% endif %}
           </a>
-          {% endif %}
 
           <div class="sidebar-coming-soon border-top">
             <div class="d-flex align-items-center gap-2 mb-2">
