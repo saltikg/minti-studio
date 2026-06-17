@@ -1134,7 +1134,7 @@
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
                       ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
-                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
                       ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
                       ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
                       ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
@@ -1152,6 +1152,10 @@
                         {% endif %}
                       {% endfor %}
                     {% endfor %}
+                    <div class="mt-2 pt-2 border-top border-secondary-subtle">
+                      <label for="titleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                      <input type="text" id="titleBgCustomColor" class="form-control form-control-sm" value="{{ selected_title_bg_color or '#FFD600' }}" placeholder="#RRGGBB">
+                    </div>
                   </div>
                   <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
                 </div>
@@ -1162,7 +1166,7 @@
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
                       ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
-                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
                       ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
                       ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
                       ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
@@ -1180,6 +1184,10 @@
                         {% endif %}
                       {% endfor %}
                     {% endfor %}
+                    <div class="mt-2 pt-2 border-top border-secondary-subtle">
+                      <label for="titleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                      <input type="text" id="titleTextCustomColor" class="form-control form-control-sm" value="{{ selected_title_text_color or '#000000' }}" placeholder="#RRGGBB">
+                    </div>
                   </div>
                   <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#000000' }}">
                 </div>
@@ -1201,7 +1209,7 @@
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
                       ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
-                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
                       ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
                       ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
                       ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
@@ -1219,6 +1227,10 @@
                         {% endif %}
                       {% endfor %}
                     {% endfor %}
+                    <div class="mt-2 pt-2 border-top border-secondary-subtle">
+                      <label for="subtitleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                      <input type="text" id="subtitleTextCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_text_color or '#FFFFFF' }}" placeholder="#RRGGBB">
+                    </div>
                   </div>
                   <input type="hidden" name="subtitle_text_color" id="subtitleTextColorValue" value="{{ selected_subtitle_text_color or '#FFFFFF' }}">
                 </div>
@@ -4424,12 +4436,13 @@ document.addEventListener("DOMContentLoaded", function () {
   updateSubtitleFont();
 
   const normalize = (value) => (value || "").toUpperCase();
-  const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, onApply }) => {
+  const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, customInputId, onApply }) => {
     const trigger = document.getElementById(triggerId);
     const popover = document.getElementById(popoverId);
     const hidden = document.getElementById(hiddenId);
     const hexLabel = document.getElementById(hexId);
     const swatchEl = document.getElementById(swatchId);
+    const customInput = document.getElementById(customInputId);
     const swatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`)).filter((s) => s.dataset.color);
     swatches.forEach((swatch) => {
       swatch.style.backgroundColor = swatch.dataset.color;
@@ -4445,6 +4458,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (hidden) hidden.value = hex;
       if (hexLabel) hexLabel.textContent = hex;
       if (swatchEl) swatchEl.style.backgroundColor = hex;
+      if (customInput) customInput.value = hex;
       if (typeof onApply === "function") onApply(hex);
       setActiveSwatch(hex);
     };
@@ -4464,6 +4478,12 @@ document.addEventListener("DOMContentLoaded", function () {
       if (trigger?.contains(event.target) || popover.contains(event.target)) return;
       popover.classList.add("closed");
     });
+    customInput?.addEventListener("change", () => {
+      const raw = String(customInput.value || "").trim();
+      const value = raw.startsWith("#") ? raw : `#${raw}`;
+      if (!/^#[0-9A-Fa-f]{6}$/.test(value)) return;
+      applyColor(value);
+    });
     const initialColor = normalize(hidden?.value) || normalize(swatches[0]?.dataset.color);
     if (initialColor) {
       applyColor(initialColor);
@@ -4476,6 +4496,7 @@ document.addEventListener("DOMContentLoaded", function () {
     hiddenId: "titleBgColorValue",
     hexId: "titleBgHex",
     swatchId: "titleBgSwatch",
+    customInputId: "titleBgCustomColor",
     onApply: (hex) => {
       if (titlePreview) titlePreview.style.backgroundColor = hex;
       const previewTitle = document.getElementById("shorts-preview-title-band");
@@ -4488,6 +4509,7 @@ document.addEventListener("DOMContentLoaded", function () {
     hiddenId: "titleTextColorValue",
     hexId: "titleTextColorHex",
     swatchId: "titleTextColorSwatch",
+    customInputId: "titleTextCustomColor",
     onApply: (hex) => {
       if (titlePreview) titlePreview.style.color = hex;
       const previewTitle = document.getElementById("shorts-preview-title-band");
@@ -4500,6 +4522,7 @@ document.addEventListener("DOMContentLoaded", function () {
     hiddenId: "subtitleTextColorValue",
     hexId: "subtitleTextColorHex",
     swatchId: "subtitleTextColorSwatch",
+    customInputId: "subtitleTextCustomColor",
     onApply: (hex) => {
       if (subtitlePreview) subtitlePreview.style.color = hex;
       const previewSubtitle = document.getElementById("shorts-preview-subtitle-band");
