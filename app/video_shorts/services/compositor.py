@@ -134,6 +134,13 @@ def _normalize_alpha_percent(value: Optional[int], default: int = DEFAULT_TITLE_
     return max(0, min(100, alpha))
 
 
+def _title_visual_y(base_y: int, font_size: int) -> int:
+    # FFmpeg drawtext places glyphs slightly low inside boxed titles.
+    # Nudge upward a bit so the text feels centered within the background pill.
+    offset = max(3, int(round((font_size or 0) * 0.12)))
+    return max(0, int(base_y) - offset)
+
+
 def _overlay_y_expr(
     top_offset: int,
     subtitle_path: Optional[Path],
@@ -396,7 +403,7 @@ def _compose_with_background(
 
         # UI'dan gelen title_margin'i mantıklı aralığa sıkıştır
         # Çok yukarı veya çok aşağı kaçmasın
-        title_test_y = max(80, min(title_margin, 250))
+        title_test_y = _title_visual_y(max(80, min(title_margin, 250)), title_font_size)
 
         # Sarı arka planı hafif transparan yap
         box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
@@ -627,7 +634,7 @@ def _compose_trimmed_with_background(
                 f"fontfile='{test_font_file}':"
                 f"textfile='{_escape_ass_path(debug_textfile)}':"
                 "x=(w-text_w)/2:"
-                f"y={safe_title_margin}:"
+                f"y={_title_visual_y(safe_title_margin, safe_title_font_size)}:"
                 f"fontsize={safe_title_font_size}:"
                 f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
                 "box=1:"
@@ -1178,7 +1185,7 @@ def _compose_trimmed_with_background(
     if title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
-        title_test_y = title_margin
+        title_test_y = _title_visual_y(title_margin, title_font_size)
         box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
 
         debug_drawtext = (
