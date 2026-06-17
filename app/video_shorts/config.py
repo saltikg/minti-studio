@@ -274,9 +274,11 @@ FONT_CHOICES = [
 SUB_FONT_CHOICES = [
     ("arimo", "Arimo", str(STATIC_FONTS_DIR / "Arimo-Regular.ttf"), "Arimo"),
     ("open_sans_semi", "Open Sans Semi Condensed", str(STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf"), "Open Sans SemiCondensed"),
-    ("dejavu", "DejaVu Sans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans"),
-    ("roboto", "Roboto", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVu Sans"),  # fallback path; adjust if Roboto exists
-    ("mono", "DejaVu Mono", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "DejaVu Sans Mono"),
+    ("anton", "Anton", str(STATIC_FONTS_DIR / "Anton-Regular.ttf"), "Anton"),
+    ("bebas_neue", "Bebas Neue", str(STATIC_FONTS_DIR / "BebasNeue-Regular.ttf"), "Bebas Neue"),
+    ("montserrat", "Montserrat", str(STATIC_FONTS_DIR / "Montserrat-VariableFont_wght.ttf"), "Montserrat"),
+    ("oswald_regular", "Oswald Regular", str(STATIC_FONTS_DIR / "Oswald-Regular.ttf"), "Oswald"),
+    ("oswald_bold", "Oswald Bold", str(STATIC_FONTS_DIR / "Oswald-Bold.ttf"), "Oswald"),
 ]
 
 TITLE_FONT_SIZES = [8, 20, 24, 28, 30, 34, 40, 44]

@@ -3145,7 +3145,18 @@ def generate_short(video_pk):
     title_font_options = [
         {"key": key, "label": cfg["label"], "css_family": cfg["css_family"]}
         for key, cfg in TITLE_FONTS.items()
+        if Path(cfg.get("path") or "").exists()
     ]
+    if not title_font_options:
+        default_cfg = TITLE_FONTS.get(DEFAULT_TITLE_FONT_KEY)
+        if default_cfg:
+            title_font_options = [
+                {
+                    "key": DEFAULT_TITLE_FONT_KEY,
+                    "label": default_cfg["label"],
+                    "css_family": default_cfg["css_family"],
+                }
+            ]
 
     # Subtitle fonts
     sub_fonts = []
@@ -3368,7 +3379,10 @@ def generate_short(video_pk):
     selected_subtitle_bg_color = video_subtitle_bg_color
     selected_subtitle_bg_alpha = video_subtitle_bg_alpha
     selected_subtitle_text_alpha = video_subtitle_text_alpha
+    available_title_font_keys = {item["key"] for item in title_font_options}
     selected_title_font_key = _resolve_title_font_key(video_font_key)
+    if selected_title_font_key not in available_title_font_keys and title_font_options:
+        selected_title_font_key = title_font_options[0]["key"]
     default_font_css = TITLE_FONTS.get(DEFAULT_TITLE_FONT_KEY, {}).get("css_family", "inherit")
     selected_title_font_css = TITLE_FONTS.get(selected_title_font_key, {}).get("css_family", default_font_css)
     selected_video_date = video_date_text
