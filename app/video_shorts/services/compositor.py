@@ -95,6 +95,16 @@ def _hex_to_drawtext_color(hex_code: Optional[str], default: str = "#FFFF00") ->
     return f"0x{value}"
 
 
+def _hex_to_ass_color(hex_code: Optional[str], default: str = "#FFFFFF") -> str:
+    value = (hex_code or default).lstrip("#").upper()
+    if len(value) != 6 or any(ch not in "0123456789ABCDEF" for ch in value):
+        value = default.lstrip("#").upper()
+    rr = value[0:2]
+    gg = value[2:4]
+    bb = value[4:6]
+    return f"&H00{bb}{gg}{rr}"
+
+
 def _overlay_y_expr(
     top_offset: int,
     subtitle_path: Optional[Path],
@@ -317,8 +327,10 @@ def _compose_with_background(
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
+    title_text_color: Optional[str] = None,
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    subtitle_text_color: Optional[str] = None,
 ):
     if not bg_path.exists():
         raise FileNotFoundError(f"Background image not found: {bg_path}")
@@ -363,7 +375,7 @@ def _compose_with_background(
             "x=(w-text_w)/2:"            # yatayda ortalı
             f"y={title_test_y}:"         # dikey pozisyon
             f"fontsize={title_font_size}:"
-            "fontcolor=black:"
+            f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
             "line_spacing=5:"   # satırlar arası mesafeyi biraz kıs
             "box=1:"
             f"boxcolor={box_color}:"
@@ -377,7 +389,7 @@ def _compose_with_background(
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            "PrimaryColour=&H00FFFFFF,"
+            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
             "BackColour=&H00000000,"
             "BorderStyle=4,"
             "Outline=1,"
@@ -455,8 +467,10 @@ def _compose_trimmed_with_background(
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
+    title_text_color: Optional[str] = None,
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    subtitle_text_color: Optional[str] = None,
     video_date_text: Optional[str] = None,
     subscribe_overlay_enabled: bool = False,
     subscribe_overlay_path: Optional[Path] = None,
@@ -578,7 +592,7 @@ def _compose_trimmed_with_background(
                 "x=(w-text_w)/2:"
                 f"y={safe_title_margin}:"
                 f"fontsize={safe_title_font_size}:"
-                "fontcolor=black:"
+                f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
                 "box=1:"
                 f"line_spacing={safe_title_line_spacing}:"
                 f"boxcolor={box_color}:"
@@ -590,7 +604,7 @@ def _compose_trimmed_with_background(
             clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
             style = (
                 f"Fontsize={safe_subtitle_font_size},"
-                "PrimaryColour=&H00FFFFFF,"
+                f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
                 "BackColour=&H00000000,"
                 "BorderStyle=4,"
                 "Outline=1,"

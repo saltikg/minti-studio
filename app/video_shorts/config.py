@@ -45,6 +45,8 @@ DEFAULT_STORAGE_PLANS = [
     {"plan_id": "plan_100gb", "label": "Studio", "quota_bytes": 100 * 1024 ** 3, "sort_order": 3},
 ]
 DEFAULT_USER_STORAGE_LIMIT = 3 * 1024 ** 3
+DEFAULT_TITLE_TEXT_COLOR = "#000000"
+DEFAULT_SUBTITLE_TEXT_COLOR = "#FFFFFF"
 _default_plan_id = next((plan["plan_id"] for plan in DEFAULT_STORAGE_PLANS if plan["plan_id"] == "plan_2gb"), DEFAULT_STORAGE_PLANS[0]["plan_id"])
 DEFAULT_USER_PLAN_ID = os.getenv("DEFAULT_USER_PLAN_ID", _default_plan_id)
 _categories_env = os.getenv("SHORTS_CATEGORY_OPTIONS", "").strip()

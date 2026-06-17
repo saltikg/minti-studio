@@ -1155,6 +1155,34 @@
                   </div>
                   <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
                 </div>
+                <div class="short-bg-trigger" id="titleTextColorTrigger">
+                  <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
+                  <span id="titleTextColorHex" class="color-value">{{ selected_title_text_color or '#000000' }}</span>
+                  <div class="short-bg-popover closed" id="titleTextColorPopover">
+                    {% set palette_groups = [
+                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
+                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
+                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
+                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
+                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
+                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#455A64'],
+                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#000000']
+                    ] %}
+                    {% set max_rows = palette_groups | map('length') | max %}
+                    {% for row in range(max_rows) %}
+                      {% for group in palette_groups %}
+                        {% set color = group[row] if row < group|length else '' %}
+                        {% if color %}
+                          <div class="short-color-swatch" data-color="{{ color }}"></div>
+                        {% else %}
+                          <div class="short-color-swatch empty"></div>
+                        {% endif %}
+                      {% endfor %}
+                    {% endfor %}
+                  </div>
+                  <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#000000' }}">
+                </div>
                 <div class="short-label">
                   <span>Subtitle</span>
                 </div>
@@ -1165,6 +1193,34 @@
                     {% endfor %}
                   </select>
                   <div id="subtitlePreview" class="short-font-preview">Font&nbsp;Preview</div>
+                </div>
+                <div class="short-bg-trigger" id="subtitleTextColorTrigger">
+                  <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
+                  <span id="subtitleTextColorHex" class="color-value">{{ selected_subtitle_text_color or '#FFFFFF' }}</span>
+                  <div class="short-bg-popover closed" id="subtitleTextColorPopover">
+                    {% set palette_groups = [
+                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FFD600'],
+                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FF9800'],
+                      ['#FFEBEE','#FFCDD2','#EF9A9A','#E57373','#EF5350'],
+                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#2E7D32'],
+                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5'],
+                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#6A1B9A'],
+                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#455A64'],
+                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#000000']
+                    ] %}
+                    {% set max_rows = palette_groups | map('length') | max %}
+                    {% for row in range(max_rows) %}
+                      {% for group in palette_groups %}
+                        {% set color = group[row] if row < group|length else '' %}
+                        {% if color %}
+                          <div class="short-color-swatch" data-color="{{ color }}"></div>
+                        {% else %}
+                          <div class="short-color-swatch empty"></div>
+                        {% endif %}
+                      {% endfor %}
+                    {% endfor %}
+                  </div>
+                  <input type="hidden" name="subtitle_text_color" id="subtitleTextColorValue" value="{{ selected_subtitle_text_color or '#FFFFFF' }}">
                 </div>
                 <div class="input-group-inline compact">
                   <span>Size</span>
@@ -1224,14 +1280,11 @@
           <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
             <div class="small text-muted mb-2">Final Preview</div>
             <div class="shorts-preview-frame" id="shorts-preview-frame">
-              <div class="shorts-preview-title-band" id="shorts-preview-title-band">
-              </div>
+              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
               <div class="shorts-preview-video" id="shorts-preview-video">
                 <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
               </div>
-              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">
-                Preview
-              </div>
+              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Subtitle</div>
             </div>
           </div>
         </div>
@@ -4065,7 +4118,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const params = new URLSearchParams();
-    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "title_margin", "title_line_spacing", "title_bg_color", "video_date_text", "video_overlay_offset"].forEach(
+    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_text_color", "subtitle_text_color", "video_date_text", "video_overlay_offset"].forEach(
       (name) => {
         const field = settingsContainer.querySelector(`[name="${name}"]`);
         if (field) {
@@ -4370,55 +4423,89 @@ document.addEventListener("DOMContentLoaded", function () {
   updateTitleFont();
   updateSubtitleFont();
 
-  const swatches = Array.from(document.querySelectorAll("#titleBgPopover .short-color-swatch")).filter((s) => s.dataset.color);
-  const hiddenColor = document.getElementById("titleBgColorValue");
-  const hexLabel = document.getElementById("titleBgHex");
-  const titleBgSwatch = document.getElementById("titleBgSwatch");
-  const titleBgTrigger = document.getElementById("titleBgTrigger");
-  const titleBgPopover = document.getElementById("titleBgPopover");
-
   const normalize = (value) => (value || "").toUpperCase();
-  swatches.forEach((swatch) => {
-    swatch.style.backgroundColor = swatch.dataset.color;
-  });
-  const setActiveSwatch = (color) => {
-    swatches.forEach((s) => {
-      s.classList.toggle("active", normalize(s.dataset.color) === color);
+  const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, onApply }) => {
+    const trigger = document.getElementById(triggerId);
+    const popover = document.getElementById(popoverId);
+    const hidden = document.getElementById(hiddenId);
+    const hexLabel = document.getElementById(hexId);
+    const swatchEl = document.getElementById(swatchId);
+    const swatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`)).filter((s) => s.dataset.color);
+    swatches.forEach((swatch) => {
+      swatch.style.backgroundColor = swatch.dataset.color;
     });
-  };
-  const applyColor = (value) => {
-    const hex = normalize(value);
-    if (!hex) return;
-    hiddenColor && (hiddenColor.value = hex);
-    hexLabel && (hexLabel.textContent = hex);
-    titlePreview && (titlePreview.style.backgroundColor = hex);
-    titleBgSwatch && (titleBgSwatch.style.backgroundColor = hex);
-    setActiveSwatch(hex);
-  };
-
-  swatches.forEach((swatch) => {
-    swatch.addEventListener("click", () => {
-      applyColor(swatch.dataset.color);
-      titleBgPopover?.classList.add("closed");
+    const setActiveSwatch = (color) => {
+      swatches.forEach((s) => {
+        s.classList.toggle("active", normalize(s.dataset.color) === color);
+      });
+    };
+    const applyColor = (value) => {
+      const hex = normalize(value);
+      if (!hex) return;
+      if (hidden) hidden.value = hex;
+      if (hexLabel) hexLabel.textContent = hex;
+      if (swatchEl) swatchEl.style.backgroundColor = hex;
+      if (typeof onApply === "function") onApply(hex);
+      setActiveSwatch(hex);
+    };
+    swatches.forEach((swatch) => {
+      swatch.addEventListener("click", () => {
+        applyColor(swatch.dataset.color);
+        popover?.classList.add("closed");
+      });
     });
-  });
+    trigger?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!popover) return;
+      popover.classList.toggle("closed");
+    });
+    document.addEventListener("click", (event) => {
+      if (!popover) return;
+      if (trigger?.contains(event.target) || popover.contains(event.target)) return;
+      popover.classList.add("closed");
+    });
+    const initialColor = normalize(hidden?.value) || normalize(swatches[0]?.dataset.color);
+    if (initialColor) {
+      applyColor(initialColor);
+    }
+  };
 
-  titleBgTrigger?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (!titleBgPopover) return;
-    titleBgPopover.classList.toggle("closed");
+  bindColorPicker({
+    triggerId: "titleBgTrigger",
+    popoverId: "titleBgPopover",
+    hiddenId: "titleBgColorValue",
+    hexId: "titleBgHex",
+    swatchId: "titleBgSwatch",
+    onApply: (hex) => {
+      if (titlePreview) titlePreview.style.backgroundColor = hex;
+      const previewTitle = document.getElementById("shorts-preview-title-band");
+      if (previewTitle) previewTitle.style.backgroundColor = hex;
+    },
   });
-
-  document.addEventListener("click", (event) => {
-    if (!titleBgPopover) return;
-    if (titleBgTrigger?.contains(event.target) || titleBgPopover.contains(event.target)) return;
-    titleBgPopover.classList.add("closed");
+  bindColorPicker({
+    triggerId: "titleTextColorTrigger",
+    popoverId: "titleTextColorPopover",
+    hiddenId: "titleTextColorValue",
+    hexId: "titleTextColorHex",
+    swatchId: "titleTextColorSwatch",
+    onApply: (hex) => {
+      if (titlePreview) titlePreview.style.color = hex;
+      const previewTitle = document.getElementById("shorts-preview-title-band");
+      if (previewTitle) previewTitle.style.color = hex;
+    },
   });
-
-  const initialColor = normalize(hiddenColor?.value) || normalize(swatches[0]?.dataset.color);
-  if (initialColor) {
-    applyColor(initialColor);
-  }
+  bindColorPicker({
+    triggerId: "subtitleTextColorTrigger",
+    popoverId: "subtitleTextColorPopover",
+    hiddenId: "subtitleTextColorValue",
+    hexId: "subtitleTextColorHex",
+    swatchId: "subtitleTextColorSwatch",
+    onApply: (hex) => {
+      if (subtitlePreview) subtitlePreview.style.color = hex;
+      const previewSubtitle = document.getElementById("shorts-preview-subtitle-band");
+      if (previewSubtitle) previewSubtitle.style.color = hex;
+    },
+  });
 });
 </script>
 {% endblock %}
