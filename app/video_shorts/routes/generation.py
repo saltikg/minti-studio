@@ -583,10 +583,10 @@ def _resolve_user_static_image_path(
     *,
     expected_owner_user_id: Optional[str] = None,
     expected_brand_id: Optional[str] = None,
-) -> Optional[Path]:
+) -> Tuple[Optional[Path], bool]:
     clean_image_id = str(image_id or "").strip()
     if not clean_image_id:
-        return None
+        return None, False
     conn_images = get_db_readonly()
     try:
         row = conn_images.execute(
@@ -596,7 +596,7 @@ def _resolve_user_static_image_path(
     finally:
         conn_images.close()
     if not row or not row[1]:
-        return None
+        return None, False
     owner_id, filename, owner_brand_id = row[0], row[1], row[2]
     if expected_owner_user_id and owner_id and owner_id != expected_owner_user_id:
         current_app.logger.warning(
@@ -605,7 +605,7 @@ def _resolve_user_static_image_path(
             owner_id,
             expected_owner_user_id,
         )
-        return None
+        return None, False
     if expected_brand_id and owner_brand_id and owner_brand_id != expected_brand_id:
         current_app.logger.warning(
             "Static image brand mismatch for image_id=%s owner_brand=%s expected_brand=%s",
@@ -613,9 +613,19 @@ def _resolve_user_static_image_path(
             owner_brand_id,
             expected_brand_id,
         )
-        return None
+        return None, False
+    key = _user_media_storage_key("image", owner_id, filename)
+    storage = get_media_storage()
     candidate = STATIC_USER_IMAGES_DIR / owner_id / filename
-    return candidate if candidate.exists() else None
+    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
+    if resolved.local_path and resolved.local_path.exists():
+        return resolved.local_path, False
+    if resolved.exists and resolved.backend == "s3":
+        try:
+            return storage.download_to_temp(key), True
+        except Exception:
+            current_app.logger.exception("Failed to download static image from s3 image_id=%s key=%s", clean_image_id, key)
+    return None, False
 
 
 def _legacy_image_to_video_path(job_id: str) -> Path:
@@ -9961,6 +9971,7 @@ def autoclip_video(video_pk):
     static_clip_path = None
     created_video_path = None
     created_video_is_temp = False
+    bg_path_is_temp = False
     made = 0
     missing_outputs = 0
     clip_filename = plan_entry.get("clip_filename") or f"{plan_index}_{vid}.mp4"
@@ -10035,7 +10046,7 @@ def autoclip_video(video_pk):
         if bg_visual_key:
             if bg_visual_key.startswith("userbg:"):
                 bg_image_id = bg_visual_key.split(":", 1)[1]
-                user_bg_path = _resolve_user_static_image_path(
+                user_bg_path, bg_path_is_temp = _resolve_user_static_image_path(
                     bg_image_id,
                     expected_owner_user_id=video_owner_user_id,
                     expected_brand_id=current_brand_id(),
@@ -10413,6 +10424,11 @@ def autoclip_video(video_pk):
         if created_video_is_temp and created_video_path:
             try:
                 created_video_path.unlink()
+            except Exception:
+                pass
+        if bg_path_is_temp and bg_path:
+            try:
+                bg_path.unlink()
             except Exception:
                 pass
         _cleanup_resolved_source_video(src_path, src_path_is_temp)
