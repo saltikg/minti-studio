@@ -1088,26 +1088,6 @@
           </div>
           <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
         </div>
-        <div class="cropper-modal-layout">
-          <div class="cropper-modal-preview flex-fill">
-            <div class="small text-muted mb-2">Drag to reframe</div>
-            <div class="cropper-loader" id="cropper-loader">
-              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
-              <span>Loading frame…</span>
-            </div>
-            <img id="cropper-image" src="" alt="Crop preview" />
-          </div>
-          <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
-            <div class="small text-muted mb-2">Final Preview</div>
-            <div class="shorts-preview-frame" id="shorts-preview-frame">
-              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
-              <div class="shorts-preview-video" id="shorts-preview-video">
-                <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
-              </div>
-              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Subtitle</div>
-            </div>
-          </div>
-        </div>
         <div class="short-video-settings">
           <div class="short-video-settings-heading">
             <span>Short video settings</span>
@@ -1288,6 +1268,26 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+        <div class="cropper-modal-layout">
+          <div class="cropper-modal-preview flex-fill">
+            <div class="small text-muted mb-2">Drag to reframe</div>
+            <div class="cropper-loader" id="cropper-loader">
+              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
+              <span>Loading frame…</span>
+            </div>
+            <img id="cropper-image" src="" alt="Crop preview" />
+          </div>
+          <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
+            <div class="small text-muted mb-2">Final Preview</div>
+            <div class="shorts-preview-frame" id="shorts-preview-frame">
+              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
+              <div class="shorts-preview-video" id="shorts-preview-video">
+                <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
+              </div>
+              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Subtitle</div>
             </div>
           </div>
         </div>

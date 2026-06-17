@@ -2794,22 +2794,24 @@ a:hover {
 .vs-app #crop-area-modal .visual-mode-buttons {
   display: flex;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .vs-app #crop-area-modal .visual-mode-btn {
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.04);
   font-size: 13px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--text);
-  min-height: 44px;
-  flex: 1 1 calc(50% - 10px);
+  min-height: 38px;
+  flex: 0 0 auto;
   justify-content: center;
+  white-space: nowrap;
 }
 
 .vs-app #crop-area-modal .visual-mode-btn.active {
