@@ -130,6 +130,18 @@ def settings_page():
             "icon": "movie",
             "href": url_for("video_shorts_bp.image_to_video_lab"),
         },
+        {
+            "title": "AI Video Assets",
+            "subtitle": "Manage AI video characters and backgrounds",
+            "icon": "recent_actors",
+            "href": url_for("video_shorts_bp.ai_video_characters_backgrounds"),
+        },
+        {
+            "title": "AI Video Create",
+            "subtitle": "Create and manage AI video clips",
+            "icon": "smart_display",
+            "href": url_for("video_shorts_bp.ai_video_create"),
+        },
     ]
     return render_template("shorts_settings.html", settings_items=settings_items)
 

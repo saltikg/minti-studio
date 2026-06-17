@@ -699,8 +699,14 @@ def account_page():
             "href": url_for("video_shorts_bp.social_connect"),
         },
         {
-            "title": "Plan and Storage",
-            "subtitle": "Review quota, plan and storage usage",
+            "title": "My Storage",
+            "subtitle": "Browse uploaded files and storage assets",
+            "icon": "cloud_download",
+            "href": url_for("video_shorts_bp.shorts_storage"),
+        },
+        {
+            "title": "Plan",
+            "subtitle": "Review quota, storage limits and plan usage",
             "icon": "workspace_premium",
             "href": url_for("video_shorts_bp.shorts_storage_plans"),
         },
