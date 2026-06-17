@@ -527,6 +527,7 @@ def dashboard_v2_page():
                 ) AS daily_views
             FROM {VIDEO_DAILY_DELTAS_TABLE}
             WHERE snapshot_date BETWEEN ? AND ?
+              {brand_clause}
               {daily_views_platform_clause}
             GROUP BY snapshot_date, channel_type
             HAVING SUM(
@@ -540,6 +541,7 @@ def dashboard_v2_page():
             [
                 start_date.isoformat(),
                 end_date.isoformat(),
+                *brand_params,
                 *daily_views_platform_params,
             ],
         )

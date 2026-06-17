@@ -970,6 +970,7 @@ def video_stats_page():
             JOIN latest l
               ON s.channel_type = l.channel_type
              AND s.snapshot_date = l.snapshot_date
+            WHERE 1 = 1{chart_clause}
             GROUP BY s.channel_type
             """,
             chart_params,
@@ -1383,10 +1384,10 @@ def video_stats_page():
                 f"""
                 WITH latest AS (
                     SELECT channel_type, MAX(snapshot_date) AS snapshot_date
-                FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                WHERE 1 = 1{subscriber_brand_clause}
-                GROUP BY channel_type
-            )
+                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
+                    WHERE 1 = 1{subscriber_brand_clause}
+                    GROUP BY channel_type
+                )
                 SELECT
                     s.channel_type,
                     SUM(
@@ -1399,9 +1400,10 @@ def video_stats_page():
                 JOIN latest l
                   ON s.channel_type = l.channel_type
                  AND s.snapshot_date = l.snapshot_date
+                WHERE 1 = 1{subscriber_brand_clause}
                 GROUP BY s.channel_type
                 """,
-                subscriber_brand_params,
+                [*subscriber_brand_params, *subscriber_brand_params],
             )
             for row in _rows_to_dict(subscriber_totals_cursor):
                 key = (row.get("channel_type") or "").lower()
