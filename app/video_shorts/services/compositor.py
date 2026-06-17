@@ -150,6 +150,53 @@ def _title_x_expr(align: Optional[str], padding: int = 88) -> str:
     return "(w-text_w)/2"
 
 
+def _estimate_title_band_width(
+    title_txt: str,
+    font_size: int,
+    frame_width: int,
+    *,
+    min_width: int = 320,
+    side_margin: int = 88,
+    inner_padding: int = 28,
+) -> int:
+    lines = [line for line in (title_txt or "").splitlines() if line] or [title_txt or ""]
+    longest = max((len(line.strip()) for line in lines), default=0)
+    estimated_text_width = int(round(longest * max(font_size, 1) * 0.62))
+    band_width = max(min_width, estimated_text_width + inner_padding * 2)
+    return max(min_width, min(frame_width - side_margin * 2, band_width))
+
+
+def _estimate_title_band_height(
+    title_txt: str,
+    font_size: int,
+    line_spacing: int,
+    *,
+    vertical_padding: int = 18,
+) -> int:
+    line_count = max(1, len((title_txt or "").splitlines()) or 1)
+    effective_spacing = max(-6, int(line_spacing or 0))
+    estimated_text_height = int(round(line_count * font_size + max(0, line_count - 1) * (font_size * 0.18 + effective_spacing)))
+    return estimated_text_height + vertical_padding * 2
+
+
+def _title_band_x_expr(align: Optional[str], band_width: int, side_margin: int = 88) -> str:
+    mode = str(align or "center").strip().lower()
+    if mode == "left":
+        return str(int(side_margin))
+    if mode == "right":
+        return f"w-{int(band_width)}-{int(side_margin)}"
+    return f"(w-{int(band_width)})/2"
+
+
+def _title_text_x_in_band_expr(align: Optional[str], band_x_expr: str, band_width: int, inner_padding: int = 28) -> str:
+    mode = str(align or "center").strip().lower()
+    if mode == "left":
+        return f"({band_x_expr}+{int(inner_padding)})"
+    if mode == "right":
+        return f"({band_x_expr}+{int(band_width)}-text_w-{int(inner_padding)})"
+    return f"({band_x_expr}+({int(band_width)}-text_w)/2)"
+
+
 def _overlay_y_expr(
     top_offset: int,
     subtitle_path: Optional[Path],
@@ -414,22 +461,34 @@ def _compose_with_background(
         # UI'dan gelen title_margin'i mantıklı aralığa sıkıştır
         # Çok yukarı veya çok aşağı kaçmasın
         title_test_y = _title_visual_y(max(80, min(title_margin, 250)), title_font_size)
+        title_band_width = _estimate_title_band_width(title_txt, title_font_size, VIDEO_TARGET_WIDTH)
+        title_band_height = _estimate_title_band_height(title_txt, title_font_size, 5)
+        title_band_x = _title_band_x_expr(title_text_align, title_band_width)
+        title_band_y = max(0, title_test_y - 18)
+        title_text_x = _title_text_x_in_band_expr(title_text_align, title_band_x, title_band_width)
 
         # Sarı arka planı hafif transparan yap
         box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
+        filter_parts.append(
+            f"{final_label}drawbox="
+            f"x={title_band_x}:"
+            f"y={title_band_y}:"
+            f"w={title_band_width}:"
+            f"h={title_band_height}:"
+            f"color={box_color}:"
+            "t=fill"
+            "[ov_title_box]"
+        )
 
         debug_drawtext = (
-            f"{final_label}drawtext="
+            "[ov_title_box]drawtext="
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
-            f"x={_title_x_expr(title_text_align)}:"
-            f"y={title_test_y}:"         # dikey pozisyon
+            f"x={title_text_x}:"
+            f"y={title_band_y}+({title_band_height}-text_h)/2-2:"
             f"fontsize={title_font_size}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
             "line_spacing=5:"   # satırlar arası mesafeyi biraz kıs
-            "box=1:"
-            f"boxcolor={box_color}:"
-            "boxborderw=22:"             # daha kalın padding
             "[ov_title_debug]"
         )
         filter_parts.append(debug_drawtext)
@@ -640,18 +699,30 @@ def _compose_trimmed_with_background(
             test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
             box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
+            title_band_width = _estimate_title_band_width(title_txt, safe_title_font_size, target_width)
+            title_band_height = _estimate_title_band_height(title_txt, safe_title_font_size, safe_title_line_spacing)
+            title_band_x = _title_band_x_expr(title_text_align, title_band_width)
+            title_band_y = max(0, _title_visual_y(safe_title_margin, safe_title_font_size) - 18)
+            title_text_x = _title_text_x_in_band_expr(title_text_align, title_band_x, title_band_width)
             filter_parts.append(
-                f"{final_label}drawtext="
+                f"{final_label}drawbox="
+                f"x={title_band_x}:"
+                f"y={title_band_y}:"
+                f"w={title_band_width}:"
+                f"h={title_band_height}:"
+                f"color={box_color}:"
+                "t=fill"
+                "[ov_title_box]"
+            )
+            filter_parts.append(
+                "[ov_title_box]drawtext="
                 f"fontfile='{test_font_file}':"
                 f"textfile='{_escape_ass_path(debug_textfile)}':"
-                f"x={_title_x_expr(title_text_align)}:"
-                f"y={_title_visual_y(safe_title_margin, safe_title_font_size)}:"
+                f"x={title_text_x}:"
+                f"y={title_band_y}+({title_band_height}-text_h)/2-2:"
                 f"fontsize={safe_title_font_size}:"
                 f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                "box=1:"
                 f"line_spacing={safe_title_line_spacing}:"
-                f"boxcolor={box_color}:"
-                "boxborderw=22:"
                 "[ov_title]"
             )
             final_label = "[ov_title]"
@@ -1197,21 +1268,32 @@ def _compose_trimmed_with_background(
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
         title_test_y = _title_visual_y(title_margin, title_font_size)
+        title_band_width = _estimate_title_band_width(title_txt, title_font_size, target_width)
+        title_band_height = _estimate_title_band_height(title_txt, title_font_size, safe_title_line_spacing_main)
+        title_band_x = _title_band_x_expr(title_text_align, title_band_width)
+        title_band_y = max(0, title_test_y - 18)
+        title_text_x = _title_text_x_in_band_expr(title_text_align, title_band_x, title_band_width)
         box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
+        filter_parts.append(
+            f"{final_label}drawbox="
+            f"x={title_band_x}:"
+            f"y={title_band_y}:"
+            f"w={title_band_width}:"
+            f"h={title_band_height}:"
+            f"color={box_color}:"
+            "t=fill"
+            "[ov_title_box]"
+        )
 
         debug_drawtext = (
-            f"{final_label}drawtext="
+            "[ov_title_box]drawtext="
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
-            f"x={_title_x_expr(title_text_align)}:"
-            f"y={title_test_y}:"          # dikeyde UI + clamp
+            f"x={title_text_x}:"
+            f"y={title_band_y}+({title_band_height}-text_h)/2-2:"
             f"fontsize={title_font_size}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-            "box=1:"
             f"line_spacing={safe_title_line_spacing_main}:"
-
-            f"boxcolor={box_color}:"      # hafif transparan sarı
-            "boxborderw=22:"              # daha kalın padding
             "[ov_title_debug]"
         )
         filter_parts.append(debug_drawtext)
