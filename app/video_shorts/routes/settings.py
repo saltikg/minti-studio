@@ -93,6 +93,47 @@ def _update_plan_category_label(old_name: str, new_name: str | None, owner_id: s
             continue
 
 
+@video_shorts_bp.route("/settings", methods=["GET"])
+def settings_page():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+
+    settings_items = [
+        {
+            "title": "Categories",
+            "subtitle": "Manage short categories",
+            "icon": "category",
+            "href": url_for("video_shorts_bp.categories_page"),
+        },
+        {
+            "title": "Prompts",
+            "subtitle": "Edit brand prompt settings",
+            "icon": "tune",
+            "href": url_for("video_shorts_bp.prompts_page"),
+        },
+        {
+            "title": "Static Images",
+            "subtitle": "Upload and organize visuals",
+            "icon": "image",
+            "href": url_for("video_shorts_bp.static_images_page"),
+        },
+        {
+            "title": "Podcast Audio",
+            "subtitle": "Manage podcast audio files",
+            "icon": "mic",
+            "href": url_for("video_shorts_bp.podcast_audios_page"),
+        },
+        {
+            "title": "Image to Video Lab",
+            "subtitle": "Create motion videos from images",
+            "icon": "movie",
+            "href": url_for("video_shorts_bp.image_to_video_lab"),
+        },
+    ]
+    return render_template("shorts_settings.html", settings_items=settings_items)
+
+
 @video_shorts_bp.route("/settings/categories", methods=["GET", "POST"])
 def categories_page():
     current_user = getattr(g, "vs_current_user", None)

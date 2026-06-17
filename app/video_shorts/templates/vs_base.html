@@ -155,39 +155,11 @@
 
           <div class="sidebar-section-label">SETTINGS</div>
 
-          <a href="{{ url_for('video_shorts_bp.categories_page') }}"
+          <a href="{{ url_for('video_shorts_bp.settings_page') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/settings/categories' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">category</span>
-            <span>Kategoriler</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.prompts_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/settings/prompts' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">tune</span>
-            <span>Prompts</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.static_images_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/settings/static-images' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">image</span>
-            <span>Static Images</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/settings/podcast-audios' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">mic</span>
-            <span>Podcast Audio</span>
-          </a>
-
-          <a href="{{ url_for('video_shorts_bp.image_to_video_lab') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/image-to-video' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">movie</span>
-            <span>Image to Video Lab</span>
+                    {% if '/settings' in request.path or '/image-to-video' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">settings</span>
+            <span>Settings</span>
           </a>
 
           <div class="sidebar-section-label">AI Video</div>
