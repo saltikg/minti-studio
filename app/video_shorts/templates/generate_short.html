@@ -1015,7 +1015,6 @@
                 <i class="bi bi-mic"></i><span class="text-white">Podcast</span>
               </button>
             </div>
-            <div class="control-note">Choose what appears inside the video area.</div>
           </div>
         </div>
         <div class="visual-mode-detail-panel">
@@ -1089,10 +1088,29 @@
           </div>
           <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
         </div>
+        <div class="cropper-modal-layout">
+          <div class="cropper-modal-preview flex-fill">
+            <div class="small text-muted mb-2">Drag to reframe</div>
+            <div class="cropper-loader" id="cropper-loader">
+              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
+              <span>Loading frame…</span>
+            </div>
+            <img id="cropper-image" src="" alt="Crop preview" />
+          </div>
+          <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
+            <div class="small text-muted mb-2">Final Preview</div>
+            <div class="shorts-preview-frame" id="shorts-preview-frame">
+              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
+              <div class="shorts-preview-video" id="shorts-preview-video">
+                <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
+              </div>
+              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Subtitle</div>
+            </div>
+          </div>
+        </div>
         <div class="short-video-settings">
           <div class="short-video-settings-heading">
             <span>Short video settings</span>
-            <div class="short-video-settings-subtitle">Spacing values are in pixels. Use top spacing for title/video placement and bottom spacing for subtitle placement.</div>
           </div>
           <div class="short-video-body"
                data-save-url="{{ url_for('video_shorts_bp.save_short_settings', video_pk=video.id) }}"
@@ -1105,7 +1123,6 @@
               <div class="short-settings-section">
                 <div class="short-section-header">
                   <span>Title</span>
-                  <small>Font, color and badge placement</small>
                 </div>
                 <div class="short-settings-row single">
                 <div class="font-preview-group tight">
@@ -1187,7 +1204,6 @@
               <div class="short-settings-section">
                 <div class="short-section-header">
                   <span>Subtitle</span>
-                  <small>Font color and lower caption band</small>
                 </div>
                 <div class="short-settings-row single">
                 <div class="font-preview-group tight">
@@ -1237,7 +1253,6 @@
               <div class="short-settings-section short-settings-section-wide">
                 <div class="short-section-header">
                   <span>Extra overlays</span>
-                  <small>Date, video area position and optional overlays</small>
                 </div>
                 <div class="short-settings-row single">
                 <div class="input-group-inline compact">
@@ -1273,26 +1288,6 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-        <div class="cropper-modal-layout">
-          <div class="cropper-modal-preview flex-fill">
-            <div class="small text-muted mb-2">Drag to reframe</div>
-            <div class="cropper-loader" id="cropper-loader">
-              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
-              <span>Loading frame…</span>
-            </div>
-            <img id="cropper-image" src="" alt="Crop preview" />
-          </div>
-          <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
-            <div class="small text-muted mb-2">Final Preview</div>
-            <div class="shorts-preview-frame" id="shorts-preview-frame">
-              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
-              <div class="shorts-preview-video" id="shorts-preview-video">
-                <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
-              </div>
-              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Subtitle</div>
             </div>
           </div>
         </div>
