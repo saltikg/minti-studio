@@ -257,14 +257,11 @@ def _ensure_video_crop_schema(conn) -> set:
     """
     Ensure the youtube_videos table exposes crop ratio columns.
     """
-    if not _schema_management_enabled():
-        return set()
     try:
-        cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info('youtube_videos')").fetchall()
-        }
+        cols = table_columns(conn, "youtube_videos")
     except Exception:
+        return set()
+    if not cols:
         return set()
     changed = False
     definitions = [
