@@ -1379,7 +1379,7 @@ def _cut_clip(src: Path, start: float, end: float, out_path: Path, subtitle_path
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            "PrimaryColour=&H00FFFFFF,"
+            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
             "BackColour=&H00000000,"
             "BorderStyle=4,"
             "Outline=1,"
