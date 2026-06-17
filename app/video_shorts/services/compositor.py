@@ -155,7 +155,7 @@ def _estimate_title_band_width(
     font_size: int,
     frame_width: int,
     *,
-    min_width: int = 320,
+    min_width: int = 140,
     side_margin: int = 88,
     inner_padding: int = 28,
 ) -> int:
