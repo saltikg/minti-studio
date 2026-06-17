@@ -8,6 +8,7 @@ from flask import current_app
 
 from app.video_shorts.config import (
     DEFAULT_TITLE_BG_COLOR,
+    DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_TITLE_MARGIN,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     FFMPEG_TIMEOUT,
@@ -103,6 +104,14 @@ def _hex_to_ass_color(hex_code: Optional[str], default: str = "#FFFFFF") -> str:
     gg = value[2:4]
     bb = value[4:6]
     return f"&H00{bb}{gg}{rr}"
+
+
+def _normalize_alpha_percent(value: Optional[int], default: int = DEFAULT_TITLE_BG_ALPHA) -> int:
+    try:
+        alpha = int(float(value if value is not None else default))
+    except Exception:
+        alpha = int(default)
+    return max(0, min(100, alpha))
 
 
 def _overlay_y_expr(
@@ -327,6 +336,7 @@ def _compose_with_background(
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
+    title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
@@ -366,7 +376,7 @@ def _compose_with_background(
         title_test_y = max(80, min(title_margin, 250))
 
         # Sarı arka planı hafif transparan yap
-        box_color = f"{_hex_to_drawtext_color(title_bg_color)}@0.92"
+        box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
 
         debug_drawtext = (
             f"{final_label}drawtext="
@@ -467,6 +477,7 @@ def _compose_trimmed_with_background(
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
+    title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
     subtitle_font_size: int = 10,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
@@ -584,7 +595,7 @@ def _compose_trimmed_with_background(
         if title_txt:
             test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
-            box_color = f"{_hex_to_drawtext_color(title_bg_color)}@1"
+            box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
             filter_parts.append(
                 f"{final_label}drawtext="
                 f"fontfile='{test_font_file}':"
@@ -1142,7 +1153,7 @@ def _compose_trimmed_with_background(
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
         title_test_y = title_margin
-        box_color = f"{_hex_to_drawtext_color(title_bg_color)}@1"
+        box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
 
         debug_drawtext = (
             f"{final_label}drawtext="

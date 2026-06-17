@@ -1148,6 +1148,10 @@
                   </div>
                   <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
                 </div>
+                <div class="input-group-inline compact short-alpha-control">
+                  <span>BG alpha</span>
+                  <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 92 }}">
+                </div>
                 <div class="short-bg-trigger" id="titleTextColorTrigger">
                   <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
                   <div class="short-bg-popover closed" id="titleTextColorPopover">
@@ -4111,7 +4115,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const params = new URLSearchParams();
-    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_text_color", "subtitle_text_color", "video_date_text", "video_overlay_offset"].forEach(
+    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "video_date_text", "video_overlay_offset"].forEach(
       (name) => {
         const field = settingsContainer.querySelector(`[name="${name}"]`);
         if (field) {
@@ -4417,6 +4421,19 @@ document.addEventListener("DOMContentLoaded", function () {
   updateSubtitleFont();
 
   const normalize = (value) => (value || "").toUpperCase();
+  const alphaToOpacity = (value, fallback = 92) => {
+    const numeric = Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const clamped = Math.max(0, Math.min(100, numeric));
+    return clamped / 100;
+  };
+  const hexToRgba = (hex, alpha = 1) => {
+    const value = normalize(hex).replace(/^#/, "");
+    if (value.length !== 6) return hex;
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
   const closeAllColorPopovers = (exceptId = null) => {
     document.querySelectorAll(".short-bg-popover").forEach((popover) => {
       if (exceptId && popover.id === exceptId) return;
@@ -4479,6 +4496,19 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
+  const titleBgAlphaInput = document.getElementById("titleBgAlphaValue");
+  const applyTitleBgPreview = () => {
+    const titleBgHidden = document.getElementById("titleBgColorValue");
+    const previewTitle = document.getElementById("shorts-preview-title-band");
+    const alpha = alphaToOpacity(titleBgAlphaInput?.value, 92);
+    const hex = normalize(titleBgHidden?.value || "#FFD600");
+    const rgba = hexToRgba(hex, alpha);
+    if (titlePreview) titlePreview.style.backgroundColor = rgba;
+    if (previewTitle) previewTitle.style.backgroundColor = rgba;
+    const titleBgSwatch = document.getElementById("titleBgSwatch");
+    if (titleBgSwatch) titleBgSwatch.style.backgroundColor = rgba;
+  };
+
   bindColorPicker({
     triggerId: "titleBgTrigger",
     popoverId: "titleBgPopover",
@@ -4486,11 +4516,7 @@ document.addEventListener("DOMContentLoaded", function () {
     hexId: "titleBgHex",
     swatchId: "titleBgSwatch",
     customInputId: "titleBgCustomColor",
-    onApply: (hex) => {
-      if (titlePreview) titlePreview.style.backgroundColor = hex;
-      const previewTitle = document.getElementById("shorts-preview-title-band");
-      if (previewTitle) previewTitle.style.backgroundColor = hex;
-    },
+    onApply: () => applyTitleBgPreview(),
   });
   bindColorPicker({
     triggerId: "titleTextColorTrigger",
@@ -4518,6 +4544,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (previewSubtitle) previewSubtitle.style.color = hex;
     },
   });
+
+  titleBgAlphaInput?.addEventListener("input", applyTitleBgPreview);
+  applyTitleBgPreview();
 });
 </script>
 {% endblock %}

@@ -1869,6 +1869,12 @@ a:hover {
   width: 60px;
   padding: 0.3rem 0.35rem;
 }
+.short-alpha-control {
+  min-width: 124px;
+}
+.short-alpha-range {
+  width: 72px;
+}
 .icon-label {
   width: 18px;
   display: inline-flex;
