@@ -438,6 +438,11 @@ def _normalize_alpha_percent(value: Any, default: int = DEFAULT_TITLE_BG_ALPHA) 
     return max(0, min(100, alpha))
 
 
+def _normalize_title_text_align(value: Any, default: str = "center") -> str:
+    candidate = str(value or default).strip().lower()
+    return candidate if candidate in {"left", "center", "right"} else default
+
+
 def _format_size_bytes(num: int) -> str:
     if num is None:
         return "0 B"
@@ -2871,6 +2876,7 @@ def _get_font_settings_from_session(
     subtitle_font_size_override: Optional[int] = None,
     subtitle_margin_override: Optional[int] = None,
     title_margin_override: Optional[int] = None,
+    title_text_align_override: Optional[str] = None,
     title_bg_color_override: Optional[str] = None,
     title_bg_alpha_override: Optional[int] = None,
     title_text_color_override: Optional[str] = None,
@@ -2878,7 +2884,7 @@ def _get_font_settings_from_session(
     subtitle_bg_color_override: Optional[str] = None,
     subtitle_bg_alpha_override: Optional[int] = None,
     subtitle_text_alpha_override: Optional[int] = None,
-) -> Tuple[Optional[Dict[str, Any]], str, int, int, int, int, str, int, str, str, str, int, int]:
+) -> Tuple[Optional[Dict[str, Any]], str, int, int, int, int, str, str, int, str, str, str, int, int]:
     font_key = video_font_key or DEFAULT_TITLE_FONT_KEY
     font_choice = _build_title_font_choice(font_key)
     sub_font_key = video_sub_font_key or DEFAULT_SUB_FONT_KEY
@@ -2905,6 +2911,7 @@ def _get_font_settings_from_session(
         title_margin = title_margin_override
     else:
         title_margin = DEFAULT_TITLE_MARGIN
+    title_text_align = _normalize_title_text_align(title_text_align_override, "center")
     if title_bg_color_override is not None:
         title_bg_color = _normalize_hex_color(title_bg_color_override, DEFAULT_TITLE_BG_COLOR)
     else:
@@ -2940,6 +2947,7 @@ def _get_font_settings_from_session(
         sub_font_size,
         sub_margin,
         title_margin,
+        title_text_align,
         title_bg_color,
         title_bg_alpha,
         title_text_color,
@@ -2972,7 +2980,7 @@ def generate_short(video_pk):
         view_count, like_count, comment_count, published_at,
         crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio,
         crop_aspect,
-        title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, video_date_text, subscribe_overlay_enabled,
+        title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_text_align, title_line_spacing, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, video_date_text, subscribe_overlay_enabled,
         is_music_only,
         static_visual_key,
         background_visual_key,
@@ -2994,7 +3002,7 @@ def generate_short(video_pk):
         "view_count", "like_count", "comment_count", "published_at",
         "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio",
         "crop_aspect",
-        "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha", "subtitle_text_alpha", "video_date_text", "subscribe_overlay_enabled",
+        "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin", "title_margin", "title_text_align", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha", "subtitle_text_alpha", "video_date_text", "subscribe_overlay_enabled",
         "is_music_only",
         "static_visual_key",
         "background_visual_key",
@@ -3173,6 +3181,7 @@ def generate_short(video_pk):
     video_sub_font_size = video.get("subtitle_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin = video.get("subtitle_margin") or SUB_MARGIN_DEFAULT
     video_title_margin = video.get("title_margin") or DEFAULT_TITLE_MARGIN
+    video_title_text_align = _normalize_title_text_align(video.get("title_text_align"), "center")
     video_title_line_spacing = video.get("title_line_spacing")
     try:
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
@@ -3352,6 +3361,7 @@ def generate_short(video_pk):
     session["vs_sub_font_size"] = video_sub_font_size
     session["vs_sub_margin"] = video_sub_margin
     session["vs_title_margin"] = video_title_margin
+    session["vs_title_text_align"] = video_title_text_align
     session["vs_title_line_spacing"] = video_title_line_spacing
     session["vs_title_bg_color"] = video_title_bg_color
     session["vs_title_bg_alpha"] = video_title_bg_alpha
@@ -3371,6 +3381,7 @@ def generate_short(video_pk):
     selected_sub_font_size = video_sub_font_size
     selected_sub_margin = video_sub_margin
     selected_title_margin = video_title_margin
+    selected_title_text_align = video_title_text_align
     selected_title_line_spacing = video_title_line_spacing
     selected_title_bg_color = video_title_bg_color
     selected_title_bg_alpha = video_title_bg_alpha
@@ -4047,6 +4058,7 @@ def generate_short(video_pk):
         selected_sub_font_size=selected_sub_font_size,
         selected_sub_margin=selected_sub_margin,
         selected_title_margin=selected_title_margin,
+        selected_title_text_align=selected_title_text_align,
         selected_title_line_spacing=selected_title_line_spacing,
         selected_title_bg_color=selected_title_bg_color,
         selected_title_bg_alpha=selected_title_bg_alpha,
@@ -9172,6 +9184,11 @@ def create_clip_plan_v2(video_pk):
         )
     except Exception:
         title_margin = DEFAULT_TITLE_MARGIN
+    title_text_align = _normalize_title_text_align(
+        request.form.get("title_text_align")
+        or session.get("vs_title_text_align")
+        or "center"
+    )
     title_bg_color = _normalize_hex_color(
         request.form.get("title_bg_color")
         or session.get("vs_title_bg_color")
@@ -9200,6 +9217,7 @@ def create_clip_plan_v2(video_pk):
     session["vs_sub_font_size"] = sub_font_size
     session["vs_sub_margin"] = sub_margin
     session["vs_title_margin"] = title_margin
+    session["vs_title_text_align"] = title_text_align
     session["vs_title_bg_color"] = title_bg_color
     session["vs_title_bg_alpha"] = title_bg_alpha
     session["vs_title_text_color"] = title_text_color
@@ -9208,9 +9226,9 @@ def create_clip_plan_v2(video_pk):
     try:
         conn_update.execute(
             """UPDATE youtube_videos
-               SET title_font_key = ?, title_font_size = ?, subtitle_font_key = ?, subtitle_font_size = ?, subtitle_margin = ?, title_margin = ?, title_bg_color = ?, title_bg_alpha = ?, title_text_color = ?, subtitle_text_color = ?
+               SET title_font_key = ?, title_font_size = ?, subtitle_font_key = ?, subtitle_font_size = ?, subtitle_margin = ?, title_margin = ?, title_text_align = ?, title_bg_color = ?, title_bg_alpha = ?, title_text_color = ?, subtitle_text_color = ?
              WHERE video_id = ?""",
-            [font_key, title_font_size, sub_font_key, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, vid],
+            [font_key, title_font_size, sub_font_key, sub_font_size, sub_margin, title_margin, title_text_align, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, vid],
         )
         conn_update.commit()
     except Exception as exc:
@@ -9567,6 +9585,7 @@ def save_short_settings(video_pk):
         title_margin = int(request.form.get("title_margin") or DEFAULT_TITLE_MARGIN)
     except Exception:
         title_margin = DEFAULT_TITLE_MARGIN
+    title_text_align = _normalize_title_text_align(request.form.get("title_text_align") or "center")
     try:
         title_line_spacing = int(request.form.get("title_line_spacing") or session.get("vs_title_line_spacing") or -4)
     except Exception:
@@ -9652,6 +9671,7 @@ def save_short_settings(video_pk):
             "subtitle_font_size": subtitle_font_size,
             "subtitle_margin": subtitle_margin,
             "title_margin": title_margin,
+            "title_text_align": title_text_align,
             "title_line_spacing": title_line_spacing,
             "title_bg_color": title_bg_color,
             "title_bg_alpha": title_bg_alpha,
@@ -9706,6 +9726,7 @@ def save_short_settings(video_pk):
     session["vs_sub_font_size"] = subtitle_font_size
     session["vs_sub_margin"] = subtitle_margin
     session["vs_title_margin"] = title_margin
+    session["vs_title_text_align"] = title_text_align
     session["vs_title_line_spacing"] = title_line_spacing
     session["vs_title_bg_color"] = title_bg_color
     session["vs_title_bg_alpha"] = title_bg_alpha
@@ -9792,6 +9813,7 @@ def autoclip_video(video_pk):
     video_sub_font_size = None
     video_sub_margin = None
     video_title_margin = None
+    video_title_text_align = "center"
     video_title_line_spacing = -4
     video_title_bg_color = None
     video_title_bg_alpha = DEFAULT_TITLE_BG_ALPHA
@@ -9819,13 +9841,13 @@ def autoclip_video(video_pk):
         crop_row = conn.execute(
             "SELECT crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, "
             "crop_aspect, "
-            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
+            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_text_align, title_line_spacing, title_bg_color, video_date_text, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
             "FROM youtube_videos WHERE video_id = ?",
             [vid],
         ).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
-            if len(crop_row) >= 29:
+            if len(crop_row) >= 30:
                 query_indexes = {
                     "crop_aspect": 4,
                     "title_font_key": 5,
@@ -9834,26 +9856,27 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
-                    "title_line_spacing": 11,
-                    "title_bg_color": 12,
-                    "video_date_text": 13,
-                    "subscribe_overlay_enabled": 14,
-                    "is_music_only": 15,
-                    "static_visual_key": 16,
-                    "background_visual_key": 17,
-                    "video_overlay_offset": 18,
-                    "podcast_audio_filename": 19,
-                    "visual_mode": 20,
-                    "podcast_overlay_short_ids": 21,
-                    "owner_user_id": 22,
-                    "title_text_color": 23,
-                    "subtitle_text_color": 24,
-                    "title_bg_alpha": 25,
-                    "subtitle_bg_color": 26,
-                    "subtitle_bg_alpha": 27,
-                    "subtitle_text_alpha": 28,
+                    "title_text_align": 11,
+                    "title_line_spacing": 12,
+                    "title_bg_color": 13,
+                    "video_date_text": 14,
+                    "subscribe_overlay_enabled": 15,
+                    "is_music_only": 16,
+                    "static_visual_key": 17,
+                    "background_visual_key": 18,
+                    "video_overlay_offset": 19,
+                    "podcast_audio_filename": 20,
+                    "visual_mode": 21,
+                    "podcast_overlay_short_ids": 22,
+                    "owner_user_id": 23,
+                    "title_text_color": 24,
+                    "subtitle_text_color": 25,
+                    "title_bg_alpha": 26,
+                    "subtitle_bg_color": 27,
+                    "subtitle_bg_alpha": 28,
+                    "subtitle_text_alpha": 29,
                 }
-            elif len(crop_row) >= 26:
+            elif len(crop_row) >= 29:
                 query_indexes = {
                     "crop_aspect": 4,
                     "title_font_key": 5,
@@ -9862,6 +9885,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": 11,
                     "title_bg_color": 12,
                     "video_date_text": 13,
@@ -9890,6 +9914,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": 11,
                     "title_bg_color": 12,
                     "video_date_text": 13,
@@ -9918,6 +9943,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": 11,
                     "title_bg_color": 12,
                     "video_date_text": 13,
@@ -9946,6 +9972,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": 11,
                     "title_bg_color": 12,
                     "video_date_text": 13,
@@ -9975,6 +10002,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": 11,
                     "title_bg_color": 12,
                     "video_date_text": 13,
@@ -10004,6 +10032,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": None,
                     "title_bg_color": 11,
                     "video_date_text": 12,
@@ -10033,6 +10062,7 @@ def autoclip_video(video_pk):
                     "subtitle_font_size": 8,
                     "subtitle_margin": 9,
                     "title_margin": 10,
+                    "title_text_align": None,
                     "title_line_spacing": None,
                     "title_bg_color": 11,
                     "video_date_text": 12,
@@ -10065,6 +10095,8 @@ def autoclip_video(video_pk):
             video_sub_font_size = crop_row[query_indexes["subtitle_font_size"]]
             video_sub_margin = crop_row[query_indexes["subtitle_margin"]]
             video_title_margin = crop_row[query_indexes["title_margin"]]
+            if query_indexes["title_text_align"] is not None:
+                video_title_text_align = _normalize_title_text_align(crop_row[query_indexes["title_text_align"]], "center")
             if query_indexes["title_line_spacing"] is not None:
                 video_title_line_spacing = crop_row[query_indexes["title_line_spacing"]]
             video_title_bg_color = crop_row[query_indexes["title_bg_color"]]
@@ -10206,13 +10238,14 @@ def autoclip_video(video_pk):
             category="danger",
         )
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
-    font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
+    font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_text_align, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
         video_font_key=video_font_key,
         title_font_size_override=video_title_font_size,
         video_sub_font_key=video_sub_font_key,
         subtitle_font_size_override=video_sub_font_size,
         subtitle_margin_override=video_sub_margin,
         title_margin_override=video_title_margin,
+        title_text_align_override=video_title_text_align,
         title_bg_color_override=video_title_bg_color,
         title_bg_alpha_override=video_title_bg_alpha,
         title_text_color_override=video_title_text_color,
@@ -10539,6 +10572,7 @@ def autoclip_video(video_pk):
                 sub_font_name,
                 title_font_size=title_font_size,
                 title_margin=title_margin,
+                title_text_align=title_text_align,
                 title_line_spacing=video_title_line_spacing,
                 title_bg_color=title_bg_color,
                 title_bg_alpha=title_bg_alpha,

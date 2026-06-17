@@ -141,6 +141,15 @@ def _title_visual_y(base_y: int, font_size: int) -> int:
     return max(0, int(base_y) - offset)
 
 
+def _title_x_expr(align: Optional[str], padding: int = 40) -> str:
+    mode = str(align or "center").strip().lower()
+    if mode == "left":
+        return str(int(padding))
+    if mode == "right":
+        return f"w-text_w-{int(padding)}"
+    return "(w-text_w)/2"
+
+
 def _overlay_y_expr(
     top_offset: int,
     subtitle_path: Optional[Path],
@@ -361,6 +370,7 @@ def _compose_with_background(
     subtitle_font: str = "DejaVu Sans",
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
+    title_text_align: str = "center",
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
@@ -412,7 +422,7 @@ def _compose_with_background(
             f"{final_label}drawtext="
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
-            "x=(w-text_w)/2:"            # yatayda ortalı
+            f"x={_title_x_expr(title_text_align)}:"
             f"y={title_test_y}:"         # dikey pozisyon
             f"fontsize={title_font_size}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
@@ -505,6 +515,7 @@ def _compose_trimmed_with_background(
     subtitle_font: str = "DejaVu Sans",
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
+    title_text_align: str = "center",
     title_line_spacing: int = -4,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
@@ -633,7 +644,7 @@ def _compose_trimmed_with_background(
                 f"{final_label}drawtext="
                 f"fontfile='{test_font_file}':"
                 f"textfile='{_escape_ass_path(debug_textfile)}':"
-                "x=(w-text_w)/2:"
+                f"x={_title_x_expr(title_text_align)}:"
                 f"y={_title_visual_y(safe_title_margin, safe_title_font_size)}:"
                 f"fontsize={safe_title_font_size}:"
                 f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
@@ -1192,7 +1203,7 @@ def _compose_trimmed_with_background(
             f"{final_label}drawtext="
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
-            "x=(w-text_w)/2:"            # yatayda ortalı
+            f"x={_title_x_expr(title_text_align)}:"
             f"y={title_test_y}:"          # dikeyde UI + clamp
             f"fontsize={title_font_size}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
