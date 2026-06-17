@@ -1113,7 +1113,7 @@
                   {% endif %}
                 </div>
                 <div class="input-group-inline compact">
-                  <span>Size</span>
+                  <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
                   <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
                 </div>
                 <div class="input-group-inline compact">
@@ -1121,12 +1121,11 @@
                   <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
                 </div>
                 <div class="input-group-inline compact">
-                  <span>Line spacing</span>
+                  <span class="icon-label" title="Line spacing" aria-label="Line spacing"><i class="bi bi-distribute-vertical"></i></span>
                   <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
                 </div>
                 <div class="short-bg-trigger" id="titleBgTrigger">
                   <div class="short-bg-swatch" id="titleBgSwatch"></div>
-                  <span id="titleBgHex" class="color-value">{{ selected_title_bg_color or '#FFD600' }}</span>
                   <div class="short-bg-popover closed" id="titleBgPopover">
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
@@ -1152,7 +1151,6 @@
                 </div>
                 <div class="short-bg-trigger" id="titleTextColorTrigger">
                   <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
-                  <span id="titleTextColorHex" class="color-value">{{ selected_title_text_color or '#000000' }}</span>
                   <div class="short-bg-popover closed" id="titleTextColorPopover">
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
@@ -1193,7 +1191,6 @@
                 </div>
                 <div class="short-bg-trigger" id="subtitleTextColorTrigger">
                   <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
-                  <span id="subtitleTextColorHex" class="color-value">{{ selected_subtitle_text_color or '#FFFFFF' }}</span>
                   <div class="short-bg-popover closed" id="subtitleTextColorPopover">
                     {% set palette_groups = [
                       ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
@@ -1218,7 +1215,7 @@
                   <input type="hidden" name="subtitle_text_color" id="subtitleTextColorValue" value="{{ selected_subtitle_text_color or '#FFFFFF' }}">
                 </div>
                 <div class="input-group-inline compact">
-                  <span>Size</span>
+                  <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
                   <input type="number" name="sub_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_sub_font_size or 9 }}" min="1" max="990">
                 </div>
                 <div class="input-group-inline compact">

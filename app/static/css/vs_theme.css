@@ -1877,6 +1877,14 @@ a:hover {
   width: 60px;
   padding: 0.3rem 0.35rem;
 }
+.icon-label {
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+}
 .input-group-inline.compact .short-input-wide {
   width: 100px;
 }
