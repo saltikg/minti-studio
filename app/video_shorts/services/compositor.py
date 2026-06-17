@@ -1162,7 +1162,7 @@ def _compose_trimmed_with_background(
             "x=(w-text_w)/2:"            # yatayda ortalı
             f"y={title_test_y}:"          # dikeyde UI + clamp
             f"fontsize={title_font_size}:"
-            "fontcolor=black:"
+            f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
             "box=1:"
             f"line_spacing={safe_title_line_spacing_main}:"
 
@@ -1178,7 +1178,7 @@ def _compose_trimmed_with_background(
         clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
         style = (
             f"Fontsize={subtitle_font_size},"
-            "PrimaryColour=&H00FFFFFF,"
+            f"PrimaryColour={_hex_to_ass_color(subtitle_text_color, '#FFFFFF')},"
             "BackColour=&H00000000,"
             "BorderStyle=4,"
             "Outline=1,"
