@@ -75,12 +75,17 @@ def create_app():
     from app.video_shorts import video_shorts_bp
     app.register_blueprint(video_shorts_bp)
     from app.video_shorts.routes.auth import _current_user
-    from app.video_shorts.routes.api import usage_api
+    from app.video_shorts.routes.api import render_job_status_api, usage_api
 
     @app.get("/api/usage")
     def video_shorts_usage_api_alias():
         _current_user()
         return usage_api()
+
+    @app.get("/api/jobs/<job_id>")
+    def video_shorts_render_job_status_api_alias(job_id):
+        _current_user()
+        return render_job_status_api(job_id)
 
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp

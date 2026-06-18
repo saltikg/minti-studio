@@ -87,6 +87,8 @@ def ensure_usage_metering_schema(conn) -> None:
         ("storage_quota_bytes", "BIGINT"),
         ("monthly_export_limit", "INTEGER"),
         ("monthly_transcription_minutes", "NUMERIC"),
+        ("render_priority", "INTEGER DEFAULT 0"),
+        ("max_concurrent_jobs", "INTEGER DEFAULT 1"),
         ("is_active", "BOOLEAN DEFAULT TRUE"),
     ]
     for column_name, definition in extra_plan_columns:
@@ -129,9 +131,11 @@ def ensure_usage_metering_schema(conn) -> None:
                 storage_quota_bytes,
                 monthly_export_limit,
                 monthly_transcription_minutes,
+                render_priority,
+                max_concurrent_jobs,
                 is_active
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(plan_id)
             DO UPDATE SET
                 label = excluded.label,
@@ -142,6 +146,8 @@ def ensure_usage_metering_schema(conn) -> None:
                 storage_quota_bytes = excluded.storage_quota_bytes,
                 monthly_export_limit = excluded.monthly_export_limit,
                 monthly_transcription_minutes = excluded.monthly_transcription_minutes,
+                render_priority = excluded.render_priority,
+                max_concurrent_jobs = excluded.max_concurrent_jobs,
                 is_active = excluded.is_active
             """,
             [
@@ -154,6 +160,8 @@ def ensure_usage_metering_schema(conn) -> None:
                 plan["quota_bytes"],
                 plan.get("monthly_export_limit"),
                 plan.get("monthly_transcription_minutes"),
+                int(plan.get("render_priority", 0) or 0),
+                int(plan.get("max_concurrent_jobs", 1) or 1),
                 bool(plan.get("is_active", True)),
             ],
         )

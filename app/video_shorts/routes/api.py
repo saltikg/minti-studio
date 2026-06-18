@@ -11,6 +11,7 @@ from app.video_shorts.services.db import (
     get_db,
     get_db_readonly,
 )
+from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
 
@@ -67,6 +68,32 @@ def usage_api():
         return jsonify(get_usage_snapshot(current_user["id"]))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@video_shorts_bp.route("/api/jobs/<job_id>", methods=["GET"])
+def render_job_status_api(job_id: str):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        job = get_job(job_id, user_id=str(current_user["id"]))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not job:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(
+        {
+            "id": job["id"],
+            "status": job["status"],
+            "priority": job["priority"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "result": job.get("result"),
+            "error": job.get("error"),
+            "queue_position": job.get("queue_position"),
+        }
+    )
 
 
 @video_shorts_bp.route("/api/caption-result", methods=["POST"])

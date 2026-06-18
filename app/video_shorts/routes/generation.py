@@ -143,6 +143,7 @@ from app.video_shorts.services.youtube_oauth import (
     upload_video_with_refresh_token,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
+from app.video_shorts.services.render_jobs import build_input_hash, cancel_job, enqueue_render_job
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
     release_export,
@@ -2480,6 +2481,105 @@ def _write_plan_entries_v4(video_id: str, entries: List[Dict[str, Any]]) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"plan": entries}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _update_plan_entry_job_state(
+    video_id: str,
+    entries: List[Dict[str, Any]],
+    *,
+    plan_index: int,
+    status: str,
+    render_job_id: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    changed = False
+    for entry in entries:
+        try:
+            entry_index = int(entry.get("plan_index"))
+        except Exception:
+            continue
+        if entry_index != plan_index:
+            continue
+        entry["status"] = status
+        if render_job_id:
+            entry["render_job_id"] = render_job_id
+        else:
+            entry.pop("render_job_id", None)
+        if error_message:
+            entry["render_error"] = error_message
+        elif status in {"queued", "processing", "created"}:
+            entry.pop("render_error", None)
+        changed = True
+        break
+    if changed:
+        _write_plan_entries(video_id, entries)
+
+
+def _build_render_job_options(
+    *,
+    plan_index: int,
+    title: str,
+    brand_id: Optional[str],
+    crop_ratios: Dict[str, Any],
+    crop_aspect: str,
+    title_font_key: Optional[str],
+    title_font_size: Optional[int],
+    subtitle_font_key: Optional[str],
+    subtitle_font_size: Optional[int],
+    subtitle_margin: Optional[int],
+    title_margin: Optional[int],
+    title_line_spacing: Optional[int],
+    title_bg_color: Optional[str],
+    title_bg_alpha: Optional[int],
+    title_text_color: Optional[str],
+    subtitle_text_color: Optional[str],
+    subtitle_bg_color: Optional[str],
+    subtitle_bg_alpha: Optional[int],
+    subtitle_text_alpha: Optional[int],
+    date_text: Optional[str],
+    date_top: Optional[int],
+    subscribe_overlay: bool,
+    is_music_only: bool,
+    static_visual_key: Optional[str],
+    background_visual_key: Optional[str],
+    visual_mode: str,
+    podcast_audio_filename: str,
+    podcast_overlay_short_ids: List[str],
+    video_overlay_offset: Optional[int],
+    custom_transcript: Optional[str],
+) -> Dict[str, Any]:
+    return {
+        "plan_index": int(plan_index),
+        "title": (title or "").strip(),
+        "brand_id": brand_id,
+        "crop_ratios": crop_ratios or {},
+        "crop_aspect": crop_aspect or "landscape",
+        "title_font_key": title_font_key,
+        "title_font_size": title_font_size,
+        "subtitle_font_key": subtitle_font_key,
+        "subtitle_font_size": subtitle_font_size,
+        "subtitle_margin": subtitle_margin,
+        "title_margin": title_margin,
+        "title_line_spacing": title_line_spacing,
+        "title_bg_color": title_bg_color,
+        "title_bg_alpha": title_bg_alpha,
+        "title_text_color": title_text_color,
+        "subtitle_text_color": subtitle_text_color,
+        "subtitle_bg_color": subtitle_bg_color,
+        "subtitle_bg_alpha": subtitle_bg_alpha,
+        "subtitle_text_alpha": subtitle_text_alpha,
+        "date_text": date_text,
+        "date_top": date_top,
+        "subscribe_overlay": bool(subscribe_overlay),
+        "is_music_only": bool(is_music_only),
+        "static_visual_key": static_visual_key,
+        "background_visual_key": background_visual_key,
+        "visual_mode": visual_mode or "video",
+        "podcast_audio_filename": podcast_audio_filename or "",
+        "podcast_overlay_short_ids": podcast_overlay_short_ids or [],
+        "video_overlay_offset": video_overlay_offset,
+        "custom_transcript": (custom_transcript or "").strip(),
+    }
 
 
 def _find_plan_entry(entries: List[Dict[str, Any]], plan_index: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -9796,6 +9896,7 @@ def autoclip_video(video_pk):
     cleanup_video_shorts_temp_dir()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -9813,6 +9914,8 @@ def autoclip_video(video_pk):
     brand_subscribe_overlay_path = _resolve_brand_subscribe_overlay_path(brand_id)
     export_reserved = False
     usage = None
+    if not current_user:
+        return _respond("Authentication required.", success=False, status=401, category="danger")
     if current_user:
         conn_usage = get_db_readonly()
         try:
@@ -10195,7 +10298,7 @@ def autoclip_video(video_pk):
     if not plan_entry:
         return _respond("Selected clip was not found in the plan.", status=404, category="warning")
 
-    if plan_entry.get("status") == "created":
+    if queued_job and plan_entry.get("status") == "created":
         return _respond(
             "Clip already generated for this plan index; delete the existing clip before regenerating.",
             status=409,
@@ -10258,17 +10361,151 @@ def autoclip_video(video_pk):
             status=404,
             category="danger",
         )
-    if current_user:
-        reserve_result = reserve_export(current_user["id"])
-        if not reserve_result.get("allowed", False):
-            return _respond(
-                "Monthly export limit reached for your plan.",
-                success=False,
-                status=403,
-                category="danger",
-                extras={"code": "export_limit_reached", "remaining": reserve_result.get("remaining")},
+    if not queued_job:
+        try:
+            job_options = _build_render_job_options(
+                plan_index=plan_index,
+                title=plan_entry.get("title") or video_title,
+                brand_id=brand_id,
+                crop_ratios=video_crop_ratios,
+                crop_aspect=video_crop_aspect,
+                title_font_key=video_font_key,
+                title_font_size=video_title_font_size,
+                subtitle_font_key=video_sub_font_key,
+                subtitle_font_size=video_sub_font_size,
+                subtitle_margin=video_sub_margin,
+                title_margin=video_title_margin,
+                title_line_spacing=video_title_line_spacing,
+                title_bg_color=video_title_bg_color,
+                title_bg_alpha=video_title_bg_alpha,
+                title_text_color=video_title_text_color,
+                subtitle_text_color=video_subtitle_text_color,
+                subtitle_bg_color=video_subtitle_bg_color,
+                subtitle_bg_alpha=video_subtitle_bg_alpha,
+                subtitle_text_alpha=video_subtitle_text_alpha,
+                date_text=video_date_text,
+                date_top=video_date_top,
+                subscribe_overlay=video_subscribe_overlay,
+                is_music_only=video_is_music_only,
+                static_visual_key=video_static_visual_key,
+                background_visual_key=video_background_visual_key,
+                visual_mode=video_visual_mode,
+                podcast_audio_filename=video_podcast_audio_filename,
+                podcast_overlay_short_ids=video_podcast_overlay_short_ids,
+                video_overlay_offset=video_overlay_offset,
+                custom_transcript=plan_entry.get("transcript_full_custom"),
             )
-        export_reserved = True
+            input_hash = build_input_hash(
+                source_id=vid,
+                start=start,
+                end=end,
+                options=job_options,
+            )
+            payload = {
+                "video_pk": int(video_pk),
+                "source_video_id": vid,
+                "brand_id": brand_id,
+                "plan_index": int(plan_index),
+                "title": plan_entry.get("title") or video_title,
+                "start": start,
+                "end": end,
+                "options": job_options,
+            }
+            enqueue_result = enqueue_render_job(
+                user_id=str(current_user["id"]),
+                payload=payload,
+                input_hash=input_hash,
+            )
+            kind = enqueue_result.get("kind")
+            job = enqueue_result.get("job") or {}
+            if kind == "cached":
+                return _respond(
+                    "Matching clip already exists.",
+                    success=True,
+                    status=200,
+                    category="success",
+                    extras={
+                        "job_id": job.get("id"),
+                        "status": job.get("status"),
+                        "cached": True,
+                        "result": job.get("result"),
+                    },
+                )
+            if kind == "existing":
+                _update_plan_entry_job_state(
+                    vid,
+                    plan_entries,
+                    plan_index=plan_index,
+                    status=str(job.get("status") or "queued"),
+                    render_job_id=job.get("id"),
+                )
+                return _respond(
+                    "Matching render job is already in progress.",
+                    success=True,
+                    status=202,
+                    category="info",
+                    extras={
+                        "job_id": job.get("id"),
+                        "status": job.get("status"),
+                        "queue_position": job.get("queue_position"),
+                    },
+                )
+            if kind == "concurrency_limit":
+                return _respond(
+                    "You already have too many render jobs in progress.",
+                    success=False,
+                    status=429,
+                    category="warning",
+                    extras={
+                        "code": "concurrency_limit",
+                        "limit": enqueue_result.get("limit"),
+                        "inflight": enqueue_result.get("inflight"),
+                    },
+                )
+            _update_plan_entry_job_state(
+                vid,
+                plan_entries,
+                plan_index=plan_index,
+                status="queued",
+                render_job_id=job.get("id"),
+            )
+            reserve_result = reserve_export(current_user["id"])
+            if not reserve_result.get("allowed", False):
+                if job.get("id"):
+                    try:
+                        cancel_job(job["id"], "Export limit reached before queue admission.")
+                    except Exception:
+                        current_app.logger.exception(
+                            "Failed to cancel queued render job after reserve rejection job_id=%s",
+                            job.get("id"),
+                        )
+                _update_plan_entry_job_state(
+                    vid,
+                    plan_entries,
+                    plan_index=plan_index,
+                    status="pending",
+                    render_job_id=None,
+                )
+                return _respond(
+                    "Monthly export limit reached for your plan.",
+                    success=False,
+                    status=403,
+                    category="danger",
+                    extras={"code": "export_limit_reached", "remaining": reserve_result.get("remaining")},
+                )
+            return _respond(
+                "Render job queued.",
+                success=True,
+                status=202,
+                category="info",
+                extras={
+                    "job_id": job.get("id"),
+                    "status": "queued",
+                    "queue_position": job.get("queue_position"),
+                },
+            )
+        finally:
+            _cleanup_resolved_source_video(src_path, src_path_is_temp)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
         video_font_key=video_font_key,

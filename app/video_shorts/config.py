@@ -46,6 +46,8 @@ DEFAULT_STORAGE_PLANS = [
         "price_monthly": 0,
         "monthly_export_limit": 10,
         "monthly_transcription_minutes": 60,
+        "render_priority": 0,
+        "max_concurrent_jobs": 1,
         "is_active": True,
         "sort_order": 0,
     },
@@ -56,6 +58,8 @@ DEFAULT_STORAGE_PLANS = [
         "price_monthly": 9,
         "monthly_export_limit": 30,
         "monthly_transcription_minutes": 180,
+        "render_priority": 10,
+        "max_concurrent_jobs": 2,
         "is_active": True,
         "sort_order": 1,
     },
@@ -66,6 +70,8 @@ DEFAULT_STORAGE_PLANS = [
         "price_monthly": 19,
         "monthly_export_limit": 90,
         "monthly_transcription_minutes": 540,
+        "render_priority": 20,
+        "max_concurrent_jobs": 2,
         "is_active": True,
         "sort_order": 2,
     },
@@ -76,6 +82,8 @@ DEFAULT_STORAGE_PLANS = [
         "price_monthly": 49,
         "monthly_export_limit": 270,
         "monthly_transcription_minutes": 1620,
+        "render_priority": 30,
+        "max_concurrent_jobs": 3,
         "is_active": True,
         "sort_order": 3,
     },
@@ -87,6 +95,9 @@ DEFAULT_SUBTITLE_BG_COLOR = "#000000"
 DEFAULT_TITLE_BG_ALPHA = 92
 DEFAULT_SUBTITLE_BG_ALPHA = 85
 DEFAULT_SUBTITLE_TEXT_ALPHA = 100
+WORKER_CONCURRENCY = max(1, int(os.getenv("WORKER_CONCURRENCY", "1") or "1"))
+JOB_TIMEOUT_SECONDS = max(60, int(os.getenv("JOB_TIMEOUT_SECONDS", "600") or "600"))
+JOB_POLL_INTERVAL_SECONDS = max(1.0, float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "2") or "2"))
 _default_plan_id = next((plan["plan_id"] for plan in DEFAULT_STORAGE_PLANS if plan["plan_id"] == "plan_2gb"), DEFAULT_STORAGE_PLANS[0]["plan_id"])
 DEFAULT_USER_PLAN_ID = os.getenv("DEFAULT_USER_PLAN_ID", _default_plan_id)
 _categories_env = os.getenv("SHORTS_CATEGORY_OPTIONS", "").strip()

@@ -1,0 +1,15 @@
+[Unit]
+Description=Minti Studio render worker
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/apps/minti_studio
+EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+ExecStart=/home/ubuntu/apps/minti_studio/venv/bin/python -m app.video_shorts.worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

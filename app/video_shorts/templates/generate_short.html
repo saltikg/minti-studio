@@ -2189,6 +2189,7 @@ const initGenerateClipForms = () => {
           response.status === 409 &&
           typeof payload.message === "string" &&
           payload.message.toLowerCase().includes("already generated");
+        const queuedJob = payload.status === "queued";
         let success =
           (response.ok && payload.success) ||
           payload.status === "created" ||
@@ -2201,7 +2202,10 @@ const initGenerateClipForms = () => {
         }
         let message =
           payload.message ||
-          (success ? "Clip generated." : "Clip generation failed.");
+          (queuedJob ? "Render job queued." : (success ? "Clip generated." : "Clip generation failed."));
+        if (queuedJob && Number.isFinite(payload.queue_position)) {
+          message = `${message} ${payload.queue_position} job(s) ahead of you.`;
+        }
         if (response.status === 403 && payload.code === "export_limit_reached") {
           const resetCopy = latestUsageSnapshot?.period?.reset_at
             ? usageResetCopy(latestUsageSnapshot.period.reset_at)
@@ -2225,7 +2229,7 @@ const initGenerateClipForms = () => {
           feedback.classList.remove("text-success", "text-danger", "d-none");
           feedback.classList.add(success ? "text-success" : "text-danger");
         }
-        if (success) {
+        if (success && !queuedJob) {
           if (feedback) {
             feedback.textContent = "Clip generated. Preparing preview…";
             feedback.classList.remove("text-danger", "d-none");
