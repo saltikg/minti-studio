@@ -435,7 +435,7 @@ def _fetch_instagram_account_profile(access_token: str, instagram_user_id: Optio
     if not graph_id:
         return profile
     detail_resp = requests.get(
-        f"{IG_API_BASE.rstrip('/')}/{graph_id}",
+        f"{IG_GRAPH_API_BASE.rstrip('/')}/{graph_id}",
         params={"fields": "id,username,account_type", "access_token": access_token},
         timeout=12,
     )

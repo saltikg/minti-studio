@@ -6893,7 +6893,7 @@ def _fetch_instagram_profile(page_access_token: Optional[str], instagram_busines
     resp = None
     try:
         resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{instagram_business_id}",
+            f"{IG_GRAPH_API_BASE.rstrip('/')}/{instagram_business_id}",
             params={"fields": "id,username,name,profile_picture_url,account_type", "access_token": page_access_token},
             timeout=8,
         )
@@ -6937,34 +6937,6 @@ def _fetch_instagram_profile(page_access_token: Optional[str], instagram_busines
 
 
 def _log_instagram_debug_token(user_access_token: str) -> Dict[str, Any]:
-    if not (IG_APP_ID and IG_APP_SECRET):
-        return {}
-    try:
-        resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/debug_token",
-            params={
-                "input_token": user_access_token,
-                "access_token": f"{IG_APP_ID}|{IG_APP_SECRET}",
-            },
-            timeout=8,
-        )
-        resp.raise_for_status()
-        payload = resp.json().get("data") or {}
-        current_app.logger.info(
-            "Instagram OAuth debug_token: %s",
-            {
-                "is_valid": payload.get("is_valid"),
-                "user_id": payload.get("user_id"),
-                "expires_at": payload.get("expires_at"),
-                "scopes": payload.get("scopes"),
-                "granular_scopes": payload.get("granular_scopes"),
-                "expires_in": payload.get("expires_in"),
-                "type": payload.get("type"),
-            },
-        )
-        return payload
-    except Exception as exc:
-        current_app.logger.warning("Instagram debug_token fetch failed: %s", exc)
     return {}
 
 
@@ -7020,7 +6992,7 @@ def _log_instagram_connect_validation(
     ig_resp = None
     try:
         ig_resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{ig_id}",
+            f"{IG_GRAPH_API_BASE.rstrip('/')}/{ig_id}",
             params={"fields": "id,username,account_type", "access_token": token},
             timeout=8,
         )
