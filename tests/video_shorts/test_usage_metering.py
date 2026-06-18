@@ -78,7 +78,7 @@ def test_one_export_is_visible_in_usage_snapshot(monkeypatch, tmp_path):
     snapshot = usage_metering.get_usage_snapshot(user_id)
 
     assert snapshot["exports"]["used"] == 1
-    assert snapshot["exports"]["limit"] == 30
+    assert snapshot["exports"]["limit"] == 10
 
 
 def test_export_limit_is_enforced(monkeypatch, tmp_path):
@@ -89,13 +89,49 @@ def test_export_limit_is_enforced(monkeypatch, tmp_path):
     user_id = str(uuid4())
     _insert_user(user_id, "plan_free")
 
-    for _ in range(30):
+    for _ in range(10):
         result = usage_metering.reserve_export(user_id, 1)
         assert result["allowed"] is True
 
     blocked = usage_metering.reserve_export(user_id, 1)
     assert blocked["allowed"] is False
     assert blocked["remaining"] == 0
+
+
+def test_plan_reseed_updates_existing_limits_without_duplicates(monkeypatch, tmp_path):
+    db_path = tmp_path / "plan_reseed.duckdb"
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB", str(db_path))
+
+    conn = db_service.get_db()
+    try:
+        usage_metering.ensure_usage_metering_schema(conn)
+        conn.execute(
+            """
+            UPDATE shorts_storage_plans
+            SET monthly_export_limit = 999,
+                monthly_transcription_minutes = 999
+            WHERE plan_id = 'plan_free'
+            """
+        )
+        conn.commit()
+
+        usage_metering.ensure_usage_metering_schema(conn)
+
+        free_plan = conn.execute(
+            """
+            SELECT monthly_export_limit, monthly_transcription_minutes
+            FROM shorts_storage_plans
+            WHERE plan_id = 'plan_free'
+            """
+        ).fetchone()
+        plan_count = conn.execute("SELECT COUNT(*) FROM shorts_storage_plans").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert free_plan[0] == 10
+    assert free_plan[1] == 60
+    assert plan_count == 4
 
 
 def test_period_rollover_creates_new_month_row(monkeypatch, tmp_path):

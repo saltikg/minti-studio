@@ -162,22 +162,8 @@
 <div class="row g-3 mb-2" id="plans">
   {% for plan in plans %}
     {% set is_selected_plan = vs_current_user and vs_current_user.plan_id == plan.plan_id %}
-    {% set tier_label = "Starter" %}
-    {% set estimate = "Estimated: ~130 shorts" %}
-    {% set monthly_price = 9 %}
-    {% if plan.plan_id == "plan_free" %}
-      {% set tier_label = "Free" %}
-      {% set estimate = "Estimated: ~130 shorts" %}
-      {% set monthly_price = 0 %}
-    {% elif plan.plan_id == "plan_10gb" %}
-      {% set tier_label = "Creator" %}
-      {% set estimate = "Estimated: ~650 shorts" %}
-      {% set monthly_price = 19 %}
-    {% elif plan.plan_id == "plan_100gb" %}
-      {% set tier_label = "Studio" %}
-      {% set estimate = "Estimated: ~6,500 shorts" %}
-      {% set monthly_price = 49 %}
-    {% endif %}
+    {% set tier_label = plan.label %}
+    {% set monthly_price = plan.price_monthly %}
     {% set yearly_total = 90 %}
     {% if plan.plan_id == "plan_free" %}
       {% set yearly_total = 0 %}
@@ -208,39 +194,32 @@
               <div class="price-period">per month</div>
             </div>
             <div class="vs-text-muted vs-text-small">{{ plan.quota_label }} storage</div>
-            <div class="vs-text-muted vs-text-small">Best for: {{ tier_label }}</div>
           </div>
           <ul class="plan-bullets text-start">
             <li>
               <i class="bi bi-check-circle"></i>
-              <span>
-                {{ estimate }}
-                <span class="vs-text-muted" title="Estimate based on typical short length. Actual usage depends on video length and bitrate.">
-                  <i class="bi bi-info-circle"></i>
-                </span>
-              </span>
+              <span>{{ plan.monthly_export_limit }} exports per month</span>
             </li>
+            <li><i class="bi bi-check-circle"></i><span>{{ plan.transcription_limit_label }} transcription per month</span></li>
             {% if tier_label == "Free" %}
               <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
               <li><i class="bi bi-check-circle"></i><span>Basic scheduling (YouTube + Instagram)</span></li>
               <li><i class="bi bi-check-circle"></i><span>Watermark on exports</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 30</span></li>
               <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
             {% elif tier_label == "Starter" %}
               <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
               <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
               <li><i class="bi bi-check-circle"></i><span>No watermark on exports</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Monthly export limit: 200</span></li>
               <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
             {% elif tier_label == "Creator" %}
               <li><i class="bi bi-check-circle"></i><span>Starter + more storage</span></li>
               <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Expanded export and transcription capacity</span></li>
               <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
             {% elif tier_label == "Studio" %}
               <li><i class="bi bi-check-circle"></i><span>Creator + more storage</span></li>
               <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Higher monthly export limit</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Expanded export and transcription capacity</span></li>
               <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
             {% endif %}
           </ul>
