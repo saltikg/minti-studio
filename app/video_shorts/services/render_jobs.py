@@ -587,3 +587,49 @@ def finalize_job_success(job_id: str) -> Dict[str, Any]:
     if job and job.get("user_id"):
         finalize_export(job["user_id"])
     return job or {}
+
+
+def clear_done_job_cache_for_plan(*, user_id: str, source_video_id: str, plan_index: int) -> int:
+    if not user_id or not source_video_id:
+        return 0
+    conn = get_db()
+    cleared = 0
+    try:
+        ensure_render_jobs_schema(conn)
+        rows = conn.execute(
+            f"""
+            {_job_select_sql()}
+            WHERE user_id = ?
+              AND status = ?
+            ORDER BY created_at DESC
+            """,
+            [user_id, JOB_STATUS_DONE],
+        ).fetchall()
+        matching_ids = []
+        for row in rows:
+            job = _row_to_job(row)
+            payload = job.get("payload") or {}
+            try:
+                payload_plan_index = int(payload.get("plan_index"))
+            except Exception:
+                continue
+            if str(payload.get("source_video_id") or "").strip() != str(source_video_id).strip():
+                continue
+            if payload_plan_index != int(plan_index):
+                continue
+            matching_ids.append(job["id"])
+        for job_id in matching_ids:
+            conn.execute(
+                f"""
+                UPDATE {JOBS_TABLE}
+                SET input_hash = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [job_id],
+            )
+            cleared += 1
+        conn.commit()
+        return cleared
+    finally:
+        conn.close()

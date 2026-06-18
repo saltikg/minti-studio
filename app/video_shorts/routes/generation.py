@@ -143,7 +143,12 @@ from app.video_shorts.services.youtube_oauth import (
     upload_video_with_refresh_token,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
-from app.video_shorts.services.render_jobs import build_input_hash, cancel_job, enqueue_render_job
+from app.video_shorts.services.render_jobs import (
+    build_input_hash,
+    cancel_job,
+    clear_done_job_cache_for_plan,
+    enqueue_render_job,
+)
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
     release_export,
@@ -5609,10 +5614,21 @@ def delete_clip(video_pk):
                     match_entry["output_filename"] = None
                     match_entry["audio_start"] = None
                     match_entry["audio_end"] = None
+                    match_entry.pop("render_job_id", None)
+                    match_entry.pop("render_error", None)
                     try:
                         _write_plan_entries(row[0], plan_entries)
                     except Exception as exc:
                         current_app.logger.warning("Failed to update plan file after delete: %s", exc)
+                    try:
+                        current_user = getattr(g, "vs_current_user", None) or {}
+                        clear_done_job_cache_for_plan(
+                            user_id=str(current_user.get("id") or ""),
+                            source_video_id=str(row[0] or ""),
+                            plan_index=int(match_entry.get("plan_index") or 0),
+                        )
+                    except Exception as exc:
+                        current_app.logger.warning("Failed to clear render cache after delete: %s", exc)
             flash(f"Deleted clip: {filename}", "success")
         else:
             flash("Clip not found.", "warning")

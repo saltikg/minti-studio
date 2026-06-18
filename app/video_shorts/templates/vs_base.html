@@ -60,12 +60,14 @@
           id="vs-topnav-notification-btn"
           class="btn btn-sm vs-btn-outline vs-notification-btn"
           aria-label="Notifications"
+          aria-expanded="false"
           title="Notifications">
           <span class="vs-notification-icon-wrap">
             <i class="bi bi-bell" aria-hidden="true"></i>
             <span id="vs-topnav-notification-badge" class="vs-notification-badge d-none">0</span>
           </span>
         </button>
+        <div id="vs-topnav-notification-menu" class="vs-notification-menu d-none" role="menu" aria-label="Notifications"></div>
         <a href="{{ url_for('video_shorts_bp.profile') }}" class="btn btn-sm vs-btn-outline">
           <i class="bi bi-person-circle me-1"></i>Profile
         </a>
@@ -253,6 +255,58 @@
         badge.classList.toggle("d-none", count <= 0);
       };
 
+      const formatNotificationTime = (isoValue) => {
+        if (!isoValue) {
+          return "";
+        }
+        const dt = new Date(isoValue);
+        if (Number.isNaN(dt.getTime())) {
+          return "";
+        }
+        return dt.toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      };
+
+      const closeNotificationMenu = () => {
+        const trigger = document.getElementById("vs-topnav-notification-btn");
+        const menu = document.getElementById("vs-topnav-notification-menu");
+        if (trigger) {
+          trigger.setAttribute("aria-expanded", "false");
+        }
+        if (menu) {
+          menu.classList.add("d-none");
+        }
+      };
+
+      const renderNotificationMenu = () => {
+        const menu = document.getElementById("vs-topnav-notification-menu");
+        if (!menu) {
+          return;
+        }
+        const items = readNotifications().slice().reverse();
+        if (!items.length) {
+          menu.innerHTML = `<div class="vs-notification-empty">No notifications yet.</div>`;
+          return;
+        }
+        menu.innerHTML = items.map((item) => {
+          const href = String(item.href || "#");
+          const title = String(item.title || "Notification");
+          const message = String(item.message || "");
+          const time = formatNotificationTime(item.createdAt);
+          return `
+            <a class="vs-notification-item" href="${href}">
+              <div class="vs-notification-item-time">${time}</div>
+              <div class="vs-notification-item-title">${title}</div>
+              <div class="vs-notification-item-text">${message}</div>
+            </a>
+          `;
+        }).join("");
+      };
+
       const renderNotificationBanner = () => {
         const banner = document.getElementById("vs-page-notification-banner");
         if (!banner) {
@@ -276,7 +330,10 @@
                 <div class="small">${message}</div>
               </div>
             </div>
-            <button type="button" class="btn btn-sm vs-btn-outline" data-vs-clear-notifications>Clear</button>
+            <div class="d-flex align-items-center gap-2">
+              ${latest.href ? `<a href="${String(latest.href)}" class="btn btn-sm vs-btn-outline">Open</a>` : ""}
+              <button type="button" class="btn btn-sm vs-btn-outline" data-vs-clear-notifications>Clear</button>
+            </div>
           </div>
         `;
         banner.classList.remove("d-none");
@@ -290,33 +347,47 @@
         }
       };
 
-      window.vsPushNotification = ({ title, message }) => {
+      window.vsPushNotification = ({ title, message, href }) => {
         const items = readNotifications();
         items.push({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           title: String(title || "Notification"),
           message: String(message || ""),
+          href: String(href || ""),
           createdAt: new Date().toISOString(),
         });
         writeNotifications(items.slice(-20));
         renderNotificationBadge();
         renderNotificationBanner();
+        renderNotificationMenu();
       };
 
       document.addEventListener("DOMContentLoaded", () => {
         renderNotificationBadge();
         renderNotificationBanner();
+        renderNotificationMenu();
         const trigger = document.getElementById("vs-topnav-notification-btn");
+        const menu = document.getElementById("vs-topnav-notification-menu");
         if (trigger) {
-          trigger.addEventListener("click", () => {
-            const items = readNotifications();
-            if (items.length) {
-              writeNotifications([]);
+          trigger.addEventListener("click", (event) => {
+            event.preventDefault();
+            renderNotificationMenu();
+            const isHidden = menu ? menu.classList.contains("d-none") : true;
+            trigger.setAttribute("aria-expanded", isHidden ? "true" : "false");
+            if (menu) {
+              menu.classList.toggle("d-none", !isHidden);
             }
-            renderNotificationBadge();
-            renderNotificationBanner();
           });
         }
+        document.addEventListener("click", (event) => {
+          if (!menu || !trigger) {
+            return;
+          }
+          if (menu.contains(event.target) || trigger.contains(event.target)) {
+            return;
+          }
+          closeNotificationMenu();
+        });
       });
     })();
   </script>

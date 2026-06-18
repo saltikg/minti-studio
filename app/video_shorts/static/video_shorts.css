@@ -67,6 +67,7 @@ body.vs-app {
 
 .vs-topnav .vs-topnav-actions {
   gap: 0.5rem;
+  position: relative;
 }
 
 .vs-notification-btn {
@@ -101,6 +102,59 @@ body.vs-app {
   line-height: 18px;
   text-align: center;
   box-shadow: 0 0 0 2px var(--surface);
+}
+
+.vs-notification-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 140px;
+  width: min(320px, calc(100vw - 32px));
+  background: rgba(10, 16, 28, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
+  padding: 0.4rem;
+  z-index: 1080;
+}
+
+.vs-notification-empty {
+  padding: 0.9rem 1rem;
+  color: var(--text-2);
+  font-size: 0.86rem;
+}
+
+.vs-notification-item {
+  display: block;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  color: var(--text);
+}
+
+.vs-notification-item:hover {
+  background: rgba(45, 212, 191, 0.08);
+  color: var(--text);
+}
+
+.vs-notification-item + .vs-notification-item {
+  margin-top: 0.2rem;
+}
+
+.vs-notification-item-time {
+  color: var(--text-2);
+  font-size: 0.72rem;
+  margin-bottom: 0.18rem;
+}
+
+.vs-notification-item-title {
+  color: var(--text-1);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.vs-notification-item-text {
+  color: var(--text-2);
+  font-size: 0.8rem;
+  margin-top: 0.12rem;
 }
 
 .vs-auth {
