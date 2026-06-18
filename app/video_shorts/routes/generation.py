@@ -47,6 +47,8 @@ from app.video_shorts.config import (
     IG_API_BASE,
     IG_APP_ID,
     IG_APP_SECRET,
+    IG_AUTH_BASE,
+    IG_GRAPH_API_BASE,
     IG_REDIRECT_URI,
     IG_OAUTH_SCOPES,
     OPENAI_MODEL,
@@ -157,12 +159,10 @@ from app.video_shorts.services.usage_metering import (
 from src.trends.instagram_tokens import (
     InstagramTokenStoreError,
     clear_instagram_token,
-    clear_pending_instagram_choices,
     get_instagram_data,
     get_instagram_credentials,
-    get_pending_instagram_choices,
+    refresh_instagram_token_if_needed,
     store_instagram_token,
-    store_pending_instagram_choices,
 )
 from src.trends.tiktok_tokens import (
     TikTokTokenStoreError,
@@ -6411,6 +6411,11 @@ def social_connect():
             current_app.logger.warning("Instagram token store unavailable: %s", exc)
             instagram_warning = "Instagram token bilgisine şu anda erişilemiyor; lütfen sayfayı yenileyin."
         if instagram_info:
+            try:
+                instagram_info = refresh_instagram_token_if_needed(user_id=current_user["id"], current=instagram_info) or instagram_info
+            except Exception as exc:
+                current_app.logger.warning("Instagram token refresh failed: %s", exc)
+                instagram_warning = "Instagram token refresh failed. Please reconnect your Instagram account."
             instagram_connected = _validate_instagram_connection(instagram_info)
             if instagram_connected:
                 instagram_profile = _fetch_instagram_profile(
@@ -6418,8 +6423,12 @@ def social_connect():
                     instagram_info.get("instagram_business_account_id"),
                 )
                 fetched_username = (instagram_profile or {}).get("username")
-                if fetched_username and not instagram_info.get("instagram_username"):
+                fetched_account_type = (instagram_profile or {}).get("account_type")
+                if (fetched_username and not instagram_info.get("instagram_username")) or (
+                    fetched_account_type and fetched_account_type != instagram_info.get("instagram_account_type")
+                ):
                     instagram_info["instagram_username"] = fetched_username
+                    instagram_info["instagram_account_type"] = fetched_account_type or instagram_info.get("instagram_account_type")
                     try:
                         store_instagram_token(
                             user_id=current_user["id"],
@@ -6428,11 +6437,15 @@ def social_connect():
                             instagram_username=fetched_username,
                             facebook_page_id=instagram_info.get("facebook_page_id") or "",
                             facebook_page_name=instagram_info.get("facebook_page_name") or "",
+                            instagram_user_id=instagram_info.get("instagram_user_id") or instagram_info.get("instagram_business_account_id"),
+                            instagram_account_type=instagram_info.get("instagram_account_type"),
                             expires_at=instagram_info.get("expires_at"),
                             scopes=instagram_info.get("scopes") or "",
                         )
                     except InstagramTokenStoreError as exc:
                         current_app.logger.warning("Failed to persist Instagram username: %s", exc)
+            elif instagram_info.get("page_access_token") and instagram_info.get("instagram_business_account_id"):
+                instagram_warning = _instagram_account_upgrade_message()
         try:
             facebook_info = get_facebook_page_data(current_user["id"])
         except FacebookTokenStoreError as exc:
@@ -6814,8 +6827,6 @@ def facebook_disconnect():
 def _instagram_oauth_url(state: str) -> Optional[str]:
     if not (IG_APP_ID and IG_REDIRECT_URI):
         return None
-    version = IG_API_BASE.rstrip("/").split("/")[-1]
-    oauth_base = f"https://www.facebook.com/{version}/dialog/oauth"
     scopes = ",".join(
         s.strip() for s in IG_OAUTH_SCOPES.split(",") if s and s.strip()
     )
@@ -6825,9 +6836,8 @@ def _instagram_oauth_url(state: str) -> Optional[str]:
         "state": state,
         "scope": scopes,
         "response_type": "code",
-        "auth_type": "rerequest",
     }
-    return f"{oauth_base}?{urlencode(params)}"
+    return f"{IG_AUTH_BASE}?{urlencode(params)}"
 
 
 def _log_instagram_auth_redirect(auth_url: str):
@@ -6859,9 +6869,14 @@ def _validate_instagram_connection(info: Optional[Dict[str, Any]]) -> bool:
         return False
     token = info.get("page_access_token")
     business_id = info.get("instagram_business_account_id")
+    account_type = str(info.get("instagram_account_type") or "").upper()
     if not token or not business_id:
         return False
-    return True
+    return account_type in {"BUSINESS", "CREATOR"}
+
+
+def _instagram_account_upgrade_message() -> str:
+    return "Instagram bağlamak için Business veya Creator hesabı gerekiyor — Instagram ayarlarından ücretsiz geçebilirsin."
 
 
 def _validate_facebook_page_connection(info: Optional[Dict[str, Any]]) -> bool:
@@ -6872,77 +6887,13 @@ def _validate_facebook_page_connection(info: Optional[Dict[str, Any]]) -> bool:
     return True
 
 
-def _validate_instagram_publish_chain(page_id: Optional[str], ig_id: Optional[str], token: Optional[str]) -> Tuple[bool, str]:
-    if not page_id or not ig_id or not token:
-        return False, "Instagram publish chain eksik (page_id/ig_id/token)."
-    try:
-        page_resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{page_id}",
-            params={"fields": "instagram_business_account{id,username}", "access_token": token},
-            timeout=8,
-        )
-        page_resp.raise_for_status()
-        page_payload = page_resp.json() or {}
-        ig_account = page_payload.get("instagram_business_account") or {}
-        if not ig_account.get("id"):
-            return False, "Secilen Facebook sayfasinda Instagram baglantisi bulunamadi."
-        if ig_account.get("id") != ig_id:
-            return False, "Instagram ID sayfa ile eslesmiyor. Lutfen tekrar baglanin."
-    except Exception as exc:
-        return False, f"Instagram sayfa dogrulamasi basarisiz: {exc}"
-    try:
-        ig_resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{ig_id}",
-            params={"fields": "id,username", "access_token": token},
-            timeout=8,
-        )
-        ig_resp.raise_for_status()
-    except Exception as exc:
-        return False, f"Instagram hesap dogrulamasi basarisiz: {exc}"
-    return True, ""
-    try:
-        resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{business_id}",
-            params={"access_token": token, "fields": "id"},
-            timeout=8,
-        )
-        resp.raise_for_status()
-        return True
-    except Exception as exc:
-        current_app.logger.info(
-            "Instagram token validation failed for business %s: %s",
-            business_id,
-            exc,
-        )
-        return False
-
-
-def _log_instagram_accounts_summary(pages: List[Dict[str, Any]]):
-    try:
-        summary = []
-        for page in pages:
-            ig_account = page.get("instagram_business_account") or {}
-            summary.append(
-                {
-                    "id": page.get("id"),
-                    "name": page.get("name"),
-                    "has_instagram": bool(ig_account.get("id")),
-                    "instagram_id": ig_account.get("id"),
-                    "instagram_username": ig_account.get("username"),
-                }
-            )
-        current_app.logger.info("Instagram OAuth /me/accounts summary: %s", summary)
-    except Exception as exc:
-        current_app.logger.warning("Failed to summarize Instagram accounts: %s", exc)
-
-
 def _fetch_instagram_profile(page_access_token: Optional[str], instagram_business_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not page_access_token or not instagram_business_id:
         return None
     try:
         resp = requests.get(
             f"{IG_API_BASE.rstrip('/')}/{instagram_business_id}",
-            params={"fields": "username,name", "access_token": page_access_token},
+            params={"fields": "id,username,name,profile_picture_url,account_type", "access_token": page_access_token},
             timeout=8,
         )
         resp.raise_for_status()
@@ -6952,11 +6903,13 @@ def _fetch_instagram_profile(page_access_token: Optional[str], instagram_busines
             "username": payload.get("username"),
             "name": payload.get("name"),
             "profile_picture_url": payload.get("profile_picture_url"),
+            "account_type": payload.get("account_type"),
         }
         current_app.logger.info(
-            "Fetched Instagram profile: ig_id=%s username=%s",
+            "Fetched Instagram profile: ig_id=%s username=%s account_type=%s",
             instagram_business_id,
             profile["username"],
+            profile["account_type"],
         )
         return profile
     except Exception as exc:
@@ -7001,24 +6954,7 @@ def _log_instagram_debug_token(user_access_token: str) -> Dict[str, Any]:
 
 
 def _log_instagram_permissions(access_token: str):
-    try:
-        resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/me/permissions",
-            params={"access_token": access_token},
-            timeout=8,
-        )
-        payload = {}
-        try:
-            payload = resp.json()
-        except Exception:
-            payload = {}
-        current_app.logger.info(
-            "Instagram OAuth /me/permissions status=%s body=%s",
-            resp.status_code,
-            payload,
-        )
-    except Exception as exc:
-        current_app.logger.warning("Instagram /me/permissions log failed: %s", exc)
+    current_app.logger.info("Instagram OAuth scopes=%s", IG_OAUTH_SCOPES)
 
 
 def _log_facebook_debug_token(user_access_token: str) -> Dict[str, Any]:
@@ -7058,50 +6994,12 @@ def _log_instagram_connect_validation(
     ig_id: Optional[str],
     token: Optional[str],
 ) -> None:
-    if not page_id or not token:
+    if not ig_id or not token:
         current_app.logger.warning(
-            "Instagram OAuth verify skipped context=%s page_id=%s token_present=%s",
+            "Instagram OAuth verify skipped context=%s ig_id=%s token_present=%s",
             context,
-            page_id,
+            ig_id,
             bool(token),
-        )
-        return
-    page_resp = None
-    try:
-        page_resp = requests.get(
-            f"{IG_API_BASE.rstrip('/')}/{page_id}",
-            params={
-                "fields": "instagram_business_account{id,username},connected_instagram_account{id,username}",
-                "access_token": token,
-            },
-            timeout=8,
-        )
-        page_resp.raise_for_status()
-        payload = page_resp.json() or {}
-        ig_account = payload.get("instagram_business_account") or {}
-        connected_account = payload.get("connected_instagram_account") or {}
-        current_app.logger.info(
-            "Instagram OAuth verify page context=%s page_id=%s status=%s ig_id=%s connected_ig_id=%s",
-            context,
-            page_id,
-            getattr(page_resp, "status_code", None),
-            ig_account.get("id"),
-            connected_account.get("id"),
-        )
-    except Exception as exc:
-        current_app.logger.warning(
-            "Instagram OAuth verify page failed context=%s page_id=%s status=%s: %s",
-            context,
-            page_id,
-            getattr(page_resp, "status_code", None),
-            exc,
-        )
-
-    if not ig_id:
-        current_app.logger.warning(
-            "Instagram OAuth verify ig skipped context=%s page_id=%s ig_id missing",
-            context,
-            page_id,
         )
         return
     ig_resp = None
@@ -7136,8 +7034,8 @@ def _log_instagram_connect_validation(
 
 def _fetch_instagram_me(access_token: str) -> Dict[str, Any]:
     resp = requests.get(
-        f"{IG_API_BASE.rstrip('/')}/me",
-        params={"access_token": access_token, "fields": "id,name"},
+        f"{IG_GRAPH_API_BASE.rstrip('/')}/me",
+        params={"access_token": access_token, "fields": "user_id,username"},
         timeout=8,
     )
     try:
@@ -7232,92 +7130,79 @@ def instagram_oauth_callback():
     for key, value in request.args.items():
         safe_args[key] = "MASKED" if key == "code" else value
     current_app.logger.info("Instagram OAuth callback args: %s", safe_args)
-    current_app.logger.info(
-        "Instagram OAuth selected_page_ids_arg=%s",
-        request.args.get("selected_page_ids"),
-    )
     error = request.args.get("error")
     if error:
-        error_reason = request.args.get("error_reason")
-        error_desc = request.args.get("error_description")
         current_app.logger.warning(
             "Instagram OAuth error=%s reason=%s description=%s",
             error,
-            error_reason,
-            error_desc,
+            request.args.get("error_reason"),
+            request.args.get("error_description"),
         )
-        if error_desc and (
-            "Feature Unavailable" in error_desc
-            or "App not active" in error_desc
-            or "updating additional details" in error_desc.lower()
-        ):
-            message = (
-                "Facebook Login is temporarily unavailable for this integration. "
-                "Please ensure the Meta app is fully approved and try again later."
-            )
-        else:
-            message = f"Instagram OAuth hatası: {error}"
-        flash(message, "danger")
+        flash(f"Instagram OAuth hatası: {error}", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     state = request.args.get("state")
     saved_state = session.pop("ig_oauth_state", None)
     expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
     if not expected_state or state != expected_state:
-        current_app.logger.warning(
-            "Instagram OAuth state mismatch: %s vs %s",
-            state,
-            expected_state,
-        )
+        current_app.logger.warning("Instagram OAuth state mismatch: %s vs %s", state, expected_state)
         flash("Instagram OAuth doğrulaması başarısız oldu.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
     if not user_id:
-        current_app.logger.warning("Instagram OAuth missing user_id in state payload.")
         flash("Instagram OAuth kodu alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
-    current_app.logger.info("Instagram OAuth user_id=%s", user_id)
 
     code = request.args.get("code")
     if not code:
         flash("Instagram OAuth kodu alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
-    token_url = f"{IG_API_BASE}/oauth/access_token"
-    short_params = {
-        "client_id": IG_APP_ID,
-        "redirect_uri": IG_REDIRECT_URI,
-        "client_secret": IG_APP_SECRET,
-        "code": code,
-    }
+    short_resp = None
     try:
-        short_resp = requests.get(token_url, params=short_params, timeout=12)
+        short_resp = requests.post(
+            f"{IG_GRAPH_API_BASE.rstrip('/')}/oauth/access_token",
+            data={
+                "client_id": IG_APP_ID,
+                "client_secret": IG_APP_SECRET,
+                "grant_type": "authorization_code",
+                "redirect_uri": IG_REDIRECT_URI,
+                "code": code,
+            },
+            timeout=12,
+        )
         short_resp.raise_for_status()
-        short_data = short_resp.json()
+        short_data = short_resp.json() or {}
     except Exception as exc:
-        current_app.logger.exception("Instagram token exchange failed: %s", exc)
+        payload = {}
+        if short_resp is not None:
+            try:
+                payload = short_resp.json()
+            except Exception:
+                pass
+        current_app.logger.exception("Instagram token exchange failed payload=%s: %s", payload, exc)
         flash("Instagram token alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     short_token = short_data.get("access_token")
+    instagram_user_id = str(short_data.get("user_id") or "").strip()
     if not short_token:
         flash("Instagram kısa token yanıtı beklenmeyen formatta.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
-    scopes = ",".join(
-        s.strip() for s in IG_OAUTH_SCOPES.split(",") if s and s.strip()
-    )
-    long_params = {
-        "grant_type": "fb_exchange_token",
-        "client_id": IG_APP_ID,
-        "client_secret": IG_APP_SECRET,
-        "fb_exchange_token": short_token,
-    }
     long_resp = None
     try:
-        long_resp = requests.get(token_url, params=long_params, timeout=12)
+        long_resp = requests.get(
+            f"{IG_GRAPH_API_BASE.rstrip('/')}/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": IG_APP_SECRET,
+                "access_token": short_token,
+            },
+            timeout=12,
+        )
         long_resp.raise_for_status()
-        long_data = long_resp.json()
+        long_data = long_resp.json() or {}
     except Exception as exc:
         payload = {}
         if long_resp is not None:
@@ -7325,15 +7210,7 @@ def instagram_oauth_callback():
                 payload = long_resp.json()
             except Exception:
                 pass
-        error_obj = payload.get("error") if isinstance(payload, dict) else None
-        current_app.logger.exception(
-            "Instagram long token exchange failed (status=%s message=%s code=%s payload=%s): %s",
-            getattr(long_resp, "status_code", None),
-            error_obj.get("message") if isinstance(error_obj, dict) else None,
-            error_obj.get("code") if isinstance(error_obj, dict) else None,
-            payload,
-            exc,
-        )
+        current_app.logger.exception("Instagram long token exchange failed payload=%s: %s", payload, exc)
         flash("Instagram uzun token alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
@@ -7342,412 +7219,71 @@ def instagram_oauth_callback():
     expires_in = long_data.get("expires_in")
     if expires_in:
         try:
-            expires_seconds = int(expires_in)
-            expires_at = (
-                datetime.utcnow() + timedelta(seconds=expires_seconds)
-            ).isoformat()
+            expires_at = (datetime.utcnow() + timedelta(seconds=int(expires_in))).replace(microsecond=0).isoformat()
         except Exception:
             expires_at = None
-
-    current_app.logger.info(
-        "Instagram long token exchange: status=%s has_token=%s expires_in=%s",
-        getattr(long_resp, "status_code", None),
-        bool(long_token),
-        expires_in,
-    )
-
     if not long_token:
-        current_app.logger.error(
-            "Instagram OAuth code exchange failed: missing access_token payload=%s",
-            long_data.get("error") if isinstance(long_data, dict) else None,
-        )
         flash("Instagram OAuth kodu doğrulanamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     debug_payload = _log_instagram_debug_token(long_token)
     current_app.logger.info(
-        "Instagram OAuth token_scopes=%s token_type=%s",
+        "Instagram OAuth token_scopes=%s token_type=%s user_id=%s",
         debug_payload.get("scopes"),
         debug_payload.get("type"),
+        instagram_user_id,
     )
-    current_app.logger.info(
-        "Instagram OAuth pre_me db_record_id=%s token_tail=%s fb_user_id=%s selected_page_id=%s",
-        user_id,
-        _token_tail(long_token),
-        None,
-        None,
-    )
-    fb_user_id = None
     try:
-        fb_user = _fetch_instagram_me(long_token)
-        fb_user_id = fb_user.get("id") if isinstance(fb_user, dict) else None
-        current_app.logger.info("Instagram OAuth fb_user_id=%s", fb_user_id)
-    except InstagramGraphError as exc:
-        error_payload = exc.payload.get("error") if isinstance(exc.payload, dict) else None
-        error_code = (error_payload or {}).get("code")
-        error_message = (error_payload or {}).get("message")
-        current_app.logger.warning("Instagram /me validation failed: %s", error_payload or exc)
-        if error_code == 2500:
-            flash("Instagram token invalid. Lütfen tekrar bağlanın.", "danger")
-        else:
-            detail = f" ({error_message})" if error_message else ""
-            flash(f"Instagram hesabı doğrulanamadı{detail}. Lütfen tekrar bağlanın.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        me_payload = _fetch_instagram_me(long_token)
     except Exception as exc:
-        current_app.logger.warning("Instagram /me unexpected failure: %s", exc)
+        current_app.logger.warning("Instagram /me validation failed: %s", exc)
         flash("Instagram hesabı doğrulanamadı. Lütfen tekrar bağlanın.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
+    normalized_ig_user_id = str(me_payload.get("user_id") or instagram_user_id or "").strip()
+    instagram_profile = _fetch_instagram_profile(long_token, normalized_ig_user_id)
+    if not instagram_profile:
+        flash("Instagram profil bilgisi alınamadı. Lütfen tekrar bağlanın.", "danger")
+        return redirect(url_for("video_shorts_bp.social_connect"))
+
+    account_type = str(instagram_profile.get("account_type") or "").upper()
+    if account_type not in {"BUSINESS", "CREATOR"}:
+        flash(_instagram_account_upgrade_message(), "warning")
+        return redirect(url_for("video_shorts_bp.social_connect"))
+
+    scopes = ",".join(s.strip() for s in IG_OAUTH_SCOPES.split(",") if s and s.strip())
     _log_instagram_permissions(long_token)
-
-    pages_url = f"{IG_API_BASE}/me/accounts"
-    pages_data = []
-    pages_resp = None
-    try:
-        current_app.logger.info(
-            "Instagram OAuth pre_accounts db_record_id=%s token_tail=%s fb_user_id=%s selected_page_id=%s",
-            user_id,
-            _token_tail(long_token),
-            fb_user_id,
-            None,
-        )
-        pages_resp = requests.get(
-            pages_url,
-            params={
-                "access_token": long_token,
-                "fields": "id,name,access_token,instagram_business_account{id,username},connected_instagram_account{id,username}",
-                "limit": 200,
-            },
-            timeout=12,
-        )
-        pages_resp.raise_for_status()
-        pages_payload = pages_resp.json()
-        pages_data = (pages_payload or {}).get("data") or []
-    except Exception as exc:
-        error_payload = {}
-        try:
-            error_payload = pages_resp.json()
-        except Exception:
-            pass
-        error_obj = error_payload.get("error") if isinstance(error_payload, dict) else None
-        current_app.logger.warning(
-            "Instagram page list fetch failed: %s | status=%s message=%s code=%s subcode=%s payload=%s",
-            exc,
-            getattr(pages_resp, "status_code", None),
-            error_obj.get("message") if isinstance(error_obj, dict) else None,
-            error_obj.get("code") if isinstance(error_obj, dict) else None,
-            error_obj.get("error_subcode") if isinstance(error_obj, dict) else None,
-            error_payload,
-        )
-        message_detail = ""
-        if isinstance(error_obj, dict) and error_obj.get("message"):
-            message_detail = f" ({error_obj['message']})"
-        flash(f"Facebook Pages list could not be fetched{message_detail}. Lütfen tekrar bağlanın.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    current_app.logger.info(
-        "Instagram /me/accounts response status=%s length=%s payload=%s",
-        getattr(pages_resp, "status_code", None),
-        len(pages_data),
-        pages_payload,
-    )
-    current_app.logger.info(
-        "Instagram /me/accounts page list=%s",
-        [{"id": page.get("id"), "name": page.get("name")} for page in pages_data],
-    )
-    _log_instagram_accounts_summary(pages_data)
-
-    if not pages_data:
-        granular_scopes = (
-            debug_payload.get("granular_scopes")
-            if isinstance(debug_payload, dict)
-            else []
-        )
-        target_ids: List[str] = []
-        for entry in granular_scopes or []:
-            if entry.get("scope") == "pages_show_list":
-                target_ids.extend(entry.get("target_ids") or [])
-        target_ids = [page_id for page_id in target_ids if page_id]
-        if target_ids:
-            current_app.logger.info(
-                "Instagram /me/accounts fallback target_ids=%s",
-                target_ids,
-            )
-            fallback_pages = []
-            for page_id in target_ids:
-                resp = None
-                try:
-                    resp = requests.get(
-                        f"{IG_API_BASE.rstrip('/')}/{page_id}",
-                        params={
-                            "fields": "id,name,access_token,instagram_business_account{id,username},connected_instagram_account{id,username}",
-                            "access_token": long_token,
-                        },
-                        timeout=8,
-                    )
-                    resp.raise_for_status()
-                    payload = resp.json() or {}
-                    fallback_pages.append(payload)
-                except Exception as exc:
-                    current_app.logger.warning(
-                        "Instagram /me/accounts fallback failed page_id=%s status=%s: %s",
-                        page_id,
-                        getattr(resp, "status_code", None),
-                        exc,
-                    )
-            if fallback_pages:
-                pages_data = fallback_pages
-                current_app.logger.info(
-                    "Instagram /me/accounts fallback response length=%s payload=%s",
-                    len(pages_data),
-                    {"data": pages_data},
-                )
-                current_app.logger.info(
-                    "Instagram /me/accounts fallback page list=%s",
-                    [{"id": page.get("id"), "name": page.get("name")} for page in pages_data],
-                )
-
-    if not pages_data:
-        flash(
-            "Facebook Pages listesi boş döndü. Lütfen Business Settings > People bölümünde bu kullanıcıya sayfa üzerinde Full Control yetkisi verildiğinden ve Instagram hesabının sayfaya bağlı olduğundan emin olun. Bağlanamadı, hesabı değiştirmiş olabilirsiniz.",
-            "warning",
-        )
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    pages_summary: List[Dict[str, Any]] = []
-    for page in pages_data:
-        ig_account = (
-            page.get("instagram_business_account")
-            or page.get("connected_instagram_account")
-            or {}
-        )
-        summary = {
-            "page_id": page.get("id"),
-            "page_name": page.get("name"),
-            "page_access_token": page.get("access_token"),
-            "user_access_token": long_token,
-            "instagram_business_account_id": ig_account.get("id"),
-            "instagram_username": ig_account.get("username"),
-            "has_instagram": bool(ig_account.get("id")),
-        }
-        pages_summary.append(summary)
-
-    current_app.logger.info(
-        "Instagram OAuth selected_page_ids=%s",
-        [p.get("page_id") for p in pages_summary if p.get("page_id")],
-    )
-
-    missing_ig_pages = [
-        page
-        for page in pages_summary
-        if page.get("page_access_token") and not page.get("instagram_business_account_id")
-    ]
-    if missing_ig_pages:
-        for page in missing_ig_pages:
-            page_id = page.get("page_id")
-            token = page.get("page_access_token")
-            if not page_id or not token:
-                continue
-            try:
-                resp = requests.get(
-                    f"{IG_API_BASE.rstrip('/')}/{page_id}",
-                    params={"fields": "instagram_business_account{id,username}", "access_token": token},
-                    timeout=8,
-                )
-                resp.raise_for_status()
-                payload = resp.json() or {}
-                ig_account = payload.get("instagram_business_account") or {}
-                if ig_account.get("id"):
-                    page["instagram_business_account_id"] = ig_account.get("id")
-                    page["instagram_username"] = ig_account.get("username")
-                    page["has_instagram"] = True
-            except Exception as exc:
-                current_app.logger.warning(
-                    "Instagram page lookup failed page_id=%s: %s",
-                    page_id,
-                    exc,
-                )
-
-    ig_ready_pages = [
-        p
-        for p in pages_summary
-        if p.get("has_instagram") and p.get("page_access_token") and p.get("instagram_business_account_id")
-    ]
-    if not ig_ready_pages:
-        flash(
-            "Bu Facebook hesabının yönettiği hiçbir sayfada Instagram Business veya Creator hesabı bağlı değil. "
-            "Instagram hesabınızı bir Facebook sayfasına bağlayıp Business Settings üzerinden tam yetki verdiğinizden emin olun.",
-            "warning",
-        )
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    if len(ig_ready_pages) == 1:
-        choice = ig_ready_pages[0]
-        selected_token = choice.get("user_access_token") or choice.get("page_access_token")
-        current_app.logger.info(
-            "Instagram OAuth auto_select page_id=%s ig_id=%s token_present=%s",
-            choice.get("page_id"),
-            choice.get("instagram_business_account_id"),
-            bool(selected_token),
-        )
-        profile = None
-        if not choice.get("instagram_username"):
-            profile = _fetch_instagram_profile(
-                selected_token, choice.get("instagram_business_account_id")
-            )
-        choice_username = choice.get("instagram_username") or (profile or {}).get("username")
-        store_instagram_token(
-            user_id=user_id,
-            page_access_token=selected_token,
-            instagram_business_account_id=choice["instagram_business_account_id"],
-            instagram_username=choice_username,
-            facebook_page_id=choice["page_id"] or "",
-            facebook_page_name=choice["page_name"] or "",
-            meta_fb_user_id=fb_user_id,
-            selected_page_id=choice.get("page_id"),
-            expires_at=expires_at,
-            scopes=scopes,
-        )
-        clear_pending_instagram_choices(user_id)
-        saved = get_instagram_data(user_id)
-        current_app.logger.info(
-            "Instagram OAuth saved db_record_id=%s fb_user_id=%s selected_page_id=%s ig_id=%s token_tail=%s token_created_at=%s updated_at=%s",
-            (saved or {}).get("user_id"),
-            (saved or {}).get("meta_fb_user_id"),
-            (saved or {}).get("selected_page_id"),
-            (saved or {}).get("instagram_business_account_id"),
-            _token_tail((saved or {}).get("page_access_token")),
-            (saved or {}).get("token_created_at"),
-            (saved or {}).get("updated_at"),
-        )
-        _log_instagram_connect_validation(
-            "callback",
-            choice.get("page_id"),
-            choice.get("instagram_business_account_id"),
-            choice.get("page_access_token"),
-        )
-        flash("Instagram bağlantısı kaydedildi.", "success")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    store_pending_instagram_choices(
+    store_instagram_token(
         user_id=user_id,
-        pages=pages_summary,
+        page_access_token=long_token,
+        instagram_business_account_id=normalized_ig_user_id,
+        instagram_username=instagram_profile.get("username"),
+        facebook_page_id="",
+        facebook_page_name="",
+        instagram_user_id=normalized_ig_user_id,
+        instagram_account_type=account_type,
         expires_at=expires_at,
         scopes=scopes,
     )
-    flash("Lütfen bağlamak istediğiniz Facebook sayfasını seçin.", "info")
-    return redirect(url_for("video_shorts_bp.instagram_select_page"))
+    saved = get_instagram_data(user_id)
+    current_app.logger.info(
+        "Instagram OAuth saved db_record_id=%s ig_id=%s username=%s account_type=%s token_tail=%s expires_at=%s",
+        (saved or {}).get("user_id"),
+        (saved or {}).get("instagram_business_account_id"),
+        (saved or {}).get("instagram_username"),
+        (saved or {}).get("instagram_account_type"),
+        _token_tail((saved or {}).get("page_access_token")),
+        (saved or {}).get("expires_at"),
+    )
+    _log_instagram_connect_validation("callback", None, normalized_ig_user_id, long_token)
+    flash("Instagram bağlantısı kaydedildi.", "success")
+    return redirect(url_for("video_shorts_bp.social_connect"))
 
 
 @video_shorts_bp.route("/instagram/select_page", methods=["GET", "POST"])
 def instagram_select_page():
-    current_user = getattr(g, "vs_current_user", None)
-    if not current_user:
-        flash("Instagram bağlantısı için giriş yapın.", "danger")
-        return redirect(url_for("video_shorts_bp.login", next=request.url))
-
-    try:
-        pending = get_pending_instagram_choices(current_user["id"])
-    except InstagramTokenStoreError as exc:
-        current_app.logger.warning("Instagram pending choices unavailable: %s", exc)
-        flash("Instagram seçim bilgilerine ulaşılamadı. Lütfen OAuth sürecini yeniden başlatın.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-    if not pending or not pending.get("pages"):
-        flash("Aktif bir Instagram sayfa seçimi bulunamadı. Lütfen bağlantıyı yeniden başlatın.", "warning")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    pages_full = pending.get("pages") or []
-    selectable_pages = []
-    for page in pages_full:
-        selectable_pages.append(
-            {
-                "page_id": page.get("page_id"),
-                "page_name": page.get("page_name"),
-                "instagram_business_account_id": page.get("instagram_business_account_id"),
-                "instagram_username": page.get("instagram_username"),
-                "has_instagram": bool(page.get("instagram_business_account_id")),
-            }
-        )
-    ready_count = sum(1 for page in pages_full if page.get("instagram_business_account_id") and page.get("page_access_token"))
-    if ready_count == 0:
-        clear_pending_instagram_choices(current_user["id"])
-        flash(
-            "Bu Facebook hesabının yönettiği hiçbir sayfada Instagram Business/Creator hesabı bağlı değil. "
-            "Instagram hesabınızı bir Facebook sayfasına bağladıktan sonra tekrar deneyin.",
-            "warning",
-        )
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    if request.method == "POST":
-        selected_page_id = (request.form.get("page_id") or "").strip()
-        choice = None
-        for page in pages_full:
-            if str(page.get("page_id") or "") == selected_page_id:
-                choice = page
-                break
-        if not choice:
-            flash("Seçilen Facebook sayfası bulunamadı.", "danger")
-            return redirect(url_for("video_shorts_bp.instagram_select_page"))
-        if not choice.get("instagram_business_account_id"):
-            flash("Bu Facebook sayfasına bağlı Instagram hesabı yok; lütfen başka bir sayfa seçin.", "warning")
-            return redirect(url_for("video_shorts_bp.instagram_select_page"))
-        selected_token = choice.get("user_access_token") or choice.get("page_access_token")
-        if not selected_token:
-            flash("Seçilen sayfa için access token alınamadı; bağlantıyı yeniden başlatın.", "danger")
-            return redirect(url_for("video_shorts_bp.social_connect"))
-
-        current_app.logger.info(
-            "Instagram select_page user_id=%s selected_page_id=%s ig_id=%s token_present=%s ig_present=%s",
-            current_user["id"],
-            choice.get("page_id"),
-            choice.get("instagram_business_account_id"),
-            bool(selected_token),
-            bool(choice.get("instagram_business_account_id")),
-        )
-
-        profile = None
-        if not choice.get("instagram_username"):
-            profile = _fetch_instagram_profile(
-                selected_token, choice.get("instagram_business_account_id")
-            )
-        choice_username = choice.get("instagram_username") or (profile or {}).get("username")
-        store_instagram_token(
-            user_id=current_user["id"],
-            page_access_token=selected_token,
-            instagram_business_account_id=choice["instagram_business_account_id"],
-            instagram_username=choice_username,
-            facebook_page_id=choice.get("page_id") or "",
-            facebook_page_name=choice.get("page_name") or "",
-            selected_page_id=choice.get("page_id"),
-            expires_at=pending.get("expires_at"),
-            scopes=pending.get("scopes") or "",
-        )
-        clear_pending_instagram_choices(current_user["id"])
-        saved = get_instagram_data(current_user["id"])
-        current_app.logger.info(
-            "Instagram select_page saved db_record_id=%s fb_user_id=%s selected_page_id=%s ig_id=%s token_tail=%s token_created_at=%s updated_at=%s",
-            (saved or {}).get("user_id"),
-            (saved or {}).get("meta_fb_user_id"),
-            (saved or {}).get("selected_page_id"),
-            (saved or {}).get("instagram_business_account_id"),
-            _token_tail((saved or {}).get("page_access_token")),
-            (saved or {}).get("token_created_at"),
-            (saved or {}).get("updated_at"),
-        )
-        _log_instagram_connect_validation(
-            "select_page",
-            choice.get("page_id"),
-            choice.get("instagram_business_account_id"),
-            choice.get("page_access_token"),
-        )
-        flash("Instagram bağlantısı kaydedildi.", "success")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    return render_template(
-        "vs_instagram_select_page.html",
-        pages=selectable_pages,
-        expires_at=pending.get("expires_at"),
-    )
+    flash("Instagram artık doğrudan hesapla bağlanıyor; sayfa seçimi gerekmiyor.", "info")
+    return redirect(url_for("video_shorts_bp.social_connect"))
 
 
 @video_shorts_bp.route("/instagram/disconnect", methods=["POST"])
@@ -7757,7 +7293,6 @@ def instagram_disconnect():
         flash("Instagram bağlantısını kaldırmak için giriş yapın.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     clear_instagram_token(current_user["id"])
-    clear_pending_instagram_choices(current_user["id"])
     flash("Instagram bağlantısı kaldırıldı.", "info")
     return redirect(url_for("video_shorts_bp.social_connect"))
 

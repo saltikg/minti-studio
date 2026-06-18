@@ -1,74 +1,28 @@
 {% extends "vs_base.html" %}
 
-{% block title %}Select Instagram Page{% endblock %}
+{% block title %}Instagram Connect{% endblock %}
 
 {% block content %}
 <div class="gs-card shadow-sm">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
-      <h4 class="mb-1">Choose a Facebook Page</h4>
+      <h4 class="mb-1">Connect Instagram directly</h4>
       <p class="text-muted small mb-0">
-        Instagram bağlantısını tamamlamak için erişmek istediğiniz Facebook sayfasını seçin.
-        Instagram hesabı bağlı olmayan sayfalar gri görünür.
+        Instagram bağlantısı artık doğrudan Instagram hesabıyla yapılıyor. Facebook Page seçimi gerekmiyor.
       </p>
     </div>
     <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-outline-secondary btn-sm">
-      Cancel
+      Back
     </a>
   </div>
 
-  {% set ns = namespace(required_added=False) %}
-  <form method="post" class="d-flex flex-column gap-3">
-    {% for page in pages %}
-      {% set is_enabled = page.has_instagram %}
-      <label class="border rounded p-3 d-flex align-items-center justify-content-between">
-        <div class="d-flex align-items-center gap-3">
-          <input
-            class="form-check-input mt-0"
-            type="radio"
-            name="page_id"
-            value="{{ page.page_id }}"
-            {% if not is_enabled %}disabled{% endif %}
-            {% if is_enabled and not ns.required_added %}
-              {% set ns.required_added = True %}
-              required
-            {% endif %}
-          >
-          <div>
-            <div class="fw-semibold">{{ page.page_name or "Unnamed Page" }}</div>
-            {% if page.instagram_business_account_id %}
-              <div class="text-muted small">
-                Instagram: {{ page.instagram_username or page.instagram_business_account_id }}
-              </div>
-            {% else %}
-              <div class="text-muted small">
-                Instagram bağlı değil – önce bu sayfaya bir Business/Creator hesabı bağlayın.
-              </div>
-            {% endif %}
-          </div>
-        </div>
-        {% if page.has_instagram %}
-          <span class="badge bg-success">Uygun</span>
-        {% else %}
-          <span class="badge bg-secondary">Bağlı değil</span>
-        {% endif %}
-      </label>
-    {% endfor %}
+  <div class="alert alert-info mb-3" role="alert">
+    Use <strong>Connect Instagram</strong> on the Social Connect page to sign in directly with Instagram.
+    Business or Creator accounts are required for publishing.
+  </div>
 
-    <div class="d-flex gap-2">
-      <button type="submit" class="btn btn-primary">
-        Connect Selected Page
-      </button>
-      <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-outline-secondary">
-        Cancel
-      </a>
-    </div>
-  </form>
-
-  {% if expires_at %}
-    <p class="text-muted small mt-3 mb-0">
-      Not: Token şu tarihe kadar geçerli: {{ expires_at }} (UTC). Bağlantı başarısız olursa yeniden OAuth başlatın.
-    </p>
-  {% endif %}
+  <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-primary">
+    Go to Social Connect
+  </a>
 </div>
 {% endblock %}

@@ -155,13 +155,16 @@ YOUTUBE_OAUTH_SCOPES = os.getenv(
 IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
 IG_BUSINESS_ACCOUNT_ID = os.getenv("IG_BUSINESS_ACCOUNT_ID")
 IG_API_BASE = os.getenv("IG_API_BASE", "https://graph.facebook.com/v24.0")
+IG_GRAPH_API_BASE = os.getenv("IG_GRAPH_API_BASE", "https://graph.instagram.com")
+IG_AUTH_BASE = os.getenv("IG_AUTH_BASE", "https://www.instagram.com/oauth/authorize")
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
 IG_OAUTH_SCOPES = os.getenv(
     "IG_OAUTH_SCOPES",
-    "pages_show_list,instagram_basic,instagram_content_publish,pages_read_engagement,instagram_manage_comments,instagram_manage_insights",
+    "instagram_business_basic,instagram_business_content_publish",
 )
+IG_TOKEN_REFRESH_BUFFER_DAYS = int(os.getenv("IG_TOKEN_REFRESH_BUFFER_DAYS", "14"))
 FB_APP_ID = os.getenv("FB_APP_ID")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET")
 FB_REDIRECT_URI = os.getenv("FB_REDIRECT_URI")
