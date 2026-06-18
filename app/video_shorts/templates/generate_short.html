@@ -383,7 +383,13 @@
               {% elif row.publish_status == "published" %}
                 {% set meta_row_classes = meta_row_classes + " published" %}
               {% endif %}
-            <div class="clip-card" data-status="{{ row.status }}" data-publish="{{ row.publish_status }}" data-start="{{ row.start or 0 }}" data-duration="{{ row.duration or 0 }}">
+            <div class="clip-card"
+                 data-status="{{ row.status }}"
+                 data-render-job-id="{{ row.render_job_id or '' }}"
+                 data-render-error="{{ row.render_error or '' }}"
+                 data-publish="{{ row.publish_status }}"
+                 data-start="{{ row.start or 0 }}"
+                 data-duration="{{ row.duration or 0 }}">
               <div class="clip-card-strip {{ row.status }}"></div>
               <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
                 <div class="clip-card-meta-time">
@@ -505,7 +511,7 @@
                           <span class="btn-label">Generate Short Clip</span>
                         </button>
                       </form>
-                      <div class="clip-card-generate-feedback small mt-1 d-none"></div>
+                      <div class="clip-card-generate-feedback small mt-1 d-none" aria-live="polite" aria-atomic="true"></div>
                     </div>
                   {% endif %}
                   </div>
@@ -2036,6 +2042,7 @@ const refreshClipList = async () => {
       initClipTitleRowAjax();
       initClipCategoryAjax();
       initSendToYoutubeButtons();
+      resumeQueuedClipJobs();
     }
     const latestInfo = document.getElementById("youtube-latest-scheduled");
     const newLatest = doc.getElementById("youtube-latest-scheduled");
@@ -2088,6 +2095,265 @@ const waitForCreatedClipRender = async (
 
 let latestUsageSnapshot = null;
 const storagePlansUrl = "{{ url_for('video_shorts_bp.shorts_storage_plans') }}";
+const clipJobStatusUrlBase = "/api/jobs";
+const clipJobStorageKey = "vsActiveClipJobs";
+const clipJobPollMaxMs = 10 * 60 * 1000;
+const clipJobBasePollMs = 2000;
+const clipJobMaxPollMs = 6000;
+const clipJobRevealAttempts = 4;
+const clipJobRevealDelayMs = 1200;
+const clipJobPolls = new Map();
+const prefersReducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const getStoredClipJobs = () => {
+  try {
+    return JSON.parse(window.sessionStorage.getItem(clipJobStorageKey) || "{}") || {};
+  } catch (error) {
+    return {};
+  }
+};
+
+const setStoredClipJobs = (jobs) => {
+  try {
+    window.sessionStorage.setItem(clipJobStorageKey, JSON.stringify(jobs || {}));
+  } catch (error) {
+    // Ignore storage failures.
+  }
+};
+
+const storeClipJob = (planIndex, payload) => {
+  const jobs = getStoredClipJobs();
+  jobs[String(planIndex)] = payload;
+  setStoredClipJobs(jobs);
+};
+
+const clearStoredClipJob = (planIndex) => {
+  const jobs = getStoredClipJobs();
+  delete jobs[String(planIndex)];
+  setStoredClipJobs(jobs);
+};
+
+const getGenerateUiParts = (card) => {
+  const btn = card?.querySelector(".clip-generate-btn");
+  const label = btn?.querySelector(".btn-label");
+  const spinner = btn?.querySelector(".spinner-border");
+  const feedback = card?.querySelector(".clip-card-generate-feedback");
+  if (btn && !btn.dataset.defaultLabel) {
+    btn.dataset.defaultLabel = label?.textContent || "Generate Short Clip";
+  }
+  return {
+    btn,
+    label,
+    spinner,
+    feedback,
+    defaultLabel: btn?.dataset.defaultLabel || "Generate Short Clip",
+  };
+};
+
+const clearClipNotice = (card) => {
+  card?.querySelectorAll(".clip-card-inline-note").forEach((el) => el.remove());
+};
+
+const injectClipNotice = (planIndex, message) => {
+  const card = getClipCardByPlanIndex(planIndex);
+  if (!card || !message) {
+    return;
+  }
+  clearClipNotice(card);
+  const note = document.createElement("div");
+  note.className = "clip-card-inline-note small text-white-50 mt-2";
+  note.textContent = message;
+  const anchor =
+    card.querySelector(".clip-card-media-actions") ||
+    card.querySelector(".clip-card-placeholder") ||
+    card.querySelector(".clip-card-media");
+  if (anchor) {
+    anchor.appendChild(note);
+  }
+};
+
+const setClipFeedbackState = (
+  card,
+  {
+    message = "",
+    tone = "text-white",
+    busy = false,
+    buttonLabel = null,
+    showSpinner = busy && !prefersReducedMotion,
+    disableButton = busy,
+    html = false,
+  } = {},
+) => {
+  const { btn, label, spinner, feedback, defaultLabel } = getGenerateUiParts(card);
+  if (btn) {
+    btn.disabled = !!disableButton;
+  }
+  if (label) {
+    label.textContent = buttonLabel || (busy ? "Generating…" : defaultLabel);
+  }
+  if (spinner) {
+    spinner.classList.toggle("d-none", !showSpinner);
+  }
+  if (!feedback) {
+    return;
+  }
+  feedback.classList.remove(
+    "d-none",
+    "text-success",
+    "text-danger",
+    "text-warning",
+    "text-white",
+    "text-white-50",
+  );
+  feedback.classList.add(tone);
+  if (html) {
+    feedback.innerHTML = message;
+  } else {
+    feedback.textContent = message;
+  }
+};
+
+const formatQueuedMessage = (queuePosition) => {
+  const count = Math.max(1, Number(queuePosition) || 0);
+  return `You're in line — ${count} ${count === 1 ? "ahead" : "ahead"}. We'll start this shortly.`;
+};
+
+const renderClipJobProgressState = (card, status, queuePosition) => {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const ahead = Number(queuePosition);
+  if (normalizedStatus === "queued" && Number.isFinite(ahead) && ahead > 0) {
+    setClipFeedbackState(card, {
+      message: formatQueuedMessage(ahead),
+      tone: "text-white-50",
+      busy: true,
+    });
+    return;
+  }
+  setClipFeedbackState(card, {
+    message: "Generating your short…",
+    tone: "text-white",
+    busy: true,
+  });
+};
+
+const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
+  const key = String(planIndex || "");
+  const existing = clipJobPolls.get(key);
+  if (existing) {
+    existing.cancelled = true;
+    clipJobPolls.delete(key);
+  }
+  if (clearStored) {
+    clearStoredClipJob(key);
+  }
+};
+
+const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
+  stopClipJobPolling(planIndex, { clearStored: true });
+  for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
+    const refreshed = await refreshClipList();
+    if (refreshed && isCreatedClipRendered(planIndex)) {
+      if (cached) {
+        injectClipNotice(planIndex, "You've already generated this clip.");
+      } else if (typeof window.vsPushNotification === "function") {
+        window.vsPushNotification({
+          title: "Short ready",
+          message: "Your short video is ready.",
+        });
+      }
+      loadGenerateUsageSummary();
+      return;
+    }
+    if (attempt < clipJobRevealAttempts - 1) {
+      await sleep(clipJobRevealDelayMs);
+    }
+  }
+  if (!cached && typeof window.vsPushNotification === "function") {
+    window.vsPushNotification({
+      title: "Short ready",
+      message: "Your short video is ready.",
+    });
+  }
+  window.location.reload();
+};
+
+const handleClipJobFailure = (planIndex) => {
+  stopClipJobPolling(planIndex, { clearStored: true });
+  const card = getClipCardByPlanIndex(planIndex);
+  if (!card) {
+    return;
+  }
+  setClipFeedbackState(card, {
+    message: "Couldn't generate this short. Please try again.",
+    tone: "text-danger",
+    busy: false,
+    buttonLabel: "Try again",
+    disableButton: false,
+    showSpinner: false,
+  });
+};
+
+const pollClipJobUntilDone = async (
+  planIndex,
+  jobId,
+  {
+    initialStatus = "queued",
+    initialQueuePosition = null,
+    startedAt = Date.now(),
+  } = {},
+) => {
+  const key = String(planIndex || "");
+  const existing = clipJobPolls.get(key);
+  if (existing && existing.jobId === jobId && !existing.cancelled) {
+    return;
+  }
+  stopClipJobPolling(key);
+  const state = { cancelled: false, jobId };
+  clipJobPolls.set(key, state);
+  storeClipJob(key, { jobId, startedAt });
+
+  let attempt = 0;
+  let status = initialStatus;
+  let queuePosition = initialQueuePosition;
+
+  while (!state.cancelled && (Date.now() - startedAt) < clipJobPollMaxMs) {
+    const card = getClipCardByPlanIndex(planIndex);
+    if (card) {
+      renderClipJobProgressState(card, status, queuePosition);
+    }
+
+    if (attempt > 0) {
+      try {
+        const response = await fetch(`${clipJobStatusUrlBase}/${encodeURIComponent(jobId)}`, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        status = payload?.status || status;
+        queuePosition = payload?.queue_position;
+        if (status === "done") {
+          await finalizeClipJobSuccess(planIndex);
+          return;
+        }
+        if (status === "failed" || status === "cancelled") {
+          handleClipJobFailure(planIndex);
+          return;
+        }
+      } catch (error) {
+        // Transient polling failure; continue with backoff.
+      }
+    }
+
+    const delay = Math.min(clipJobBasePollMs + (attempt * 500), clipJobMaxPollMs);
+    attempt += 1;
+    await sleep(delay);
+  }
+
+  handleClipJobFailure(planIndex);
+};
 
 const usageResetCopy = (resetAt) => {
   if (!resetAt) {
@@ -2152,23 +2418,12 @@ const initGenerateClipForms = () => {
       if (hiddenTitleInput && titleSource) {
         hiddenTitleInput.value = titleSource.value || "";
       }
-      const btn = card.querySelector(".clip-generate-btn");
-      const label = btn?.querySelector(".btn-label");
-      const spinner = btn?.querySelector(".spinner-border");
-      const originalLabel = label?.textContent || "Generate Short Clip";
-      const feedback = card.querySelector(".clip-card-generate-feedback");
-      if (feedback) {
-        feedback.classList.add("d-none");
-      }
-      if (btn) {
-        btn.disabled = true;
-      }
-      if (label) {
-        label.textContent = "Generating…";
-      }
-      if (spinner) {
-        spinner.classList.remove("d-none");
-      }
+      clearClipNotice(card);
+      setClipFeedbackState(card, {
+        message: "Generating your short…",
+        tone: "text-white",
+        busy: true,
+      });
       const data = new URLSearchParams(new FormData(form));
       try {
         const response = await fetch(form.action, {
@@ -2189,84 +2444,96 @@ const initGenerateClipForms = () => {
           response.status === 409 &&
           typeof payload.message === "string" &&
           payload.message.toLowerCase().includes("already generated");
-        const queuedJob = payload.status === "queued";
-        let success =
-          (response.ok && payload.success) ||
-          payload.status === "created" ||
-          clipAlreadyExists;
-        if (!success) {
-          const refreshed = await refreshClipList();
-          if (refreshed && isCreatedClipRendered(planIndex)) {
-            success = true;
-          }
-        }
-        let message =
-          payload.message ||
-          (queuedJob ? "Render job queued." : (success ? "Clip generated." : "Clip generation failed."));
-        if (queuedJob && Number.isFinite(payload.queue_position)) {
-          message = `${message} ${payload.queue_position} job(s) ahead of you.`;
-        }
         if (response.status === 403 && payload.code === "export_limit_reached") {
           const resetCopy = latestUsageSnapshot?.period?.reset_at
             ? usageResetCopy(latestUsageSnapshot.period.reset_at)
             : "";
-          message = `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}.`;
+          setClipFeedbackState(card, {
+            message: `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}. <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`,
+            tone: "text-danger",
+            busy: false,
+            html: true,
+            showSpinner: false,
+            disableButton: false,
+          });
+          return;
         }
-        if (
-          success &&
-          !response.ok &&
-          !clipAlreadyExists &&
-          (!payload.message || payload.message === "Clip generation failed.")
-        ) {
-          message = "Clip generated. The page was refreshed after a delayed server response.";
+        if (response.status === 429 && payload.code === "concurrency_limit") {
+          setClipFeedbackState(card, {
+            message: "Finish your current short first — your plan runs one at a time.",
+            tone: "text-warning",
+            busy: false,
+            showSpinner: false,
+            disableButton: false,
+          });
+          return;
         }
-        if (feedback) {
-          if (response.status === 403 && payload.code === "export_limit_reached") {
-            feedback.innerHTML = `${message} <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`;
-          } else {
-            feedback.textContent = message;
-          }
-          feedback.classList.remove("text-success", "text-danger", "d-none");
-          feedback.classList.add(success ? "text-success" : "text-danger");
+        if (payload.cached && payload.result) {
+          await finalizeClipJobSuccess(planIndex, { cached: true });
+          return;
         }
-        if (success && !queuedJob) {
-          if (feedback) {
-            feedback.textContent = "Clip generated. Preparing preview…";
-            feedback.classList.remove("text-danger", "d-none");
-            feedback.classList.add("text-success");
-          }
-          const previewReady = await waitForCreatedClipRender(planIndex);
-          if (!previewReady && feedback) {
-            feedback.textContent = "Clip generated. Refresh the page if the preview does not appear yet.";
-          }
+        if (response.ok && payload.job_id) {
+          await pollClipJobUntilDone(planIndex, payload.job_id, {
+            initialStatus: payload.status || "queued",
+            initialQueuePosition: payload.queue_position,
+            startedAt: Date.now(),
+          });
+          return;
         }
+        if ((response.ok && payload.success && payload.status === "created") || clipAlreadyExists) {
+          await finalizeClipJobSuccess(planIndex, { cached: false });
+          return;
+        }
+        handleClipJobFailure(planIndex);
       } catch (err) {
-        if (feedback) {
-          feedback.textContent = "Failed to reach server.";
-          feedback.classList.remove("text-success", "text-danger", "d-none");
-          feedback.classList.add("text-danger");
-        }
-        const previewReady = await waitForCreatedClipRender(planIndex, { attempts: 6, delayMs: 1500 });
-        if (previewReady && feedback) {
-          feedback.textContent = "Clip generated. The page was refreshed after a delayed server response.";
-          feedback.classList.remove("text-success", "text-danger", "d-none");
-          feedback.classList.add("text-success");
-        }
+        handleClipJobFailure(planIndex);
       } finally {
-        loadGenerateUsageSummary();
-        if (btn) {
-          btn.disabled = false;
-        }
-        if (label) {
-          label.textContent = originalLabel;
-        }
-        if (spinner) {
-          spinner.classList.add("d-none");
+        if (!clipJobPolls.has(String(planIndex || ""))) {
+          const { btn, label, spinner, defaultLabel } = getGenerateUiParts(card);
+          if (btn) {
+            btn.disabled = false;
+          }
+          if (label) {
+            label.textContent = defaultLabel;
+          }
+          if (spinner) {
+            spinner.classList.add("d-none");
+          }
         }
       }
     });
   });
 };
+
+const resumeQueuedClipJobs = () => {
+  const storedJobs = getStoredClipJobs();
+  document.querySelectorAll(".clip-card").forEach((card) => {
+    const planIndexInput = card.querySelector("input[name='plan_index']");
+    const planIndex = planIndexInput?.value || "";
+    if (!planIndex) {
+      return;
+    }
+    if (card.dataset.status === "created") {
+      stopClipJobPolling(planIndex, { clearStored: true });
+      return;
+    }
+    const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJobs[String(planIndex)]?.jobId || "").trim();
+    const status = String(card.dataset.status || "").trim().toLowerCase();
+    if (!jobId || !["queued", "processing"].includes(status)) {
+      return;
+    }
+    pollClipJobUntilDone(planIndex, jobId, {
+      initialStatus: status,
+      startedAt: Number(storedJobs[String(planIndex)]?.startedAt || Date.now()),
+    });
+  });
+};
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    resumeQueuedClipJobs();
+  }
+});
 </script>
 <script>
 const initClipTitleRowAjax = () => {
@@ -3358,6 +3625,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSendToYoutubeButtons();
   initCreateLongFromShortsButton();
   initLongVideoDeleteButtons();
+  resumeQueuedClipJobs();
   applyCropperPreviewCardWidth();
   if (typeof bootstrap !== "undefined") {
     document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => {

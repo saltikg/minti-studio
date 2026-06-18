@@ -3870,6 +3870,8 @@ def generate_short(video_pk):
             "video_url": video_url,
             "subtitle": subtitle_source,
             "status": status,
+            "render_job_id": entry.get("render_job_id") or "",
+            "render_error": entry.get("render_error") or "",
             "publish_status": entry.get("publish_status") or ("ready" if entry.get("yt_description") else "not_ready"),
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),

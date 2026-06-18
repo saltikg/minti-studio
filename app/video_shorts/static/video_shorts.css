@@ -69,6 +69,40 @@ body.vs-app {
   gap: 0.5rem;
 }
 
+.vs-notification-btn {
+  position: relative;
+  min-width: 40px;
+  padding-inline: 0.7rem;
+}
+
+.vs-notification-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vs-notification-icon-wrap .bi-bell {
+  font-size: 0.95rem;
+}
+
+.vs-notification-badge {
+  position: absolute;
+  top: -7px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
 .vs-auth {
   color: var(--text);
   min-height: 100vh;
@@ -786,6 +820,16 @@ body.vs-app {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.35);
   color: var(--danger);
+}
+
+.vs-content .vs-notification-banner {
+  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.28);
+  color: var(--text);
+}
+
+.vs-content .vs-notification-banner .small {
+  color: var(--text-2);
 }
 
 .crop-save-status,
