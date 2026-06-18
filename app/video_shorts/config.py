@@ -39,10 +39,46 @@ VIDEO_SHORTS_TMP_DIR = Path(os.getenv("VIDEO_SHORTS_TMP_DIR") or (Path(__file__)
 BGCOVER_PATH = VIDEOS_DIR / "1-short_bg_8.png"
 FFMPEG_BIN = os.getenv("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
 DEFAULT_STORAGE_PLANS = [
-    {"plan_id": "plan_free", "label": "Free", "quota_bytes": 2 * 1024 ** 3, "sort_order": 0},
-    {"plan_id": "plan_2gb", "label": "Starter", "quota_bytes": 2 * 1024 ** 3, "sort_order": 1},
-    {"plan_id": "plan_10gb", "label": "Creator", "quota_bytes": 10 * 1024 ** 3, "sort_order": 2},
-    {"plan_id": "plan_100gb", "label": "Studio", "quota_bytes": 100 * 1024 ** 3, "sort_order": 3},
+    {
+        "plan_id": "plan_free",
+        "label": "Free",
+        "quota_bytes": 2 * 1024 ** 3,
+        "price_monthly": 0,
+        "monthly_export_limit": 30,
+        "monthly_transcription_minutes": 60,
+        "is_active": True,
+        "sort_order": 0,
+    },
+    {
+        "plan_id": "plan_2gb",
+        "label": "Starter",
+        "quota_bytes": 2 * 1024 ** 3,
+        "price_monthly": 9,
+        "monthly_export_limit": 200,
+        "monthly_transcription_minutes": 240,
+        "is_active": True,
+        "sort_order": 1,
+    },
+    {
+        "plan_id": "plan_10gb",
+        "label": "Creator",
+        "quota_bytes": 10 * 1024 ** 3,
+        "price_monthly": 19,
+        "monthly_export_limit": 650,
+        "monthly_transcription_minutes": 600,
+        "is_active": True,
+        "sort_order": 2,
+    },
+    {
+        "plan_id": "plan_100gb",
+        "label": "Studio",
+        "quota_bytes": 100 * 1024 ** 3,
+        "price_monthly": 49,
+        "monthly_export_limit": 6500,
+        "monthly_transcription_minutes": 3000,
+        "is_active": True,
+        "sort_order": 3,
+    },
 ]
 DEFAULT_USER_STORAGE_LIMIT = 3 * 1024 ** 3
 DEFAULT_TITLE_TEXT_COLOR = "#000000"

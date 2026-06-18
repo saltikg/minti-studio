@@ -1,6 +1,6 @@
 import json
 
-from flask import jsonify, request
+from flask import current_app, g, jsonify, request
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import CAPTION_API_TOKEN
@@ -12,6 +12,17 @@ from app.video_shorts.services.db import (
     get_db_readonly,
 )
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
+from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
+
+
+def _duration_minutes(duration_seconds) -> float:
+    try:
+        seconds = float(duration_seconds or 0)
+    except Exception:
+        seconds = 0.0
+    if seconds <= 0:
+        return 0.0
+    return round(seconds / 60.0, 2)
 
 
 def _check_caption_token(req):
@@ -47,6 +58,17 @@ def caption_tasks():
     return jsonify({"tasks": tasks})
 
 
+@video_shorts_bp.route("/api/usage", methods=["GET"])
+def usage_api():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        return jsonify(get_usage_snapshot(current_user["id"]))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @video_shorts_bp.route("/api/caption-result", methods=["POST"])
 def caption_result():
     if not _check_caption_token(request):
@@ -78,13 +100,15 @@ def caption_result():
     ensure_postgres_youtube_transcripts_id_default(conn)
     try:
         row = conn.execute(
-            "SELECT video_id FROM youtube_videos WHERE id = ?",
+            "SELECT video_id, owner_user_id, duration_seconds FROM youtube_videos WHERE id = ?",
             [video_db_id],
         ).fetchone()
         if not row:
             conn.close()
             return jsonify({"error": "video not found"}), 404
         video_id = row[0]
+        owner_user_id = row[1]
+        duration_seconds = row[2]
 
         conn.execute(
             """
@@ -106,6 +130,16 @@ def caption_result():
         )
         conn.commit()
         conn.close()
+        if owner_user_id:
+            minutes = _duration_minutes(duration_seconds)
+            if minutes > 0:
+                try:
+                    add_transcription_minutes(str(owner_user_id), minutes)
+                except Exception:
+                    current_app.logger.exception(
+                        "Failed to meter caption worker transcription usage for video_db_id=%s",
+                        video_db_id,
+                    )
         return jsonify({"ok": True}), 200
     except Exception as e:
         try:

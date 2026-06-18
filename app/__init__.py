@@ -74,6 +74,13 @@ def create_app():
     # 1) Video Shorts only
     from app.video_shorts import video_shorts_bp
     app.register_blueprint(video_shorts_bp)
+    from app.video_shorts.routes.auth import _current_user
+    from app.video_shorts.routes.api import usage_api
+
+    @app.get("/api/usage")
+    def video_shorts_usage_api_alias():
+        _current_user()
+        return usage_api()
 
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp

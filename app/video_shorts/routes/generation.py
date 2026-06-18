@@ -143,6 +143,11 @@ from app.video_shorts.services.youtube_oauth import (
     upload_video_with_refresh_token,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
+from app.video_shorts.services.usage_metering import (
+    add_transcription_minutes,
+    release_export,
+    reserve_export,
+)
 from src.trends.instagram_tokens import (
     InstagramTokenStoreError,
     clear_instagram_token,
@@ -483,6 +488,16 @@ def _quota_block_message(limit_label: str, used_label: str) -> str:
         "Storage full. Please upgrade or delete files. "
         f"Used {used_label} of {limit_label}."
     )
+
+
+def _duration_minutes(duration_seconds: Any) -> float:
+    try:
+        seconds = float(duration_seconds or 0)
+    except Exception:
+        seconds = 0.0
+    if seconds <= 0:
+        return 0.0
+    return round(seconds / 60.0, 2)
 
 
 def _upsert_storage_asset(
@@ -8458,6 +8473,19 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
                 [video_pk],
             )
             conn.commit()
+            owner_user_id = None
+            try:
+                owner_row = conn.execute(
+                    "SELECT owner_user_id, duration_seconds FROM youtube_videos WHERE id = ?",
+                    [video_pk],
+                ).fetchone()
+                if owner_row:
+                    owner_user_id = owner_row[0]
+                    audio_minutes = _duration_minutes(owner_row[1])
+                    if owner_user_id and audio_minutes > 0:
+                        add_transcription_minutes(str(owner_user_id), audio_minutes)
+            except Exception:
+                app_obj.logger.exception("Failed to meter transcription usage for video_pk=%s", video_pk)
             elapsed = round(time.monotonic() - start_ts, 1)
             _set_transcribe_job_state(
                 video_pk,
@@ -8698,6 +8726,16 @@ def transcribe_video(video_pk):
             [video_pk, getattr(g, "vs_current_user", {}).get("id"), current_brand_id(), current_brand_id()],
         )
         conn.commit()
+        audio_minutes = _duration_minutes(_probe_media_duration_seconds(source_path))
+        current_user = getattr(g, "vs_current_user", None) or {}
+        if current_user.get("id") and audio_minutes > 0:
+            try:
+                add_transcription_minutes(str(current_user["id"]), audio_minutes)
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to meter synchronous transcription usage for video_pk=%s",
+                    video_pk,
+                )
         flash("Transkript başarıyla Whisper ile üretildi.", "success")
     except Exception as e:
         flash(f"Whisper transcription failed: {e}", "danger")
@@ -9759,6 +9797,7 @@ def autoclip_video(video_pk):
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     brand_subscribe_overlay_path = _resolve_brand_subscribe_overlay_path(brand_id)
+    export_reserved = False
     usage = None
     if current_user:
         conn_usage = get_db_readonly()
@@ -10205,6 +10244,17 @@ def autoclip_video(video_pk):
             status=404,
             category="danger",
         )
+    if current_user:
+        reserve_result = reserve_export(current_user["id"])
+        if not reserve_result.get("allowed", False):
+            return _respond(
+                "Monthly export limit reached for your plan.",
+                success=False,
+                status=403,
+                category="danger",
+                extras={"code": "export_limit_reached", "remaining": reserve_result.get("remaining")},
+            )
+        export_reserved = True
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
         video_font_key=video_font_key,
@@ -10614,6 +10664,9 @@ def autoclip_video(video_pk):
                         final_file.unlink()
                     except Exception:
                         current_app.logger.warning("Failed to remove oversized clip %s", final_file)
+                    if export_reserved and current_user:
+                        release_export(current_user["id"])
+                        export_reserved = False
                     return _respond(
                         _quota_block_message(
                             _format_size_bytes(usage["limit_bytes"]),
@@ -10709,6 +10762,15 @@ def autoclip_video(video_pk):
             )
         error_message = f"Clip {plan_index} failed: {e}"
     finally:
+        if export_reserved and not made and current_user:
+            try:
+                release_export(current_user["id"])
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to release export reservation for user_id=%s plan_index=%s",
+                    current_user["id"],
+                    plan_index,
+                )
         for p in temp_subs:
             try:
                 p.unlink()
