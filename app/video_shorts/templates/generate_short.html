@@ -337,7 +337,10 @@
       {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
       <div class="gs-card h-100">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-          <div class="small text-white-50">Clips: {{ created_clip_count }}/{{ total_clip_count }} created</div>
+          <div>
+            <div class="small text-white-50">Clips: {{ created_clip_count }}/{{ total_clip_count }} created</div>
+            <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
+          </div>
           <button
             type="button"
             class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
@@ -1988,6 +1991,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
+  loadGenerateUsageSummary();
   document.querySelectorAll("[data-confirm-message]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       const message = btn.getAttribute("data-confirm-message");
@@ -2082,6 +2086,54 @@ const waitForCreatedClipRender = async (
   return false;
 };
 
+let latestUsageSnapshot = null;
+const storagePlansUrl = "{{ url_for('video_shorts_bp.shorts_storage_plans') }}";
+
+const usageResetCopy = (resetAt) => {
+  if (!resetAt) {
+    return "";
+  }
+  const resetDate = new Date(`${resetAt}T00:00:00Z`);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const resetUtc = Date.UTC(resetDate.getUTCFullYear(), resetDate.getUTCMonth(), resetDate.getUTCDate());
+  const daysLeft = Math.max(0, Math.round((resetUtc - todayUtc) / 86400000));
+  const label = resetDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return `${label} · ${daysLeft === 1 ? "1 day left" : `${daysLeft} days left`}`;
+};
+
+const renderGenerateUsageSummary = (payload) => {
+  const usageEl = document.getElementById("generate-usage-summary");
+  if (!usageEl) {
+    return;
+  }
+  if (!payload || !payload.exports) {
+    usageEl.textContent = "Usage unavailable right now.";
+    return;
+  }
+  const used = Number(payload.exports.used || 0);
+  const limit = Number(payload.exports.limit || 0);
+  const remaining = Math.max(0, limit - used);
+  const resetCopy = payload?.period?.reset_at ? usageResetCopy(payload.period.reset_at) : "";
+  usageEl.textContent = `${remaining} ${remaining === 1 ? "export" : "exports"} left this month${resetCopy ? ` · Resets ${resetCopy}` : ""}`;
+};
+
+const loadGenerateUsageSummary = async () => {
+  try {
+    const response = await fetch("/api/usage", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    latestUsageSnapshot = await response.json();
+    renderGenerateUsageSummary(latestUsageSnapshot);
+  } catch (error) {
+    renderGenerateUsageSummary(null);
+  }
+};
+
 const initGenerateClipForms = () => {
   document.querySelectorAll(".generate-clip-form").forEach((form) => {
     if (form.dataset.generateClipBound === "1") {
@@ -2150,6 +2202,12 @@ const initGenerateClipForms = () => {
         let message =
           payload.message ||
           (success ? "Clip generated." : "Clip generation failed.");
+        if (response.status === 403 && payload.code === "export_limit_reached") {
+          const resetCopy = latestUsageSnapshot?.period?.reset_at
+            ? usageResetCopy(latestUsageSnapshot.period.reset_at)
+            : "";
+          message = `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}.`;
+        }
         if (
           success &&
           !response.ok &&
@@ -2159,7 +2217,11 @@ const initGenerateClipForms = () => {
           message = "Clip generated. The page was refreshed after a delayed server response.";
         }
         if (feedback) {
-          feedback.textContent = message;
+          if (response.status === 403 && payload.code === "export_limit_reached") {
+            feedback.innerHTML = `${message} <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`;
+          } else {
+            feedback.textContent = message;
+          }
           feedback.classList.remove("text-success", "text-danger", "d-none");
           feedback.classList.add(success ? "text-success" : "text-danger");
         }
@@ -2187,6 +2249,7 @@ const initGenerateClipForms = () => {
           feedback.classList.add("text-success");
         }
       } finally {
+        loadGenerateUsageSummary();
         if (btn) {
           btn.disabled = false;
         }

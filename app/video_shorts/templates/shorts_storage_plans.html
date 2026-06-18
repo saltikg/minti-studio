@@ -1,6 +1,122 @@
 {% extends "vs_base.html" %}
 
 {% block title %}Plan & Storage{% endblock %}
+{% block extra_styles %}
+<style>
+  .usage-panel {
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background:
+      radial-gradient(circle at top right, rgba(45, 212, 191, 0.12), transparent 32%),
+      linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+  }
+  .usage-panel-numbers {
+    font-variant-numeric: tabular-nums;
+  }
+  .usage-reset {
+    color: var(--text-2);
+    font-size: 0.9rem;
+  }
+  .usage-loading,
+  .usage-error {
+    min-height: 140px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    color: var(--text-2);
+    background: rgba(255,255,255,0.02);
+  }
+  .usage-banner {
+    border-radius: 14px;
+    padding: 14px 16px;
+    border: 1px solid transparent;
+  }
+  .usage-banner.storage-full {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  .usage-banner.export-full {
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.3);
+  }
+  .usage-meters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .usage-meter {
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+  }
+  .usage-meter-label {
+    color: var(--text-2);
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .usage-meter-value {
+    color: var(--text-1);
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .usage-meter-meta {
+    color: var(--text-2);
+    font-size: 0.88rem;
+  }
+  .usage-meter-progress {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+  .usage-meter-progress-bar {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.22s ease;
+  }
+  .usage-state-ok {
+    color: var(--mint);
+  }
+  .usage-state-ok .usage-meter-progress-bar {
+    background: linear-gradient(90deg, var(--mint-2), var(--mint));
+  }
+  .usage-state-warning {
+    color: var(--warning);
+  }
+  .usage-state-warning .usage-meter-progress-bar {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  }
+  .usage-state-full {
+    color: var(--danger);
+  }
+  .usage-state-full .usage-meter-progress-bar {
+    background: linear-gradient(90deg, #ef4444, #f87171);
+  }
+  .usage-meter-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-2);
+    font-size: 0.84rem;
+  }
+  .usage-upgrade-btn:focus-visible {
+    outline: 2px solid rgba(45, 212, 191, 0.48);
+    outline-offset: 2px;
+  }
+  .admin-usage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
 
@@ -22,8 +138,26 @@
 </div>
 
 {% if is_admin %}
-  <div class="alert alert-info mb-4">Admin controls are available in the usage cards below.</div>
+  <div class="alert alert-info mb-4">Admin controls are available below the usage panel.</div>
 {% endif %}
+
+<div class="card shadow-sm usage-panel mb-4">
+  <div class="card-body p-4">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <div class="vs-card-title mb-1">Usage this month</div>
+        <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
+      </div>
+      <a class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" href="#plans">Upgrade</a>
+    </div>
+    <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
+    <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
+    <div id="usage-panel-error" class="usage-error usage-panel-numbers d-none">Usage could not be loaded right now.</div>
+    <div id="usage-panel-content" class="d-none">
+      <div class="usage-meters usage-panel-numbers" id="usage-meters"></div>
+    </div>
+  </div>
+</div>
 
 <div class="row g-3 mb-2" id="plans">
   {% for plan in plans %}
@@ -144,78 +278,52 @@
   {% endfor %}
 </div>
 
-<div class="row g-3 mb-3" id="usage-section">
-  {% for user in users %}
-    <div class="col-md-6 col-xl-4">
-      <div class="card shadow-sm h-100 usage-card vs-card" data-user-id="{{ user.id }}" data-usage-percent="{{ user.percent }}">
+{% if is_admin %}
+<div class="mb-3">
+  <div class="vs-card-title mb-2">Admin plan controls</div>
+  <div class="admin-usage-grid">
+    {% for user in users %}
+      <div class="card shadow-sm usage-card vs-card">
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
+          <div class="d-flex justify-content-between align-items-start mb-3">
             <div>
-              <div class="vs-card-title">Your usage</div>
+              <div class="vs-card-title">{{ user.name }}</div>
+              <div class="vs-text-muted vs-text-small">{{ user.email or user.username or user.id }}</div>
             </div>
             <span class="vs-badge">{{ user.plan_label }}</span>
           </div>
-          {% if user.percent >= 95 %}
-            <span class="vs-badge vs-badge-danger mb-2 d-inline-flex">Critical usage</span>
-          {% elif user.percent >= 80 %}
-            <span class="vs-badge vs-badge-warning mb-2 d-inline-flex">Usage warning</span>
-          {% endif %}
-          <div class="vs-text-body mb-2">Used {{ user.used_label }} of {{ user.limit_label }}</div>
-          <div class="progress mb-3 usage-progress">
-            <div class="progress-bar {% if user.percent > 80 %}bg-danger{% elif user.percent > 60 %}bg-warning{% else %}bg-success{% endif %}"
-                 role="progressbar"
-                 aria-valuenow="{{ user.percent }}"
-                 aria-valuemin="0"
-                 aria-valuemax="100"
-                 style="width: {{ user.percent }}%;">
+          <form method="post" class="row g-2 align-items-end">
+            <input type="hidden" name="user_id" value="{{ user.id }}">
+            <div class="col-md-6">
+              <label class="form-label vs-card-title mb-1">Plan</label>
+              <select name="plan_id" class="form-select form-select-sm vs-select">
+                <option value="">Select plan</option>
+                {% for plan in plans %}
+                  <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
+                    {{ plan.label }}
+                  </option>
+                {% endfor %}
+              </select>
             </div>
-          </div>
-          <div class="vs-text-muted vs-text-small mb-3">Includes exports and uploaded source files.</div>
-          <div class="d-flex">
-            <a class="btn btn-sm vs-btn vs-btn-primary w-100" href="#plans">Upgrade</a>
-          </div>
-          {% if is_admin %}
-            <div class="mt-3">
-              <a class="vs-text-small text-decoration-none" data-bs-toggle="collapse" href="#adminPlanControls{{ loop.index }}" role="button" aria-expanded="false" aria-controls="adminPlanControls{{ loop.index }}">
-                Advanced
-              </a>
-              <div class="collapse mt-2" id="adminPlanControls{{ loop.index }}">
-                <form method="post" class="row g-2 align-items-end">
-                  <input type="hidden" name="user_id" value="{{ user.id }}">
-                  <div class="col-md-6">
-                    <label class="form-label vs-card-title mb-1">Plan</label>
-                    <select name="plan_id" class="form-select form-select-sm vs-select">
-                      <option value="">Select plan</option>
-                      {% for plan in plans %}
-                        <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
-                          {{ plan.label }}
-                        </option>
-                      {% endfor %}
-                    </select>
-                  </div>
-                  <div class="col-md-4">
-                    <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
-                    <input type="text"
-                           name="custom_limit"
-                           class="form-control form-control-sm vs-input"
-                           value="{{ user.custom_limit_gb }}">
-                  </div>
-                  <div class="col-md-2">
-                    <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
-                  </div>
-                </form>
-              </div>
+            <div class="col-md-4">
+              <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
+              <input type="text"
+                     name="custom_limit"
+                     class="form-control form-control-sm vs-input"
+                     value="{{ user.custom_limit_gb }}">
             </div>
-          {% endif %}
+            <div class="col-md-2">
+              <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
+            </div>
+          </form>
         </div>
       </div>
-    </div>
-  {% else %}
-    <div class="col-12">
-      <div class="alert alert-info">No users yet. Create users via the CLI task before assigning subscriptions.</div>
-    </div>
-  {% endfor %}
+    {% else %}
+      <div class="alert alert-info mb-0">No users yet. Create users via the CLI task before assigning subscriptions.</div>
+    {% endfor %}
+  </div>
 </div>
+{% endif %}
 
 <div class="modal fade" id="storageLimitModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -290,9 +398,193 @@
     const planIdInput = document.getElementById("planConfirmPlanId");
     const confirmForm = document.getElementById("planConfirmForm");
     const confirmBtn = document.getElementById("planConfirmSubmit");
+    const usageLoading = document.getElementById("usage-panel-loading");
+    const usageError = document.getElementById("usage-panel-error");
+    const usageContent = document.getElementById("usage-panel-content");
+    const usageMeters = document.getElementById("usage-meters");
+    const usageResetCopy = document.getElementById("usage-reset-copy");
+    const usageBanner = document.getElementById("usage-panel-banner");
+    const usageUpgradeBtn = document.getElementById("usage-upgrade-btn");
 
     const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
     const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
+
+    const formatBytes = (bytes) => {
+      const value = Number(bytes || 0);
+      if (value >= 1024 ** 3) return `${(value / (1024 ** 3)).toFixed(2)} GB`;
+      if (value >= 1024 ** 2) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
+      if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${Math.round(value)} B`;
+    };
+
+    const formatMinutes = (minutes) => {
+      const total = Math.max(0, Math.round(Number(minutes || 0)));
+      const hours = Math.floor(total / 60);
+      const mins = total % 60;
+      if (hours > 0) {
+        return `${hours}h ${mins}m`;
+      }
+      return `${mins}m`;
+    };
+
+    const percentOf = (used, limit) => {
+      const safeLimit = Number(limit || 0);
+      const safeUsed = Number(used || 0);
+      if (!safeLimit) return 0;
+      return (safeUsed / safeLimit) * 100;
+    };
+
+    const clampPercent = (percent) => Math.max(0, Math.min(100, percent));
+
+    const usageState = (percent) => {
+      if (percent >= 100) return "full";
+      if (percent >= 85) return "warning";
+      return "ok";
+    };
+
+    const usageStateClass = (state) => {
+      if (state === "full") return "usage-state-full";
+      if (state === "warning") return "usage-state-warning";
+      return "usage-state-ok";
+    };
+
+    const formatResetCopy = (resetAt) => {
+      if (!resetAt) return "";
+      const resetDate = new Date(`${resetAt}T00:00:00Z`);
+      const now = new Date();
+      const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const resetUtc = Date.UTC(resetDate.getUTCFullYear(), resetDate.getUTCMonth(), resetDate.getUTCDate());
+      const daysLeft = Math.max(0, Math.round((resetUtc - todayUtc) / 86400000));
+      const label = resetDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+      return `Resets ${label} · ${daysLeft === 1 ? "1 day left" : `${daysLeft} days left`}`;
+    };
+
+    const createMeter = ({ label, usedLabel, limitLabel, helper, percent, state }) => {
+      const meter = document.createElement("div");
+      meter.className = `usage-meter ${usageStateClass(state)}`;
+      meter.innerHTML = `
+        <div class="usage-meter-label mb-2">${label}</div>
+        <div class="d-flex align-items-end justify-content-between gap-3 mb-2">
+          <div class="usage-meter-value">${usedLabel} <span class="vs-text-muted">/ ${limitLabel}</span></div>
+          <div class="small">${Math.round(percent)}%</div>
+        </div>
+        <div class="usage-meter-progress mb-2" role="progressbar" aria-label="${label}: ${usedLabel} of ${limitLabel}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(clampPercent(percent))}">
+          <div class="usage-meter-progress-bar" style="width: ${clampPercent(percent)}%;"></div>
+        </div>
+        <div class="usage-meter-foot">
+          <span class="usage-meter-meta">${helper}</span>
+          <span>${state === "full" ? "Limit reached" : ""}</span>
+        </div>
+      `;
+      return meter;
+    };
+
+    const renderUsagePanel = (payload) => {
+      if (!usageMeters) return;
+      usageMeters.innerHTML = "";
+
+      const exportsUsed = Number(payload?.exports?.used || 0);
+      const exportsLimit = Number(payload?.exports?.limit || 0);
+      const exportsRemaining = Math.max(0, exportsLimit - exportsUsed);
+      const exportsPercent = percentOf(exportsUsed, exportsLimit);
+      const exportsState = usageState(exportsPercent);
+
+      const storageUsed = Number(payload?.storage?.used_bytes || 0);
+      const storageQuota = Number(payload?.storage?.quota_bytes || 0);
+      const storageFree = Math.max(0, storageQuota - storageUsed);
+      const storagePercent = percentOf(storageUsed, storageQuota);
+      const storageState = usageState(storagePercent);
+
+      const transcriptionLimitRaw = payload?.transcription?.limit_minutes;
+      const hasTranscriptionLimit = transcriptionLimitRaw !== null && transcriptionLimitRaw !== undefined;
+      const transcriptionUsed = Number(payload?.transcription?.used_minutes || 0);
+      const transcriptionLimit = Number(transcriptionLimitRaw || 0);
+      const transcriptionRemaining = Math.max(0, transcriptionLimit - transcriptionUsed);
+      const transcriptionPercent = hasTranscriptionLimit ? percentOf(transcriptionUsed, transcriptionLimit) : 0;
+      const transcriptionState = usageState(transcriptionPercent);
+
+      usageMeters.appendChild(createMeter({
+        label: "Monthly Exports",
+        usedLabel: `${exportsUsed}`,
+        limitLabel: `${exportsLimit}`,
+        helper: exportsRemaining === 1 ? "1 left" : `${exportsRemaining} left`,
+        percent: exportsPercent,
+        state: exportsState,
+      }));
+      usageMeters.appendChild(createMeter({
+        label: "Storage",
+        usedLabel: formatBytes(storageUsed),
+        limitLabel: formatBytes(storageQuota),
+        helper: `${formatBytes(storageFree)} free`,
+        percent: storagePercent,
+        state: storageState,
+      }));
+      if (hasTranscriptionLimit) {
+        usageMeters.appendChild(createMeter({
+          label: "Transcription Minutes",
+          usedLabel: formatMinutes(transcriptionUsed),
+          limitLabel: formatMinutes(transcriptionLimit),
+          helper: `${formatMinutes(transcriptionRemaining)} left`,
+          percent: transcriptionPercent,
+          state: transcriptionState,
+        }));
+      }
+
+      const exportFull = exportsLimit > 0 && exportsUsed >= exportsLimit;
+      const storageFull = storageQuota > 0 && storageUsed >= storageQuota;
+      if (usageBanner) {
+        usageBanner.classList.remove("d-none", "storage-full", "export-full");
+        if (storageFull) {
+          usageBanner.textContent = "Exports are paused — storage is full. Free up space or upgrade to keep exporting.";
+          usageBanner.classList.add("storage-full");
+        } else if (exportFull) {
+          usageBanner.textContent = "Exports are paused — you've reached this month's export limit. Upgrade or wait for the reset.";
+          usageBanner.classList.add("export-full");
+        } else {
+          usageBanner.classList.add("d-none");
+        }
+      }
+
+      if (usageResetCopy) {
+        usageResetCopy.textContent = formatResetCopy(payload?.period?.reset_at);
+      }
+
+      if (usageUpgradeBtn) {
+        const emphasizeUpgrade = exportFull || storageFull || exportsPercent >= 85 || storagePercent >= 85 || transcriptionPercent >= 85;
+        usageUpgradeBtn.classList.remove("vs-btn-primary", "vs-btn-secondary");
+        usageUpgradeBtn.classList.add(emphasizeUpgrade ? "vs-btn-primary" : "vs-btn-secondary");
+      }
+
+      if (storageLimitModal && storagePercent >= 95) {
+        storageLimitModal.show();
+      }
+    };
+
+    const loadUsagePanel = async () => {
+      if (!usageLoading || !usageError || !usageContent) return;
+      usageLoading.classList.remove("d-none");
+      usageError.classList.add("d-none");
+      usageContent.classList.add("d-none");
+      try {
+        const response = await fetch("/api/usage", {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        renderUsagePanel(payload);
+        usageLoading.classList.add("d-none");
+        usageContent.classList.remove("d-none");
+      } catch (error) {
+        usageLoading.classList.add("d-none");
+        usageError.classList.remove("d-none");
+        if (usageResetCopy) {
+          usageResetCopy.textContent = "Usage could not be loaded right now.";
+        }
+      }
+    };
 
     function setBillingCycle(isYearly) {
       priceBlocks.forEach((block) => {
@@ -387,17 +679,7 @@
       });
     });
 
-    const currentUserId = "{{ current_user_id or '' }}";
-    if (storageLimitModal) {
-        const usageCards = Array.from(document.querySelectorAll(".usage-card"));
-        const currentCard = usageCards.find((card) => card.dataset.userId === currentUserId) || usageCards[0];
-        if (currentCard) {
-          const percent = Number(currentCard.dataset.usagePercent || 0);
-          if (percent >= 95) {
-            storageLimitModal.show();
-          }
-        }
-    }
+    loadUsagePanel();
   })();
 </script>
 {% endblock %}
