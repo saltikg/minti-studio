@@ -22,6 +22,25 @@ class InstagramTokenStoreError(Exception):
     """Raised when the token store cannot be accessed."""
 
 
+_INSTAGRAM_REQUIRED_COLUMNS = {
+    "user_id",
+    "page_access_token",
+    "instagram_business_account_id",
+    "instagram_username",
+    "facebook_page_id",
+    "facebook_page_name",
+    "meta_fb_user_id",
+    "selected_page_id",
+    "instagram_user_id",
+    "instagram_account_type",
+    "token_created_at",
+    "token_refreshed_at",
+    "expires_at",
+    "scopes",
+    "updated_at",
+}
+
+
 def _connect(read_only: bool = True, retries: int = 2):
     return connect_store(
         read_only=read_only,
@@ -165,7 +184,10 @@ def get_instagram_data(user_id: Optional[str] = None) -> Optional[Dict[str, Opti
     except InstagramTokenStoreError:
         return None
     try:
-        if user_id:
+        existing_cols = has_columns(conn, "instagram_oauth_tokens")
+        if existing_cols and not _INSTAGRAM_REQUIRED_COLUMNS.issubset(existing_cols):
+            row = None
+        elif user_id:
             row = conn.execute(
                 """
                 SELECT user_id, page_access_token, instagram_business_account_id, instagram_username, facebook_page_id, facebook_page_name, meta_fb_user_id, selected_page_id, instagram_user_id, instagram_account_type, token_created_at, token_refreshed_at, expires_at, scopes, updated_at
