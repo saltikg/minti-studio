@@ -7,7 +7,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/apps/minti_studio
 EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
-ExecStart=/home/ubuntu/apps/minti_studio/venv/bin/python -m app.video_shorts.worker
+ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/python -m app.video_shorts.worker
 Restart=always
 RestartSec=5
 
