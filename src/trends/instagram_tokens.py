@@ -424,22 +424,25 @@ def _fetch_instagram_account_profile(access_token: str, instagram_user_id: Optio
     )
     resp.raise_for_status()
     me_payload = resp.json() or {}
-    normalized_user_id = str(me_payload.get("user_id") or instagram_user_id or "").strip()
+    graph_id = str(me_payload.get("id") or instagram_user_id or "").strip()
+    normalized_user_id = str(me_payload.get("user_id") or "").strip()
     profile = {
+        "instagram_graph_id": graph_id,
         "instagram_user_id": normalized_user_id,
         "instagram_username": me_payload.get("username"),
         "instagram_account_type": None,
     }
-    if not normalized_user_id:
+    if not graph_id:
         return profile
     detail_resp = requests.get(
-        f"{IG_API_BASE.rstrip('/')}/{normalized_user_id}",
+        f"{IG_API_BASE.rstrip('/')}/{graph_id}",
         params={"fields": "id,username,account_type", "access_token": access_token},
         timeout=12,
     )
     detail_resp.raise_for_status()
     detail_payload = detail_resp.json() or {}
-    profile["instagram_user_id"] = str(detail_payload.get("id") or normalized_user_id)
+    profile["instagram_graph_id"] = str(detail_payload.get("id") or graph_id)
+    profile["instagram_user_id"] = normalized_user_id or profile["instagram_graph_id"]
     profile["instagram_username"] = detail_payload.get("username") or profile["instagram_username"]
     profile["instagram_account_type"] = detail_payload.get("account_type")
     return profile
@@ -493,7 +496,7 @@ def refresh_instagram_token_if_needed(
     store_instagram_token(
         user_id=user_id,
         page_access_token=refreshed_token,
-        instagram_business_account_id=profile.get("instagram_user_id") or data.get("instagram_business_account_id") or "",
+        instagram_business_account_id=profile.get("instagram_graph_id") or data.get("instagram_business_account_id") or "",
         instagram_username=profile.get("instagram_username") or data.get("instagram_username"),
         facebook_page_id=data.get("facebook_page_id") or "",
         facebook_page_name=data.get("facebook_page_name") or "",

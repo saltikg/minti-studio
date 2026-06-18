@@ -6890,6 +6890,7 @@ def _validate_facebook_page_connection(info: Optional[Dict[str, Any]]) -> bool:
 def _fetch_instagram_profile(page_access_token: Optional[str], instagram_business_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not page_access_token or not instagram_business_id:
         return None
+    resp = None
     try:
         resp = requests.get(
             f"{IG_API_BASE.rstrip('/')}/{instagram_business_id}",
@@ -6913,10 +6914,24 @@ def _fetch_instagram_profile(page_access_token: Optional[str], instagram_busines
         )
         return profile
     except Exception as exc:
+        payload = {}
+        body_text = ""
+        if resp is not None:
+            try:
+                payload = resp.json() or {}
+            except Exception:
+                payload = {}
+            try:
+                body_text = (resp.text or "").strip()
+            except Exception:
+                body_text = ""
         current_app.logger.warning(
-            "Instagram profile lookup failed: %s | ig_id=%s",
+            "Instagram profile lookup failed: %s | ig_id=%s status=%s payload=%s body=%s",
             exc,
             instagram_business_id,
+            getattr(resp, "status_code", None),
+            payload,
+            body_text,
         )
         return None
 
@@ -7263,8 +7278,9 @@ def instagram_oauth_callback():
         flash("Instagram hesabı doğrulanamadı. Lütfen tekrar bağlanın.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
-    normalized_ig_user_id = str(me_payload.get("user_id") or instagram_user_id or "").strip()
-    instagram_profile = _fetch_instagram_profile(long_token, normalized_ig_user_id)
+    graph_ig_id = str(me_payload.get("id") or instagram_user_id or "").strip()
+    instagram_user_id_value = str(me_payload.get("user_id") or "").strip()
+    instagram_profile = _fetch_instagram_profile(long_token, graph_ig_id)
     if not instagram_profile:
         flash("Instagram profil bilgisi alınamadı. Lütfen tekrar bağlanın.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
@@ -7279,11 +7295,11 @@ def instagram_oauth_callback():
     store_instagram_token(
         user_id=user_id,
         page_access_token=long_token,
-        instagram_business_account_id=normalized_ig_user_id,
+        instagram_business_account_id=graph_ig_id,
         instagram_username=instagram_profile.get("username"),
         facebook_page_id="",
         facebook_page_name="",
-        instagram_user_id=normalized_ig_user_id,
+        instagram_user_id=instagram_user_id_value or graph_ig_id,
         instagram_account_type=account_type,
         expires_at=expires_at,
         scopes=scopes,
@@ -7298,7 +7314,7 @@ def instagram_oauth_callback():
         _token_tail((saved or {}).get("page_access_token")),
         (saved or {}).get("expires_at"),
     )
-    _log_instagram_connect_validation("callback", None, normalized_ig_user_id, long_token)
+    _log_instagram_connect_validation("callback", None, graph_ig_id, long_token)
     flash("Instagram bağlantısı kaydedildi.", "success")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
