@@ -7161,7 +7161,8 @@ def instagram_oauth_callback():
     short_resp = None
     try:
         short_resp = requests.post(
-            f"{IG_GRAPH_API_BASE.rstrip('/')}/oauth/access_token",
+            "https://api.instagram.com/oauth/access_token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={
                 "client_id": IG_APP_ID,
                 "client_secret": IG_APP_SECRET,
@@ -7175,12 +7176,23 @@ def instagram_oauth_callback():
         short_data = short_resp.json() or {}
     except Exception as exc:
         payload = {}
+        body_text = ""
         if short_resp is not None:
             try:
                 payload = short_resp.json()
             except Exception:
                 pass
-        current_app.logger.exception("Instagram token exchange failed payload=%s: %s", payload, exc)
+            try:
+                body_text = (short_resp.text or "").strip()
+            except Exception:
+                body_text = ""
+        current_app.logger.exception(
+            "Instagram token exchange failed status=%s payload=%s body=%s: %s",
+            getattr(short_resp, "status_code", None),
+            payload,
+            body_text,
+            exc,
+        )
         flash("Instagram token alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
@@ -7205,12 +7217,23 @@ def instagram_oauth_callback():
         long_data = long_resp.json() or {}
     except Exception as exc:
         payload = {}
+        body_text = ""
         if long_resp is not None:
             try:
                 payload = long_resp.json()
             except Exception:
                 pass
-        current_app.logger.exception("Instagram long token exchange failed payload=%s: %s", payload, exc)
+            try:
+                body_text = (long_resp.text or "").strip()
+            except Exception:
+                body_text = ""
+        current_app.logger.exception(
+            "Instagram long token exchange failed status=%s payload=%s body=%s: %s",
+            getattr(long_resp, "status_code", None),
+            payload,
+            body_text,
+            exc,
+        )
         flash("Instagram uzun token alınamadı.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
