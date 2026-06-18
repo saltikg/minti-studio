@@ -897,8 +897,7 @@ def generated_kb_pages():
 
     conn = get_db_readonly()
     try:
-        rows = conn.execute(
-            """
+        sql = """
             SELECT
                 p.id,
                 p.question,
@@ -911,13 +910,13 @@ def generated_kb_pages():
             LEFT JOIN shorts_kb_generations g ON g.id = p.generation_id
             LEFT JOIN shorts_kb_source_reviews r ON r.source_entry_key = g.source_entry_key
             WHERE COALESCE(r.is_relevant, true) = true
-              AND (? IS NULL OR v.brand_id = ?)
-            ORDER BY p.updated_at DESC, p.created_at DESC
-            LIMIT 200
-            """
-            ,
-            [brand_id, brand_id],
-        ).fetchall()
+        """
+        params = []
+        if brand_id:
+            sql += "\n  AND v.brand_id = ?"
+            params.append(brand_id)
+        sql += "\nORDER BY p.updated_at DESC, p.created_at DESC\nLIMIT 200"
+        rows = conn.execute(sql, params).fetchall()
     except Exception as exc:
         conn.close()
         return _missing_schema_response(exc)
