@@ -7890,13 +7890,8 @@ def upload_clip_to_youtube():
                     instagram_creds.get("meta_fb_user_id"),
                     instagram_creds.get("selected_page_id"),
                 )
-                ok, message = _validate_instagram_publish_chain(
-                    instagram_creds.get("facebook_page_id"),
-                    instagram_creds.get("instagram_business_account_id"),
-                    instagram_creds.get("page_access_token"),
-                )
-                if not ok:
-                    flash(message, "danger")
+                if not _validate_instagram_connection(instagram_creds):
+                    flash(_instagram_account_upgrade_message(), "danger")
                     return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
                 caption_source = (
                     target_entry.get("ig_caption")
