@@ -20,6 +20,7 @@
     radial-gradient(circle at top right, rgba(45, 212, 191, 0.16), transparent 36%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
     var(--surface);
+  padding-bottom: 18px;
 }
 .qs-title {
   font-size: clamp(1.8rem, 2.6vw, 2.7rem);
@@ -83,10 +84,30 @@
   font-weight: 700;
   font-size: 0.9rem;
 }
+.qs-step.is-active .qs-step-label {
+  color: #d9fff8;
+}
+.qs-step-caret {
+  width: 0;
+  height: 0;
+  margin-top: 10px;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 10px solid var(--mint);
+  opacity: 0;
+}
+.qs-step.is-active .qs-step-caret {
+  opacity: 1;
+}
 .qs-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
+}
+.qs-hero-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 18px;
+  padding-top: 18px;
 }
 .qs-field,
 .qs-review-card,
@@ -312,21 +333,13 @@
   <div class="qs-hero">
     <div class="qs-title">Create your first short</div>
     <div class="qs-stepper" id="qs-stepper"></div>
-  </div>
-
-  <div id="qs-live-region" class="qs-live" aria-live="polite"></div>
-
-  <div id="qs-stage-input" class="qs-panel">
-    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-      <div>
-        <h3 class="mb-1">Add your video</h3>
-      </div>
+    <div id="qs-stage-input" class="qs-hero-divider">
+      <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 mb-3">
       <div class="qs-segmented" id="qs-source-toggle">
         <button type="button" class="qs-segmented-btn is-active" data-source-mode="upload">Upload file</button>
         <button type="button" class="qs-segmented-btn" data-source-mode="youtube">YouTube URL</button>
       </div>
-    </div>
-    <div class="qs-grid">
+      </div>
       <div class="qs-field">
         <div class="qs-add-stack">
           <div id="qs-upload-panel">
@@ -344,12 +357,13 @@
           <div class="qs-actions">
             <button type="button" id="qs-continue-submit" class="btn btn-primary">Continue</button>
           </div>
-          <div class="qs-micro">Runs in the background — you can leave, we'll notify you.</div>
         </div>
       </div>
+      <div id="qs-input-feedback" class="qs-inline-feedback mt-3"></div>
     </div>
-    <div id="qs-input-feedback" class="qs-inline-feedback mt-3"></div>
   </div>
+
+  <div id="qs-live-region" class="qs-live" aria-live="polite"></div>
 
   <div id="qs-stage-ingest" class="qs-panel qs-hidden">
     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
@@ -516,8 +530,8 @@
     stepperEl.innerHTML = steps.map((step, index) => `
       <div class="qs-step ${step.key === currentKey ? "is-active" : ""} ${doneKeys.has(step.key) ? "is-done" : ""}">
         <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : `<i class="bi ${step.icon}"></i>`}</div>
-        <div class="qs-step-icon"><i class="bi ${step.icon}"></i></div>
         <div class="qs-step-label">${step.label}</div>
+        <div class="qs-step-caret"></div>
       </div>
     `).join("");
   };
