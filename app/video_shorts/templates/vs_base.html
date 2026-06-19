@@ -25,6 +25,79 @@
     href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}">
 
   {% block extra_styles %}{% endblock %}
+  <style>
+    .vs-onboarding-progress {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+    .vs-onboarding-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--mint-2), var(--mint));
+      border-radius: 999px;
+    }
+    .vs-onboarding-step {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .vs-onboarding-step:last-child {
+      border-bottom: 0;
+    }
+    .vs-onboarding-step-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .vs-onboarding-step-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-2);
+      background: rgba(255, 255, 255, 0.04);
+      flex: 0 0 auto;
+    }
+    .vs-onboarding-step.is-done .vs-onboarding-step-icon {
+      color: #052e26;
+      background: rgba(45, 212, 191, 0.9);
+      border-color: transparent;
+    }
+    .vs-onboarding-step-label {
+      color: var(--text-1);
+      font-weight: 600;
+    }
+    .vs-onboarding-step-meta {
+      color: var(--text-2);
+      font-size: 0.88rem;
+    }
+    .vs-onboarding-step-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+    .vs-onboarding-done {
+      color: var(--mint);
+      font-size: 0.86rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .vs-onboarding-later {
+      color: var(--text-2);
+      font-size: 0.9rem;
+    }
+  </style>
 
   <meta name="robots" content="noindex, nofollow">
 </head>
@@ -209,6 +282,62 @@
 
       <!-- Main content -->
       <main class="col-md-9 col-lg-10 vs-content">
+        {% if vs_onboarding and vs_onboarding.show_modal %}
+          <div class="modal fade" id="vsOnboardingModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content vs-modal">
+                <div class="modal-header vs-modal-header">
+                  <div>
+                    <h5 class="modal-title vs-modal-title">Get set up</h5>
+                    <div class="small text-muted">{{ vs_onboarding.completed_core_steps }} of {{ vs_onboarding.core_total_steps }} completed</div>
+                  </div>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" data-vs-onboarding-dismiss aria-label="Close"></button>
+                </div>
+                <div class="modal-body vs-modal-body">
+                  <div class="vs-onboarding-progress mb-3" aria-hidden="true">
+                    <div class="vs-onboarding-progress-bar" style="width: {{ (vs_onboarding.completed_core_steps / vs_onboarding.core_total_steps * 100) if vs_onboarding.core_total_steps else 0 }}%;"></div>
+                  </div>
+                  {% for step in vs_onboarding.steps %}
+                    <div class="vs-onboarding-step {% if step.done %}is-done{% endif %}">
+                      <div class="vs-onboarding-step-main">
+                        <span class="vs-onboarding-step-icon" aria-hidden="true">
+                          {% if step.done %}✓{% else %}{{ loop.index }}{% endif %}
+                        </span>
+                        <div>
+                          <div class="vs-onboarding-step-label">{{ step.label }}</div>
+                          <div class="vs-onboarding-step-meta">
+                            {% if step.key == "youtube" %}
+                              Connect the channel you want to publish from.
+                            {% elif step.key == "source" %}
+                              Add at least one YouTube source to pull videos from.
+                            {% elif step.key == "short" %}
+                              Generate your first short to unlock the full workflow.
+                            {% else %}
+                              Optional, but useful if you want to publish straight to Instagram.
+                            {% endif %}
+                          </div>
+                        </div>
+                      </div>
+                      <div class="vs-onboarding-step-actions">
+                        {% if step.done %}
+                          <span class="vs-onboarding-done">Done</span>
+                        {% else %}
+                          <a href="{{ step.href }}" class="btn btn-sm vs-btn {% if step.key == 'short' %}vs-btn-primary{% else %}vs-btn-secondary{% endif %}">
+                            {{ step.cta_label }}
+                          </a>
+                        {% endif %}
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+                <div class="modal-footer vs-modal-footer justify-content-between">
+                  <span class="vs-onboarding-later">You can finish this later from the main workflow.</span>
+                  <button type="button" class="btn btn-sm vs-btn vs-btn-secondary" data-vs-onboarding-dismiss data-bs-dismiss="modal">Maybe later</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endif %}
         <div id="vs-page-notification-banner" class="alert d-none vs-notification-banner" role="alert" aria-live="polite"></div>
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% for cat, msg in messages %}
@@ -230,6 +359,17 @@
     (() => {
       const storageKey = "vsUiNotifications";
       const usageSummaryKey = "vsUsageSummaryCache";
+      const dismissOnboarding = async () => {
+        try {
+          await fetch("{{ url_for('video_shorts_bp.dismiss_onboarding') }}", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+          });
+        } catch (error) {
+          // Ignore dismissal errors.
+        }
+      };
 
       const readNotifications = () => {
         try {
@@ -440,6 +580,16 @@
       document.addEventListener("DOMContentLoaded", () => {
         renderCachedUsageSummary();
         loadUsageSummary();
+        const onboardingEl = document.getElementById("vsOnboardingModal");
+        if (onboardingEl && window.bootstrap) {
+          const onboardingModal = new bootstrap.Modal(onboardingEl);
+          onboardingModal.show();
+          onboardingEl.querySelectorAll("[data-vs-onboarding-dismiss]").forEach((button) => {
+            button.addEventListener("click", () => {
+              dismissOnboarding();
+            });
+          });
+        }
         renderNotificationBadge();
         renderNotificationBanner();
         renderNotificationMenu();

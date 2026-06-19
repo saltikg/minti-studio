@@ -22,8 +22,9 @@ from app.video_shorts.config import (
     SHORTS_OVERVIEW_STATS_MAX_VIDEOS,
     SHORTS_OVERVIEW_QUOTA_COOLDOWN_HOURS,
 )
-from app.video_shorts.services.db import ensure_storage_user_schema, get_db, get_db_readonly
+from app.video_shorts.services.db import ensure_storage_user_schema, get_db, get_db_readonly, table_columns
 from app.video_shorts.services.brands import (
+    current_brand_id,
     create_brand as create_brand_record,
     ensure_brand_for_user,
     ensure_brand_schema,
@@ -33,7 +34,14 @@ from app.video_shorts.services.brands import (
     set_default_brand_for_user,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
-from app.video_shorts.services.youtube_oauth import build_oauth_flow, is_reauth_required, store_refresh_token
+from app.video_shorts.services.usage_metering import get_usage_snapshot
+from app.video_shorts.services.youtube_oauth import (
+    build_oauth_flow,
+    has_refresh_token,
+    is_reauth_required,
+    store_refresh_token,
+)
+from src.trends.instagram_tokens import get_instagram_credentials
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 logger = logging.getLogger(__name__)
@@ -82,6 +90,22 @@ def _current_user():
         g.vs_current_user = None
         return None
     try:
+        user_columns = table_columns(conn, "shorts_users")
+        if "onboarding_dismissed" in user_columns:
+            select_sql = """
+                SELECT
+                  CAST(id AS VARCHAR),
+                  username,
+                  name,
+                  email,
+                  plan_id,
+                  custom_limit_bytes,
+                  role,
+                  time_zone,
+                  COALESCE(onboarding_dismissed, FALSE)
+                FROM shorts_users
+                WHERE id = ?
+            """
         row = conn.execute(select_sql, [user_id]).fetchone()
     except Exception as exc:
         conn.close()
@@ -117,6 +141,7 @@ def _current_user():
         "custom_limit_bytes": row[5],
         "role": row[6] or "member",
         "time_zone": row[7] or DEFAULT_TIME_ZONE,
+        "onboarding_dismissed": bool(row[8]) if len(row) > 8 else False,
     }
     return g.vs_current_user
 
@@ -145,6 +170,161 @@ def _current_brand():
 
 def _is_authenticated():
     return _current_user() is not None
+
+
+def _ensure_onboarding_flag_column(conn) -> None:
+    cols = table_columns(conn, "shorts_users")
+    if "onboarding_dismissed" in cols:
+        return
+    try:
+        conn.execute(
+            "ALTER TABLE shorts_users ADD COLUMN onboarding_dismissed BOOLEAN DEFAULT FALSE"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def _build_onboarding_context() -> dict:
+    user = _current_user()
+    if not user:
+        return {"show_modal": False}
+
+    brand_id = current_brand_id()
+    youtube_connected = False
+    instagram_connected = False
+    source_count = 0
+    first_source_channel_id = None
+    first_video_channel_id = None
+    first_downloadable_video_pk = None
+    exports_used = 0
+
+    try:
+        youtube_connected = has_refresh_token(user.get("id"), brand_id=brand_id)
+    except Exception:
+        youtube_connected = False
+    try:
+        instagram_connected = bool(get_instagram_credentials(user.get("id")))
+    except Exception:
+        instagram_connected = False
+    try:
+        usage_snapshot = get_usage_snapshot(user["id"])
+        exports_used = int(usage_snapshot.get("exports", {}).get("used") or 0)
+    except Exception:
+        exports_used = 0
+
+    conn = None
+    try:
+        conn = get_db_readonly()
+        source_rows = conn.execute(
+            """
+            SELECT channel_id, channel_url
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND (
+                (? IS NULL AND brand_id IS NULL)
+                OR brand_id = ?
+              )
+            ORDER BY added_at ASC, channel_id ASC
+            """,
+            [user["id"], brand_id, brand_id],
+        ).fetchall()
+        real_sources = [
+            row for row in source_rows
+            if not str(row[1] or "").startswith("local://")
+        ]
+        source_count = len(real_sources)
+        if real_sources:
+            first_source_channel_id = real_sources[0][0]
+
+        video_rows = conn.execute(
+            """
+            SELECT v.id, v.channel_id, COALESCE(lower(v.download_status), '')
+            FROM youtube_videos v
+            LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+            WHERE v.owner_user_id = ?
+              AND (
+                (? IS NULL AND c.brand_id IS NULL)
+                OR c.brand_id = ?
+              )
+            ORDER BY v.published_at DESC NULLS LAST, v.id DESC
+            """,
+            [user["id"], brand_id, brand_id],
+        ).fetchall()
+        if video_rows:
+            first_video_channel_id = video_rows[0][1]
+        for row in video_rows:
+            if row[2] in {"downloaded", "downloaded_deleted"}:
+                first_downloadable_video_pk = row[0]
+                break
+    except Exception:
+        source_count = 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+    core_steps = [
+        {
+            "key": "youtube",
+            "label": "Connect your YouTube channel",
+            "done": youtube_connected,
+            "cta_label": "Connect YouTube",
+            "href": url_for("video_shorts_bp.youtube_authorize"),
+        },
+        {
+            "key": "source",
+            "label": "Add your first source",
+            "done": source_count >= 1,
+            "cta_label": "Add source",
+            "href": f"{url_for('video_shorts_bp.channels_page')}#add-source",
+        },
+        {
+            "key": "short",
+            "label": "Create your first short",
+            "done": exports_used >= 1,
+            "cta_label": "Generate",
+            "href": (
+                url_for("video_shorts_bp.generate_short", video_pk=first_downloadable_video_pk)
+                if first_downloadable_video_pk
+                else (
+                    url_for("video_shorts_bp.videos_page", channel_id=first_source_channel_id, fetch=1)
+                    if first_source_channel_id
+                    else url_for("video_shorts_bp.channels_page")
+                )
+            ),
+        },
+    ]
+    optional_steps = [
+        {
+            "key": "instagram",
+            "label": "Connect Instagram to publish",
+            "done": instagram_connected,
+            "cta_label": "Connect Instagram",
+            "href": url_for("video_shorts_bp.instagram_authorize"),
+        }
+    ]
+    completed_core_steps = sum(1 for step in core_steps if step["done"])
+    core_total_steps = len(core_steps)
+    core_completed = completed_core_steps >= core_total_steps
+    dismissed = bool(user.get("onboarding_dismissed"))
+
+    return {
+        "show_modal": not core_completed and not dismissed,
+        "dismissed": dismissed,
+        "completed_core_steps": completed_core_steps,
+        "core_total_steps": core_total_steps,
+        "steps": core_steps + optional_steps,
+        "source_count": source_count,
+        "exports_used": exports_used,
+        "youtube_connected": youtube_connected,
+        "instagram_connected": instagram_connected,
+        "first_source_channel_id": first_source_channel_id,
+        "first_video_channel_id": first_video_channel_id,
+        "first_downloadable_video_pk": first_downloadable_video_pk,
+    }
 
 
 def _allowed_netlocs():
@@ -429,6 +609,7 @@ def inject_current_user():
         "vs_google_oauth_available": _google_oauth_enabled(),
         "vs_youtube_reauth_required": _youtube_reauth_required(),
         "vs_overview_quota": _load_overview_quota_context(),
+        "vs_onboarding": _build_onboarding_context(),
     }
 
 
@@ -733,6 +914,26 @@ def account_page():
             }
         )
     return render_template("shorts_account.html", account_items=account_items)
+
+
+@video_shorts_bp.route("/onboarding/dismiss", methods=["POST"])
+def dismiss_onboarding():
+    current_user = _current_user()
+    if not current_user:
+        return {"ok": False}, 401
+    conn = get_db()
+    try:
+        ensure_storage_user_schema(conn)
+        _ensure_onboarding_flag_column(conn)
+        conn.execute(
+            "UPDATE shorts_users SET onboarding_dismissed = TRUE, updated_at = now() WHERE id = ?",
+            [current_user["id"]],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    current_user["onboarding_dismissed"] = True
+    return {"ok": True}
 
 
 @video_shorts_bp.route("/brands")

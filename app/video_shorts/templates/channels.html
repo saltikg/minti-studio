@@ -227,6 +227,28 @@
     background: rgba(37, 99, 235, 0.18);
     border-color: rgba(96, 165, 250, 0.4);
   }
+  .sources-empty-state {
+    border-radius: 18px;
+    border: 1px dashed rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.08);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .sources-empty-state h4 {
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  .sources-empty-state p {
+    color: var(--muted);
+    margin-bottom: 0;
+    max-width: 720px;
+  }
+  .sources-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
 </style>
 
 <div class="sources-page-header mb-4">
@@ -239,8 +261,19 @@
   </div>
 </div>
 
+{% if real_source_count == 0 %}
+<div class="sources-empty-state">
+  <h4>Add your first source</h4>
+  <p>Start by connecting YouTube, then add a channel URL here. Once your first videos are pulled in, you can generate your first short.</p>
+  <div class="sources-empty-actions">
+    <a href="{{ url_for('video_shorts_bp.youtube_connect') }}" class="btn btn-sm vs-btn vs-btn-secondary">Connected Accounts</a>
+    <a href="#add-source" class="btn btn-sm vs-btn vs-btn-primary">Add source now</a>
+  </div>
+</div>
+{% endif %}
+
 <!-- Add new channel form -->
-<div class="card shadow-sm sources-card mb-4 vs-card">
+<div class="card shadow-sm sources-card mb-4 vs-card" id="add-source">
   <div class="card-header py-2">Add New Channel</div>
   <div class="card-body">
     <form method="post" action="{{ url_for('video_shorts_bp.channels_page') }}">
@@ -417,8 +450,8 @@
 
           {% if channels|length == 0 %}
           <tr>
-            <td colspan="9" class="text-center text-muted py-3">
-              No channels yet. Add one above.
+            <td colspan="10" class="text-center text-muted py-3">
+              No sources yet. Add one above.
             </td>
           </tr>
           {% endif %}

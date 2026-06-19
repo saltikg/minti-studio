@@ -289,7 +289,15 @@ def channels_page():
             ch["download_pct"] = 0
         ch["added_at_display"] = _format_channel_timestamp(ch.get("added_at"), user_tz)
 
-    return render_template("channels.html", channels=channels)
+    real_source_count = sum(
+        1 for ch in channels if not str(ch.get("channel_url") or "").startswith("local://")
+    )
+
+    return render_template(
+        "channels.html",
+        channels=channels,
+        real_source_count=real_source_count,
+    )
 
 
 @video_shorts_bp.route("/channels/<int:channel_id>/set_active", methods=["POST"])

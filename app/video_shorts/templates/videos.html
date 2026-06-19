@@ -4,6 +4,29 @@
 
 {% block content %}
 
+<style>
+  .videos-empty-state {
+    border-radius: 18px;
+    border: 1px dashed rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.08);
+    padding: 24px;
+    margin-bottom: 18px;
+  }
+  .videos-empty-state h4 {
+    margin-bottom: 8px;
+  }
+  .videos-empty-state p {
+    color: var(--muted);
+    margin-bottom: 0;
+    max-width: 760px;
+  }
+  .videos-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+</style>
 
 
 <div class="vs-hero vs-card mb-3">
@@ -126,6 +149,17 @@
     </div>
   </div>
 </div>
+
+{% if videos|length == 0 and not search_q and not video_id_q and not download_filter and not duration_min and not duration_max and not short_filter %}
+<div class="videos-empty-state">
+  <h4>Pull in your first videos</h4>
+  <p>This source is connected, but there are no videos in this workspace yet. Fetch the next batch from YouTube or import one video by ID, then generate your first short from the list below.</p>
+  <div class="videos-empty-actions">
+    <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, fetch=1) }}" class="vs-btn vs-btn-primary vs-btn-sm">Fetch next batch</a>
+    <a href="{{ url_for('video_shorts_bp.channels_page') }}" class="vs-btn vs-btn-secondary vs-btn-sm">Back to Sources</a>
+  </div>
+</div>
+{% endif %}
 
 {# Progress info #}
 <!-- Video list -->
