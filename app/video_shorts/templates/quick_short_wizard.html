@@ -29,53 +29,63 @@
 .qs-stepper {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+  gap: 0;
+  margin-top: 20px;
+  align-items: start;
 }
 .qs-step {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 16px;
-  padding: 14px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0 10px;
 }
-.qs-step.is-active {
-  border-color: rgba(45, 212, 191, 0.4);
-  background: rgba(45, 212, 191, 0.08);
+.qs-step::after {
+  content: "";
+  position: absolute;
+  top: 23px;
+  left: calc(50% + 28px);
+  width: calc(100% - 56px);
+  border-top: 2px dashed rgba(255, 255, 255, 0.18);
 }
-.qs-step.is-done {
-  border-color: rgba(16, 185, 129, 0.32);
+.qs-step:last-child::after {
+  display: none;
 }
 .qs-step-num {
-  width: 28px;
-  height: 28px;
+  width: 46px;
+  height: 46px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 0.82rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--muted);
+  font-size: 1rem;
   font-weight: 700;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: 1;
 }
 .qs-step.is-active .qs-step-num {
   background: var(--mint);
+  border-color: var(--mint);
   color: #07161d;
+  box-shadow: 0 0 0 8px rgba(45, 212, 191, 0.14);
+}
+.qs-step.is-done .qs-step-num {
+  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.34);
+  color: #c7fff4;
 }
 .qs-step-label {
   font-weight: 700;
-}
-.qs-step-icon {
-  font-size: 1rem;
-  margin-bottom: 10px;
-  color: var(--muted);
-}
-.qs-step.is-active .qs-step-icon,
-.qs-step.is-done .qs-step-icon {
-  color: var(--text);
+  font-size: 0.9rem;
 }
 .qs-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 .qs-field,
@@ -95,27 +105,52 @@
 }
 .qs-add-stack {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 .qs-add-title {
   font-size: 1rem;
   font-weight: 700;
 }
-.qs-or {
-  display: flex;
+.qs-segmented {
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  color: var(--muted);
-  font-size: 0.82rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
-.qs-or::before,
-.qs-or::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+.qs-segmented-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+.qs-segmented-btn.is-active {
+  background: var(--mint);
+  color: #07161d;
+}
+.qs-dropzone {
+  border: 1px dashed rgba(45, 212, 191, 0.36);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.06), rgba(255, 255, 255, 0.02));
+  padding: 26px 18px;
+  text-align: center;
+  cursor: pointer;
+}
+.qs-dropzone.is-dragover {
+  border-color: var(--mint);
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.14), rgba(255, 255, 255, 0.03));
+}
+.qs-dropzone-copy {
+  font-weight: 700;
+}
+.qs-dropzone-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 .qs-field .form-control,
 .qs-field .form-select,
@@ -159,10 +194,6 @@
 }
 .qs-status-row.is-done {
   color: #9be7d8;
-}
-.qs-status-row.is-live {
-  border-color: rgba(45, 212, 191, 0.24);
-  background: rgba(255, 255, 255, 0.02);
 }
 .qs-dot {
   width: 10px;
@@ -260,9 +291,19 @@
   .qs-spinner { animation: none; }
 }
 @media (max-width: 992px) {
-  .qs-grid,
   .qs-stepper {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .qs-step {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    text-align: left;
+    padding: 0;
+  }
+  .qs-step::after {
+    display: none;
   }
 }
 </style>
@@ -280,34 +321,31 @@
       <div>
         <h3 class="mb-1">Add your video</h3>
       </div>
+      <div class="qs-segmented" id="qs-source-toggle">
+        <button type="button" class="qs-segmented-btn is-active" data-source-mode="upload">Upload file</button>
+        <button type="button" class="qs-segmented-btn" data-source-mode="youtube">YouTube URL</button>
+      </div>
     </div>
     <div class="qs-grid">
       <div class="qs-field">
         <div class="qs-add-stack">
-          <div>
-            <div class="qs-add-title mb-2">Upload file</div>
-            <input id="qs-upload-file" type="file" class="form-control" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,video/*,audio/*" />
+          <div id="qs-upload-panel">
+            <input id="qs-upload-file" type="file" class="qs-hidden" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,video/*,audio/*" />
+            <label class="qs-dropzone" id="qs-upload-dropzone" for="qs-upload-file">
+              <div class="qs-dropzone-copy">Choose a file or drag it here</div>
+              <div class="qs-dropzone-meta">Direct-to-S3, ≤500MB</div>
+            </label>
             <div id="qs-upload-meta" class="qs-micro mt-2"></div>
-            <div class="qs-actions mt-3">
-              <button type="button" id="qs-upload-submit" class="btn btn-primary">Continue</button>
-            </div>
           </div>
-          <div class="qs-or">or</div>
-          <div>
-            <div class="qs-add-title mb-2">YouTube URL</div>
-            <input id="qs-youtube-url" type="url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." />
-            <div class="qs-actions mt-3">
-              <button type="button" id="qs-youtube-submit" class="btn btn-primary">Continue</button>
-            </div>
+          <div id="qs-youtube-panel" class="qs-hidden">
+            <input id="qs-youtube-url" type="url" class="form-control" placeholder="https://youtube.com/…" />
+            <div class="qs-micro mt-2">≤25 dk</div>
           </div>
+          <div class="qs-actions">
+            <button type="button" id="qs-continue-submit" class="btn btn-primary">Continue</button>
+          </div>
+          <div class="qs-micro">Runs in the background — you can leave, we'll notify you.</div>
         </div>
-      </div>
-      <div class="qs-status-card">
-        <div class="qs-status-title mb-2">Live status</div>
-        <div class="qs-status-list" id="qs-input-status-list">
-          <div class="qs-status-row is-live"><span><span class="qs-dot"></span> Waiting</span><span class="qs-status-copy">Add a video</span></div>
-        </div>
-        <div class="qs-micro mt-3" id="qs-input-status-copy">You can leave, we'll notify you.</div>
       </div>
     </div>
     <div id="qs-input-feedback" class="qs-inline-feedback mt-3"></div>
@@ -405,8 +443,6 @@
   const stepperEl = document.getElementById("qs-stepper");
   const liveRegion = document.getElementById("qs-live-region");
   const inputFeedback = document.getElementById("qs-input-feedback");
-  const inputStatusList = document.getElementById("qs-input-status-list");
-  const inputStatusCopy = document.getElementById("qs-input-status-copy");
   const reviewFeedback = document.getElementById("qs-review-feedback");
   const renderCopy = document.getElementById("qs-render-copy");
   const ingestHeadline = document.getElementById("qs-ingest-headline");
@@ -421,15 +457,19 @@
   const doneVideo = document.getElementById("qs-done-video");
   const downloadLink = document.getElementById("qs-download-link");
   const doneFeedback = document.getElementById("qs-done-feedback");
+  const sourceButtons = Array.from(document.querySelectorAll("[data-source-mode]"));
+  const uploadPanel = document.getElementById("qs-upload-panel");
+  const youtubePanel = document.getElementById("qs-youtube-panel");
   const uploadInput = document.getElementById("qs-upload-file");
+  const uploadDropzone = document.getElementById("qs-upload-dropzone");
   const uploadMeta = document.getElementById("qs-upload-meta");
-  const uploadSubmit = document.getElementById("qs-upload-submit");
-  const youtubeSubmit = document.getElementById("qs-youtube-submit");
+  const continueSubmit = document.getElementById("qs-continue-submit");
   const renderSubmit = document.getElementById("qs-render-submit");
   const youtubeUrlInput = document.getElementById("qs-youtube-url");
 
   const state = {
     session: initialSession || null,
+    sourceMode: initialSession?.source_type === "youtube" ? "youtube" : "upload",
     pollTimer: null,
     pollDelayMs: 2000,
   };
@@ -475,7 +515,7 @@
     const currentKey = activeMap[stage] || "input";
     stepperEl.innerHTML = steps.map((step, index) => `
       <div class="qs-step ${step.key === currentKey ? "is-active" : ""} ${doneKeys.has(step.key) ? "is-done" : ""}">
-        <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : index + 1}</div>
+        <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : `<i class="bi ${step.icon}"></i>`}</div>
         <div class="qs-step-icon"><i class="bi ${step.icon}"></i></div>
         <div class="qs-step-label">${step.label}</div>
       </div>
@@ -487,6 +527,12 @@
       el.classList.toggle("qs-hidden", key !== stageName);
     });
     renderStepper();
+  };
+
+  const syncSourceModeUi = () => {
+    sourceButtons.forEach((btn) => btn.classList.toggle("is-active", btn.dataset.sourceMode === state.sourceMode));
+    uploadPanel?.classList.toggle("qs-hidden", state.sourceMode !== "upload");
+    youtubePanel?.classList.toggle("qs-hidden", state.sourceMode !== "youtube");
   };
 
   const renderTranscript = (segments) => {
@@ -529,21 +575,6 @@
         </div>
       `;
     }).join("");
-  };
-
-  const renderInputStatus = (headline, detail) => {
-    if (!inputStatusList) {
-      return;
-    }
-    inputStatusList.innerHTML = `
-      <div class="qs-status-row is-live">
-        <span><span class="qs-dot"></span> ${headline}</span>
-        <span class="qs-status-copy">${detail || ""}</span>
-      </div>
-    `;
-    if (inputStatusCopy) {
-      inputStatusCopy.textContent = "You can leave, we'll notify you.";
-    }
   };
 
   const renderReview = () => {
@@ -690,33 +721,60 @@
     return `${file.name} · ${mb} MB · ${file.type || "binary"}`;
   };
 
+  const setDragState = (isActive) => {
+    uploadDropzone?.classList.toggle("is-dragover", Boolean(isActive));
+  };
+
+  sourceButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.sourceMode = button.dataset.sourceMode || "upload";
+      syncSourceModeUi();
+    });
+  });
+
   uploadInput?.addEventListener("change", () => {
     uploadMeta.textContent = formatUploadMeta(uploadInput.files?.[0]);
   });
-
-  youtubeSubmit?.addEventListener("click", async () => {
-    inputFeedback.textContent = "";
-    renderInputStatus("Queued", "Adding video");
-    const { response, payload } = await postJson("/video_shorts/shorts/quick/api/ingest-youtube", {
-      video_url: youtubeUrlInput.value,
-    });
-    if (!response.ok) {
-      inputFeedback.textContent = payload.message || "Couldn't start ingest.";
+  uploadDropzone?.addEventListener("dragenter", () => setDragState(true));
+  uploadDropzone?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    setDragState(true);
+  });
+  uploadDropzone?.addEventListener("dragleave", () => setDragState(false));
+  uploadDropzone?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    setDragState(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !uploadInput) {
       return;
     }
-    state.session = payload.session;
-    renderView();
-    beginSessionPollingIfNeeded();
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    uploadInput.files = dt.files;
+    uploadMeta.textContent = formatUploadMeta(file);
   });
 
-  uploadSubmit?.addEventListener("click", async () => {
+  continueSubmit?.addEventListener("click", async () => {
+    inputFeedback.textContent = "";
+    if (state.sourceMode === "youtube") {
+      const { response, payload } = await postJson("/video_shorts/shorts/quick/api/ingest-youtube", {
+        video_url: youtubeUrlInput.value,
+      });
+      if (!response.ok) {
+        inputFeedback.textContent = payload.message || "Couldn't start ingest.";
+        return;
+      }
+      state.session = payload.session;
+      renderView();
+      beginSessionPollingIfNeeded();
+      return;
+    }
+
     const file = uploadInput.files?.[0];
     if (!file) {
       inputFeedback.textContent = "Choose a file first.";
       return;
     }
-    inputFeedback.textContent = "";
-    renderInputStatus("Uploading…", "Sending file");
     const { response, payload } = await postJson("/video_shorts/shorts/quick/api/upload/presign", {
       filename: file.name,
       size_bytes: file.size,
@@ -736,7 +794,6 @@
       inputFeedback.textContent = "Upload failed.";
       return;
     }
-    renderInputStatus("Uploaded", "AI is processing…");
     const completion = await postJson("/video_shorts/shorts/quick/api/upload/complete", {
       session_id: payload.session_id,
       duration_seconds: null,
@@ -781,7 +838,7 @@
     }
   });
 
-  renderInputStatus("Waiting", "Add a video");
+  syncSourceModeUi();
   renderView();
   beginSessionPollingIfNeeded();
 })();
