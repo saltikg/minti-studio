@@ -13,6 +13,7 @@ STATUS_INPUT = "input"
 STATUS_INGESTING = "ingesting"
 STATUS_REVIEW = "review"
 STATUS_RENDERING = "rendering"
+STATUS_PUBLISHING = "publishing"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 
@@ -60,6 +61,7 @@ def ensure_quick_short_schema(conn) -> None:
             video_id VARCHAR,
             ingest_job_id VARCHAR,
             render_job_id VARCHAR,
+            publish_job_id VARCHAR,
             status VARCHAR NOT NULL DEFAULT 'input',
             clip_start_seconds DOUBLE PRECISION,
             clip_end_seconds DOUBLE PRECISION,
@@ -81,6 +83,7 @@ def ensure_quick_short_schema(conn) -> None:
         ("video_id", "VARCHAR"),
         ("ingest_job_id", "VARCHAR"),
         ("render_job_id", "VARCHAR"),
+        ("publish_job_id", "VARCHAR"),
         ("status", "VARCHAR NOT NULL DEFAULT 'input'"),
         ("clip_start_seconds", "DOUBLE PRECISION"),
         ("clip_end_seconds", "DOUBLE PRECISION"),
@@ -113,14 +116,15 @@ def _row_to_session(row: Any) -> Dict[str, Any]:
         "video_id": row[8],
         "ingest_job_id": row[9],
         "render_job_id": row[10],
-        "status": row[11] or STATUS_INPUT,
-        "clip_start_seconds": row[12],
-        "clip_end_seconds": row[13],
-        "clip_title": row[14],
-        "payload": _parse(row[15]) or {},
-        "result": _parse(row[16]) or {},
-        "created_at": row[17].isoformat() if isinstance(row[17], datetime) else (str(row[17]) if row[17] else None),
-        "updated_at": row[18].isoformat() if isinstance(row[18], datetime) else (str(row[18]) if row[18] else None),
+        "publish_job_id": row[11],
+        "status": row[12] or STATUS_INPUT,
+        "clip_start_seconds": row[13],
+        "clip_end_seconds": row[14],
+        "clip_title": row[15],
+        "payload": _parse(row[16]) or {},
+        "result": _parse(row[17]) or {},
+        "created_at": row[18].isoformat() if isinstance(row[18], datetime) else (str(row[18]) if row[18] else None),
+        "updated_at": row[19].isoformat() if isinstance(row[19], datetime) else (str(row[19]) if row[19] else None),
     }
 
 
@@ -138,6 +142,7 @@ def _select_sql() -> str:
             video_id,
             ingest_job_id,
             render_job_id,
+            publish_job_id,
             status,
             clip_start_seconds,
             clip_end_seconds,
@@ -251,6 +256,7 @@ def update_session(session_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
             "video_id": "video_id",
             "ingest_job_id": "ingest_job_id",
             "render_job_id": "render_job_id",
+            "publish_job_id": "publish_job_id",
             "status": "status",
             "clip_start_seconds": "clip_start_seconds",
             "clip_end_seconds": "clip_end_seconds",

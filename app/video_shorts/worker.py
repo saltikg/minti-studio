@@ -4,6 +4,7 @@ import os
 import socket
 import time
 import tempfile
+from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_INGESTING,
+    STATUS_PUBLISHING,
     STATUS_RENDERING,
     STATUS_REVIEW,
     get_session,
@@ -26,6 +28,7 @@ from app.video_shorts.services.quick_short_flow import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     claim_next_job,
@@ -40,12 +43,15 @@ from app.video_shorts.services.render_jobs import (
 from app.video_shorts.services.storage import get_media_storage, build_storage_reference
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
+from app.video_shorts.services.youtube_oauth import has_refresh_token, upload_video_with_refresh_token
+from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
     ensure_postgres_youtube_transcripts_id_default,
     get_db,
 )
+from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
 try:
     import yt_dlp
@@ -417,6 +423,107 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     return response_payload
 
 
+def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    session_id = str(payload.get("quick_session_id") or "").strip()
+    video_pk = int(payload.get("video_pk"))
+    video_id = str(payload.get("video_id") or "").strip()
+    clip_filename = str(payload.get("clip_filename") or "").strip()
+    title = str(payload.get("title") or "Short").strip()[:100] or "Short"
+    description = str(payload.get("description") or title).strip()[:5000]
+    target = str(payload.get("target") or "").strip().lower()
+    publish_at_iso = payload.get("publish_at_iso")
+    publish_at_local = payload.get("publish_at_local")
+    user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
+    brand_id = (brand or {}).get("id")
+    _set_quick_session_state(session_id, status=STATUS_PUBLISHING)
+    _set_job_progress(job["id"], stage="queued", message="Publish queued.", status="queued")
+
+    clip_path = generation._resolve_short_path_for_processing(clip_filename)
+    if not clip_path or not clip_path.exists():
+        raise PermanentRenderJobError("Short file could not be found for publishing.")
+
+    if target == "youtube":
+        if not has_refresh_token(user.get("id"), brand_id=brand_id):
+            raise PermanentRenderJobError("Connect YouTube first.")
+        _set_job_progress(job["id"], stage="uploading", message="Uploading to YouTube.", status="processing")
+        try:
+            response = upload_video_with_refresh_token(
+                video_path=str(clip_path),
+                title=title,
+                description=description,
+                publish_at=publish_at_iso,
+                privacy_status="private",
+                user_id=user.get("id"),
+                brand_id=brand_id,
+            ) or {}
+        except Exception as exc:
+            if "invalid_grant" in str(exc):
+                raise PermanentRenderJobError("YouTube connection is invalid. Reconnect and try again.") from exc
+            raise
+        youtube_id = response.get("id")
+        publish_status = "scheduled" if publish_at_iso else "uploaded"
+        with app.app_context():
+            with app.test_request_context("/video_shorts/shorts/quick", method="POST"):
+                g.vs_current_user = user
+                if brand:
+                    g.vs_current_brand = brand
+                generation._update_plan_entry_publish_state(
+                    video_pk=video_pk,
+                    plan_index="1",
+                    filename=clip_filename,
+                    publish_status=publish_status,
+                    publish_at_local=publish_at_local,
+                    publish_at_iso=publish_at_iso,
+                    title=title,
+                    description=description,
+                    youtube_id=youtube_id,
+                )
+        return {
+            "target": "youtube",
+            "status": publish_status,
+            "message": "YouTube publish submitted.",
+            "youtube_id": youtube_id,
+            "publish_at": publish_at_iso,
+        }
+
+    if target == "instagram":
+        try:
+            instagram_creds = get_instagram_credentials(user.get("id")) or {}
+        except InstagramTokenStoreError as exc:
+            raise PermanentRenderJobError("Connect Instagram first.") from exc
+        if not instagram_creds or not generation._validate_instagram_connection(instagram_creds):
+            raise PermanentRenderJobError("Connect Instagram first.")
+        _set_job_progress(job["id"], stage="queueing", message="Queueing Instagram publish.", status="processing")
+        plan_entries = generation._load_plan_entries(video_id) or []
+        target_entry = plan_entries[0] if plan_entries else {}
+        queue_id = enqueue_instagram_clip(
+            user_id=user.get("id"),
+            video_id=video_id,
+            plan_index=str(target_entry.get("plan_index") or 1),
+            clip_filename=clip_filename,
+            caption_text=(target_entry.get("ig_caption") or target_entry.get("yt_description") or description or title),
+            publish_at_iso=publish_at_iso or (datetime.utcnow().isoformat() + "Z"),
+            instagram_business_account_id=instagram_creds.get("instagram_business_account_id"),
+            instagram_username=instagram_creds.get("instagram_username"),
+            youtube_video_id=video_id,
+            youtube_short_id=target_entry.get("yt_video_id"),
+            plan_title=target_entry.get("title") or target_entry.get("yt_title") or title,
+            media_type="reel",
+            force_requeue=False,
+        )
+        return {
+            "target": "instagram",
+            "status": "scheduled" if publish_at_iso else "queued",
+            "message": "Instagram publish queued.",
+            "queue_id": queue_id,
+            "publish_at": publish_at_iso,
+            "media_type": "reel",
+        }
+
+    raise PermanentRenderJobError("Unsupported publish target.")
+
+
 def process_next_job(app, worker_id: str) -> bool:
     job = claim_next_job(worker_id)
     if not job:
@@ -428,6 +535,8 @@ def process_next_job(app, worker_id: str) -> bool:
             result = _execute_ingest_youtube_job(app, job)
         elif job.get("type") == JOB_TYPE_TRANSCRIBE_UPLOAD:
             result = _execute_transcribe_upload_job(app, job)
+        elif job.get("type") == JOB_TYPE_PUBLISH_SHORT:
+            result = _execute_publish_job(app, job)
         else:
             result = _execute_render_job(app, job)
         mark_job_done(job["id"], result)
@@ -441,6 +550,17 @@ def process_next_job(app, worker_id: str) -> bool:
                     render_job_id=job.get("id"),
                     result=result,
                 )
+        elif job.get("type") == JOB_TYPE_PUBLISH_SHORT:
+            quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
+            if quick_session_id:
+                quick_session = get_session(quick_session_id, user_id=job.get("user_id")) or {}
+                existing_result = quick_session.get("result") or {}
+                _set_quick_session_state(
+                    quick_session_id,
+                    status=STATUS_DONE,
+                    publish_job_id=job.get("id"),
+                    result={**existing_result, "publish": result},
+                )
         return True
     except PermanentRenderJobError as exc:
         if job.get("type") == JOB_TYPE_RENDER_SHORT:
@@ -448,7 +568,17 @@ def process_next_job(app, worker_id: str) -> bool:
         mark_job_failed(job["id"], str(exc), release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT)
         quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
         if quick_session_id:
-            _set_quick_session_state(quick_session_id, status=STATUS_FAILED, result={"message": str(exc)})
+            quick_session = get_session(quick_session_id, user_id=job.get("user_id")) or {}
+            existing_result = quick_session.get("result") or {}
+            _set_quick_session_state(
+                quick_session_id,
+                status=STATUS_DONE if job.get("type") == JOB_TYPE_PUBLISH_SHORT else STATUS_FAILED,
+                result=(
+                    {**existing_result, "publish": {"status": "failed", "message": str(exc)}}
+                    if job.get("type") == JOB_TYPE_PUBLISH_SHORT
+                    else {"message": str(exc)}
+                ),
+            )
         return True
     except Exception as exc:
         latest = get_job(job["id"]) or job
@@ -458,7 +588,17 @@ def process_next_job(app, worker_id: str) -> bool:
             mark_job_failed(job["id"], str(exc), release_reservation=latest.get("type") == JOB_TYPE_RENDER_SHORT)
             quick_session_id = str((latest.get("payload") or {}).get("quick_session_id") or "").strip()
             if quick_session_id:
-                _set_quick_session_state(quick_session_id, status=STATUS_FAILED, result={"message": str(exc)})
+                quick_session = get_session(quick_session_id, user_id=latest.get("user_id")) or {}
+                existing_result = quick_session.get("result") or {}
+                _set_quick_session_state(
+                    quick_session_id,
+                    status=STATUS_DONE if latest.get("type") == JOB_TYPE_PUBLISH_SHORT else STATUS_FAILED,
+                    result=(
+                        {**existing_result, "publish": {"status": "failed", "message": str(exc)}}
+                        if latest.get("type") == JOB_TYPE_PUBLISH_SHORT
+                        else {"message": str(exc)}
+                    ),
+                )
         else:
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 _update_plan_status(latest, "queued")

@@ -268,44 +268,14 @@ def _build_onboarding_context() -> dict:
 
     core_steps = [
         {
-            "key": "youtube",
-            "label": "Connect your YouTube channel",
-            "done": youtube_connected,
-            "cta_label": "Connect YouTube",
-            "href": url_for("video_shorts_bp.youtube_authorize"),
-        },
-        {
-            "key": "source",
-            "label": "Add your first source",
-            "done": source_count >= 1,
-            "cta_label": "Add source",
-            "href": f"{url_for('video_shorts_bp.channels_page')}#add-source",
-        },
-        {
             "key": "short",
             "label": "Create your first short",
             "done": exports_used >= 1,
-            "cta_label": "Generate",
-            "href": (
-                url_for("video_shorts_bp.generate_short", video_pk=first_downloadable_video_pk)
-                if first_downloadable_video_pk
-                else (
-                    url_for("video_shorts_bp.videos_page", channel_id=first_source_channel_id, fetch=1)
-                    if first_source_channel_id
-                    else url_for("video_shorts_bp.channels_page")
-                )
-            ),
+            "cta_label": "Start",
+            "href": url_for("video_shorts_bp.quick_short"),
         },
     ]
-    optional_steps = [
-        {
-            "key": "instagram",
-            "label": "Connect Instagram to publish",
-            "done": instagram_connected,
-            "cta_label": "Connect Instagram",
-            "href": url_for("video_shorts_bp.instagram_authorize"),
-        }
-    ]
+    optional_steps = []
     completed_core_steps = sum(1 for step in core_steps if step["done"])
     core_total_steps = len(core_steps)
     core_completed = completed_core_steps >= core_total_steps

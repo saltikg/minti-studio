@@ -273,6 +273,53 @@
   gap: 10px;
   flex-wrap: wrap;
 }
+.qs-publish-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.qs-target-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+.qs-target-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.qs-target-title {
+  font-weight: 700;
+}
+.qs-target-meta {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.qs-target-actions,
+.qs-target-schedule {
+  display: grid;
+  gap: 10px;
+}
+.qs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+}
+.qs-pill.is-live {
+  border-color: rgba(45, 212, 191, 0.34);
+  background: rgba(45, 212, 191, 0.1);
+  color: #b8fff1;
+}
 .qs-empty {
   color: var(--muted);
   border: 1px dashed rgba(255, 255, 255, 0.12);
@@ -325,6 +372,9 @@
   }
   .qs-step::after {
     display: none;
+  }
+  .qs-publish-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
@@ -433,9 +483,51 @@
         <div class="qs-badge">Done</div>
       </div>
       <video id="qs-done-video" class="qs-inline-player mb-3" controls playsinline></video>
-      <div class="qs-actions">
-        <a id="qs-download-link" href="#" class="btn btn-primary" download>Download short</a>
-        <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-outline-secondary">Connect a channel to publish</a>
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+        <div class="fw-semibold">Where do you want to publish?</div>
+        <div id="qs-done-badge" class="qs-pill">Ready</div>
+      </div>
+      <div class="qs-publish-grid">
+        <div class="qs-target-card">
+          <div class="qs-target-head">
+            <div class="qs-target-title"><i class="bi bi-youtube me-2"></i>YouTube</div>
+            <div id="qs-target-youtube-state" class="qs-pill">Not connected</div>
+          </div>
+          <div id="qs-target-youtube-copy" class="qs-target-meta"></div>
+          <div class="qs-target-actions">
+            <a id="qs-connect-youtube" href="{{ url_for('video_shorts_bp.youtube_authorize') }}" class="btn btn-outline-secondary">Connect YouTube</a>
+            <button type="button" id="qs-publish-youtube-now" class="btn btn-primary qs-hidden" data-publish-target="youtube" data-publish-mode="now">Publish now</button>
+            <div id="qs-publish-youtube-schedule-wrap" class="qs-target-schedule qs-hidden">
+              <input id="qs-publish-youtube-at" type="datetime-local" class="form-control" />
+              <button type="button" class="btn btn-outline-secondary" data-publish-target="youtube" data-publish-mode="schedule">Schedule</button>
+            </div>
+          </div>
+        </div>
+        <div class="qs-target-card">
+          <div class="qs-target-head">
+            <div class="qs-target-title"><i class="bi bi-instagram me-2"></i>Instagram</div>
+            <div id="qs-target-instagram-state" class="qs-pill">Not connected</div>
+          </div>
+          <div id="qs-target-instagram-copy" class="qs-target-meta"></div>
+          <div class="qs-target-actions">
+            <a id="qs-connect-instagram" href="{{ url_for('video_shorts_bp.instagram_authorize') }}" class="btn btn-outline-secondary">Connect Instagram</a>
+            <button type="button" id="qs-publish-instagram-now" class="btn btn-primary qs-hidden" data-publish-target="instagram" data-publish-mode="now">Publish now</button>
+            <div id="qs-publish-instagram-schedule-wrap" class="qs-target-schedule qs-hidden">
+              <input id="qs-publish-instagram-at" type="datetime-local" class="form-control" />
+              <button type="button" class="btn btn-outline-secondary" data-publish-target="instagram" data-publish-mode="schedule">Schedule</button>
+            </div>
+          </div>
+        </div>
+        <div class="qs-target-card">
+          <div class="qs-target-head">
+            <div class="qs-target-title"><i class="bi bi-download me-2"></i>Download</div>
+            <div class="qs-pill is-live">Ready</div>
+          </div>
+          <div class="qs-target-meta">Save the short and share it anywhere.</div>
+          <div class="qs-target-actions">
+            <a id="qs-download-link" href="#" class="btn btn-primary" download>Download short</a>
+          </div>
+        </div>
       </div>
       <div id="qs-done-feedback" class="qs-inline-feedback mt-2"></div>
     </div>
@@ -471,7 +563,21 @@
   const doneVideo = document.getElementById("qs-done-video");
   const downloadLink = document.getElementById("qs-download-link");
   const doneFeedback = document.getElementById("qs-done-feedback");
+  const doneBadge = document.getElementById("qs-done-badge");
+  const connectYoutubeLink = document.getElementById("qs-connect-youtube");
+  const connectInstagramLink = document.getElementById("qs-connect-instagram");
+  const youtubeState = document.getElementById("qs-target-youtube-state");
+  const instagramState = document.getElementById("qs-target-instagram-state");
+  const youtubeCopy = document.getElementById("qs-target-youtube-copy");
+  const instagramCopy = document.getElementById("qs-target-instagram-copy");
+  const youtubeNowBtn = document.getElementById("qs-publish-youtube-now");
+  const instagramNowBtn = document.getElementById("qs-publish-instagram-now");
+  const youtubeScheduleWrap = document.getElementById("qs-publish-youtube-schedule-wrap");
+  const instagramScheduleWrap = document.getElementById("qs-publish-instagram-schedule-wrap");
+  const youtubeScheduleInput = document.getElementById("qs-publish-youtube-at");
+  const instagramScheduleInput = document.getElementById("qs-publish-instagram-at");
   const sourceButtons = Array.from(document.querySelectorAll("[data-source-mode]"));
+  const publishButtons = Array.from(document.querySelectorAll("[data-publish-target]"));
   const uploadPanel = document.getElementById("qs-upload-panel");
   const youtubePanel = document.getElementById("qs-youtube-panel");
   const uploadInput = document.getElementById("qs-upload-file");
@@ -489,8 +595,8 @@
   };
 
   const steps = [
-    { key: "input", label: "Add video", icon: "bi-plus-square" },
-    { key: "ingest", label: "AI processing", icon: "bi-cpu" },
+    { key: "input", label: "Add video", icon: "bi-camera-video" },
+    { key: "ingest", label: "AI processing", icon: "bi-stars" },
     { key: "review", label: "Pick & create", icon: "bi-scissors" },
     { key: "done", label: "Publish", icon: "bi-send" },
   ];
@@ -504,6 +610,8 @@
   const activeStage = () => {
     const session = state.session;
     if (!session) return "input";
+    const publishStatus = session.publish_job?.status || "";
+    if (session.status === "publishing" || publishStatus === "queued" || publishStatus === "processing") return "done";
     const renderStatus = session.render_job?.status || "";
     if (session.status === "done" || renderStatus === "done") return "done";
     if (session.status === "rendering" || renderStatus === "queued" || renderStatus === "processing") return "render";
@@ -605,9 +713,53 @@
 
   const renderDone = () => {
     const result = state.session?.result || {};
+    const publish = result.publish || {};
+    const publishJob = state.session?.publish_job || {};
+    const sessionId = state.session?.id || "";
     const clipUrl = result.clip_url || "";
     doneVideo.src = clipUrl;
     downloadLink.href = clipUrl || "#";
+    const youtubeConnected = Boolean(state.session?.connections?.youtube);
+    const instagramConnected = Boolean(state.session?.connections?.instagram);
+    if (connectYoutubeLink && sessionId) {
+      connectYoutubeLink.href = `{{ url_for('video_shorts_bp.youtube_authorize') }}?next=${encodeURIComponent(`/video_shorts/shorts/quick?session=${sessionId}`)}`;
+    }
+    if (connectInstagramLink && sessionId) {
+      connectInstagramLink.href = `{{ url_for('video_shorts_bp.instagram_authorize') }}?next=${encodeURIComponent(`/video_shorts/shorts/quick?session=${sessionId}`)}`;
+    }
+    youtubeState.textContent = youtubeConnected ? "Connected" : "Not connected";
+    youtubeState.classList.toggle("is-live", youtubeConnected);
+    instagramState.textContent = instagramConnected ? "Connected" : "Not connected";
+    instagramState.classList.toggle("is-live", instagramConnected);
+    connectYoutubeLink?.classList.toggle("qs-hidden", youtubeConnected);
+    youtubeNowBtn?.classList.toggle("qs-hidden", !youtubeConnected);
+    youtubeScheduleWrap?.classList.toggle("qs-hidden", !youtubeConnected);
+    connectInstagramLink?.classList.toggle("qs-hidden", instagramConnected);
+    instagramNowBtn?.classList.toggle("qs-hidden", !instagramConnected);
+    instagramScheduleWrap?.classList.toggle("qs-hidden", !instagramConnected);
+    youtubeCopy.textContent = youtubeConnected ? "Upload this short now or schedule it." : "Connect YouTube when you're ready.";
+    instagramCopy.textContent = instagramConnected ? "Queue this short for Instagram now or later." : "Connect Instagram when you're ready.";
+    const publishBusy = ["queued", "processing"].includes(String(publishJob.status || ""));
+    if (publishBusy) {
+      doneBadge.textContent = "Publishing…";
+      doneBadge.classList.add("is-live");
+      doneFeedback.textContent = publishJob.result?.message || publish.message || "Publishing… we'll notify you.";
+      return;
+    }
+    if (publish.status === "failed") {
+      doneBadge.textContent = "Publish failed";
+      doneBadge.classList.remove("is-live");
+      doneFeedback.textContent = publish.message || "Couldn't publish this short. Please try again.";
+      return;
+    }
+    if (publish.target) {
+      doneBadge.textContent = publish.target === "youtube" ? "YouTube ready" : "Instagram queued";
+      doneBadge.classList.add("is-live");
+      doneFeedback.textContent = publish.message || "Publish submitted.";
+      return;
+    }
+    doneBadge.textContent = "Ready";
+    doneBadge.classList.remove("is-live");
     doneFeedback.textContent = result.title ? `Short ready: ${result.title}` : "Short ready.";
   };
 
@@ -637,7 +789,7 @@
     if (stage === "done") {
       renderDone();
       showOnlyStage("done");
-      setLiveMessage("Your short is ready.");
+      setLiveMessage(["queued", "processing"].includes(String(state.session?.publish_job?.status || "")) ? "Publishing your short." : "Your short is ready.");
       return;
     }
     showOnlyStage("input");
@@ -653,6 +805,7 @@
 
   const maybeNotify = () => {
     if (!state.session) return;
+    const publish = state.session?.result?.publish || {};
     if (activeStage() === "review" && typeof window.vsPushNotification === "function") {
       window.vsPushNotification({
         title: "Source ready",
@@ -660,10 +813,17 @@
         href: `${window.location.pathname}?session=${encodeURIComponent(state.session.id)}`,
       });
     }
-    if (activeStage() === "done" && typeof window.vsPushNotification === "function") {
+    if (activeStage() === "done" && !publish.target && typeof window.vsPushNotification === "function") {
       window.vsPushNotification({
         title: "Short ready",
         message: "Your short video is ready.",
+        href: `${window.location.pathname}?session=${encodeURIComponent(state.session.id)}`,
+      });
+    }
+    if (publish.target && publish.status !== "failed" && typeof window.vsPushNotification === "function") {
+      window.vsPushNotification({
+        title: "Publish ready",
+        message: publish.message || "Your publish request is ready.",
         href: `${window.location.pathname}?session=${encodeURIComponent(state.session.id)}`,
       });
     }
@@ -690,12 +850,18 @@
     stopPolling();
     state.pollTimer = window.setTimeout(async () => {
       const before = activeStage();
+      const beforePublishStatus = String(state.session?.publish_job?.status || "");
       await fetchSession(state.session?.id || "");
       const after = activeStage();
-      if ((before === "ingest" && after === "review") || (before === "render" && after === "done")) {
+      const afterPublishStatus = String(state.session?.publish_job?.status || "");
+      if (
+        (before === "ingest" && after === "review")
+        || (before === "render" && after === "done")
+        || (["queued", "processing"].includes(beforePublishStatus) && afterPublishStatus === "done")
+      ) {
         maybeNotify();
       }
-      if (["ingest", "render"].includes(after)) {
+      if (["ingest", "render"].includes(after) || ["queued", "processing"].includes(afterPublishStatus)) {
         state.pollDelayMs = Math.min(state.pollDelayMs + 500, 6000);
         schedulePoll(state.pollDelayMs);
       } else {
@@ -706,7 +872,8 @@
 
   const beginSessionPollingIfNeeded = () => {
     const stage = activeStage();
-    if (["ingest", "render"].includes(stage)) {
+    const publishStatus = String(state.session?.publish_job?.status || "");
+    if (["ingest", "render"].includes(stage) || ["queued", "processing"].includes(publishStatus)) {
       schedulePoll(1500);
     } else {
       stopPolling();
@@ -844,6 +1011,38 @@
     state.session = payload.session;
     renderView();
     beginSessionPollingIfNeeded();
+  });
+
+  publishButtons.forEach((button) => {
+    button.addEventListener("click", async () => {
+      const target = button.dataset.publishTarget;
+      const mode = button.dataset.publishMode;
+      const publishAt = target === "youtube"
+        ? (mode === "schedule" ? (youtubeScheduleInput?.value || "") : "")
+        : (mode === "schedule" ? (instagramScheduleInput?.value || "") : "");
+      doneFeedback.textContent = "Publishing… we'll notify you.";
+      const { response, payload } = await postJson("/video_shorts/shorts/quick/api/publish", {
+        session_id: state.session?.id,
+        target,
+        mode,
+        publish_at: publishAt,
+      });
+      if (response.status === 403 && payload.code === "target_not_connected") {
+        doneFeedback.textContent = target === "youtube" ? "Connect YouTube first." : "Connect Instagram first.";
+        return;
+      }
+      if (response.status === 429 && payload.code === "concurrency_limit") {
+        doneFeedback.textContent = "Finish your current short first — your plan runs one at a time.";
+        return;
+      }
+      if (!response.ok) {
+        doneFeedback.textContent = payload.message || "Couldn't publish this short. Please try again.";
+        return;
+      }
+      state.session = payload.session;
+      renderView();
+      beginSessionPollingIfNeeded();
+    });
   });
 
   document.addEventListener("visibilitychange", () => {

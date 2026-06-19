@@ -19,6 +19,7 @@ JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
 JOB_TYPE_TRANSCRIBE_UPLOAD = "transcribe_upload"
+JOB_TYPE_PUBLISH_SHORT = "publish_short"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_PROCESSING = "processing"
 JOB_STATUS_DONE = "done"
@@ -369,7 +370,7 @@ def enqueue_job(
             return {"kind": "existing", "job": existing_active}
 
         plan = _fetch_plan_settings(conn, user_id)
-        if job_type == JOB_TYPE_RENDER_SHORT:
+        if job_type in {JOB_TYPE_RENDER_SHORT, JOB_TYPE_PUBLISH_SHORT}:
             inflight = _count_user_inflight(conn, user_id)
             if inflight >= plan["max_concurrent_jobs"]:
                 conn.commit()

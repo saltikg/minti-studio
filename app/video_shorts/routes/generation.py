@@ -6537,6 +6537,13 @@ def _facebook_oauth_url(state: str) -> Optional[str]:
     return f"{oauth_base}?{urlencode(params)}"
 
 
+def _safe_oauth_next(value: Optional[str], fallback: str) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith("/") and not raw.startswith("//"):
+        return raw
+    return fallback
+
+
 @video_shorts_bp.route("/facebook/connect")
 def facebook_connect():
     current_user = getattr(g, "vs_current_user", None)
@@ -7096,9 +7103,11 @@ def instagram_authorize():
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     state_token = secrets.token_urlsafe(16)
+    next_url = _safe_oauth_next(request.args.get("next"), url_for("video_shorts_bp.social_connect"))
     session["ig_oauth_state"] = {
         "nonce": state_token,
         "user_id": current_user["id"],
+        "next": next_url,
     }
     auth_url = _instagram_oauth_url(state_token)
     if not auth_url:
@@ -7128,20 +7137,21 @@ def instagram_oauth_callback():
 
     state = request.args.get("state")
     saved_state = session.pop("ig_oauth_state", None)
+    next_url = _safe_oauth_next((saved_state or {}).get("next"), url_for("video_shorts_bp.social_connect"))
     expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
     if not expected_state or state != expected_state:
         current_app.logger.warning("Instagram OAuth state mismatch: %s vs %s", state, expected_state)
         flash("Instagram OAuth doğrulaması başarısız oldu.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
     user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
     if not user_id:
         flash("Instagram OAuth kodu alınamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     code = request.args.get("code")
     if not code:
         flash("Instagram OAuth kodu alınamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     short_resp = None
     try:
@@ -7179,13 +7189,13 @@ def instagram_oauth_callback():
             exc,
         )
         flash("Instagram token alınamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     short_token = short_data.get("access_token")
     instagram_user_id = str(short_data.get("user_id") or "").strip()
     if not short_token:
         flash("Instagram kısa token yanıtı beklenmeyen formatta.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     long_resp = None
     try:
@@ -7220,7 +7230,7 @@ def instagram_oauth_callback():
             exc,
         )
         flash("Instagram uzun token alınamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     long_token = long_data.get("access_token")
     expires_at = None
@@ -7232,7 +7242,7 @@ def instagram_oauth_callback():
             expires_at = None
     if not long_token:
         flash("Instagram OAuth kodu doğrulanamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     debug_payload = _log_instagram_debug_token(long_token)
     current_app.logger.info(
@@ -7246,19 +7256,19 @@ def instagram_oauth_callback():
     except Exception as exc:
         current_app.logger.warning("Instagram /me validation failed: %s", exc)
         flash("Instagram hesabı doğrulanamadı. Lütfen tekrar bağlanın.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     graph_ig_id = str(me_payload.get("id") or instagram_user_id or "").strip()
     instagram_user_id_value = str(me_payload.get("user_id") or "").strip()
     instagram_profile = _fetch_instagram_profile(long_token, graph_ig_id)
     if not instagram_profile:
         flash("Instagram profil bilgisi alınamadı. Lütfen tekrar bağlanın.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     account_type = str(instagram_profile.get("account_type") or "").upper()
     if account_type not in {"BUSINESS", "CREATOR"}:
         flash(_instagram_account_upgrade_message(), "warning")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     scopes = ",".join(s.strip() for s in IG_OAUTH_SCOPES.split(",") if s and s.strip())
     _log_instagram_permissions(long_token)
@@ -7286,7 +7296,7 @@ def instagram_oauth_callback():
     )
     _log_instagram_connect_validation("callback", None, graph_ig_id, long_token)
     flash("Instagram bağlantısı kaydedildi.", "success")
-    return redirect(url_for("video_shorts_bp.social_connect"))
+    return redirect(next_url)
 
 
 @video_shorts_bp.route("/instagram/select_page", methods=["GET", "POST"])
@@ -7475,6 +7485,7 @@ def youtube_authorize():
     if not current_user:
         flash("YouTube bağlantısı için giriş yapın.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    next_url = _safe_oauth_next(request.args.get("next"), url_for("video_shorts_bp.social_connect"))
     flow = build_oauth_flow()
     authorization_url, state = flow.authorization_url(
         access_type="offline",
@@ -7485,6 +7496,7 @@ def youtube_authorize():
         "nonce": state,
         "user_id": current_user.get("id"),
         "code_verifier": flow.code_verifier,
+        "next": next_url,
     }
     return redirect(authorization_url)
 
@@ -7496,31 +7508,33 @@ def youtube_oauth_callback():
         flash("YouTube bağlantısı için giriş yapın.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     error = request.args.get("error")
+    saved_state = session.pop("yt_oauth_state", None)
+    next_url = _safe_oauth_next((saved_state or {}).get("next"), url_for("video_shorts_bp.social_connect"))
     if error:
         flash(f"YouTube OAuth hatası: {error}", "danger")
-        return redirect(url_for("video_shorts_bp.channels_page"))
+        return redirect(next_url)
 
     state = request.args.get("state")
-    saved_state = session.pop("yt_oauth_state", None)
     flow = build_oauth_flow(state=state)
-    if saved_state and state != saved_state:
-        current_app.logger.warning("YouTube OAuth state mismatch: %s vs %s", state, saved_state)
+    expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
+    if expected_state and state != expected_state:
+        current_app.logger.warning("YouTube OAuth state mismatch: %s vs %s", state, expected_state)
     try:
         flow.fetch_token(authorization_response=request.url)
     except Exception as exc:
         current_app.logger.exception("Failed to fetch YouTube OAuth token: %s", exc)
         flash("YouTube OAuth sonucu alınamadı.", "danger")
-        return redirect(url_for("video_shorts_bp.channels_page"))
+        return redirect(next_url)
 
     credentials = flow.credentials
     refresh_token = credentials.refresh_token
     if not refresh_token:
         flash("YouTube OAuth işleminden refresh token elde edilemedi.", "warning")
-        return redirect(url_for("video_shorts_bp.channels_page"))
+        return redirect(next_url)
 
     store_refresh_token(refresh_token, user_id=current_user["id"])
     flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
-    return redirect(url_for("video_shorts_bp.youtube_connect"))
+    return redirect(next_url)
 
 
 @video_shorts_bp.route("/video_shorts/youtube/disconnect", methods=["POST"])

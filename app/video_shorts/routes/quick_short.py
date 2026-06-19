@@ -24,6 +24,7 @@ from app.video_shorts.services.quick_short_flow import (
     STATUS_FAILED,
     STATUS_INGESTING,
     STATUS_INPUT,
+    STATUS_PUBLISHING,
     STATUS_RENDERING,
     STATUS_REVIEW,
     create_session,
@@ -34,14 +35,17 @@ from app.video_shorts.services.quick_short_flow import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     enqueue_job,
     get_job,
     update_job_payload,
 )
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
+from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
 MAX_QUICK_SHORT_SECONDS = 25 * 60
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
@@ -440,6 +444,8 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
     payload["transcript"] = {"full_text": "", "segments": []}
     payload["job"] = None
     payload["render_job"] = None
+    payload["publish_job"] = None
+    payload["connections"] = {"youtube": False, "instagram": False}
     video_pk = session.get("video_pk")
     video_id = session.get("video_id")
     if video_pk or video_id:
@@ -492,6 +498,20 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
     render_job_id = str(session.get("render_job_id") or "").strip()
     if render_job_id:
         payload["render_job"] = get_job(render_job_id, user_id=session.get("user_id"))
+    publish_job_id = str(session.get("publish_job_id") or "").strip()
+    if publish_job_id:
+        payload["publish_job"] = get_job(publish_job_id, user_id=session.get("user_id"))
+    try:
+        brand_id = session.get("brand_id")
+        user_id = str(session.get("user_id") or "").strip()
+        payload["connections"]["youtube"] = bool(user_id and has_refresh_token(user_id, brand_id=brand_id))
+        if user_id:
+            try:
+                payload["connections"]["instagram"] = bool(get_instagram_credentials(user_id))
+            except InstagramTokenStoreError:
+                payload["connections"]["instagram"] = False
+    except Exception:
+        current_app.logger.exception("Failed to resolve quick short connections for session=%s", session.get("id"))
     if payload.get("video_id") and (payload.get("status") == STATUS_DONE or (payload.get("render_job") or {}).get("status") == "done"):
         try:
             plan_entries = generation._load_plan_entries(payload["video_id"]) or []
@@ -505,6 +525,7 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
                         "clip_url": generation._short_public_url(clip_filename),
                         "publish_status": entry.get("publish_status"),
                         "title": entry.get("title"),
+                        "yt_video_id": entry.get("yt_video_id"),
                     }
         except Exception:
             current_app.logger.exception("Failed to resolve quick short output for session=%s", session.get("id"))
@@ -885,3 +906,120 @@ def quick_short_render():
             job_payload["quick_session_id"] = session["id"]
         update_job_payload(job_id, job_payload)
     return jsonify({"ok": True, "session": _build_session_payload(session), **payload}), status_code
+
+
+@video_shorts_bp.route("/shorts/quick/api/publish", methods=["POST"])
+def quick_short_publish():
+    current_user, redirect_response = _require_quick_user()
+    if redirect_response:
+        return jsonify({"error": "unauthorized"}), 401
+    _ensure_quick_schema()
+    data = request.get_json(silent=True) or {}
+    session_id = str(data.get("session_id") or "").strip()
+    session = get_session(session_id, user_id=current_user["id"])
+    if not session or not session.get("video_pk") or not session.get("video_id"):
+        return _json_error("Quick short session not found.", 404)
+    result = session.get("result") or {}
+    clip_filename = str(result.get("clip_filename") or "").strip()
+    if not clip_filename or not generation._short_exists(clip_filename):
+        return _json_error("Short file could not be found.", 404)
+
+    brand_id = session.get("brand_id")
+    target = str(data.get("target") or "").strip().lower()
+    mode = str(data.get("mode") or "now").strip().lower()
+    if target not in {"youtube", "instagram"}:
+        return _json_error("Choose where to publish first.")
+    if mode not in {"now", "schedule"}:
+        mode = "now"
+
+    publish_at_value = str(data.get("publish_at") or "").strip()
+    publish_at_iso = None
+    if mode == "schedule":
+        if not publish_at_value:
+            return _json_error("Choose a schedule time first.")
+        try:
+            publish_at_iso = generation.local_to_utc_rfc3339(
+                publish_at_value,
+                (current_user or {}).get("time_zone") or generation.DEFAULT_TIME_ZONE,
+            )
+        except Exception:
+            return _json_error("Enter a valid schedule time.")
+
+    if target == "youtube" and not has_refresh_token(current_user["id"], brand_id=brand_id):
+        return _json_error("Connect YouTube first.", 403, code="target_not_connected", target="youtube")
+    if target == "instagram":
+        try:
+            instagram_creds = get_instagram_credentials(current_user["id"]) or {}
+        except InstagramTokenStoreError:
+            instagram_creds = {}
+        if not instagram_creds or not generation._validate_instagram_connection(instagram_creds):
+            return _json_error("Connect Instagram first.", 403, code="target_not_connected", target="instagram")
+
+    title = (str(result.get("title") or session.get("clip_title") or "Short").strip()[:100] or "Short")
+    description = str(result.get("description") or result.get("excerpt") or title).strip()[:5000]
+    publish_payload = {
+        "quick_session_id": session["id"],
+        "video_pk": int(session["video_pk"]),
+        "video_id": str(session["video_id"]),
+        "brand_id": brand_id,
+        "clip_filename": clip_filename,
+        "title": title,
+        "description": description,
+        "target": target,
+        "mode": mode,
+        "publish_at_local": publish_at_value or None,
+        "publish_at_iso": publish_at_iso,
+    }
+    job_input_hash = sha256(
+        (
+            f"quick-publish:{current_user['id']}:{session['id']}:{clip_filename}:{target}:{mode}:{publish_at_iso or ''}"
+        ).encode("utf-8")
+    ).hexdigest()
+    enqueue_result = enqueue_job(
+        user_id=current_user["id"],
+        job_type=JOB_TYPE_PUBLISH_SHORT,
+        payload=publish_payload,
+        input_hash=job_input_hash,
+    )
+    if enqueue_result.get("kind") == "concurrency_limit":
+        return _json_error(
+            "Finish your current short first — your plan runs one at a time.",
+            429,
+            code="concurrency_limit",
+        )
+
+    job = enqueue_result.get("job") or {}
+    if enqueue_result.get("kind") == "cached":
+        publish_result = job.get("result") or {}
+        merged = {**result, "publish": publish_result}
+        session = update_session(
+            session["id"],
+            status=STATUS_DONE,
+            publish_job_id=job.get("id"),
+            result=merged,
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "session": _build_session_payload(session),
+                "job_id": job.get("id"),
+                "cached": True,
+            }
+        )
+
+    merged = {
+        **result,
+        "publish": {
+            "target": target,
+            "mode": mode,
+            "status": "queued",
+            "message": "Publishing… we'll notify you.",
+        },
+    }
+    session = update_session(
+        session["id"],
+        status=STATUS_PUBLISHING,
+        publish_job_id=job.get("id"),
+        result=merged,
+    )
+    return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id"), "cached": False})
