@@ -251,8 +251,6 @@
           <div class="plan-actions">
             {% if is_selected_plan %}
               <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
-            {% elif is_admin %}
-              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Admin only</button>
             {% else %}
               <button
                 type="button"
@@ -270,6 +268,25 @@
                   Upgrade to Creator
                 {% else %}
                   Upgrade to Studio
+                {% endif %}
+              </button>
+            {% elif is_admin %}
+              <button
+                type="button"
+                class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
+                data-plan-id="{{ plan.plan_id }}"
+                data-plan-name="{{ tier_label }}"
+                data-plan-quota="{{ plan.quota_label }}"
+                data-price-monthly="{{ monthly_price }}"
+                data-price-yearly="{{ yearly_total }}">
+                {% if tier_label == "Free" %}
+                  Switch to Free
+                {% elif tier_label == "Starter" %}
+                  Switch to Starter
+                {% elif tier_label == "Creator" %}
+                  Switch to Creator
+                {% else %}
+                  Switch to Studio
                 {% endif %}
               </button>
             {% endif %}

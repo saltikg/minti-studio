@@ -5372,10 +5372,8 @@ def shorts_storage_plans():
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
-        if is_admin:
-            user_id = (request.form.get("user_id") or "").strip()
-        else:
-            user_id = current_user["id"]
+        requested_user_id = (request.form.get("user_id") or "").strip()
+        user_id = requested_user_id or current_user["id"]
         plan_id = (request.form.get("plan_id") or "").strip() or None
         custom_limit = request.form.get("custom_limit") or ""
         custom_limit_bytes = None
