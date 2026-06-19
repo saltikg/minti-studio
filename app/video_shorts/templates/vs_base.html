@@ -38,7 +38,6 @@
       <span>MintiStudio</span>
     </a>
     <div class="d-flex flex-wrap align-items-center gap-2 vs-topnav-actions">
-      <span class="badge text-bg-dark text-uppercase">DB: {{ video_shorts_db_backend or 'unknown' }}</span>
       {% if vs_current_user %}
         {% if vs_current_brand %}
           <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="d-flex align-items-center gap-2">
