@@ -7906,7 +7906,7 @@ def upload_clip_to_youtube():
                 elif instagram_mode == "sync":
                     publish_at_iso = publish_at
                 elif instagram_mode == "now":
-                    publish_at_iso = datetime.utcnow().isoformat()
+                    publish_at_iso = datetime.utcnow().isoformat() + "Z"
                 else:
                     publish_at_iso = None
                 clip_name = target_entry.get("output_filename") or filename
@@ -7969,7 +7969,7 @@ def upload_clip_to_youtube():
                 elif facebook_mode == "sync":
                     facebook_publish_at_iso = publish_at
                 elif facebook_mode == "now":
-                    facebook_publish_at_iso = datetime.utcnow().isoformat()
+                    facebook_publish_at_iso = datetime.utcnow().isoformat() + "Z"
                 else:
                     facebook_publish_at_iso = None
                 clip_name = target_entry.get("output_filename") or filename
@@ -8029,7 +8029,7 @@ def upload_clip_to_youtube():
                 elif tiktok_mode == "sync":
                     tiktok_publish_at_iso = publish_at
                 elif tiktok_mode == "now":
-                    tiktok_publish_at_iso = datetime.utcnow().isoformat()
+                    tiktok_publish_at_iso = datetime.utcnow().isoformat() + "Z"
                 else:
                     tiktok_publish_at_iso = None
                 plan_index_key = str(target_entry.get("plan_index") or plan_index_raw or "")
