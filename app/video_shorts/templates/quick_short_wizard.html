@@ -1,365 +1,790 @@
 {% extends "vs_base.html" %}
 
-{% block title %}Quick Short{% endblock %}
+{% block title %}Create Your First Short{% endblock %}
 
 {% block content %}
 <style>
-.vs-quick-dark .qs-hero {
-  border-radius: 18px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  padding: 18px 20px;
-  color: var(--text);
-}
-.vs-quick-dark .qs-stepper {
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-}
-.vs-quick-dark .qs-step {
-  flex: 1;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 0.85rem;
-  text-align: center;
-  color: var(--muted);
-}
-.vs-quick-dark .qs-step.active {
-  border-color: var(--border-soft);
-  background: rgba(45, 212, 191, 0.08);
-  font-weight: 600;
-  color: var(--text);
-}
-.vs-quick-dark .qs-subtitle {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-.vs-quick-dark .qs-card {
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: var(--surface);
-  padding: 18px;
-}
-.vs-quick-dark .qs-card form {
-  color: var(--text);
-}
-.vs-quick-dark .qs-meta {
+.qs-shell {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+  gap: 18px;
 }
-.vs-quick-dark .qs-meta-item {
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 10px;
-  background: var(--surface-2);
-  font-size: 0.9rem;
-  color: var(--text);
-}
-.vs-quick-dark .qs-meta-item strong {
-  color: var(--muted);
-}
-.vs-quick-dark .qs-card .form-label,
-.vs-quick-dark .qs-card .form-text {
-  color: var(--muted);
-}
-.vs-quick-dark .qs-card .form-control,
-.vs-quick-dark .qs-card .form-select {
-  background: var(--surface-2);
+.qs-hero,
+.qs-panel {
   border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 10px;
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 22px;
 }
-.vs-quick-dark .qs-card .form-control:focus,
-.vs-quick-dark .qs-card .form-select:focus {
-  border-color: var(--mint);
-  box-shadow: 0 0 0 0.2rem rgba(45, 212, 191, 0.35);
-  outline: none;
+.qs-hero {
+  background:
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.16), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+    var(--surface);
 }
-.vs-quick-dark .btn-warning {
-  background: linear-gradient(135deg, var(--mint-2), var(--mint));
-  border-color: transparent;
-  color: #031018;
-}
-.vs-quick-dark .btn-outline-secondary {
-  border-color: rgba(255, 255, 255, 0.2);
-  color: var(--text);
-  background: transparent;
-}
-.vs-quick-dark .btn-outline-secondary:hover {
+.qs-kicker {
   color: var(--mint);
-  border-color: var(--mint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
-.vs-quick-dark .qs-progress {
-  display: none;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 10px;
+.qs-title {
+  font-size: clamp(1.8rem, 2.6vw, 2.7rem);
+  font-weight: 800;
+  margin: 6px 0 8px;
 }
-.vs-quick-dark .qs-progress-bar {
-  width: 0%;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--mint-2), var(--mint));
-  transition: width 0.15s ease;
-}
-.vs-quick-dark .qs-progress-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.85rem;
-  margin-top: 6px;
+.qs-copy {
   color: var(--muted);
+  max-width: 760px;
 }
-.vs-quick-dark .qs-success {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  text-align: center;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text);
+.qs-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
 }
-.vs-quick-dark .qs-success-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+.qs-step {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 16px;
+  padding: 14px;
+}
+.qs-step.is-active {
+  border-color: rgba(45, 212, 191, 0.4);
+  background: rgba(45, 212, 191, 0.08);
+}
+.qs-step.is-done {
+  border-color: rgba(16, 185, 129, 0.32);
+}
+.qs-step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(16, 185, 129, 0.18);
-  color: #34d399;
-  font-size: 1.1rem;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.qs-step.is-active .qs-step-num {
+  background: var(--mint);
+  color: #07161d;
+}
+.qs-step-label {
+  font-weight: 700;
+}
+.qs-step-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.qs-source-switch {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.qs-source-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: transparent;
+  color: var(--text);
+}
+.qs-source-btn.is-active {
+  background: var(--mint);
+  color: #07161d;
+  font-weight: 700;
+}
+.qs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 18px;
+}
+.qs-field,
+.qs-review-card,
+.qs-status-card,
+.qs-done-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 16px;
+}
+.qs-field label,
+.qs-review-card h3,
+.qs-status-title,
+.qs-done-card h3 {
+  font-weight: 700;
+}
+.qs-field .form-control,
+.qs-field .form-select,
+.qs-review-card .form-control {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 12px;
+}
+.qs-field .form-control:focus,
+.qs-field .form-select:focus,
+.qs-review-card .form-control:focus {
+  border-color: var(--mint);
+  box-shadow: 0 0 0 0.2rem rgba(45, 212, 191, 0.24);
+}
+.qs-help,
+.qs-note {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.qs-status-list {
+  display: grid;
+  gap: 10px;
+}
+.qs-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.qs-status-row.is-current {
+  border-color: rgba(45, 212, 191, 0.4);
+  background: rgba(45, 212, 191, 0.08);
+}
+.qs-status-row.is-done {
+  color: #9be7d8;
+}
+.qs-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.qs-status-row.is-current .qs-dot,
+.qs-status-row.is-done .qs-dot {
+  background: var(--mint);
+}
+.qs-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid rgba(45, 212, 191, 0.2);
+  border-top-color: var(--mint);
+  animation: qs-spin 0.8s linear infinite;
+}
+.qs-preview {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #000;
+  min-height: 240px;
+  object-fit: cover;
+}
+.qs-transcript {
+  max-height: 360px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+.qs-transcript-item {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.qs-transcript-time {
+  color: var(--mint);
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+}
+.qs-inline-feedback {
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.qs-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.qs-empty {
+  color: var(--muted);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 18px;
+}
+.qs-hidden {
+  display: none !important;
+}
+.qs-inline-player {
+  width: 100%;
+  border-radius: 16px;
+  background: #000;
+}
+.qs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
+  background: rgba(45, 212, 191, 0.08);
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  color: #aef4e7;
+}
+.qs-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+@keyframes qs-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qs-spinner { animation: none; }
+}
+@media (max-width: 992px) {
+  .qs-grid,
+  .qs-stepper {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 
-<div class="vs-quick-dark">
-<div class="qs-hero mb-3">
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-    <div>
-      <h3 class="fw-bold mb-1">Create your first short</h3>
-      <div class="qs-subtitle">Quick start with a single YouTube URL or upload a file.</div>
-    </div>
+<div class="qs-shell">
+  <div class="qs-hero">
+    <div class="qs-kicker">Quick Start</div>
+    <div class="qs-title">Create your first short</div>
+    <div class="qs-copy">Start with a YouTube URL or upload a file, let ingest run in the background, review the transcript, then create the short. You can leave this page and come back later.</div>
+    <div class="qs-stepper" id="qs-stepper"></div>
   </div>
-  <div class="d-flex flex-wrap gap-2 mt-2">
-    <a href="{{ url_for('video_shorts_bp.quick_short', flow='youtube') }}"
-       class="btn btn-sm {% if flow != 'upload' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
-      YouTube URL
-    </a>
-    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload') }}"
-       class="btn btn-sm {% if flow == 'upload' and upload_kind != 'music' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
-      Upload from device
-    </a>
-    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind='music') }}"
-       class="btn btn-sm {% if flow == 'upload' and upload_kind == 'music' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
-      Upload pseudo music video
-    </a>
-    <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind='podcast') }}"
-       class="btn btn-sm {% if flow == 'upload' and upload_kind == 'podcast' %}btn-warning{% else %}btn-outline-secondary{% endif %}">
-      Upload podcast video
-    </a>
-  </div>
-  <div class="qs-stepper">
-    {% if flow == 'upload' %}
-      <div class="qs-step {% if upload_step == 'upload' %}active{% endif %}">1. Upload</div>
-      <div class="qs-step {% if upload_step == 'metadata' %}active{% endif %}">2. Details</div>
-    {% else %}
-      <div class="qs-step {% if step == 1 %}active{% endif %}">1. URL</div>
-      <div class="qs-step {% if step == 2 %}active{% endif %}">2. Review</div>
-      <div class="qs-step {% if step == 3 %}active{% endif %}">3. Create</div>
-    {% endif %}
-  </div>
-</div>
 
-{% if flow == 'upload' %}
-  {% if upload_step == 'upload' %}
-    <div class="qs-card">
-      <form id="upload-form" method="post" action="{{ url_for('video_shorts_bp.quick_short', flow='upload') }}" enctype="multipart/form-data" class="d-flex flex-column gap-3">
-        <div>
-          <label class="form-label">
-            {% if upload_kind == 'music' %}
-              Upload pseudo music video
-            {% elif upload_kind == 'podcast' %}
-              Upload podcast source video
-            {% else %}
-              Upload media file
-            {% endif %}
-          </label>
-          <input type="file" name="video_file" class="form-control" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*" required>
-          <div class="form-text">
-            Max 500MB. Video: mp4, mov, mkv. Audio: mp3, wav, m4a, aac, ogg, flac.
-            {% if upload_kind == 'music' %}This will be saved as a music-only source for generate.{% endif %}
-            {% if upload_kind == 'podcast' %}This will be saved under Podcast channel and open generate after upload.{% endif %}
+  <div id="qs-live-region" class="qs-live" aria-live="polite"></div>
+
+  <div id="qs-stage-input" class="qs-panel">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+      <div>
+        <h3 class="mb-1">Input</h3>
+        <div class="qs-note">Choose one source and continue. Ingest starts immediately and the page stays usable.</div>
+      </div>
+      <div class="qs-source-switch" id="qs-source-switch">
+        <button type="button" class="qs-source-btn is-active" data-source-mode="youtube">YouTube URL</button>
+        <button type="button" class="qs-source-btn" data-source-mode="upload">Upload from device</button>
+        <button type="button" class="qs-source-btn" data-source-mode="music">Pseudo music video</button>
+        <button type="button" class="qs-source-btn" data-source-mode="podcast">Podcast video</button>
+      </div>
+    </div>
+    <div class="qs-grid">
+      <div class="qs-field" id="qs-youtube-panel">
+        <label for="qs-youtube-url" class="mb-2">YouTube video URL</label>
+        <input id="qs-youtube-url" type="url" class="form-control mb-2" placeholder="https://www.youtube.com/watch?v=..." />
+        <div class="qs-help">The source video must be {{ max_minutes }} minutes or shorter.</div>
+        <div class="qs-actions mt-3">
+          <button type="button" id="qs-youtube-submit" class="btn btn-primary">Continue</button>
+        </div>
+      </div>
+      <div class="qs-field qs-hidden" id="qs-upload-panel">
+        <label for="qs-upload-file" class="mb-2">Upload a source file</label>
+        <input id="qs-upload-file" type="file" class="form-control mb-2" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,video/*,audio/*" />
+        <div class="qs-help">Direct S3 upload, up to 500MB. The file does not stream through the web server.</div>
+        <div id="qs-upload-meta" class="qs-note mt-2"></div>
+        <div class="qs-actions mt-3">
+          <button type="button" id="qs-upload-submit" class="btn btn-primary">Continue</button>
+        </div>
+      </div>
+      <div class="qs-status-card">
+        <div class="qs-status-title mb-2">How this works</div>
+        <div class="qs-status-list">
+          <div class="qs-status-row is-done"><span><span class="qs-dot"></span> Queued</span><span>background</span></div>
+          <div class="qs-status-row"><span><span class="qs-dot"></span> Downloading or uploading</span><span>async</span></div>
+          <div class="qs-status-row"><span><span class="qs-dot"></span> Transcribing</span><span>Whisper</span></div>
+          <div class="qs-status-row"><span><span class="qs-dot"></span> Ready to review</span><span>resume anytime</span></div>
+        </div>
+      </div>
+    </div>
+    <div id="qs-input-feedback" class="qs-inline-feedback mt-3"></div>
+  </div>
+
+  <div id="qs-stage-ingest" class="qs-panel qs-hidden">
+    <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+      <div>
+        <h3 class="mb-1">Preparing your source</h3>
+        <div class="qs-note" id="qs-ingest-copy">We’ll notify you when this is ready to review.</div>
+      </div>
+      <div class="qs-badge"><span class="qs-spinner"></span><span id="qs-ingest-headline">Queued</span></div>
+    </div>
+    <div class="qs-status-list" id="qs-ingest-status-list"></div>
+    <div id="qs-ingest-queue-copy" class="qs-inline-feedback mt-3"></div>
+  </div>
+
+  <div id="qs-stage-review" class="qs-panel qs-hidden">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+      <div>
+        <h3 class="mb-1">Review</h3>
+        <div class="qs-note">Adjust the clip window and title, then create the short. A suggested clip is already filled in.</div>
+      </div>
+      <div class="qs-badge">Ready to review</div>
+    </div>
+    <div class="qs-grid">
+      <div class="qs-review-card">
+        <video id="qs-review-video" class="qs-preview" controls playsinline></video>
+        <div class="row g-3 mt-1">
+          <div class="col-md-4">
+            <label for="qs-clip-start" class="mb-2">Clip start (seconds)</label>
+            <input id="qs-clip-start" type="number" step="0.1" min="0" class="form-control" />
+          </div>
+          <div class="col-md-4">
+            <label for="qs-clip-end" class="mb-2">Clip end (seconds)</label>
+            <input id="qs-clip-end" type="number" step="0.1" min="0" class="form-control" />
+          </div>
+          <div class="col-md-4">
+            <label for="qs-clip-title" class="mb-2">Short title</label>
+            <input id="qs-clip-title" type="text" maxlength="80" class="form-control" />
           </div>
         </div>
-        <input type="hidden" name="flow" value="upload">
-        <input type="hidden" name="upload_kind" value="{{ upload_kind or 'video' }}">
-        <input type="hidden" name="action" value="upload">
-        <div id="upload-progress" class="qs-progress">
-          <div class="qs-progress-bar" id="upload-progress-bar"></div>
-          <div class="qs-progress-meta">
-            <span id="upload-progress-text">0%</span>
-            <span id="upload-progress-bytes">0 MB / 0 MB</span>
-          </div>
+        <div class="qs-actions mt-3">
+          <button type="button" id="qs-render-submit" class="btn btn-primary">Create</button>
         </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-warning">Upload file</button>
-          <a href="{{ url_for('video_shorts_bp.channels_page') }}" class="btn btn-outline-secondary">Cancel</a>
-        </div>
-      </form>
+        <div id="qs-review-feedback" class="qs-inline-feedback mt-2"></div>
+      </div>
+      <div class="qs-review-card">
+        <h3 class="h5 mb-3">Transcript</h3>
+        <div id="qs-transcript" class="qs-transcript"></div>
+      </div>
     </div>
-  {% elif upload_step == 'metadata' %}
-    <div class="qs-card">
-      <div class="qs-success mb-2">
-        <span class="qs-success-icon"><i class="bi bi-check-lg"></i></span>
-        <span>
-          {% if upload_kind == 'music' %}
-            Pseudo music video uploaded successfully
-          {% elif upload_kind == 'podcast' %}
-            Podcast source video uploaded successfully
-          {% else %}
-            File uploaded successfully
-          {% endif %}
-        </span>
+  </div>
+
+  <div id="qs-stage-render" class="qs-panel qs-hidden">
+    <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+      <div>
+        <h3 class="mb-1">Creating your short…</h3>
+        <div class="qs-note">We’ll notify you when the render finishes.</div>
       </div>
-      <div class="qs-meta">
-        <div class="qs-meta-item"><strong>Size (MB)</strong><br>{{ upload_meta.size_mb if upload_meta else '-' }}</div>
-        <div class="qs-meta-item"><strong>Duration (s)</strong><br>{{ upload_meta.duration_seconds if upload_meta else '-' }}</div>
-      </div>
-      <form method="post" class="mt-3 d-flex flex-column gap-2">
+      <div class="qs-badge"><span class="qs-spinner"></span><span id="qs-render-headline">Generating your short…</span></div>
+    </div>
+    <div id="qs-render-copy" class="qs-inline-feedback"></div>
+  </div>
+
+  <div id="qs-stage-done" class="qs-panel qs-hidden">
+    <div class="qs-done-card">
+      <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
         <div>
-          <label class="form-label">Set a title for your video</label>
-          <input type="text" name="title" class="form-control" value="{{ upload_meta.title if upload_meta else '' }}" required>
+          <h3 class="mb-1">Your short is ready</h3>
+          <div class="qs-note">Next step: connect a channel to publish when you’re ready.</div>
         </div>
-        <input type="hidden" name="flow" value="upload">
-        <input type="hidden" name="upload_kind" value="{{ upload_kind or 'video' }}">
-        <input type="hidden" name="action" value="metadata">
-        <input type="hidden" name="video_pk" value="{{ uploaded_video_pk or '' }}">
-        <div class="d-flex gap-2">
-          <button class="btn btn-dark">Open generate</button>
-          <a href="{{ url_for('video_shorts_bp.quick_short', flow='upload', upload_kind=upload_kind) }}" class="btn btn-outline-secondary">Back</a>
-        </div>
-      </form>
-    </div>
-  {% endif %}
-{% elif step == 1 %}
-  <div class="qs-card">
-    <form method="post" class="d-flex flex-column gap-3">
-      <div>
-        <label class="form-label">YouTube video URL</label>
-        <input type="url" name="video_url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required value="{{ video_url or '' }}">
-        <div class="form-text">The video should be no longer than 25 minutes.</div>
+        <div class="qs-badge">Done</div>
       </div>
-      <input type="hidden" name="flow" value="youtube">
-      <input type="hidden" name="action" value="validate">
-      <div class="d-flex gap-2">
-        <button class="btn btn-warning">Continue</button>
-        <a href="{{ url_for('video_shorts_bp.channels_page') }}" class="btn btn-outline-secondary">Cancel</a>
+      <video id="qs-done-video" class="qs-inline-player mb-3" controls playsinline></video>
+      <div class="qs-actions">
+        <a id="qs-download-link" href="#" class="btn btn-primary" download>Download short</a>
+        <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-outline-secondary">Connect a channel to publish</a>
       </div>
-    </form>
-  </div>
-{% elif step == 2 and meta %}
-  <div class="qs-card">
-    <div class="d-flex flex-wrap align-items-center gap-3">
-      {% if meta.thumbnail_url %}
-        <img src="{{ meta.thumbnail_url }}" alt="Video thumbnail" style="width: 160px; border-radius: 10px; border: 1px solid #e5e7eb;">
-      {% endif %}
-      <div>
-        <div class="fw-semibold">{{ meta.title }}</div>
-        <div class="text-white">Channel: {{ meta.channel_title }}</div>
-      </div>
+      <div id="qs-done-feedback" class="qs-inline-feedback mt-2"></div>
     </div>
-    <div class="qs-meta">
-      <div class="qs-meta-item"><strong>Video ID</strong><br>{{ meta.video_id }}</div>
-      <div class="qs-meta-item"><strong>Duration (s)</strong><br>{{ meta.duration_seconds or '-' }}</div>
-      <div class="qs-meta-item"><strong>Publish date</strong><br>{{ meta.published_at or '-' }}</div>
-    </div>
-    <form method="post" class="mt-3 d-flex gap-2">
-      <input type="hidden" name="flow" value="youtube">
-      <input type="hidden" name="action" value="confirm">
-      <input type="hidden" name="video_url" value="{{ video_url }}">
-      <button class="btn btn-warning">Continue</button>
-      <a href="{{ url_for('video_shorts_bp.quick_short') }}" class="btn btn-outline-secondary">Back</a>
-    </form>
   </div>
-{% elif step == 3 %}
-  <div class="qs-card">
-    <h5 class="fw-semibold">Ready to go?</h5>
-    <p class="text-white mb-3">
-      The video will be queued for download. Since the local downloader runs hourly,
-      you might see a "Downloading" status.
-    </p>
-    <form method="post" class="d-flex gap-2">
-      <input type="hidden" name="flow" value="youtube">
-      <input type="hidden" name="action" value="create">
-      <input type="hidden" name="video_id" value="{{ video_id }}">
-      <button class="btn btn-dark">Create short</button>
-      <a href="{{ url_for('video_shorts_bp.quick_short') }}" class="btn btn-outline-secondary">Back</a>
-    </form>
-  </div>
-{% endif %}
 </div>
-{% if flow == 'upload' %}
+{% endblock %}
+
+{% block scripts %}
 <script>
 (() => {
-  const form = document.getElementById("upload-form");
-  if (!form) return;
-  const progressWrap = document.getElementById("upload-progress");
-  const progressBar = document.getElementById("upload-progress-bar");
-  const progressText = document.getElementById("upload-progress-text");
-  const progressBytes = document.getElementById("upload-progress-bytes");
+  const initialSession = {{ initial_session|tojson }};
+  const stageEls = {
+    input: document.getElementById("qs-stage-input"),
+    ingest: document.getElementById("qs-stage-ingest"),
+    review: document.getElementById("qs-stage-review"),
+    render: document.getElementById("qs-stage-render"),
+    done: document.getElementById("qs-stage-done"),
+  };
+  const stepperEl = document.getElementById("qs-stepper");
+  const liveRegion = document.getElementById("qs-live-region");
+  const inputFeedback = document.getElementById("qs-input-feedback");
+  const reviewFeedback = document.getElementById("qs-review-feedback");
+  const renderCopy = document.getElementById("qs-render-copy");
+  const ingestHeadline = document.getElementById("qs-ingest-headline");
+  const ingestCopy = document.getElementById("qs-ingest-copy");
+  const ingestStatusList = document.getElementById("qs-ingest-status-list");
+  const ingestQueueCopy = document.getElementById("qs-ingest-queue-copy");
+  const reviewVideo = document.getElementById("qs-review-video");
+  const transcriptWrap = document.getElementById("qs-transcript");
+  const clipStartInput = document.getElementById("qs-clip-start");
+  const clipEndInput = document.getElementById("qs-clip-end");
+  const clipTitleInput = document.getElementById("qs-clip-title");
+  const doneVideo = document.getElementById("qs-done-video");
+  const downloadLink = document.getElementById("qs-download-link");
+  const doneFeedback = document.getElementById("qs-done-feedback");
+  const sourceButtons = Array.from(document.querySelectorAll("[data-source-mode]"));
+  const youtubePanel = document.getElementById("qs-youtube-panel");
+  const uploadPanel = document.getElementById("qs-upload-panel");
+  const uploadInput = document.getElementById("qs-upload-file");
+  const uploadMeta = document.getElementById("qs-upload-meta");
+  const uploadSubmit = document.getElementById("qs-upload-submit");
+  const youtubeSubmit = document.getElementById("qs-youtube-submit");
+  const renderSubmit = document.getElementById("qs-render-submit");
+  const youtubeUrlInput = document.getElementById("qs-youtube-url");
 
-  const formatMb = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const state = {
+    session: initialSession || null,
+    sourceMode: "youtube",
+    pollTimer: null,
+    pollDelayMs: 2000,
+  };
 
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(form);
-    const file = form.querySelector("input[name='video_file']")?.files?.[0];
-    if (!file) {
-      form.submit();
+  const steps = [
+    { key: "input", label: "Input", meta: "Choose your source" },
+    { key: "review", label: "Review", meta: "Pick the clip" },
+    { key: "done", label: "Done", meta: "Use your short" },
+  ];
+
+  const setLiveMessage = (message) => {
+    if (liveRegion) {
+      liveRegion.textContent = message || "";
+    }
+  };
+
+  const activeStage = () => {
+    const session = state.session;
+    if (!session) return "input";
+    const renderStatus = session.render_job?.status || "";
+    if (session.status === "done" || renderStatus === "done") return "done";
+    if (session.status === "rendering" || renderStatus === "queued" || renderStatus === "processing") return "render";
+    if (session.status === "review") return "review";
+    if (session.status === "ingesting" || session.job?.status === "queued" || session.job?.status === "processing") return "ingest";
+    return "input";
+  };
+
+  const renderStepper = () => {
+    const stage = activeStage();
+    const doneKeys = new Set();
+    if (stage === "review" || stage === "render" || stage === "done") doneKeys.add("input");
+    if (stage === "render" || stage === "done") doneKeys.add("review");
+    if (stage === "done") doneKeys.add("done");
+    const activeMap = {
+      input: "input",
+      ingest: "input",
+      review: "review",
+      render: "review",
+      done: "done",
+    };
+    const currentKey = activeMap[stage] || "input";
+    stepperEl.innerHTML = steps.map((step, index) => `
+      <div class="qs-step ${step.key === currentKey ? "is-active" : ""} ${doneKeys.has(step.key) ? "is-done" : ""}">
+        <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : index + 1}</div>
+        <div class="qs-step-label">${step.label}</div>
+        <div class="qs-step-meta">${step.meta}</div>
+      </div>
+    `).join("");
+  };
+
+  const showOnlyStage = (stageName) => {
+    Object.entries(stageEls).forEach(([key, el]) => {
+      el.classList.toggle("qs-hidden", key !== stageName);
+    });
+    renderStepper();
+  };
+
+  const setSourceMode = (mode) => {
+    state.sourceMode = mode;
+    sourceButtons.forEach((btn) => btn.classList.toggle("is-active", btn.dataset.sourceMode === mode));
+    const isUploadMode = mode !== "youtube";
+    youtubePanel.classList.toggle("qs-hidden", isUploadMode);
+    uploadPanel.classList.toggle("qs-hidden", !isUploadMode);
+  };
+
+  const renderTranscript = (segments) => {
+    if (!segments?.length) {
+      transcriptWrap.innerHTML = `<div class="qs-empty">Transcript will appear here after ingest finishes.</div>`;
       return;
     }
+    transcriptWrap.innerHTML = segments.map((segment) => `
+      <div class="qs-transcript-item">
+        <div class="qs-transcript-time">${segment.start_label || ""}${segment.end_label ? ` → ${segment.end_label}` : ""}</div>
+        <div>${segment.text || ""}</div>
+      </div>
+    `).join("");
+  };
 
-    progressWrap.style.display = "block";
-    progressBar.style.width = "0%";
-    progressText.textContent = "0%";
-    progressBytes.textContent = `0 MB / ${formatMb(file.size)}`;
+  const renderIngestStatus = () => {
+    const job = state.session?.job || {};
+    const queuePosition = Number(job.queue_position || 0);
+    const stage = String(job.result?.stage || "").trim().toLowerCase();
+    const currentStage = stage || (job.status === "processing" ? "downloading" : "queued");
+    const rows = [
+      { key: "queued", label: "Queued" },
+      { key: "downloading", label: state.session?.source_type === "youtube" ? "Downloading" : "Uploading" },
+      { key: "transcribing", label: "Transcribing" },
+      { key: "ready", label: "Ready to review" },
+    ];
+    ingestHeadline.textContent = job.result?.message || "Queued";
+    ingestCopy.textContent = "You can leave this page now. We’ll pick this up again when you come back.";
+    ingestQueueCopy.textContent = queuePosition > 0
+      ? `You're in line — ${queuePosition} ${queuePosition === 1 ? "job" : "jobs"} ahead. We'll start this shortly.`
+      : "No wait right now. We’ll keep working in the background.";
+    const activeIndex = rows.findIndex((row) => row.key === currentStage);
+    ingestStatusList.innerHTML = rows.map((row, index) => {
+      const done = activeIndex > index || currentStage === "ready";
+      const current = activeIndex === index;
+      return `
+        <div class="qs-status-row ${current ? "is-current" : ""} ${done ? "is-done" : ""}">
+          <span><span class="qs-dot"></span> ${row.label}</span>
+          <span>${current ? "working" : (done ? "done" : "")}</span>
+        </div>
+      `;
+    }).join("");
+  };
 
-    const xhr = new XMLHttpRequest();
-    const actionUrl = form.getAttribute("action") || window.location.href;
-    xhr.open(form.method || "POST", actionUrl, true);
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) {
-        progressText.textContent = "Uploading...";
-        return;
+  const renderReview = () => {
+    const session = state.session || {};
+    const video = session.video || {};
+    const transcript = session.transcript || {};
+    reviewVideo.poster = video.thumbnail_url || "";
+    reviewVideo.src = video.source_url || "";
+    clipStartInput.value = session.clip_start_seconds ?? session.result?.clip_start_seconds ?? 0;
+    clipEndInput.value = session.clip_end_seconds ?? session.result?.clip_end_seconds ?? 30;
+    clipTitleInput.value = session.clip_title || session.result?.clip_title || video.title || "First short";
+    renderTranscript(transcript.segments || []);
+  };
+
+  const renderDone = () => {
+    const result = state.session?.result || {};
+    const clipUrl = result.clip_url || "";
+    doneVideo.src = clipUrl;
+    downloadLink.href = clipUrl || "#";
+    doneFeedback.textContent = result.title ? `Short ready: ${result.title}` : "Short ready.";
+  };
+
+  const renderView = () => {
+    const stage = activeStage();
+    if (stage === "ingest") {
+      renderIngestStatus();
+      showOnlyStage("ingest");
+      setLiveMessage(state.session?.job?.result?.message || "Preparing your source.");
+      return;
+    }
+    if (stage === "review") {
+      renderReview();
+      showOnlyStage("review");
+      setLiveMessage("Ready to review.");
+      return;
+    }
+    if (stage === "render") {
+      const queuePosition = Number(state.session?.render_job?.queue_position || 0);
+      renderCopy.textContent = queuePosition > 0
+        ? `You're in line — ${queuePosition} ${queuePosition === 1 ? "job" : "jobs"} ahead. We'll start this shortly.`
+        : "Generating your short…";
+      showOnlyStage("render");
+      setLiveMessage("Creating your short.");
+      return;
+    }
+    if (stage === "done") {
+      renderDone();
+      showOnlyStage("done");
+      setLiveMessage("Your short is ready.");
+      return;
+    }
+    showOnlyStage("input");
+    setLiveMessage("Choose a source to start.");
+  };
+
+  const stopPolling = () => {
+    if (state.pollTimer) {
+      window.clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+    }
+  };
+
+  const maybeNotify = () => {
+    if (!state.session) return;
+    if (activeStage() === "review" && typeof window.vsPushNotification === "function") {
+      window.vsPushNotification({
+        title: "Source ready",
+        message: "Your source is ready to review.",
+        href: `${window.location.pathname}?session=${encodeURIComponent(state.session.id)}`,
+      });
+    }
+    if (activeStage() === "done" && typeof window.vsPushNotification === "function") {
+      window.vsPushNotification({
+        title: "Short ready",
+        message: "Your short video is ready.",
+        href: `${window.location.pathname}?session=${encodeURIComponent(state.session.id)}`,
+      });
+    }
+  };
+
+  const fetchSession = async (sessionId) => {
+    const url = new URL(`${window.location.origin}/video_shorts/shorts/quick/api/session`);
+    if (sessionId) url.searchParams.set("session_id", sessionId);
+    const response = await fetch(url.toString(), { credentials: "same-origin", cache: "no-store" });
+    const payload = await response.json();
+    if (response.ok) {
+      state.session = payload.session || null;
+      renderView();
+      const qs = new URLSearchParams(window.location.search);
+      if (state.session?.id && qs.get("session") !== state.session.id) {
+        qs.set("session", state.session.id);
+        window.history.replaceState({}, "", `${window.location.pathname}?${qs.toString()}`);
       }
-      const percent = Math.round((e.loaded / e.total) * 100);
-      progressBar.style.width = `${percent}%`;
-      progressText.textContent = `${percent}%`;
-      progressBytes.textContent = `${formatMb(e.loaded)} / ${formatMb(e.total)}`;
-    };
-    xhr.onreadystatechange = () => {
-      if (xhr.readyState !== 4) return;
-      if (xhr.status >= 200 && xhr.status < 400) {
-        const responseUrl = xhr.responseURL;
-        if (responseUrl && responseUrl !== window.location.href) {
-          window.location.assign(responseUrl);
-          return;
-        }
-        document.open();
-        document.write(xhr.responseText);
-        document.close();
-        return;
+    }
+    return payload;
+  };
+
+  const schedulePoll = (delay = state.pollDelayMs) => {
+    stopPolling();
+    state.pollTimer = window.setTimeout(async () => {
+      const before = activeStage();
+      await fetchSession(state.session?.id || "");
+      const after = activeStage();
+      if ((before === "ingest" && after === "review") || (before === "render" && after === "done")) {
+        maybeNotify();
       }
-      progressText.textContent = "Upload failed.";
-    };
-    xhr.send(formData);
+      if (["ingest", "render"].includes(after)) {
+        state.pollDelayMs = Math.min(state.pollDelayMs + 500, 6000);
+        schedulePoll(state.pollDelayMs);
+      } else {
+        state.pollDelayMs = 2000;
+      }
+    }, delay);
+  };
+
+  const beginSessionPollingIfNeeded = () => {
+    const stage = activeStage();
+    if (["ingest", "render"].includes(stage)) {
+      schedulePoll(1500);
+    } else {
+      stopPolling();
+    }
+  };
+
+  const postJson = async (url, body) => {
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      body: JSON.stringify(body || {}),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = {};
+    }
+    return { response, payload };
+  };
+
+  const formatUploadMeta = (file) => {
+    if (!file) return "";
+    const mb = (file.size / (1024 * 1024)).toFixed(1);
+    return `${file.name} · ${mb} MB · ${file.type || "binary"}`;
+  };
+
+  sourceButtons.forEach((btn) => {
+    btn.addEventListener("click", () => setSourceMode(btn.dataset.sourceMode || "youtube"));
   });
+
+  uploadInput?.addEventListener("change", () => {
+    uploadMeta.textContent = formatUploadMeta(uploadInput.files?.[0]);
+  });
+
+  youtubeSubmit?.addEventListener("click", async () => {
+    inputFeedback.textContent = "Queued → Downloading → Transcribing → Ready to review";
+    const { response, payload } = await postJson("/video_shorts/shorts/quick/api/ingest-youtube", {
+      video_url: youtubeUrlInput.value,
+    });
+    if (!response.ok) {
+      inputFeedback.textContent = payload.message || "Couldn't start ingest.";
+      return;
+    }
+    state.session = payload.session;
+    renderView();
+    beginSessionPollingIfNeeded();
+  });
+
+  uploadSubmit?.addEventListener("click", async () => {
+    const file = uploadInput.files?.[0];
+    if (!file) {
+      inputFeedback.textContent = "Choose a file first.";
+      return;
+    }
+    inputFeedback.textContent = "Preparing direct upload…";
+    const mode = state.sourceMode === "youtube" ? "video" : state.sourceMode;
+    const { response, payload } = await postJson("/video_shorts/shorts/quick/api/upload/presign", {
+      filename: file.name,
+      size_bytes: file.size,
+      content_type: file.type || "application/octet-stream",
+      upload_kind: mode,
+    });
+    if (!response.ok) {
+      inputFeedback.textContent = payload.message || "Couldn't prepare the upload.";
+      return;
+    }
+    const putResponse = await fetch(payload.upload_url, {
+      method: "PUT",
+      headers: payload.headers || { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    if (!putResponse.ok) {
+      inputFeedback.textContent = "Upload failed.";
+      return;
+    }
+    inputFeedback.textContent = "Upload complete. Starting transcription…";
+    const completion = await postJson("/video_shorts/shorts/quick/api/upload/complete", {
+      session_id: payload.session_id,
+      duration_seconds: null,
+    });
+    if (!completion.response.ok) {
+      inputFeedback.textContent = completion.payload.message || "Couldn't start transcription.";
+      return;
+    }
+    state.session = completion.payload.session;
+    renderView();
+    beginSessionPollingIfNeeded();
+  });
+
+  renderSubmit?.addEventListener("click", async () => {
+    reviewFeedback.textContent = "Creating your short… we'll notify you.";
+    const { response, payload } = await postJson("/video_shorts/shorts/quick/api/render", {
+      session_id: state.session?.id,
+      clip_start_seconds: Number(clipStartInput.value || 0),
+      clip_end_seconds: Number(clipEndInput.value || 0),
+      clip_title: clipTitleInput.value || "First short",
+    });
+    if (response.status === 403 && payload.code === "export_limit_reached") {
+      reviewFeedback.textContent = "You've hit this month's export limit — upgrade or wait until the reset.";
+      return;
+    }
+    if (response.status === 429 && payload.code === "concurrency_limit") {
+      reviewFeedback.textContent = "Finish your current short first — your plan runs one at a time.";
+      return;
+    }
+    if (!response.ok) {
+      reviewFeedback.textContent = payload.message || "Couldn't generate this short. Please try again.";
+      return;
+    }
+    state.session = payload.session;
+    renderView();
+    beginSessionPollingIfNeeded();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.session?.id) {
+      fetchSession(state.session.id).then(beginSessionPollingIfNeeded);
+    }
+  });
+
+  setSourceMode("youtube");
+  if (state.session?.source_type === "upload") {
+    setSourceMode(state.session.upload_kind || "upload");
+  }
+  renderView();
+  beginSessionPollingIfNeeded();
 })();
 </script>
-{% endif %}
 {% endblock %}

@@ -17,6 +17,8 @@ from app.video_shorts.services.usage_metering import (
 
 JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
+JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
+JOB_TYPE_TRANSCRIBE_UPLOAD = "transcribe_upload"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_PROCESSING = "processing"
 JOB_STATUS_DONE = "done"
@@ -289,9 +291,59 @@ def get_job(job_id: str, *, user_id: Optional[str] = None) -> Optional[Dict[str,
         conn.close()
 
 
-def enqueue_render_job(
+def update_job_result(job_id: str, result: Dict[str, Any], *, touch_status: bool = False) -> Dict[str, Any]:
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        if touch_status:
+            conn.execute(
+                f"""
+                UPDATE {JOBS_TABLE}
+                SET result_json = {_json_value_sql(conn)},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [_serialize_json(result) or "{}", job_id],
+            )
+        else:
+            conn.execute(
+                f"""
+                UPDATE {JOBS_TABLE}
+                SET result_json = {_json_value_sql(conn)},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [_serialize_json(result) or "{}", job_id],
+            )
+        conn.commit()
+        return get_job(job_id) or {}
+    finally:
+        conn.close()
+
+
+def update_job_payload(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        conn.execute(
+            f"""
+            UPDATE {JOBS_TABLE}
+            SET payload_json = {_json_value_sql(conn)},
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            [_serialize_json(payload) or "{}", job_id],
+        )
+        conn.commit()
+        return get_job(job_id) or {}
+    finally:
+        conn.close()
+
+
+def enqueue_job(
     *,
     user_id: str,
+    job_type: str,
     payload: Dict[str, Any],
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
@@ -317,15 +369,16 @@ def enqueue_render_job(
             return {"kind": "existing", "job": existing_active}
 
         plan = _fetch_plan_settings(conn, user_id)
-        inflight = _count_user_inflight(conn, user_id)
-        if inflight >= plan["max_concurrent_jobs"]:
-            conn.commit()
-            return {
-                "kind": "concurrency_limit",
-                "limit": plan["max_concurrent_jobs"],
-                "inflight": inflight,
-                "plan_id": plan["plan_id"],
-            }
+        if job_type == JOB_TYPE_RENDER_SHORT:
+            inflight = _count_user_inflight(conn, user_id)
+            if inflight >= plan["max_concurrent_jobs"]:
+                conn.commit()
+                return {
+                    "kind": "concurrency_limit",
+                    "limit": plan["max_concurrent_jobs"],
+                    "inflight": inflight,
+                    "plan_id": plan["plan_id"],
+                }
 
         job_id = str(uuid4())
         payload_json = _serialize_json(payload) or "{}"
@@ -349,7 +402,7 @@ def enqueue_render_job(
             [
                 job_id,
                 user_id,
-                JOB_TYPE_RENDER_SHORT,
+                job_type,
                 JOB_STATUS_QUEUED,
                 plan["render_priority"],
                 payload_json,
@@ -369,23 +422,44 @@ def enqueue_render_job(
         conn.close()
 
 
-def claim_next_job(worker_id: str, *, job_type: str = JOB_TYPE_RENDER_SHORT) -> Optional[Dict[str, Any]]:
+def enqueue_render_job(
+    *,
+    user_id: str,
+    payload: Dict[str, Any],
+    input_hash: str,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+) -> Dict[str, Any]:
+    return enqueue_job(
+        user_id=user_id,
+        job_type=JOB_TYPE_RENDER_SHORT,
+        payload=payload,
+        input_hash=input_hash,
+        max_attempts=max_attempts,
+    )
+
+
+def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
         backend_name = getattr(conn, "backend_name", "")
+        job_type_clause = ""
+        params: list[Any] = []
+        if job_type:
+            job_type_clause = "AND type = ?"
+            params.append(job_type)
         if backend_name == "postgres":
             row = conn.execute(
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
-                WHERE type = ?
-                  AND status = ?
+                WHERE status = ?
+                  {job_type_clause}
                 ORDER BY priority DESC, created_at ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 """,
-                [job_type, JOB_STATUS_QUEUED],
+                [JOB_STATUS_QUEUED, *params],
             ).fetchone()
             if not row:
                 conn.commit()
@@ -428,12 +502,12 @@ def claim_next_job(worker_id: str, *, job_type: str = JOB_TYPE_RENDER_SHORT) -> 
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
-                WHERE type = ?
-                  AND status = ?
+                WHERE status = ?
+                  {job_type_clause}
                 ORDER BY priority DESC, created_at ASC
                 LIMIT 1
                 """,
-                [job_type, JOB_STATUS_QUEUED],
+                [JOB_STATUS_QUEUED, *params],
             ).fetchone()
             if not row:
                 conn.commit()

@@ -3,15 +3,31 @@ from __future__ import annotations
 import os
 import socket
 import time
+import tempfile
 from typing import Any, Dict, Optional, Tuple
+from pathlib import Path
 
 from flask import g
 
 from app import create_app
 from app.video_shorts.config import JOB_POLL_INTERVAL_SECONDS, JOB_TIMEOUT_SECONDS, WORKER_CONCURRENCY
 from app.video_shorts.routes import generation
+from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.media_utils import _resolve_source_video, _cleanup_resolved_source_video
+from app.video_shorts.services.quick_short_flow import (
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_INGESTING,
+    STATUS_RENDERING,
+    STATUS_REVIEW,
+    get_session,
+    update_session,
+)
 from app.video_shorts.services.render_jobs import (
+    JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_RENDER_SHORT,
+    JOB_TYPE_TRANSCRIBE_UPLOAD,
     claim_next_job,
     finalize_job_success,
     get_job,
@@ -19,7 +35,22 @@ from app.video_shorts.services.render_jobs import (
     mark_job_failed,
     requeue_job,
     requeue_timed_out_jobs,
+    update_job_result,
 )
+from app.video_shorts.services.storage import get_media_storage, build_storage_reference
+from app.video_shorts.services.transcript_service import _transcribe_with_whisper
+from app.video_shorts.services.usage_metering import add_transcription_minutes
+from app.video_shorts.services.db import (
+    _ensure_transcript_schema,
+    _ensure_video_crop_schema,
+    ensure_postgres_youtube_transcripts_id_default,
+    get_db,
+)
+
+try:
+    import yt_dlp
+except ImportError:  # pragma: no cover
+    yt_dlp = None
 
 
 class PermanentRenderJobError(RuntimeError):
@@ -129,6 +160,232 @@ def _update_plan_status(job: Dict[str, Any], status: str) -> None:
         pass
 
 
+def _set_quick_session_state(session_id: Optional[str], **updates: Any) -> None:
+    if not session_id:
+        return
+    try:
+        update_session(session_id, **updates)
+    except Exception:
+        pass
+
+
+def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> None:
+    payload = {"stage": stage, "message": message}
+    if status:
+        payload["status"] = status
+    if extra:
+        payload.update(extra)
+    update_job_result(job_id, payload)
+
+
+def _duration_minutes(duration_seconds: Any) -> float:
+    try:
+        seconds = float(duration_seconds or 0)
+    except Exception:
+        seconds = 0.0
+    if seconds <= 0:
+        return 0.0
+    return round(seconds / 60.0, 2)
+
+
+def _download_youtube_video(video_url: str, video_id: str) -> Path:
+    if yt_dlp is None:
+        raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
+    work_dir = Path(tempfile.mkdtemp(prefix=f"vs_quick_{video_id}_"))
+    target = work_dir / f"{video_id}.mp4"
+    opts = {
+        "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
+        "merge_output_format": "mp4",
+        "format": "bestvideo*+bestaudio/best",
+        "quiet": True,
+        "noprogress": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([video_url])
+    if target.exists():
+        return target
+    candidates = sorted(work_dir.glob(f"{video_id}.*"))
+    if not candidates:
+        raise FileNotFoundError(f"download output missing for {video_id}")
+    candidates[0].rename(target)
+    return target
+
+
+def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], owner_user_id: Optional[str], duration_seconds: Any) -> None:
+    segments_json = generation.json.dumps(segments, ensure_ascii=False)
+    conn = get_db()
+    try:
+        _ensure_video_crop_schema(conn)
+        _ensure_transcript_schema(conn)
+        ensure_postgres_youtube_transcripts_id_default(conn)
+        existing = conn.execute("SELECT 1 FROM youtube_transcripts WHERE video_id = ?", [video_id]).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE youtube_transcripts SET full_text = ?, segments_json = ?, whisper_segments_json = ? WHERE video_id = ?",
+                [full_text, segments_json, segments_json, video_id],
+            )
+        else:
+            conn.execute(
+                "INSERT INTO youtube_transcripts (video_id, full_text, segments_json, whisper_segments_json) VALUES (?, ?, ?, ?)",
+                [video_id, full_text, segments_json, segments_json],
+            )
+        conn.execute(
+            """
+            UPDATE youtube_videos
+            SET transcript_status = 'done',
+                fetch_transcript = FALSE,
+                last_checked_at = CURRENT_TIMESTAMP
+            WHERE video_id = ?
+            """,
+            [video_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if owner_user_id:
+        minutes = _duration_minutes(duration_seconds)
+        if minutes > 0:
+            add_transcription_minutes(str(owner_user_id), minutes)
+
+
+def _suggest_clip(segments: list[dict], duration_seconds: Any) -> Tuple[float, float, str, str]:
+    if segments:
+        first = segments[0] or {}
+        start = float(first.get("start") or 0.0)
+        end = float(first.get("end") or 0.0)
+        if end <= start:
+            end = start + 20.0
+        end = min(end, start + 30.0)
+        title = str((first.get("tr_text") or first.get("text") or "First short").strip())[:80] or "First short"
+        excerpt = str((first.get("tr_text") or first.get("text") or "").strip())
+        return round(start, 3), round(end, 3), title, excerpt
+    duration = float(duration_seconds or 30.0)
+    end = min(duration, 30.0)
+    return 0.0, round(end, 3), "First short", ""
+
+
+def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    session_id = str(payload.get("quick_session_id") or "").strip()
+    video_url = str(payload.get("video_url") or "").strip()
+    video_id = str(payload.get("video_id") or "").strip()
+    video_pk = int(payload.get("video_pk"))
+    owner_user_id = str(job["user_id"])
+    duration_seconds = payload.get("duration_seconds")
+    _set_quick_session_state(session_id, status=STATUS_INGESTING)
+    _set_job_progress(job["id"], stage="queued", message="Queued for ingest.", status="queued")
+    _set_job_progress(job["id"], stage="downloading", message="Downloading the source video.", status="processing")
+    local_path = _download_youtube_video(video_url, video_id)
+    try:
+        storage = get_media_storage()
+        source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
+        storage.put_file(local_path, source_key)
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET download_status = 'downloaded',
+                    downloaded_at = CURRENT_TIMESTAMP,
+                    last_checked_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [video_pk],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
+        transcript_text, segments = _transcribe_with_whisper(local_path)
+        _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
+        clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
+        result = {
+            "stage": "ready",
+            "message": "Ready to review.",
+            "video_pk": video_pk,
+            "video_id": video_id,
+            "clip_start_seconds": clip_start,
+            "clip_end_seconds": clip_end,
+            "clip_title": clip_title,
+            "excerpt": excerpt,
+            "source_url": build_storage_reference(source_key),
+        }
+        _set_quick_session_state(
+            session_id,
+            status=STATUS_REVIEW,
+            video_pk=video_pk,
+            video_id=video_id,
+            clip_start_seconds=clip_start,
+            clip_end_seconds=clip_end,
+            clip_title=clip_title,
+            result=result,
+        )
+        return result
+    finally:
+        try:
+            local_path.unlink(missing_ok=True)
+            local_path.parent.rmdir()
+        except Exception:
+            pass
+
+
+def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    session_id = str(payload.get("quick_session_id") or "").strip()
+    video_id = str(payload.get("video_id") or "").strip()
+    video_pk = int(payload.get("video_pk"))
+    owner_user_id = str(job["user_id"])
+    duration_seconds = payload.get("duration_seconds")
+    _set_quick_session_state(session_id, status=STATUS_INGESTING)
+    _set_job_progress(job["id"], stage="uploaded", message="Upload complete. Preparing transcription.", status="processing")
+    source_path, is_temp = _resolve_source_video(video_id)
+    if not source_path or not source_path.exists():
+        raise PermanentRenderJobError("Uploaded source file could not be found.")
+    try:
+        _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
+        transcript_text, segments = _transcribe_with_whisper(source_path)
+        _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
+        clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET download_status = 'downloaded',
+                    downloaded_at = CURRENT_TIMESTAMP,
+                    last_checked_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [video_pk],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        result = {
+            "stage": "ready",
+            "message": "Ready to review.",
+            "video_pk": video_pk,
+            "video_id": video_id,
+            "clip_start_seconds": clip_start,
+            "clip_end_seconds": clip_end,
+            "clip_title": clip_title,
+            "excerpt": excerpt,
+        }
+        _set_quick_session_state(
+            session_id,
+            status=STATUS_REVIEW,
+            video_pk=video_pk,
+            video_id=video_id,
+            clip_start_seconds=clip_start,
+            clip_end_seconds=clip_end,
+            clip_title=clip_title,
+            result=result,
+        )
+        return result
+    finally:
+        _cleanup_resolved_source_video(source_path, is_temp)
+
+
 def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     video_pk = int(payload.get("video_pk"))
@@ -164,23 +421,47 @@ def process_next_job(app, worker_id: str) -> bool:
     job = claim_next_job(worker_id)
     if not job:
         return False
-    _update_plan_status(job, "processing")
+    if job.get("type") == JOB_TYPE_RENDER_SHORT:
+        _update_plan_status(job, "processing")
     try:
-        result = _execute_render_job(app, job)
+        if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
+            result = _execute_ingest_youtube_job(app, job)
+        elif job.get("type") == JOB_TYPE_TRANSCRIBE_UPLOAD:
+            result = _execute_transcribe_upload_job(app, job)
+        else:
+            result = _execute_render_job(app, job)
         mark_job_done(job["id"], result)
-        finalize_job_success(job["id"])
+        if job.get("type") == JOB_TYPE_RENDER_SHORT:
+            finalize_job_success(job["id"])
+            quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
+            if quick_session_id:
+                _set_quick_session_state(
+                    quick_session_id,
+                    status=STATUS_DONE,
+                    render_job_id=job.get("id"),
+                    result=result,
+                )
         return True
     except PermanentRenderJobError as exc:
-        _mark_plan_failure(job, str(exc))
-        mark_job_failed(job["id"], str(exc))
+        if job.get("type") == JOB_TYPE_RENDER_SHORT:
+            _mark_plan_failure(job, str(exc))
+        mark_job_failed(job["id"], str(exc), release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT)
+        quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
+        if quick_session_id:
+            _set_quick_session_state(quick_session_id, status=STATUS_FAILED, result={"message": str(exc)})
         return True
     except Exception as exc:
         latest = get_job(job["id"]) or job
         if int(latest.get("attempts") or 0) >= int(latest.get("max_attempts") or 1):
-            _mark_plan_failure(latest, str(exc))
-            mark_job_failed(job["id"], str(exc))
+            if latest.get("type") == JOB_TYPE_RENDER_SHORT:
+                _mark_plan_failure(latest, str(exc))
+            mark_job_failed(job["id"], str(exc), release_reservation=latest.get("type") == JOB_TYPE_RENDER_SHORT)
+            quick_session_id = str((latest.get("payload") or {}).get("quick_session_id") or "").strip()
+            if quick_session_id:
+                _set_quick_session_state(quick_session_id, status=STATUS_FAILED, result={"message": str(exc)})
         else:
-            _update_plan_status(latest, "queued")
+            if latest.get("type") == JOB_TYPE_RENDER_SHORT:
+                _update_plan_status(latest, "queued")
             requeue_job(job["id"], str(exc))
         return True
 
