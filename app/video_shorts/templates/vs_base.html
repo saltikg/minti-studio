@@ -39,6 +39,9 @@
     </a>
     <div class="d-flex flex-wrap align-items-center gap-2 vs-topnav-actions">
       {% if vs_current_user %}
+        <a href="{{ url_for('video_shorts_bp.account_page') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Account usage summary">
+          Usage
+        </a>
         {% if vs_current_brand %}
           <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="d-flex align-items-center gap-2">
             <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
@@ -226,6 +229,7 @@
   <script>
     (() => {
       const storageKey = "vsUiNotifications";
+      const usageSummaryKey = "vsUsageSummaryCache";
 
       const readNotifications = () => {
         try {
@@ -278,6 +282,78 @@
         }
         if (menu) {
           menu.classList.add("d-none");
+        }
+      };
+
+      const formatUsageMinutes = (minutes) => {
+        const total = Math.max(0, Math.round(Number(minutes || 0)));
+        const hours = Math.floor(total / 60);
+        const mins = total % 60;
+        if (hours > 0 && mins === 0) {
+          return `${hours}h`;
+        }
+        if (hours > 0) {
+          return `${hours}h ${mins}m`;
+        }
+        return `${mins}m`;
+      };
+
+      const renderUsageSummary = (payload) => {
+        const summary = document.getElementById("vs-topnav-usage-summary");
+        if (!summary || !payload) {
+          return;
+        }
+        const exportsUsed = Number(payload?.exports?.used || 0);
+        const exportsLimit = Number(payload?.exports?.limit || 0);
+        const storageUsed = Number(payload?.storage?.used_bytes || 0);
+        const storageQuota = Number(payload?.storage?.quota_bytes || 0);
+        const transcriptionUsed = Number(payload?.transcription?.used_minutes || 0);
+        const transcriptionLimitRaw = payload?.transcription?.limit_minutes;
+        const storagePercent = storageQuota > 0 ? Math.round((storageUsed / storageQuota) * 100) : 0;
+        const parts = [
+          `Exports ${exportsUsed}/${exportsLimit || 0}`,
+          `Storage ${storagePercent}%`,
+        ];
+        if (transcriptionLimitRaw !== null && transcriptionLimitRaw !== undefined) {
+          parts.push(`Transcription ${formatUsageMinutes(transcriptionUsed)}/${formatUsageMinutes(transcriptionLimitRaw)}`);
+        }
+        summary.textContent = parts.join(" · ");
+        summary.classList.remove("d-none");
+        try {
+          window.sessionStorage.setItem(usageSummaryKey, JSON.stringify(payload));
+        } catch (error) {
+          // Ignore storage failures.
+        }
+      };
+
+      const renderCachedUsageSummary = () => {
+        try {
+          const cached = JSON.parse(window.sessionStorage.getItem(usageSummaryKey) || "null");
+          if (cached) {
+            renderUsageSummary(cached);
+          }
+        } catch (error) {
+          // Ignore storage failures.
+        }
+      };
+
+      const loadUsageSummary = async () => {
+        const summary = document.getElementById("vs-topnav-usage-summary");
+        if (!summary) {
+          return;
+        }
+        try {
+          const response = await fetch("/api/usage", {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const payload = await response.json();
+          renderUsageSummary(payload);
+        } catch (error) {
+          renderCachedUsageSummary();
         }
       };
 
@@ -362,6 +438,8 @@
       };
 
       document.addEventListener("DOMContentLoaded", () => {
+        renderCachedUsageSummary();
+        loadUsageSummary();
         renderNotificationBadge();
         renderNotificationBanner();
         renderNotificationMenu();

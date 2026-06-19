@@ -115,6 +115,21 @@
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 16px;
   }
+  .plan-compare-modal .modal-dialog {
+    max-width: 1180px;
+  }
+  .plan-compare-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .plan-compare-copy {
+    color: var(--text-2);
+    font-size: 0.92rem;
+  }
 </style>
 {% endblock %}
 
@@ -123,17 +138,11 @@
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
   <div>
     <h3 class="mb-1 vs-card-title">Plan &amp; Storage</h3>
-    <div class="vs-text-muted vs-text-small">Pick a plan that fits your workflow.</div>
-    <div class="vs-text-muted vs-text-small">Storage is used for generated shorts and exports.</div>
-    <div class="vs-text-muted vs-text-small">When you reach your limit, new exports are paused until you upgrade or delete files.</div>
   </div>
   <div class="d-flex align-items-center gap-2">
-    <div class="billing-toggle btn-group btn-group-sm" role="group" aria-label="Billing cycle">
-      <input type="radio" class="btn-check" name="billingCycle" id="billingMonthly" autocomplete="off" checked>
-      <label class="btn vs-btn vs-btn-secondary" for="billingMonthly">Monthly</label>
-      <input type="radio" class="btn-check" name="billingCycle" id="billingYearly" autocomplete="off">
-      <label class="btn vs-btn vs-btn-secondary" for="billingYearly">Yearly</label>
-    </div>
+    <button type="button" class="btn btn-sm vs-btn vs-btn-secondary" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+      Upgrade / Compare plans
+    </button>
   </div>
 </div>
 
@@ -148,7 +157,9 @@
         <div class="vs-card-title mb-1">Usage this month</div>
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
-      <a class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" href="#plans">Upgrade</a>
+      <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+        Upgrade / Compare plans
+      </button>
     </div>
     <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
     <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
@@ -159,7 +170,26 @@
   </div>
 </div>
 
-<div class="row g-3 mb-2" id="plans">
+<div class="modal fade plan-compare-modal" id="planCompareModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <div>
+          <h5 class="modal-title vs-modal-title">Compare plans</h5>
+          <div class="plan-compare-copy">Review exports, storage and transcription limits before you switch.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <div class="plan-compare-toolbar">
+          <div class="billing-toggle btn-group btn-group-sm" role="group" aria-label="Billing cycle">
+            <input type="radio" class="btn-check" name="billingCycle" id="billingMonthly" autocomplete="off" checked>
+            <label class="btn vs-btn vs-btn-secondary" for="billingMonthly">Monthly</label>
+            <input type="radio" class="btn-check" name="billingCycle" id="billingYearly" autocomplete="off">
+            <label class="btn vs-btn vs-btn-secondary" for="billingYearly">Yearly</label>
+          </div>
+        </div>
+        <div class="row g-3 mb-2">
   {% for plan in plans %}
     {% set is_selected_plan = vs_current_user and vs_current_user.plan_id == plan.plan_id %}
     {% set tier_label = plan.label %}
@@ -232,8 +262,6 @@
               <button
                 type="button"
                 class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
-                data-bs-toggle="modal"
-                data-bs-target="#planConfirmModal"
                 data-plan-id="{{ plan.plan_id }}"
                 data-plan-name="{{ tier_label }}"
                 data-plan-quota="{{ plan.quota_label }}"
@@ -255,6 +283,10 @@
       </div>
     </div>
   {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 {% if is_admin %}
@@ -316,7 +348,7 @@
         <p class="vs-text-muted mb-0">Your latest shorts are saved. Upgrade to keep generating or delete files to free up space.</p>
       </div>
       <div class="modal-footer vs-modal-footer">
-        <a class="btn vs-btn vs-btn-primary" href="#plans">Upgrade</a>
+        <button type="button" class="btn vs-btn vs-btn-primary" data-bs-dismiss="modal" data-bs-toggle="modal" data-bs-target="#planCompareModal">Upgrade / Compare plans</button>
       </div>
     </div>
   </div>
@@ -369,6 +401,7 @@
     const planButtons = document.querySelectorAll(".plan-select-btn");
     const planModalEl = document.getElementById("planConfirmModal");
     const storageLimitModalEl = document.getElementById("storageLimitModal");
+    const planCompareModalEl = document.getElementById("planCompareModal");
     const planTitleEl = document.getElementById("planConfirmTitle");
     const planPriceEl = document.getElementById("planConfirmPrice");
     const planBillingEl = document.getElementById("planConfirmBilling");
@@ -387,6 +420,7 @@
 
     const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
     const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
+    const planCompareModal = planCompareModalEl && window.bootstrap ? new bootstrap.Modal(planCompareModalEl) : null;
 
     const formatBytes = (bytes) => {
       const value = Number(bytes || 0);
@@ -635,7 +669,16 @@
         if (planIdInput) {
           planIdInput.value = button.dataset.planId;
         }
-        if (planModal) {
+        if (planCompareModalEl && planCompareModalEl.classList.contains("show")) {
+          const openConfirm = () => {
+            planCompareModalEl.removeEventListener("hidden.bs.modal", openConfirm);
+            if (planModal) {
+              planModal.show();
+            }
+          };
+          planCompareModalEl.addEventListener("hidden.bs.modal", openConfirm);
+          planCompareModal.hide();
+        } else if (planModal) {
           planModal.show();
         }
       });
