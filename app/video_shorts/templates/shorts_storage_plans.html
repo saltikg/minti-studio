@@ -251,25 +251,6 @@
           <div class="plan-actions">
             {% if is_selected_plan %}
               <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
-            {% else %}
-              <button
-                type="button"
-                class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
-                data-plan-id="{{ plan.plan_id }}"
-                data-plan-name="{{ tier_label }}"
-                data-plan-quota="{{ plan.quota_label }}"
-                data-price-monthly="{{ monthly_price }}"
-                data-price-yearly="{{ yearly_total }}">
-                {% if tier_label == "Free" %}
-                  Start free
-                {% elif tier_label == "Starter" %}
-                  Upgrade to Starter
-                {% elif tier_label == "Creator" %}
-                  Upgrade to Creator
-                {% else %}
-                  Upgrade to Studio
-                {% endif %}
-              </button>
             {% elif is_admin %}
               <button
                 type="button"
@@ -287,6 +268,25 @@
                   Switch to Creator
                 {% else %}
                   Switch to Studio
+                {% endif %}
+              </button>
+            {% else %}
+              <button
+                type="button"
+                class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
+                data-plan-id="{{ plan.plan_id }}"
+                data-plan-name="{{ tier_label }}"
+                data-plan-quota="{{ plan.quota_label }}"
+                data-price-monthly="{{ monthly_price }}"
+                data-price-yearly="{{ yearly_total }}">
+                {% if tier_label == "Free" %}
+                  Start free
+                {% elif tier_label == "Starter" %}
+                  Upgrade to Starter
+                {% elif tier_label == "Creator" %}
+                  Upgrade to Creator
+                {% else %}
+                  Upgrade to Studio
                 {% endif %}
               </button>
             {% endif %}
