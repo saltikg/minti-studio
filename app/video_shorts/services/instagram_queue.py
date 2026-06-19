@@ -236,10 +236,19 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
         ensure_instagram_queue_schema(conn)
         now = _utc_now_iso()
         backend_name = getattr(conn, "backend_name", "duckdb")
-        publish_ts_expr = _queue_timestamp_expr("publish_at_norm", backend_name)
-        created_ts_expr = _queue_timestamp_expr("created_at_norm", backend_name)
+        publish_ts_expr = _queue_timestamp_expr("publish_at_clean", backend_name)
+        created_ts_expr = _queue_timestamp_expr("created_at_clean", backend_name)
         z_suffix_like = "'%%Z'" if backend_name == "postgres" else "'%Z'"
-        stale_cutoff = (datetime.utcnow() - timedelta(seconds=STALE_UPLOAD_SECONDS)).isoformat()
+        stale_cutoff = (
+            datetime.utcnow().replace(microsecond=0) - timedelta(seconds=STALE_UPLOAD_SECONDS)
+        ).isoformat() + "Z"
+        if backend_name == "postgres":
+            sort_ts_expr = (
+                f"COALESCE(EXTRACT(EPOCH FROM {publish_ts_expr}), "
+                f"EXTRACT(EPOCH FROM {created_ts_expr}))"
+            )
+        else:
+            sort_ts_expr = f"COALESCE(epoch({publish_ts_expr}), epoch({created_ts_expr}))"
         conn.execute(
             """
             UPDATE shorts_instagram_queue
@@ -259,19 +268,30 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
                 SELECT *,
                        CASE
                            WHEN publish_at IS NULL THEN NULL
-                           WHEN publish_at LIKE {z_suffix_like} THEN replace(publish_at, 'Z', '+00:00')
-                           ELSE publish_at
+                           WHEN CAST(publish_at AS VARCHAR) LIKE {z_suffix_like}
+                               THEN replace(CAST(publish_at AS VARCHAR), 'Z', '+00:00')
+                           ELSE CAST(publish_at AS VARCHAR)
                        END AS publish_at_norm
                 FROM shorts_instagram_queue
             ),
+            cleaned AS (
+                SELECT *,
+                       split_part(replace(publish_at_norm, 'Z', ''), '+', 1) AS publish_at_clean
+                FROM normalized
+            ),
             queue AS (
                 SELECT *,
-                       {publish_ts_expr} AS publish_ts
-                FROM normalized
+                       {publish_ts_expr} AS publish_ts,
+                       CASE
+                           WHEN publish_at IS NULL OR btrim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
+                           WHEN {publish_ts_expr} IS NULL THEN FALSE
+                           ELSE {publish_ts_expr} <= NOW()
+                       END AS ready_now
+                FROM cleaned
             )
             SELECT COUNT(*) FROM queue
             WHERE status IN ('pending','retry')
-              AND (publish_ts IS NULL OR publish_ts <= NOW())
+              AND ready_now
             """
         ).fetchone()[0]
         print(f"Instagram queue status counts={status_counts} due_now={due_count}")
@@ -281,21 +301,35 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
                 SELECT *,
                        CASE
                            WHEN publish_at IS NULL THEN NULL
-                           WHEN publish_at LIKE {z_suffix_like} THEN replace(publish_at, 'Z', '+00:00')
-                           ELSE publish_at
+                           WHEN CAST(publish_at AS VARCHAR) LIKE {z_suffix_like}
+                               THEN replace(CAST(publish_at AS VARCHAR), 'Z', '+00:00')
+                           ELSE CAST(publish_at AS VARCHAR)
                        END AS publish_at_norm,
                        CASE
                            WHEN created_at IS NULL THEN NULL
-                           WHEN created_at LIKE {z_suffix_like} THEN replace(created_at, 'Z', '+00:00')
-                           ELSE created_at
+                           WHEN CAST(created_at AS VARCHAR) LIKE {z_suffix_like}
+                               THEN replace(CAST(created_at AS VARCHAR), 'Z', '+00:00')
+                           ELSE CAST(created_at AS VARCHAR)
                        END AS created_at_norm
                 FROM shorts_instagram_queue
+            ),
+            cleaned AS (
+                SELECT *,
+                       split_part(replace(publish_at_norm, 'Z', ''), '+', 1) AS publish_at_clean,
+                       split_part(replace(created_at_norm, 'Z', ''), '+', 1) AS created_at_clean
+                FROM normalized
             ),
             queue AS (
                 SELECT *,
                        {publish_ts_expr} AS publish_ts,
-                       {created_ts_expr} AS created_ts
-                FROM normalized
+                       {created_ts_expr} AS created_ts,
+                       {sort_ts_expr} AS sort_ts,
+                       CASE
+                           WHEN publish_at IS NULL OR btrim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
+                           WHEN {publish_ts_expr} IS NULL THEN FALSE
+                           ELSE {publish_ts_expr} <= NOW()
+                       END AS ready_now
+                FROM cleaned
             )
             SELECT
                 id,
@@ -319,8 +353,8 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
                 media_type
             FROM queue
             WHERE status IN ('pending','retry')
-              AND (publish_ts IS NULL OR publish_ts <= NOW())
-            ORDER BY COALESCE(publish_ts, created_ts) ASC
+              AND ready_now
+            ORDER BY sort_ts ASC
             LIMIT ?
             """,
             [limit],
