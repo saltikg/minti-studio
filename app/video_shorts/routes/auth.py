@@ -311,11 +311,16 @@ def _build_onboarding_context() -> dict:
     core_completed = completed_core_steps >= core_total_steps
     dismissed = bool(user.get("onboarding_dismissed"))
 
+    progress_percent = int((completed_core_steps / core_total_steps) * 100) if core_total_steps else 0
+
     return {
-        "show_modal": not core_completed and not dismissed,
+        "show_modal": not core_completed,
+        "auto_open": not core_completed and not dismissed,
+        "core_completed": core_completed,
         "dismissed": dismissed,
         "completed_core_steps": completed_core_steps,
         "core_total_steps": core_total_steps,
+        "progress_percent": progress_percent,
         "steps": core_steps + optional_steps,
         "source_count": source_count,
         "exports_used": exports_used,

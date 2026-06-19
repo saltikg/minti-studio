@@ -97,6 +97,42 @@
       color: var(--text-2);
       font-size: 0.9rem;
     }
+    .vs-onboarding-header-trigger {
+      min-width: 168px;
+      padding: 8px 12px;
+      text-align: left;
+      gap: 8px;
+    }
+    .vs-onboarding-header-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .vs-onboarding-header-label {
+      color: var(--text-1);
+      font-size: 0.82rem;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+    .vs-onboarding-header-meta {
+      color: var(--text-2);
+      font-size: 0.76rem;
+      line-height: 1.1;
+    }
+    .vs-onboarding-header-bar {
+      width: 58px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+    .vs-onboarding-header-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--mint-2), var(--mint));
+    }
   </style>
 
   <meta name="robots" content="noindex, nofollow">
@@ -115,6 +151,21 @@
         <a href="{{ url_for('video_shorts_bp.account_page') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Account usage summary">
           Usage
         </a>
+        {% if vs_onboarding and not vs_onboarding.core_completed %}
+          <button
+            type="button"
+            id="vs-topnav-onboarding-trigger"
+            class="btn btn-sm vs-btn-outline d-inline-flex align-items-center vs-onboarding-header-trigger"
+            aria-label="Open setup checklist">
+            <span class="vs-onboarding-header-copy">
+              <span class="vs-onboarding-header-label">Setup progress</span>
+              <span class="vs-onboarding-header-meta">{{ vs_onboarding.completed_core_steps }} of {{ vs_onboarding.core_total_steps }}</span>
+            </span>
+            <span class="vs-onboarding-header-bar" aria-hidden="true">
+              <span class="vs-onboarding-header-bar-fill" style="width: {{ vs_onboarding.progress_percent }}%;"></span>
+            </span>
+          </button>
+        {% endif %}
         {% if vs_current_brand %}
           <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="d-flex align-items-center gap-2">
             <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
@@ -127,9 +178,6 @@
             </select>
           </form>
         {% endif %}
-        <span class="small d-none d-sm-inline">
-          {{ vs_current_user.name or vs_current_user.username }}
-        </span>
         <button
           type="button"
           id="vs-topnav-notification-btn"
@@ -295,7 +343,7 @@
                 </div>
                 <div class="modal-body vs-modal-body">
                   <div class="vs-onboarding-progress mb-3" aria-hidden="true">
-                    <div class="vs-onboarding-progress-bar" style="width: {{ (vs_onboarding.completed_core_steps / vs_onboarding.core_total_steps * 100) if vs_onboarding.core_total_steps else 0 }}%;"></div>
+                    <div class="vs-onboarding-progress-bar" style="width: {{ vs_onboarding.progress_percent }}%;"></div>
                   </div>
                   {% for step in vs_onboarding.steps %}
                     <div class="vs-onboarding-step {% if step.done %}is-done{% endif %}">
@@ -583,7 +631,13 @@
         const onboardingEl = document.getElementById("vsOnboardingModal");
         if (onboardingEl && window.bootstrap) {
           const onboardingModal = new bootstrap.Modal(onboardingEl);
-          onboardingModal.show();
+          if ({{ "true" if vs_onboarding and vs_onboarding.auto_open else "false" }}) {
+            onboardingModal.show();
+          }
+          const onboardingTrigger = document.getElementById("vs-topnav-onboarding-trigger");
+          if (onboardingTrigger) {
+            onboardingTrigger.addEventListener("click", () => onboardingModal.show());
+          }
           onboardingEl.querySelectorAll("[data-vs-onboarding-dismiss]").forEach((button) => {
             button.addEventListener("click", () => {
               dismissOnboarding();
