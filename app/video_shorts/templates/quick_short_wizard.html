@@ -21,25 +21,14 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
     var(--surface);
 }
-.qs-kicker {
-  color: var(--mint);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-  font-weight: 700;
-}
 .qs-title {
   font-size: clamp(1.8rem, 2.6vw, 2.7rem);
   font-weight: 800;
-  margin: 6px 0 8px;
-}
-.qs-copy {
-  color: var(--muted);
-  max-width: 760px;
+  margin: 0;
 }
 .qs-stepper {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-top: 18px;
 }
@@ -75,31 +64,14 @@
 .qs-step-label {
   font-weight: 700;
 }
-.qs-step-meta {
-  margin-top: 4px;
+.qs-step-icon {
+  font-size: 1rem;
+  margin-bottom: 10px;
   color: var(--muted);
-  font-size: 0.9rem;
 }
-.qs-source-switch {
-  display: inline-flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.qs-source-btn {
-  border: 0;
-  border-radius: 999px;
-  padding: 9px 14px;
-  background: transparent;
+.qs-step.is-active .qs-step-icon,
+.qs-step.is-done .qs-step-icon {
   color: var(--text);
-}
-.qs-source-btn.is-active {
-  background: var(--mint);
-  color: #07161d;
-  font-weight: 700;
 }
 .qs-grid {
   display: grid;
@@ -121,6 +93,30 @@
 .qs-done-card h3 {
   font-weight: 700;
 }
+.qs-add-stack {
+  display: grid;
+  gap: 14px;
+}
+.qs-add-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.qs-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.qs-or::before,
+.qs-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
 .qs-field .form-control,
 .qs-field .form-select,
 .qs-review-card .form-control {
@@ -139,6 +135,10 @@
 .qs-note {
   color: var(--muted);
   font-size: 0.92rem;
+}
+.qs-micro {
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 .qs-status-list {
   display: grid;
@@ -160,11 +160,19 @@
 .qs-status-row.is-done {
   color: #9be7d8;
 }
+.qs-status-row.is-live {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(255, 255, 255, 0.02);
+}
 .qs-dot {
   width: 10px;
   height: 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.18);
+}
+.qs-status-copy {
+  font-size: 0.88rem;
+  color: var(--muted);
 }
 .qs-status-row.is-current .qs-dot,
 .qs-status-row.is-done .qs-dot {
@@ -261,9 +269,7 @@
 
 <div class="qs-shell">
   <div class="qs-hero">
-    <div class="qs-kicker">Quick Start</div>
     <div class="qs-title">Create your first short</div>
-    <div class="qs-copy">Start with a YouTube URL or upload a file, let ingest run in the background, review the transcript, then create the short. You can leave this page and come back later.</div>
     <div class="qs-stepper" id="qs-stepper"></div>
   </div>
 
@@ -272,42 +278,36 @@
   <div id="qs-stage-input" class="qs-panel">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
       <div>
-        <h3 class="mb-1">Input</h3>
-        <div class="qs-note">Choose one source and continue. Ingest starts immediately and the page stays usable.</div>
-      </div>
-      <div class="qs-source-switch" id="qs-source-switch">
-        <button type="button" class="qs-source-btn is-active" data-source-mode="youtube">YouTube URL</button>
-        <button type="button" class="qs-source-btn" data-source-mode="upload">Upload from device</button>
-        <button type="button" class="qs-source-btn" data-source-mode="music">Pseudo music video</button>
-        <button type="button" class="qs-source-btn" data-source-mode="podcast">Podcast video</button>
+        <h3 class="mb-1">Add your video</h3>
       </div>
     </div>
     <div class="qs-grid">
-      <div class="qs-field" id="qs-youtube-panel">
-        <label for="qs-youtube-url" class="mb-2">YouTube video URL</label>
-        <input id="qs-youtube-url" type="url" class="form-control mb-2" placeholder="https://www.youtube.com/watch?v=..." />
-        <div class="qs-help">The source video must be {{ max_minutes }} minutes or shorter.</div>
-        <div class="qs-actions mt-3">
-          <button type="button" id="qs-youtube-submit" class="btn btn-primary">Continue</button>
-        </div>
-      </div>
-      <div class="qs-field qs-hidden" id="qs-upload-panel">
-        <label for="qs-upload-file" class="mb-2">Upload a source file</label>
-        <input id="qs-upload-file" type="file" class="form-control mb-2" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,video/*,audio/*" />
-        <div class="qs-help">Direct S3 upload, up to 500MB. The file does not stream through the web server.</div>
-        <div id="qs-upload-meta" class="qs-note mt-2"></div>
-        <div class="qs-actions mt-3">
-          <button type="button" id="qs-upload-submit" class="btn btn-primary">Continue</button>
+      <div class="qs-field">
+        <div class="qs-add-stack">
+          <div>
+            <div class="qs-add-title mb-2">Upload file</div>
+            <input id="qs-upload-file" type="file" class="form-control" accept=".mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac,video/*,audio/*" />
+            <div id="qs-upload-meta" class="qs-micro mt-2"></div>
+            <div class="qs-actions mt-3">
+              <button type="button" id="qs-upload-submit" class="btn btn-primary">Continue</button>
+            </div>
+          </div>
+          <div class="qs-or">or</div>
+          <div>
+            <div class="qs-add-title mb-2">YouTube URL</div>
+            <input id="qs-youtube-url" type="url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." />
+            <div class="qs-actions mt-3">
+              <button type="button" id="qs-youtube-submit" class="btn btn-primary">Continue</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="qs-status-card">
-        <div class="qs-status-title mb-2">How this works</div>
-        <div class="qs-status-list">
-          <div class="qs-status-row is-done"><span><span class="qs-dot"></span> Queued</span><span>background</span></div>
-          <div class="qs-status-row"><span><span class="qs-dot"></span> Downloading or uploading</span><span>async</span></div>
-          <div class="qs-status-row"><span><span class="qs-dot"></span> Transcribing</span><span>Whisper</span></div>
-          <div class="qs-status-row"><span><span class="qs-dot"></span> Ready to review</span><span>resume anytime</span></div>
+        <div class="qs-status-title mb-2">Live status</div>
+        <div class="qs-status-list" id="qs-input-status-list">
+          <div class="qs-status-row is-live"><span><span class="qs-dot"></span> Waiting</span><span class="qs-status-copy">Add a video</span></div>
         </div>
+        <div class="qs-micro mt-3" id="qs-input-status-copy">You can leave, we'll notify you.</div>
       </div>
     </div>
     <div id="qs-input-feedback" class="qs-inline-feedback mt-3"></div>
@@ -317,7 +317,7 @@
     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
       <div>
         <h3 class="mb-1">Preparing your source</h3>
-        <div class="qs-note" id="qs-ingest-copy">We’ll notify you when this is ready to review.</div>
+        <div class="qs-micro" id="qs-ingest-copy">You can leave, we'll notify you.</div>
       </div>
       <div class="qs-badge"><span class="qs-spinner"></span><span id="qs-ingest-headline">Queued</span></div>
     </div>
@@ -328,8 +328,7 @@
   <div id="qs-stage-review" class="qs-panel qs-hidden">
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
       <div>
-        <h3 class="mb-1">Review</h3>
-        <div class="qs-note">Adjust the clip window and title, then create the short. A suggested clip is already filled in.</div>
+        <h3 class="mb-1">Pick & create</h3>
       </div>
       <div class="qs-badge">Ready to review</div>
     </div>
@@ -366,7 +365,7 @@
     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
       <div>
         <h3 class="mb-1">Creating your short…</h3>
-        <div class="qs-note">We’ll notify you when the render finishes.</div>
+        <div class="qs-micro">We'll notify you.</div>
       </div>
       <div class="qs-badge"><span class="qs-spinner"></span><span id="qs-render-headline">Generating your short…</span></div>
     </div>
@@ -377,8 +376,7 @@
     <div class="qs-done-card">
       <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
         <div>
-          <h3 class="mb-1">Your short is ready</h3>
-          <div class="qs-note">Next step: connect a channel to publish when you’re ready.</div>
+          <h3 class="mb-1">Publish</h3>
         </div>
         <div class="qs-badge">Done</div>
       </div>
@@ -407,6 +405,8 @@
   const stepperEl = document.getElementById("qs-stepper");
   const liveRegion = document.getElementById("qs-live-region");
   const inputFeedback = document.getElementById("qs-input-feedback");
+  const inputStatusList = document.getElementById("qs-input-status-list");
+  const inputStatusCopy = document.getElementById("qs-input-status-copy");
   const reviewFeedback = document.getElementById("qs-review-feedback");
   const renderCopy = document.getElementById("qs-render-copy");
   const ingestHeadline = document.getElementById("qs-ingest-headline");
@@ -421,9 +421,6 @@
   const doneVideo = document.getElementById("qs-done-video");
   const downloadLink = document.getElementById("qs-download-link");
   const doneFeedback = document.getElementById("qs-done-feedback");
-  const sourceButtons = Array.from(document.querySelectorAll("[data-source-mode]"));
-  const youtubePanel = document.getElementById("qs-youtube-panel");
-  const uploadPanel = document.getElementById("qs-upload-panel");
   const uploadInput = document.getElementById("qs-upload-file");
   const uploadMeta = document.getElementById("qs-upload-meta");
   const uploadSubmit = document.getElementById("qs-upload-submit");
@@ -433,15 +430,15 @@
 
   const state = {
     session: initialSession || null,
-    sourceMode: "youtube",
     pollTimer: null,
     pollDelayMs: 2000,
   };
 
   const steps = [
-    { key: "input", label: "Input", meta: "Choose your source" },
-    { key: "review", label: "Review", meta: "Pick the clip" },
-    { key: "done", label: "Done", meta: "Use your short" },
+    { key: "input", label: "Add video", icon: "bi-plus-square" },
+    { key: "ingest", label: "AI processing", icon: "bi-cpu" },
+    { key: "review", label: "Pick & create", icon: "bi-scissors" },
+    { key: "done", label: "Publish", icon: "bi-send" },
   ];
 
   const setLiveMessage = (message) => {
@@ -464,12 +461,13 @@
   const renderStepper = () => {
     const stage = activeStage();
     const doneKeys = new Set();
-    if (stage === "review" || stage === "render" || stage === "done") doneKeys.add("input");
-    if (stage === "render" || stage === "done") doneKeys.add("review");
+    if (["ingest", "review", "render", "done"].includes(stage)) doneKeys.add("input");
+    if (["review", "render", "done"].includes(stage)) doneKeys.add("ingest");
+    if (["render", "done"].includes(stage)) doneKeys.add("review");
     if (stage === "done") doneKeys.add("done");
     const activeMap = {
       input: "input",
-      ingest: "input",
+      ingest: "ingest",
       review: "review",
       render: "review",
       done: "done",
@@ -478,8 +476,8 @@
     stepperEl.innerHTML = steps.map((step, index) => `
       <div class="qs-step ${step.key === currentKey ? "is-active" : ""} ${doneKeys.has(step.key) ? "is-done" : ""}">
         <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : index + 1}</div>
+        <div class="qs-step-icon"><i class="bi ${step.icon}"></i></div>
         <div class="qs-step-label">${step.label}</div>
-        <div class="qs-step-meta">${step.meta}</div>
       </div>
     `).join("");
   };
@@ -489,14 +487,6 @@
       el.classList.toggle("qs-hidden", key !== stageName);
     });
     renderStepper();
-  };
-
-  const setSourceMode = (mode) => {
-    state.sourceMode = mode;
-    sourceButtons.forEach((btn) => btn.classList.toggle("is-active", btn.dataset.sourceMode === mode));
-    const isUploadMode = mode !== "youtube";
-    youtubePanel.classList.toggle("qs-hidden", isUploadMode);
-    uploadPanel.classList.toggle("qs-hidden", !isUploadMode);
   };
 
   const renderTranscript = (segments) => {
@@ -521,10 +511,10 @@
       { key: "queued", label: "Queued" },
       { key: "downloading", label: state.session?.source_type === "youtube" ? "Downloading" : "Uploading" },
       { key: "transcribing", label: "Transcribing" },
-      { key: "ready", label: "Ready to review" },
+      { key: "ready", label: "Video ready" },
     ];
     ingestHeadline.textContent = job.result?.message || "Queued";
-    ingestCopy.textContent = "You can leave this page now. We’ll pick this up again when you come back.";
+    ingestCopy.textContent = "You can leave, we'll notify you.";
     ingestQueueCopy.textContent = queuePosition > 0
       ? `You're in line — ${queuePosition} ${queuePosition === 1 ? "job" : "jobs"} ahead. We'll start this shortly.`
       : "No wait right now. We’ll keep working in the background.";
@@ -539,6 +529,21 @@
         </div>
       `;
     }).join("");
+  };
+
+  const renderInputStatus = (headline, detail) => {
+    if (!inputStatusList) {
+      return;
+    }
+    inputStatusList.innerHTML = `
+      <div class="qs-status-row is-live">
+        <span><span class="qs-dot"></span> ${headline}</span>
+        <span class="qs-status-copy">${detail || ""}</span>
+      </div>
+    `;
+    if (inputStatusCopy) {
+      inputStatusCopy.textContent = "You can leave, we'll notify you.";
+    }
   };
 
   const renderReview = () => {
@@ -685,16 +690,13 @@
     return `${file.name} · ${mb} MB · ${file.type || "binary"}`;
   };
 
-  sourceButtons.forEach((btn) => {
-    btn.addEventListener("click", () => setSourceMode(btn.dataset.sourceMode || "youtube"));
-  });
-
   uploadInput?.addEventListener("change", () => {
     uploadMeta.textContent = formatUploadMeta(uploadInput.files?.[0]);
   });
 
   youtubeSubmit?.addEventListener("click", async () => {
-    inputFeedback.textContent = "Queued → Downloading → Transcribing → Ready to review";
+    inputFeedback.textContent = "";
+    renderInputStatus("Queued", "Adding video");
     const { response, payload } = await postJson("/video_shorts/shorts/quick/api/ingest-youtube", {
       video_url: youtubeUrlInput.value,
     });
@@ -713,13 +715,13 @@
       inputFeedback.textContent = "Choose a file first.";
       return;
     }
-    inputFeedback.textContent = "Preparing direct upload…";
-    const mode = state.sourceMode === "youtube" ? "video" : state.sourceMode;
+    inputFeedback.textContent = "";
+    renderInputStatus("Uploading…", "Sending file");
     const { response, payload } = await postJson("/video_shorts/shorts/quick/api/upload/presign", {
       filename: file.name,
       size_bytes: file.size,
       content_type: file.type || "application/octet-stream",
-      upload_kind: mode,
+      upload_kind: "video",
     });
     if (!response.ok) {
       inputFeedback.textContent = payload.message || "Couldn't prepare the upload.";
@@ -734,7 +736,7 @@
       inputFeedback.textContent = "Upload failed.";
       return;
     }
-    inputFeedback.textContent = "Upload complete. Starting transcription…";
+    renderInputStatus("Uploaded", "AI is processing…");
     const completion = await postJson("/video_shorts/shorts/quick/api/upload/complete", {
       session_id: payload.session_id,
       duration_seconds: null,
@@ -779,10 +781,7 @@
     }
   });
 
-  setSourceMode("youtube");
-  if (state.session?.source_type === "upload") {
-    setSourceMode(state.session.upload_kind || "upload");
-  }
+  renderInputStatus("Waiting", "Add a video");
   renderView();
   beginSessionPollingIfNeeded();
 })();
