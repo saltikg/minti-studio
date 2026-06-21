@@ -162,7 +162,7 @@ IG_APP_SECRET = os.getenv("IG_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
 IG_OAUTH_SCOPES = os.getenv(
     "IG_OAUTH_SCOPES",
-    "instagram_business_basic,instagram_business_content_publish",
+    "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
 )
 IG_TOKEN_REFRESH_BUFFER_DAYS = int(os.getenv("IG_TOKEN_REFRESH_BUFFER_DAYS", "14"))
 FB_APP_ID = os.getenv("FB_APP_ID")
