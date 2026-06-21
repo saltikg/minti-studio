@@ -251,6 +251,7 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
             "fields": "id,media_type,permalink,like_count,comments_count,timestamp",
         },
     )
+    views = None
     reach = None
     saved = None
     shares = None
@@ -259,8 +260,9 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
             "GET",
             f"{media_id}/insights",
             token,
-            params={"metric": "reach,saved,shares"},
+            params={"metric": "views,reach,likes,comments,saved,shares,total_interactions"},
         )
+        views = _extract_insight_value(insights, "views")
         reach = _extract_insight_value(insights, "reach")
         saved = _extract_insight_value(insights, "saved")
         shares = _extract_insight_value(insights, "shares")
@@ -272,7 +274,7 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
         like_count=details.get("like_count"),
         comment_count=details.get("comments_count"),
         permalink=details.get("permalink"),
-        impressions=None,
+        impressions=views,
         reach=reach,
         saved=saved,
         shares=shares,
