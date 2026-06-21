@@ -3,7 +3,7 @@ import json
 import requests
 from typing import Dict, List, Optional
 
-from app.video_shorts.config import IG_GRAPH_API_BASE
+from app.video_shorts.config import IG_API_BASE
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.instagram_queue import (
@@ -205,7 +205,7 @@ def _get_entry_and_token(queue_id: str):
 
 
 def _graph_request(method: str, path: str, token: str, *, params=None, data=None):
-    url = f"{IG_GRAPH_API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    url = f"{IG_API_BASE.rstrip('/')}/{path.lstrip('/')}"
     params = params or {}
     params["access_token"] = token
     resp = requests.request(method, url, params=params, data=data, timeout=20)
