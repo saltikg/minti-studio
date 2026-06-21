@@ -319,7 +319,7 @@
                       <div class="shorts-meta-stats d-flex flex-wrap gap-3 mt-1">
                         <span class="d-flex align-items-center gap-1 text-muted">
                           <i class="bi bi-eye"></i>
-                          {{ ig.impressions if ig.impressions is not none else '-' }}
+                          {{ ig.impressions if ig.impressions is not none else (ig.reach if ig.reach is not none else '-') }}
                         </span>
                         <span class="d-flex align-items-center gap-1 text-muted">
                           <i class="bi bi-broadcast"></i>
