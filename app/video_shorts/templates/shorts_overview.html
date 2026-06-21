@@ -1678,22 +1678,7 @@
       }
 
       function updateInstagramMeta(data) {
-        const parts = [];
-        if (data?.instagram_username) {
-          parts.push(`@${data.instagram_username}`);
-        }
-        const totalCount = Number(data?.comment_count);
-        const loadedCount = Array.isArray(data?.comments) ? data.comments.length : 0;
-        if (Number.isFinite(totalCount)) {
-          parts.push(`Comments: ${totalCount}`);
-          if (loadedCount > 0 || totalCount > 0) {
-            parts.push(`Loaded: ${loadedCount}`);
-          }
-        }
-        if (data?.comments_last_synced) {
-          parts.push(`Last synced: ${formatDate(data.comments_last_synced)}`);
-        }
-        const metaText = parts.join(" · ");
+        const metaText = "";
         if (instagramMeta) {
           instagramMeta.textContent = metaText;
         }
