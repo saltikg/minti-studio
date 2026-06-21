@@ -36,8 +36,8 @@ def _extract_graph_error_message(resp: requests.Response) -> str:
 
     if code == 10:
         return (
-            "Instagram yorum/etkileşim izni yok. Meta token'i "
-            "`instagram_manage_comments` ve ilgili page izinleriyle yeniden bağlayın."
+            "Instagram insight veya yorum izni yok. Instagram hesabini "
+            "`instagram_manage_insights` ve `instagram_manage_comments` izinleriyle yeniden baglayin."
         )
 
     if message:
