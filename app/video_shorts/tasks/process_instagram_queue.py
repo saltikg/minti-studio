@@ -6,7 +6,7 @@ from typing import Optional
 
 import requests
 
-from app.video_shorts.config import IG_API_BASE, SHORTS_DIR
+from app.video_shorts.config import IG_API_BASE, IG_GRAPH_API_BASE, SHORTS_DIR
 from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.instagram_queue import (
     fetch_due_instagram_jobs,
@@ -65,7 +65,7 @@ def _wait_for_creation_ready(business_id: str, creation_id: str, access_token: s
     wait_schedule = [0, 5, 10, 20, 30, 30, 30, 30]  # seconds, total ~155s
     total_wait = 0
     last_status = None
-    endpoint = f"{IG_API_BASE.rstrip('/')}/{creation_id}"
+    endpoint = f"{IG_GRAPH_API_BASE.rstrip('/')}/{creation_id}"
     for delay in wait_schedule:
         if delay:
             time.sleep(delay)
@@ -124,7 +124,7 @@ def _upload_reel(job: dict) -> Optional[str]:
 
     print(f"   ↳ IG media create payload={_payload_for_log(payload)}")
     create_resp = requests.post(
-        f"{IG_API_BASE.rstrip('/')}/{business_id}/media",
+        f"{IG_GRAPH_API_BASE.rstrip('/')}/{business_id}/media",
         data=payload,
         timeout=30,
     )
@@ -148,7 +148,7 @@ def _upload_reel(job: dict) -> Optional[str]:
     print(f"   ↳ creation ready after {waited}s")
     publish_payload = {"creation_id": creation_id, "access_token": access_token}
     publish_resp = requests.post(
-        f"{IG_API_BASE.rstrip('/')}/{business_id}/media_publish",
+        f"{IG_GRAPH_API_BASE.rstrip('/')}/{business_id}/media_publish",
         data=publish_payload,
         timeout=30,
     )
@@ -163,7 +163,7 @@ def _upload_reel(job: dict) -> Optional[str]:
         raise InstagramMediaError("Instagram media_id alınamadı.")
     print(f"   ↳ publish_id={media_id}")
     details_resp = requests.get(
-        f"{IG_API_BASE.rstrip('/')}/{media_id}",
+        f"{IG_GRAPH_API_BASE.rstrip('/')}/{media_id}",
         params={"fields": "permalink,like_count,comments_count", "access_token": access_token},
         timeout=15,
     )
