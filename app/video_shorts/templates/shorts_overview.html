@@ -548,6 +548,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body vs-modal-body">
+        <p class="text-muted small mb-3 vs-modal-meta" id="instagramCommentsMeta"></p>
         <div id="instagramCommentsLoading" class="text-center py-4 d-none">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -1681,6 +1682,14 @@
         if (data?.instagram_username) {
           parts.push(`@${data.instagram_username}`);
         }
+        const totalCount = Number(data?.comment_count);
+        const loadedCount = Array.isArray(data?.comments) ? data.comments.length : 0;
+        if (Number.isFinite(totalCount)) {
+          parts.push(`Comments: ${totalCount}`);
+          if (loadedCount > 0 || totalCount > 0) {
+            parts.push(`Loaded: ${loadedCount}`);
+          }
+        }
         if (data?.comments_last_synced) {
           parts.push(`Last synced: ${formatDate(data.comments_last_synced)}`);
         }
@@ -1951,7 +1960,10 @@
                 window.setTimeout(() => fetchInstagramComments(true), 500);
                 return;
               }
-              setInstagramStatus("Comments could not be loaded yet. Please press Refresh.", true);
+              setInstagramStatus(
+                `Instagram reports ${currentInstagramExpectedTotal} comment${currentInstagramExpectedTotal === 1 ? "" : "s"}, but the comment list is still empty. Please press Refresh.`,
+                true
+              );
               return;
             }
             instagramEmptyLoadRetryCount = 0;
