@@ -133,6 +133,24 @@
       border-radius: 999px;
       background: linear-gradient(90deg, var(--mint-2), var(--mint));
     }
+    .vs-sidebar-link.is-locked {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .vs-sidebar-link.is-locked:hover,
+    .vs-sidebar-link.is-locked:focus-visible {
+      color: inherit;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .vs-sidebar-link.is-locked:focus-visible {
+      outline: 2px solid rgba(45, 212, 191, 0.55);
+      outline-offset: -2px;
+    }
+    .vs-sidebar-lock {
+      margin-left: auto;
+      font-size: 0.88rem;
+      opacity: 0.9;
+    }
   </style>
 
   <meta name="robots" content="noindex, nofollow">
@@ -223,57 +241,83 @@
 
       <!-- Sidebar -->
       <aside class="col-md-3 col-lg-2 mb-4">
+        {% set vs_is_first_run = vs_onboarding and not vs_onboarding.core_completed %}
         <div class="list-group shadow-sm vs-sidebar-menu">
           <div class="sidebar-section-label">WORKFLOW</div>
 
-          <a href="{{ url_for('video_shorts_bp.video_stats_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/stats' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">analytics</span>
-            <span>Dashboard</span>
-          </a>
+          {% if vs_is_first_run %}
+            {% set locked_label = "Unlocks after your first short." %}
+            {% for item in [
+              ("analytics", "Dashboard"),
+              ("insights", "Video Analytics"),
+              ("movie_edit", "Monthly Top Video"),
+              ("monitoring", "Publishing"),
+              ("comment", "Comments"),
+              ("subscriptions", "Sources"),
+            ] %}
+              <button
+                type="button"
+                class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link is-locked"
+                aria-disabled="true"
+                aria-label="{{ item[1] }}. {{ locked_label }}"
+                title="{{ locked_label }}"
+                data-bs-toggle="tooltip"
+                data-bs-placement="right">
+                <span class="material-symbols-outlined">{{ item[0] }}</span>
+                <span>{{ item[1] }}</span>
+                <i class="bi bi-lock-fill vs-sidebar-lock" aria-hidden="true"></i>
+              </button>
+            {% endfor %}
+          {% else %}
+            <a href="{{ url_for('video_shorts_bp.video_stats_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/stats' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">analytics</span>
+              <span>Dashboard</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.dashboard_v2_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/dashboard-v2' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">show_chart</span>
-            <span>Dashboard V2</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.dashboard_v2_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/dashboard-v2' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">show_chart</span>
+              <span>Dashboard V2</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">insights</span>
-            <span>Video Analytics</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">insights</span>
+              <span>Video Analytics</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.workflow_monthly_top_video') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/workflow/monthly-top-video' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">movie_edit</span>
-            <span>Monthly Top Video</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.workflow_monthly_top_video') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/workflow/monthly-top-video' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">movie_edit</span>
+              <span>Monthly Top Video</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.shorts_overview') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/shorts/overview' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">monitoring</span>
-            <span>Publishing</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.shorts_overview') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/shorts/overview' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">monitoring</span>
+              <span>Publishing</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.shorts_comments_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/shorts/comments' in request.path and '/shorts/comments/' not in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">comment</span>
-            <span>Comments</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.shorts_comments_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/shorts/comments' in request.path and '/shorts/comments/' not in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">comment</span>
+              <span>Comments</span>
+            </a>
 
-          <a href="{{ url_for('video_shorts_bp.channels_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/channels' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">subscriptions</span>
-            <span>Sources</span>
-          </a>
+            <a href="{{ url_for('video_shorts_bp.channels_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/channels' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">subscriptions</span>
+              <span>Sources</span>
+            </a>
+          {% endif %}
 
           <a href="{{ url_for('video_shorts_bp.quick_short') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
@@ -287,11 +331,11 @@
                     {% if '/settings' in request.path
                           or '/image-to-video' in request.path
                           or '/video_shorts/ai-video/' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">settings</span>
+             <span class="material-symbols-outlined">settings</span>
             <span>Settings</span>
           </a>
 
-          {% if vs_current_user and vs_current_user.get('role') == 'admin' %}
+          {% if not vs_is_first_run and vs_current_user and vs_current_user.get('role') == 'admin' %}
           <div class="sidebar-section-label">KNOWLEDGE BASE</div>
 
           <a href="{{ url_for('video_shorts_bp.short_qa_generator') }}"
@@ -309,21 +353,36 @@
           </a>
           {% endif %}
 
-          <a href="{{ url_for('video_shorts_bp.account_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                    {% if '/video_shorts/account' in request.path
-                          or '/video_shorts/social' in request.path
-                          or '/shorts/storage' in request.path
-                          or '/shorts/storage/plans' in request.path
-                          or '/video_shorts/profile' in request.path
-                          or '/video_shorts/brands' in request.path
-                          or '/video_shorts/shorts/social-logs' in request.path %}active{% endif %}">
-            <span class="material-symbols-outlined">manage_accounts</span>
-            <span>Account</span>
-            {% if vs_overview_quota and vs_overview_quota.active %}
-              <span class="badge text-bg-warning ms-auto">Quota</span>
-            {% endif %}
-          </a>
+          {% if vs_is_first_run %}
+            <button
+              type="button"
+              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link is-locked"
+              aria-disabled="true"
+              aria-label="Account. Unlocks after your first short."
+              title="Unlocks after your first short."
+              data-bs-toggle="tooltip"
+              data-bs-placement="right">
+              <span class="material-symbols-outlined">manage_accounts</span>
+              <span>Account</span>
+              <i class="bi bi-lock-fill vs-sidebar-lock" aria-hidden="true"></i>
+            </button>
+          {% else %}
+            <a href="{{ url_for('video_shorts_bp.account_page') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/account' in request.path
+                            or '/video_shorts/social' in request.path
+                            or '/shorts/storage' in request.path
+                            or '/shorts/storage/plans' in request.path
+                            or '/video_shorts/profile' in request.path
+                            or '/video_shorts/brands' in request.path
+                            or '/video_shorts/shorts/social-logs' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">manage_accounts</span>
+              <span>Account</span>
+              {% if vs_overview_quota and vs_overview_quota.active %}
+                <span class="badge text-bg-warning ms-auto">Quota</span>
+              {% endif %}
+            </a>
+          {% endif %}
 
         </div>
       </aside>
@@ -626,6 +685,11 @@
       };
 
       document.addEventListener("DOMContentLoaded", () => {
+        if (window.bootstrap && window.bootstrap.Tooltip) {
+          document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
+            new bootstrap.Tooltip(element);
+          });
+        }
         renderCachedUsageSummary();
         loadUsageSummary();
         const onboardingEl = document.getElementById("vsOnboardingModal");
