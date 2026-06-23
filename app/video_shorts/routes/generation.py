@@ -2695,16 +2695,59 @@ def _load_user_title_style_examples(
 
 
 def _generic_short_title_examples() -> List[Dict[str, str]]:
-    return [
-        {
-            "excerpt": "Bir insan sürekli aynı hatayı yapıyorsa mesele irade eksikliği değil, yanlış ortamın içinde yaşıyor olabilir.",
-            "title": "Aynı Hatanın Asıl Sebebi",
-        },
-        {
-            "excerpt": "Gençlerin en çok sorduğu şey şu: İyi bir başlangıç yapmak için önce neyi bırakmak gerekiyor?",
-            "title": "İyi Başlangıç İçin Ne Bırakılmalı",
-        },
-    ]
+    return _generic_short_title_examples_for_language("tr")
+
+
+def _detect_title_prompt_language(excerpt: str) -> Optional[str]:
+    text = " ".join(str(excerpt or "").strip().split())
+    if not text:
+        return None
+    lowered = f" {text.lower()} "
+    if any(ch in text for ch in "çğıöşüÇĞİÖŞÜ"):
+        return "tr"
+
+    turkish_hints = {
+        " ve ", " bir ", " bu ", " şu ", " için ", " ama ", " gibi ", " daha ",
+        " çok ", " değil ", " neden ", " nasıl ", " çünkü ", " sonra ", " önce ",
+    }
+    english_hints = {
+        " the ", " and ", " you ", " your ", " what ", " why ", " how ", " this ",
+        " that ", " with ", " from ", " about ", " when ", " where ", " should ",
+    }
+    turkish_score = sum(1 for hint in turkish_hints if hint in lowered)
+    english_score = sum(1 for hint in english_hints if hint in lowered)
+    if turkish_score >= english_score + 1 and turkish_score >= 2:
+        return "tr"
+    if english_score >= turkish_score + 1 and english_score >= 2:
+        return "en"
+    return None
+
+
+def _generic_short_title_examples_for_language(language: Optional[str]) -> List[Dict[str, str]]:
+    normalized = str(language or "").strip().lower()
+    if normalized == "tr":
+        return [
+            {
+                "excerpt": "Bir insan sürekli aynı hatayı yapıyorsa mesele irade eksikliği değil, yanlış ortamın içinde yaşıyor olabilir.",
+                "title": "Aynı Hatanın Asıl Sebebi",
+            },
+            {
+                "excerpt": "Gençlerin en çok sorduğu şey şu: İyi bir başlangıç yapmak için önce neyi bırakmak gerekiyor?",
+                "title": "İyi Başlangıç İçin Ne Bırakılmalı",
+            },
+        ]
+    if normalized == "en":
+        return [
+            {
+                "excerpt": "If someone keeps repeating the same mistake, the real problem may not be discipline at all but the environment they stay inside every day.",
+                "title": "The Real Reason the Same Mistake Keeps Happening",
+            },
+            {
+                "excerpt": "One of the most common questions is this: what do you need to stop doing first if you want a genuinely strong start?",
+                "title": "What You Need to Stop First",
+            },
+        ]
+    return []
 
 
 def _request_short_title_suggestion(
@@ -2716,9 +2759,10 @@ def _request_short_title_suggestion(
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     safe_excerpt = (excerpt or "").strip()[:2000]
+    detected_language = _detect_title_prompt_language(safe_excerpt)
     system_prompt = (
-        "You write strong titles for short vertical clips cut from longer Turkish talk, educational, and Q&A videos. "
-        "Return exactly one title in the same language as the transcript. "
+        "You write strong titles for short vertical clips cut from longer talk, educational, and Q&A videos. "
+        "Write the title in the EXACT same language as the transcript. "
         "Make it specific to the single most interesting point, claim, or question in this excerpt. "
         "Prefer concrete wording over vague summary language. "
         "For Q&A clips, surface the core question or claim naturally. "
@@ -2736,21 +2780,26 @@ def _request_short_title_suggestion(
         current_app.logger.exception("Failed to load user title style examples")
         examples = []
     if len(examples) < 2:
-        examples = _generic_short_title_examples()
+        examples = _generic_short_title_examples_for_language(detected_language)
 
-    example_lines = []
-    for idx, example in enumerate(examples, start=1):
-        example_lines.append(
-            f"Example {idx}\n"
-            f"Transcript excerpt: {example['excerpt']}\n"
-            f"Title: {example['title']}"
+    prompt_parts: List[str] = []
+    if examples:
+        example_lines = []
+        for idx, example in enumerate(examples, start=1):
+            example_lines.append(
+                f"Example {idx}\n"
+                f"Transcript excerpt: {example['excerpt']}\n"
+                f"Title: {example['title']}"
+            )
+        prompt_parts.append(
+            "Use these examples only as style anchors for tone, length, and word choice.\n\n"
+            + "\n".join(example_lines)
         )
-    user_content = (
-        "Use these examples only as style anchors for tone, length, and word choice.\n\n"
-        f"{chr(10).join(example_lines)}\n\n"
+    prompt_parts.append(
         f"Current transcript excerpt:\n{safe_excerpt or 'No transcript available.'}\n\n"
         "Create one short title only."
     )
+    user_content = "\n\n".join(prompt_parts)
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
