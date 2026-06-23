@@ -3234,6 +3234,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       }
       initGenerateClipForms();
       initRemovePlanEntryAjax();
+      initDeleteClipAjax();
       initClipTitleRowAjax();
       bindClipTitleAutofillTracking();
       initClipSuggestTitleButtons();
@@ -6057,6 +6058,13 @@ const initRemovePlanEntryAjax = () => {
       const submitBtn = form.querySelector("button[type='submit']");
       submitBtn?.setAttribute("disabled", "disabled");
       const params = new URLSearchParams(new FormData(form));
+      const currentPlanIndex = String(card.dataset.planIndex || form.querySelector("input[name='plan_index']")?.value || "").trim();
+      const railItems = Array.from(document.querySelectorAll(".clip-rail-item"));
+      const railIndex = railItems.findIndex((item) => String(item.dataset.planIndex || "").trim() === currentPlanIndex);
+      const fallbackPlanIndex =
+        railItems[railIndex + 1]?.dataset.planIndex ||
+        railItems[railIndex - 1]?.dataset.planIndex ||
+        "";
       try {
         const response = await fetch(form.action, {
           method: form.method || "POST",
@@ -6070,11 +6078,10 @@ const initRemovePlanEntryAjax = () => {
         if (!response.ok || !payload.success) {
           throw new Error(payload.message || "Failed to delete plan section.");
         }
-        card.style.transition = "opacity 0.32s ease";
-        card.style.opacity = "0";
-        window.setTimeout(() => {
-          card.remove();
-        }, 320);
+        const refreshed = await refreshClipList(fallbackPlanIndex, "list");
+        if (!refreshed) {
+          window.location.reload();
+        }
       } catch (err) {
         alert(err.message || "Failed to delete plan section.");
       } finally {
@@ -6087,6 +6094,59 @@ const initRemovePlanEntryAjax = () => {
 
 document.addEventListener("DOMContentLoaded", () => {
   initRemovePlanEntryAjax();
+});
+</script>
+<script>
+const initDeleteClipAjax = () => {
+  document.querySelectorAll("form[action*='delete_clip']").forEach((form) => {
+    if (form.dataset.deleteClipBound === "1") {
+      return;
+    }
+    form.dataset.deleteClipBound = "1";
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (form.dataset.ajaxDeleting === "1") {
+        return;
+      }
+      const confirmMessage = form.querySelector("[data-confirm-message]")?.dataset.confirmMessage || "";
+      if (confirmMessage && !window.confirm(confirmMessage)) {
+        return;
+      }
+      form.dataset.ajaxDeleting = "1";
+      const submitBtn = form.querySelector("button[type='submit']");
+      submitBtn?.setAttribute("disabled", "disabled");
+      const planIndex = String(form.querySelector("input[name='plan_index']")?.value || "").trim();
+      const params = new URLSearchParams(new FormData(form));
+      try {
+        const response = await fetch(form.action, {
+          method: form.method || "POST",
+          body: params,
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Failed to delete clip.");
+        }
+        const refreshed = await refreshClipList(planIndex, "detail");
+        if (!refreshed) {
+          window.location.reload();
+        }
+      } catch (err) {
+        alert(err.message || "Failed to delete clip.");
+      } finally {
+        form.dataset.ajaxDeleting = "";
+        submitBtn?.removeAttribute("disabled");
+      }
+    });
+  });
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  initDeleteClipAjax();
 });
 </script>
 <script>
@@ -6103,13 +6163,11 @@ const initClipSuggestTitleButtons = () => {
         return;
       }
       const card = button.closest(".clip-card");
-      const titleInput = card?.querySelector(".clip-title-input");
       await requestSuggestedClipTitle({
         button,
         card,
         planIndex,
         excerpt,
-        currentTitle: titleInput?.value || "",
         applyMode: "always",
         successMessage: "New title suggested.",
       });

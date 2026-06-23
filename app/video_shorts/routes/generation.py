@@ -5747,10 +5747,14 @@ def shorts_storage_plans():
 
 @video_shorts_bp.route("/generate/<int:video_pk>/delete_clip", methods=["POST"])
 def delete_clip(video_pk):
+    ajax_request = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     filename = (request.form.get("filename") or "").strip()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
     if not filename:
-        flash("Missing clip filename.", "danger")
+        message = "Missing clip filename."
+        if ajax_request:
+            return jsonify(success=False, message=message), 400
+        flash(message, "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     conn = get_db_readonly()
@@ -5758,14 +5762,19 @@ def delete_clip(video_pk):
     conn.close()
     conn = None
     if not row:
-        flash("Video not found", "danger")
+        message = "Video not found"
+        if ajax_request:
+            return jsonify(success=False, message=message), 404
+        flash(message, "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
 
+    message = "Clip not found."
+    success = False
     target = (SHORTS_DIR / filename).resolve()
     try:
         # safety: ensure path is under shorts dir
         if not str(target).startswith(str(SHORTS_DIR.resolve())):
-            flash("Invalid path.", "danger")
+            message = "Invalid path."
         elif _short_exists(filename):
             _delete_short_media(filename)
             plan_entries = _load_plan_entries(row[0])
@@ -5810,11 +5819,18 @@ def delete_clip(video_pk):
                         )
                     except Exception as exc:
                         current_app.logger.warning("Failed to clear render cache after delete: %s", exc)
-            flash(f"Deleted clip: {filename}", "success")
+            message = f"Deleted clip: {filename}"
+            success = True
         else:
-            flash("Clip not found.", "warning")
+            message = "Clip not found."
     except Exception as e:
-        flash(f"Delete failed: {e}", "danger")
+        message = f"Delete failed: {e}"
+
+    if ajax_request:
+        status = 200 if success else 400
+        return jsonify(success=success, message=message, plan_index=plan_index_raw, filename=filename), status
+
+    flash(message, "success" if success else "warning")
 
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
