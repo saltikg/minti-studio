@@ -189,6 +189,81 @@
     border-radius: 4px;
     padding: 0 1px;
   }
+  .clip-workbench-row {
+    align-items: start;
+  }
+  .clip-management-panel {
+    position: relative;
+  }
+  .clip-rail-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 360px;
+    overflow: auto;
+    padding-right: 2px;
+  }
+  .clip-rail-item {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    padding: 8px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    color: inherit;
+    text-align: left;
+  }
+  .clip-rail-item.is-active {
+    border-color: rgba(45, 212, 191, 0.55);
+    background: rgba(45, 212, 191, 0.12);
+  }
+  .clip-rail-thumb {
+    width: 72px;
+    height: 72px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.06);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .clip-rail-thumb video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .clip-rail-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+  }
+  .clip-rail-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .clip-rail-meta {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.62);
+    font-variant-numeric: tabular-nums;
+  }
+  .clip-rail-detail {
+    margin-top: 4px;
+  }
+  .clip-rail-detail .clip-card {
+    display: none;
+  }
+  .clip-rail-detail .clip-card.is-active {
+    display: block;
+  }
   @media (max-width: 991.98px) {
     .trs-document {
       max-height: 520px;
@@ -488,45 +563,110 @@
     {% if has_transcript %}
       {% set total_clip_count = clip_rows|length %}
       {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
-      <div class="gs-card h-100">
-        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-          <div>
-            <div class="small text-white-50">Clips: {{ created_clip_count }}/{{ total_clip_count }} created</div>
-            <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
+      <div class="row g-3 clip-workbench-row">
+        <div class="col-12 col-xl-8">
+          <div class="gs-card h-100">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+              <h5 class="mb-0">Transcript</h5>
+            </div>
+            <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
+              <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
+              <div class="trs-toolbar">
+                <div class="trs-search-group">
+                  <input
+                    type="search"
+                    class="form-control form-control-sm"
+                    id="trs-search-input"
+                    placeholder="Search transcript">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
+                </div>
+                <div class="trs-match-nav">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-prev" aria-label="Previous match">↑</button>
+                  <span class="trs-match-count" id="trs-match-count">0 / 0</span>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
+                </div>
+              </div>
+              <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
+              <div class="trs-panel">
+                <div class="trs-document" id="trs-document" aria-label="Transcript document"></div>
+                <div class="trs-selection-bar">
+                  <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-selection-clear" disabled>Clear</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="trs-create-clip" disabled>Create clip</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-            id="add-clip-toggle-btn"
-            aria-expanded="false"
-            aria-controls="add-clip-panel">
-            <i class="bi bi-plus-lg" aria-hidden="true"></i>
-            Add clip
-          </button>
+          <div class="gs-card mt-3">
+            <h5 class="mb-2">Original transcript</h5>
+            <div class="gs-code gs-code-scroll-220" id="transcript-text">
+              {{ transcript_override or transcript_text_tr or transcript_text }}
+            </div>
+          </div>
         </div>
-        <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
-          <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
-            <div class="col-12 col-md-3">
-              <label class="form-label small mb-1">Start</label>
-              <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
-            </div>
-            <div class="col-12 col-md-3">
-              <label class="form-label small mb-1">End</label>
-              <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label small mb-1">Title (optional)</label>
-              <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
-            </div>
-            <div class="col-12 col-md-2 d-grid">
-              <button type="submit" class="btn btn-sm btn-primary">
-                <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
+        <div class="col-12 col-xl-4">
+          <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
+            <div class="d-flex align-items-start justify-content-between gap-2 mb-3 flex-wrap">
+              <div>
+                <div class="fw-semibold">Klipler · {{ total_clip_count }}</div>
+                <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
+                <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                id="add-clip-toggle-btn"
+                aria-expanded="false"
+                aria-controls="add-clip-panel">
+                <i class="bi bi-plus-lg" aria-hidden="true"></i>
+                Add
               </button>
             </div>
-          </form>
-        </div>
-        <div id="clip-list" class="clip-list">
-          {% for row in clip_rows %}
+            <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
+              <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
+                <div class="col-12 col-md-6 col-xl-12">
+                  <label class="form-label small mb-1">Start</label>
+                  <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+                </div>
+                <div class="col-12 col-md-6 col-xl-12">
+                  <label class="form-label small mb-1">End</label>
+                  <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label small mb-1">Title (optional)</label>
+                  <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
+                </div>
+                <div class="col-12 d-grid">
+                  <button type="submit" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
+                  </button>
+                </div>
+              </form>
+            </div>
+            <div class="clip-rail-list mb-3" id="clip-rail-list">
+              {% for row in clip_rows %}
+                {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
+                <button type="button" class="clip-rail-item" data-plan-index="{{ row.plan_index }}">
+                  <span class="clip-rail-thumb">
+                    {% if row.status == "created" and row.video_url %}
+                      <video muted playsinline preload="metadata">
+                        <source src="{{ row.video_url }}" type="video/mp4">
+                      </video>
+                    {% else %}
+                      <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                    {% endif %}
+                  </span>
+                  <span class="clip-rail-copy">
+                    <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
+                    <span class="clip-rail-meta">{{ rail_duration_label }}</span>
+                  </span>
+                </button>
+              {% endfor %}
+            </div>
+            <div id="clip-list" class="clip-list clip-rail-detail">
+              {% for row in clip_rows %}
             {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
             {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
               {% set clip_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
@@ -537,6 +677,7 @@
                 {% set meta_row_classes = meta_row_classes + " published" %}
               {% endif %}
             <div class="clip-card"
+                 data-plan-index="{{ row.plan_index }}"
                  data-status="{{ row.status }}"
                  data-render-job-id="{{ row.render_job_id or '' }}"
                  data-render-error="{{ row.render_error or '' }}"
@@ -823,7 +964,9 @@
                 </div>
               </div>
             </div>
-          {% endfor %}
+              {% endfor %}
+            </div>
+          </div>
         </div>
       </div>
     {% else %}
@@ -1536,64 +1679,6 @@
   </div>
 </div>
 {% endif %}
-{% if has_transcript %}
-<div class="row g-3">
-  <div class="col-lg-6 order-lg-2">
-        <div class="gs-card">
-      <h5 class="mb-2">Transcript</h5>
-      <div class="mb-2">
-        <div class="fw-bold small text-muted">Original transcript</div>
-        <div class="gs-code gs-code-scroll-220" id="transcript-text">
-          {{ transcript_override or transcript_text_tr or transcript_text }}
-        </div>
-      </div>
-    </div>
-  </div>
-    <div class="col-lg-6 order-lg-1">
-    <div class="gs-card">
-      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <h5 class="mb-0">Transcript</h5>
-      </div>
-      {% if segments_view %}
-        <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
-          <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
-          <div class="trs-toolbar">
-            <div class="trs-search-group">
-              <input
-                type="search"
-                class="form-control form-control-sm"
-                id="trs-search-input"
-                placeholder="Search transcript">
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
-            </div>
-            <div class="trs-match-nav">
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-prev" aria-label="Previous match">↑</button>
-              <span class="trs-match-count" id="trs-match-count">0 / 0</span>
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
-            </div>
-          </div>
-          <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
-          <div class="trs-panel">
-            <div class="trs-document" id="trs-document" aria-label="Transcript document"></div>
-            <div class="trs-selection-bar">
-              <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
-              <div class="d-flex align-items-center gap-2 flex-wrap">
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-selection-clear" disabled>Clear</button>
-                <button type="button" class="btn btn-primary btn-sm" id="trs-create-clip" disabled>Create clip</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      {% else %}
-        <div class="text-muted">No segment data stored yet.</div>
-      {% endif %}
-    </div>
-  </div>
-</div>
-</div>
-{% endif %}
-
-
 {% endblock %}
 
 {% block scripts %}
@@ -2523,7 +2608,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const step3Btn = document.getElementById("step3-btn");
-  const clipList = document.getElementById("clip-list");
+  const clipList = document.getElementById("clip-management-panel");
   if (step3Btn && clipList) {
     step3Btn.addEventListener("click", () => {
       clipList.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2554,11 +2639,64 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-const refreshClipList = async () => {
+const initClipRail = (preferredPlanIndex = null) => {
+  const panel = document.getElementById("clip-management-panel");
+  const railList = document.getElementById("clip-rail-list");
   const clipList = document.getElementById("clip-list");
-  if (!clipList) {
+  if (!panel || !railList || !clipList) {
+    return;
+  }
+  const railItems = Array.from(railList.querySelectorAll(".clip-rail-item"));
+  const clipCards = Array.from(clipList.querySelectorAll(".clip-card"));
+  if (!railItems.length || !clipCards.length) {
+    return;
+  }
+
+  const selectPlan = (planIndex) => {
+    const normalized = String(planIndex || "").trim();
+    panel.dataset.activePlanIndex = normalized;
+    railItems.forEach((item) => {
+      item.classList.toggle("is-active", String(item.dataset.planIndex || "").trim() === normalized);
+    });
+    clipCards.forEach((card) => {
+      card.classList.toggle("is-active", String(card.dataset.planIndex || "").trim() === normalized);
+    });
+  };
+
+  railItems.forEach((item) => {
+    if (item.dataset.clipRailBound === "1") {
+      return;
+    }
+    item.dataset.clipRailBound = "1";
+    item.addEventListener("click", () => {
+      selectPlan(item.dataset.planIndex || "");
+    });
+  });
+
+  const fallbackPlanIndex = railItems[0]?.dataset.planIndex || clipCards[0]?.dataset.planIndex || "";
+  selectPlan(preferredPlanIndex || panel.dataset.activePlanIndex || fallbackPlanIndex);
+};
+
+const initAddClipToggle = () => {
+  const toggleBtn = document.getElementById("add-clip-toggle-btn");
+  const panel = document.getElementById("add-clip-panel");
+  if (!toggleBtn || !panel || toggleBtn.dataset.addClipToggleBound === "1") {
+    return;
+  }
+  toggleBtn.dataset.addClipToggleBound = "1";
+  toggleBtn.addEventListener("click", () => {
+    const isHidden = panel.classList.toggle("d-none");
+    toggleBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
+  });
+};
+</script>
+<script>
+const refreshClipList = async () => {
+  const clipPanel = document.getElementById("clip-management-panel");
+  if (!clipPanel) {
     return false;
   }
+  const activePlanIndex = clipPanel.dataset.activePlanIndex || "";
   try {
     const response = await fetch(window.location.href, {
       credentials: "same-origin",
@@ -2570,9 +2708,16 @@ const refreshClipList = async () => {
     const html = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
-    const newClipList = doc.getElementById("clip-list");
-    if (newClipList) {
-      clipList.replaceWith(newClipList);
+    const newClipPanel = doc.getElementById("clip-management-panel");
+    if (newClipPanel) {
+      clipPanel.replaceWith(newClipPanel);
+      initClipRail(activePlanIndex);
+      initAddClipToggle();
+      if (typeof bootstrap !== "undefined") {
+        document.querySelectorAll("#clip-management-panel [data-bs-toggle='tooltip']").forEach((el) => {
+          new bootstrap.Tooltip(el);
+        });
+      }
       initGenerateClipForms();
       initRemovePlanEntryAjax();
       initClipTitleRowAjax();
@@ -5297,15 +5442,8 @@ window.addEventListener("unhandledrejection", (event) => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const toggleBtn = document.getElementById("add-clip-toggle-btn");
-  const panel = document.getElementById("add-clip-panel");
-  if (!toggleBtn || !panel) {
-    return;
-  }
-  toggleBtn.addEventListener("click", () => {
-    const isHidden = panel.classList.toggle("d-none");
-    toggleBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
-  });
+  initClipRail();
+  initAddClipToggle();
 });
 </script>
 <script>
