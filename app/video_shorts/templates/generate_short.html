@@ -124,14 +124,14 @@
   .trs-document {
     max-height: 620px;
     overflow: auto;
-    padding: 20px 20px 96px;
-    line-height: 1.9;
-    font-size: 1rem;
+    padding: 16px 18px 96px;
+    line-height: 1.6;
+    font-size: 0.98rem;
     color: rgba(255, 255, 255, 0.92);
     user-select: text;
   }
   .trs-paragraph {
-    margin: 0 0 18px;
+    margin: 0 0 10px;
   }
   .trs-paragraph:last-child {
     margin-bottom: 0;
@@ -160,6 +160,9 @@
   }
   .trs-segment.is-selected {
     background: rgba(59, 130, 246, 0.22);
+  }
+  .trs-segment.is-live-selected {
+    background: rgba(45, 212, 191, 0.16);
   }
   .trs-selection-bar {
     position: sticky;
@@ -216,8 +219,9 @@
     text-align: left;
   }
   .clip-rail-item.is-active {
-    border-color: rgba(45, 212, 191, 0.55);
-    background: rgba(45, 212, 191, 0.12);
+    border: 2px solid rgba(45, 212, 191, 0.78);
+    background: rgba(45, 212, 191, 0.16);
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.18);
   }
   .clip-rail-thumb {
     width: 72px;
@@ -258,6 +262,38 @@
   .clip-rail-detail {
     margin-top: 4px;
   }
+  .clip-rail-detail-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.08);
+  }
+  .clip-rail-detail-title {
+    color: #fff;
+    font-weight: 700;
+  }
+  .clip-rail-detail-meta {
+    color: rgba(255, 255, 255, 0.66);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .clip-rail-detail-state {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 5px 10px;
+    background: rgba(45, 212, 191, 0.18);
+    color: #baf7ee;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
   .clip-rail-detail .clip-card {
     display: none;
   }
@@ -267,7 +303,7 @@
   @media (max-width: 991.98px) {
     .trs-document {
       max-height: 520px;
-      padding: 18px 16px 94px;
+      padding: 14px 14px 94px;
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -571,6 +607,7 @@
             </div>
             <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
+              <div class="small text-white-50">Metni seçerek klip yap.</div>
               <div class="trs-toolbar">
                 <div class="trs-search-group">
                   <input
@@ -666,6 +703,13 @@
               {% endfor %}
             </div>
             <div id="clip-list" class="clip-list clip-rail-detail">
+              <div class="clip-rail-detail-header" id="clip-rail-detail-header">
+                <div>
+                  <div class="clip-rail-detail-title" id="clip-rail-detail-title">Clip details</div>
+                  <div class="clip-rail-detail-meta" id="clip-rail-detail-meta">Select a clip from the rail.</div>
+                </div>
+                <div class="clip-rail-detail-state">Düzenleniyor</div>
+              </div>
               {% for row in clip_rows %}
             {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
             {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
@@ -2208,6 +2252,7 @@ document.addEventListener("DOMContentLoaded", () => {
       selectionStart: null,
       selectionEnd: null,
       creating: false,
+      dragAnchorIndex: null,
     };
 
     const buildParagraphs = (items) => {
@@ -2220,9 +2265,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const shouldBreak = Boolean(
           current.length &&
           (
-            gap > 1.8 ||
-            current.length >= 8 ||
-            /[.!?…:]["')\]]*$/.test(prevText)
+            gap > 2.8 ||
+            current.length >= 14 ||
+            (current.length >= 6 && /[.!?…:]["')\]]*$/.test(prevText))
           )
         );
         if (shouldBreak) {
@@ -2298,6 +2343,23 @@ document.addEventListener("DOMContentLoaded", () => {
         segment.element.classList.toggle("is-selected", selected);
       });
       renderSelectionSummary();
+    };
+
+    const renderLiveSelection = (firstIndex, secondIndex) => {
+      segments.forEach((segment) => segment.element?.classList.remove("is-live-selected"));
+      if (firstIndex === null || secondIndex === null || firstIndex === undefined || secondIndex === undefined) {
+        return;
+      }
+      const ordered = [firstIndex, secondIndex].sort((left, right) => left - right);
+      segments.forEach((segment) => {
+        if (!segment.element) {
+          return;
+        }
+        segment.element.classList.toggle(
+          "is-live-selected",
+          segment.index >= ordered[0] && segment.index <= ordered[1],
+        );
+      });
     };
 
     const renderMatches = (scrollToCurrent = false) => {
@@ -2396,13 +2458,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (anchorIndex !== null && focusIndex !== null) {
         setSelectionFromIndexes(anchorIndex, focusIndex);
+        renderLiveSelection(null, null);
         clearNativeSelection();
         return;
       }
       if (clickIndex !== null) {
         setSelectionFromIndexes(clickIndex, clickIndex);
+        renderLiveSelection(null, null);
         clearNativeSelection();
+        return;
       }
+      if (state.dragAnchorIndex !== null) {
+        setSelectionFromIndexes(state.dragAnchorIndex, state.dragAnchorIndex);
+      }
+      renderLiveSelection(null, null);
+      clearNativeSelection();
     };
 
     const cycleMatches = (direction) => {
@@ -2416,11 +2486,36 @@ document.addEventListener("DOMContentLoaded", () => {
     renderDocument();
     renderMatches(false);
 
+    documentEl.addEventListener("mousedown", (event) => {
+      state.dragAnchorIndex = segmentFromNode(event.target);
+      if (state.dragAnchorIndex !== null) {
+        renderLiveSelection(state.dragAnchorIndex, state.dragAnchorIndex);
+      }
+    });
+    document.addEventListener("selectionchange", () => {
+      if (state.dragAnchorIndex === null) {
+        return;
+      }
+      const selection = window.getSelection();
+      const anchorIndex = segmentFromNode(selection?.anchorNode);
+      const focusIndex = segmentFromNode(selection?.focusNode);
+      if (anchorIndex !== null && focusIndex !== null) {
+        renderLiveSelection(anchorIndex, focusIndex);
+      } else {
+        renderLiveSelection(state.dragAnchorIndex, state.dragAnchorIndex);
+      }
+    });
     documentEl.addEventListener("mouseup", (event) => {
-      window.setTimeout(() => applySelectionFromEvent(event.target), 0);
+      window.setTimeout(() => {
+        applySelectionFromEvent(event.target);
+        state.dragAnchorIndex = null;
+      }, 0);
     });
     documentEl.addEventListener("touchend", (event) => {
-      window.setTimeout(() => applySelectionFromEvent(event.target), 0);
+      window.setTimeout(() => {
+        applySelectionFromEvent(event.target);
+        state.dragAnchorIndex = null;
+      }, 0);
     });
 
     searchInput?.addEventListener("input", () => {
@@ -2643,6 +2738,8 @@ const initClipRail = (preferredPlanIndex = null) => {
   const panel = document.getElementById("clip-management-panel");
   const railList = document.getElementById("clip-rail-list");
   const clipList = document.getElementById("clip-list");
+  const detailTitle = document.getElementById("clip-rail-detail-title");
+  const detailMeta = document.getElementById("clip-rail-detail-meta");
   if (!panel || !railList || !clipList) {
     return;
   }
@@ -2659,7 +2756,16 @@ const initClipRail = (preferredPlanIndex = null) => {
       item.classList.toggle("is-active", String(item.dataset.planIndex || "").trim() === normalized);
     });
     clipCards.forEach((card) => {
-      card.classList.toggle("is-active", String(card.dataset.planIndex || "").trim() === normalized);
+      const isActive = String(card.dataset.planIndex || "").trim() === normalized;
+      card.classList.toggle("is-active", isActive);
+      if (isActive) {
+        if (detailTitle) {
+          detailTitle.textContent = card.querySelector(".clip-title-input")?.value?.trim() || "Clip details";
+        }
+        if (detailMeta) {
+          detailMeta.textContent = card.querySelector(".clip-card-meta-time")?.textContent?.trim() || "";
+        }
+      }
     });
   };
 
@@ -3274,6 +3380,16 @@ const initClipTitleRowAjax = () => {
           }
           if (payload.duration !== undefined) {
             card.dataset.duration = payload.duration;
+          }
+          if (card.classList.contains("is-active")) {
+            const detailTitle = document.getElementById("clip-rail-detail-title");
+            const detailMeta = document.getElementById("clip-rail-detail-meta");
+            if (detailTitle) {
+              detailTitle.textContent = card.querySelector(".clip-title-input")?.value?.trim() || "Clip details";
+            }
+            if (detailMeta && metaTime) {
+              detailMeta.textContent = metaTime.textContent.trim();
+            }
           }
         }
       } catch (err) {
