@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import string
 import subprocess
@@ -52,6 +53,7 @@ from app.video_shorts.config import (
     IG_REDIRECT_URI,
     IG_OAUTH_SCOPES,
     OPENAI_MODEL,
+    MINTI_BACKGROUNDS_DIR,
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
     SUB_FONT_CHOICES,
@@ -579,6 +581,7 @@ def _update_storage_asset_label(file_key: str, label: Optional[str]) -> None:
 
 
 _ALLOWED_STATIC_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+_ALLOWED_AUTO_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def _user_media_storage_key(kind: str, user_id: str, filename: str) -> str:
@@ -663,6 +666,40 @@ def _resolve_user_static_image_path(
         except Exception:
             current_app.logger.exception("Failed to download static image from s3 image_id=%s key=%s", clean_image_id, key)
     return None, False
+
+
+def _list_auto_background_paths() -> List[Path]:
+    try:
+        if not MINTI_BACKGROUNDS_DIR.exists():
+            return []
+        return sorted(
+            [
+                entry
+                for entry in MINTI_BACKGROUNDS_DIR.iterdir()
+                if entry.is_file() and entry.suffix.lower() in _ALLOWED_AUTO_BACKGROUND_EXTS
+            ],
+            key=lambda entry: entry.name.lower(),
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Failed to list minti background images from %s",
+            MINTI_BACKGROUNDS_DIR,
+        )
+        return []
+
+
+def _resolve_auto_background_path(video_id: Optional[str]) -> Optional[Path]:
+    candidates = _list_auto_background_paths()
+    if not candidates:
+        return None
+    existing_candidates = [candidate for candidate in candidates if candidate.exists()]
+    if not existing_candidates:
+        return None
+    if not video_id:
+        return existing_candidates[0]
+    digest = hashlib.sha256(str(video_id).encode("utf-8")).digest()
+    index = int.from_bytes(digest[:8], "big") % len(existing_candidates)
+    return existing_candidates[index]
 
 
 def _legacy_image_to_video_path(job_id: str) -> Path:
@@ -10194,6 +10231,10 @@ def autoclip_video(video_pk):
             static_fallback = STATIC_IMG_DIR / bg_path.name
             if static_fallback.exists():
                 bg_path = static_fallback
+        if not bg_visual_key:
+            auto_bg_path = _resolve_auto_background_path(vid)
+            if auto_bg_path:
+                bg_path = auto_bg_path
         if bg_visual_key:
             if bg_visual_key.startswith("userbg:"):
                 bg_image_id = bg_visual_key.split(":", 1)[1]

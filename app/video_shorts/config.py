@@ -218,6 +218,7 @@ DEFAULT_TITLE_BG_COLOR = "#FFD600"
 DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "400"))
 
 STATIC_FONTS_DIR = Path(__file__).resolve().parent / "static" / "fonts"
+MINTI_BACKGROUNDS_DIR = Path(__file__).resolve().parent / "static" / "mintibackgrounds"
 
 TITLE_FONTS = OrderedDict(
     [
