@@ -151,8 +151,8 @@ def settings_page():
             "href": url_for("video_shorts_bp.prompts_page"),
         },
         {
-            "title": "Static Images",
-            "subtitle": "Upload and organize visuals",
+            "title": "Backgrounds",
+            "subtitle": "Manage default and uploaded backgrounds",
             "icon": "image",
             "href": url_for("video_shorts_bp.static_images_page"),
         },

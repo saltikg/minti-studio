@@ -2625,21 +2625,130 @@ def _build_placeholder_clip_title(transcript_text: str, fallback_index: int) -> 
     return f"Manual clip #{fallback_index}"
 
 
-def _request_short_title_suggestion(excerpt: str, current_title: str = "") -> str:
+def _is_placeholder_clip_title(title: str) -> bool:
+    normalized = " ".join(str(title or "").strip().split())
+    if not normalized:
+        return True
+    if re.fullmatch(r"Manual clip #\d+", normalized, flags=re.IGNORECASE):
+        return True
+    if len(normalized) > 80:
+        return True
+    return False
+
+
+def _clip_title_example_from_entry(entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    title = " ".join(str(entry.get("title") or "").strip().split())
+    if _is_placeholder_clip_title(title):
+        return None
+    excerpt = " ".join(
+        str(
+            entry.get("transcript_full_custom")
+            or entry.get("transcript_full")
+            or entry.get("excerpt")
+            or ""
+        ).strip().split()
+    )
+    if not excerpt:
+        return None
+    excerpt = excerpt[:280].strip()
+    if len(excerpt) < 24:
+        return None
+    return {"excerpt": excerpt, "title": title[:80].strip()}
+
+
+def _load_user_title_style_examples(
+    user_id: Any,
+    current_video_id: Optional[str] = None,
+    max_examples: int = 3,
+) -> List[Dict[str, str]]:
+    if not user_id:
+        return []
+    conn = get_db_readonly()
+    rows: List[Tuple[Any, ...]] = []
+    try:
+        rows = conn.execute(
+            """
+            SELECT video_id, id
+            FROM youtube_videos
+            WHERE owner_user_id = ?
+            ORDER BY id DESC
+            LIMIT 40
+            """,
+            [user_id],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    examples: List[Dict[str, str]] = []
+    for row in rows:
+        video_id = str(row[0] or "").strip()
+        if not video_id or video_id == str(current_video_id or "").strip():
+            continue
+        for entry in _load_plan_entries(video_id):
+            example = _clip_title_example_from_entry(entry)
+            if not example:
+                continue
+            examples.append(example)
+            if len(examples) >= max_examples:
+                return examples
+    return examples
+
+
+def _generic_short_title_examples() -> List[Dict[str, str]]:
+    return [
+        {
+            "excerpt": "Bir insan sürekli aynı hatayı yapıyorsa mesele irade eksikliği değil, yanlış ortamın içinde yaşıyor olabilir.",
+            "title": "Aynı Hatanın Asıl Sebebi",
+        },
+        {
+            "excerpt": "Gençlerin en çok sorduğu şey şu: İyi bir başlangıç yapmak için önce neyi bırakmak gerekiyor?",
+            "title": "İyi Başlangıç İçin Ne Bırakılmalı",
+        },
+    ]
+
+
+def _request_short_title_suggestion(
+    excerpt: str,
+    *,
+    user_id: Any = None,
+    current_video_id: Optional[str] = None,
+) -> str:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     safe_excerpt = (excerpt or "").strip()[:2000]
-    safe_current_title = (current_title or "").strip()[:200]
     system_prompt = (
-        "You write short, catchy social video titles. "
+        "You write strong titles for short vertical clips cut from longer Turkish talk, educational, and Q&A videos. "
         "Return exactly one title in the same language as the transcript. "
-        "Keep it concise, natural, and suitable for a Shorts clip headline. "
-        "Do not use quotes. Do not add trailing punctuation. "
-        "Prefer a few words over a summary."
+        "Make it specific to the single most interesting point, claim, or question in this excerpt. "
+        "Prefer concrete wording over vague summary language. "
+        "For Q&A clips, surface the core question or claim naturally. "
+        "Avoid clickbait, generic filler, quotes, trailing punctuation, hashtags, emojis, ALL CAPS, and summaries. "
+        "Output exactly one line containing only the title."
     )
+    examples: List[Dict[str, str]] = []
+    try:
+        examples = _load_user_title_style_examples(
+            user_id=user_id,
+            current_video_id=current_video_id,
+            max_examples=3,
+        )
+    except Exception:
+        current_app.logger.exception("Failed to load user title style examples")
+        examples = []
+    if len(examples) < 2:
+        examples = _generic_short_title_examples()
+
+    example_lines = []
+    for idx, example in enumerate(examples, start=1):
+        example_lines.append(
+            f"Example {idx}\n"
+            f"Transcript excerpt: {example['excerpt']}\n"
+            f"Title: {example['title']}"
+        )
     user_content = (
-        f"Current title: {safe_current_title or 'None'}\n"
-        f"Transcript:\n{safe_excerpt or 'No transcript available.'}\n\n"
+        "Use these examples only as style anchors for tone, length, and word choice.\n\n"
+        f"{chr(10).join(example_lines)}\n\n"
+        f"Current transcript excerpt:\n{safe_excerpt or 'No transcript available.'}\n\n"
         "Create one short title only."
     )
     response = _openai_client.chat.completions.create(
@@ -2648,7 +2757,7 @@ def _request_short_title_suggestion(excerpt: str, current_title: str = "") -> st
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.4,
+        temperature=0.7,
     )
     suggestion = (response.choices[0].message.content or "").strip()
     suggestion = suggestion.strip(" \"'“”‘’")
@@ -6265,11 +6374,11 @@ def update_clip_category(video_pk):
 def suggest_clip_title(video_pk):
     if not _openai_client:
         return jsonify(success=False, message="OPENAI_API_KEY missing"), 403
+    current_user = getattr(g, "vs_current_user", None)
     plan_index = request.form.get("plan_index")
     if not plan_index:
         return jsonify(success=False, message="Plan index missing"), 400
     excerpt = (request.form.get("excerpt") or "").strip()
-    current_title = (request.form.get("current_title") or "").strip()
     expected_current_title = (request.form.get("expected_current_title") or "").strip()
     video_id = _resolve_video_id_from_pk(video_pk)
     if not video_id:
@@ -6285,7 +6394,11 @@ def suggest_clip_title(video_pk):
     if expected_current_title and existing_title != expected_current_title:
         return jsonify(success=True, skipped=True, title=existing_title)
     try:
-        new_title = _request_short_title_suggestion(excerpt, current_title=current_title)
+        new_title = _request_short_title_suggestion(
+            excerpt,
+            user_id=current_user.get("id") if current_user else None,
+            current_video_id=video_id,
+        )
     except Exception as exc:
         current_app.logger.exception("Title suggestion failed: %s", exc)
         return jsonify(success=False, message="LLM hata verdi"), 500
