@@ -107,6 +107,8 @@ from app.video_shorts.services.media_utils import (
 )
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
+    make_system_background_key,
+    list_system_background_paths,
     resolve_system_background_path,
 )
 from app.video_shorts.services.storage import (
@@ -2608,6 +2610,52 @@ def _find_plan_entry(entries: List[Dict[str, Any]], plan_index: Optional[str]) -
     return None
 
 
+def _build_placeholder_clip_title(transcript_text: str, fallback_index: int) -> str:
+    source = " ".join(str(transcript_text or "").strip().split())
+    if source:
+        sentence = re.split(r"(?<=[.!?])\s+|\n+", source, maxsplit=1)[0].strip()
+        sentence = sentence.strip(" \"'“”‘’.,:;!?-")
+        if sentence:
+            words = sentence.split()
+            shortened = " ".join(words[:8]).strip()
+            if len(words) > 8:
+                shortened = f"{shortened}…"
+            if shortened:
+                return shortened[:80].rstrip()
+    return f"Manual clip #{fallback_index}"
+
+
+def _request_short_title_suggestion(excerpt: str, current_title: str = "") -> str:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    safe_excerpt = (excerpt or "").strip()[:2000]
+    safe_current_title = (current_title or "").strip()[:200]
+    system_prompt = (
+        "You write short, catchy social video titles. "
+        "Return exactly one title in the same language as the transcript. "
+        "Keep it concise, natural, and suitable for a Shorts clip headline. "
+        "Do not use quotes. Do not add trailing punctuation. "
+        "Prefer a few words over a summary."
+    )
+    user_content = (
+        f"Current title: {safe_current_title or 'None'}\n"
+        f"Transcript:\n{safe_excerpt or 'No transcript available.'}\n\n"
+        "Create one short title only."
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.4,
+    )
+    suggestion = (response.choices[0].message.content or "").strip()
+    suggestion = suggestion.strip(" \"'“”‘’")
+    suggestion = re.sub(r"[.!?,:;]+$", "", suggestion).strip()
+    return suggestion[:80].strip()
+
+
 def _resolve_video_id_from_pk(video_pk: Any) -> Optional[str]:
     if not video_pk:
         return None
@@ -3471,9 +3519,29 @@ def generate_short(video_pk):
     static_visual_label = active_static_visual["label"] if active_static_visual else None
     created_visual_label = active_created_visual["label"] if active_created_visual else None
     selected_visual_label = static_visual_label or created_visual_label
-    bg_visual_options = list(user_background_visual_options)
+    system_background_visual_options = [
+        {
+            "key": make_system_background_key(system_path.name),
+            "label": system_path.stem.replace("_", " "),
+            "image_url": url_for("video_shorts_bp.static", filename=f"mintibackgrounds/{system_path.name}"),
+            "description": "System background",
+        }
+        for system_path in list_system_background_paths()
+    ]
+    bg_visual_options = list(system_background_visual_options) + list(user_background_visual_options)
     bg_visual_map = {opt["key"]: opt for opt in bg_visual_options}
-    video_background_visual_key = video.get("background_visual_key")
+    preferred_bg_key = None
+    if current_user:
+        preferred_bg_key = load_background_preference(current_user.get("id"), brand_id)
+        if preferred_bg_key not in bg_visual_map:
+            preferred_bg_key = None
+    video_background_visual_key = preferred_bg_key or video.get("background_visual_key")
+    if not video_background_visual_key:
+        auto_bg_path = choose_deterministic_system_background(vid)
+        if auto_bg_path:
+            candidate_key = make_system_background_key(auto_bg_path.name)
+            if candidate_key in bg_visual_map:
+                video_background_visual_key = candidate_key
     active_bg_visual = bg_visual_map.get(video_background_visual_key)
     background_visual_label = active_bg_visual["label"] if active_bg_visual else None
 
@@ -4227,6 +4295,7 @@ def generate_short(video_pk):
         bg_visual_options=bg_visual_options,
         video_background_visual_key=video_background_visual_key,
         background_visual_label=background_visual_label,
+        background_preference_update_url=url_for("video_shorts_bp.update_selected_background"),
         video_crop_aspect=video.get("crop_aspect") if video else None,
         instagram_connected=instagram_connected,
         tiktok_connected=tiktok_connected,
@@ -6019,7 +6088,7 @@ def add_clip_section(video_pk):
             except Exception:
                 pass
 
-    clip_title = title or f"Manual clip #{next_plan_index}"
+    clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
     new_entry = {
         "plan_index": next_plan_index,
         "title": clip_title,
@@ -6041,7 +6110,12 @@ def add_clip_section(video_pk):
         f"Klip bölümü eklendi (#{next_plan_index}).",
         success=True,
         category="success",
-        extras={"plan_index": next_plan_index},
+        extras={
+            "plan_index": next_plan_index,
+            "title": clip_title,
+            "transcript_full": transcript_full,
+            "excerpt": transcript_full,
+        },
     )
 
 
@@ -6196,6 +6270,7 @@ def suggest_clip_title(video_pk):
         return jsonify(success=False, message="Plan index missing"), 400
     excerpt = (request.form.get("excerpt") or "").strip()
     current_title = (request.form.get("current_title") or "").strip()
+    expected_current_title = (request.form.get("expected_current_title") or "").strip()
     video_id = _resolve_video_id_from_pk(video_pk)
     if not video_id:
         return jsonify(success=False, message="Video not found"), 404
@@ -6206,27 +6281,11 @@ def suggest_clip_title(video_pk):
     if not excerpt:
         excerpt = plan_entry.get("excerpt") or plan_entry.get("transcript_full") or ""
     excerpt = excerpt[:2000]
-    system_prompt = (
-        "You are a helpful Turkish copywriter specializing in short, respectful YouTube titles. "
-        "The lecture is faith-based, so keep the tone sincere and concise. "
-        "Generate a single title under 80 characters that reflects the provided clip excerpt. "
-        "Do not invent facts; rely on the excerpt."
-    )
-    user_content = (
-        f"Current title: {current_title or 'None'}\n"
-        f"Clip excerpt: {excerpt.strip() or 'No excerpt available.'}\n"
-        "Suggest a better title only if it improves clarity, and do not return the same title—always offer new wording even if the meaning is similar."
-    )
+    existing_title = str(plan_entry.get("title") or "").strip()
+    if expected_current_title and existing_title != expected_current_title:
+        return jsonify(success=True, skipped=True, title=existing_title)
     try:
-        response = _openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.3,
-        )
-        new_title = (response.choices[0].message.content or "").strip()
+        new_title = _request_short_title_suggestion(excerpt, current_title=current_title)
     except Exception as exc:
         current_app.logger.exception("Title suggestion failed: %s", exc)
         return jsonify(success=False, message="LLM hata verdi"), 500
@@ -10193,16 +10252,13 @@ def autoclip_video(video_pk):
             for key, val in video_crop_ratios.items()
             if key in {"crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio"}
         }
-        bg_visual_key = video_background_visual_key
+        preferred_bg_key = load_background_preference(video_owner_user_id, current_brand_id()) if video_owner_user_id else None
+        bg_visual_key = preferred_bg_key or video_background_visual_key
         bg_path = BGCOVER_PATH
         if not bg_path.exists():
             static_fallback = STATIC_IMG_DIR / bg_path.name
             if static_fallback.exists():
                 bg_path = static_fallback
-        if not bg_visual_key and video_owner_user_id:
-            preferred_bg_key = load_background_preference(video_owner_user_id, current_brand_id())
-            if preferred_bg_key:
-                bg_visual_key = preferred_bg_key
         resolved_selected_background = False
         if not bg_visual_key:
             auto_bg_path = choose_deterministic_system_background(vid)

@@ -191,6 +191,105 @@
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.78rem;
   }
+  .background-selected-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 62px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .background-selected-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    flex: 0 0 auto;
+  }
+  .background-selected-meta {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .background-selected-label {
+    font-size: 0.86rem;
+    color: rgba(255, 255, 255, 0.96);
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .background-selected-note {
+    font-size: 0.74rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 3px;
+  }
+  .background-edit-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.9);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .background-edit-btn:hover,
+  .background-edit-btn:focus-visible {
+    background: rgba(45, 212, 191, 0.14);
+    border-color: rgba(45, 212, 191, 0.36);
+    color: #d8fffb;
+  }
+  .background-picker-panel {
+    display: none;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .background-picker-panel.is-open {
+    display: block;
+  }
+  .background-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .background-picker-title {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.68);
+  }
+  .background-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .background-picker-grid .bg-visual-option {
+    padding: 0;
+    aspect-ratio: 9 / 16;
+    overflow: hidden;
+  }
+  .background-picker-grid .bg-visual-option img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .background-picker-empty {
+    font-size: 0.76rem;
+    color: rgba(255, 255, 255, 0.64);
+  }
+  @media (max-width: 991.98px) {
+    .background-picker-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
   .trs-shell {
     display: flex;
     flex-direction: column;
@@ -940,12 +1039,6 @@
               </div>
             </div>
           </div>
-          <div class="gs-card mt-3">
-            <h5 class="mb-2">Original transcript</h5>
-            <div class="gs-code gs-code-scroll-220" id="transcript-text">
-              {{ transcript_override or transcript_text_tr or transcript_text }}
-            </div>
-          </div>
         </div>
         <div class="col-12 col-xl-5 clip-workbench-side">
           <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
@@ -1631,32 +1724,48 @@
               </button>
             </div>
           </div>
-          <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}'>
+          <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
             <label class="text-white-50">Background</label>
-            <div class="controls static-visual-grid" id="background-visual-grid">
-              {% for visual in bg_visual_options %}
-                {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
-                <button
-                  type="button"
-                  class="static-visual-option bg-visual-option"
-                  data-bg-visual-key="{{ visual.key }}"
-                  data-img-url="{{ bg_img_url or '' }}"
-                  aria-label="Select background {{ visual.label }}"
-                  data-bs-toggle="tooltip"
-                  data-bs-placement="top"
-                  title="Background {{ visual.label }}"
-                >
-                  <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
-                  <span class="bg-selected-badge" aria-hidden="true">
-                    <i class="bi bi-check"></i>
-                  </span>
-                </button>
-              {% endfor %}
+            <div class="background-selected-card" id="background-selected-card">
+              <img src="" alt="" class="background-selected-thumb" id="background-selected-thumb">
+              <div class="background-selected-meta">
+                <div class="background-selected-label" id="background-selected-label">No background selected</div>
+                <div class="background-selected-note" id="background-selected-note">Default background</div>
+              </div>
+              <button type="button" class="background-edit-btn" id="background-edit-btn" aria-label="Change background">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+            </div>
+            <div class="background-picker-panel" id="background-picker-panel">
+              <div class="background-picker-head">
+                <div class="background-picker-title">Choose a different default background</div>
+                <button type="button" class="btn btn-link btn-sm text-muted p-0" id="background-picker-close">Done</button>
+              </div>
+              <div class="background-picker-grid" id="background-visual-grid">
+                {% for visual in bg_visual_options %}
+                  {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
+                  <button
+                    type="button"
+                    class="static-visual-option bg-visual-option"
+                    data-bg-visual-key="{{ visual.key }}"
+                    data-img-url="{{ bg_img_url or '' }}"
+                    aria-label="Select background {{ visual.label }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Background {{ visual.label }}"
+                  >
+                    <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
+                    <span class="bg-selected-badge" aria-hidden="true">
+                      <i class="bi bi-check"></i>
+                    </span>
+                  </button>
+                {% endfor %}
+              </div>
             </div>
             {% if not bg_visual_options %}
-              <div class="small text-warning mt-2">
+              <div class="small text-warning mt-2 background-picker-empty">
                 Please upload a background image from
-                <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Static Images</a>.
+                <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Backgrounds</a>.
               </div>
             {% endif %}
           </div>
@@ -2222,15 +2331,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     root.dataset.trsMounted = "1";
-    const transcriptEl = document.getElementById("transcript-text");
     const editUrl = "{{ url_for('video_shorts_bp.edit_segment_text', video_pk=video.id) }}";
     window.initTranscriptClipSelector?.(root, {
       editUrl,
-      onTranscriptSaved: (fullText) => {
-        if (transcriptEl && typeof fullText === "string") {
-          transcriptEl.textContent = fullText;
-        }
-      },
       onCreateClip: async ({ startTime, endTime }) => {
         const response = await fetch(root.dataset.addClipUrl || "", {
           method: "POST",
@@ -2251,6 +2354,23 @@ document.addEventListener("DOMContentLoaded", () => {
         if (typeof refreshClipList === "function") {
           const ok = await refreshClipList(payload.plan_index || "", "detail");
           if (ok) {
+            const createdCard = getClipCardByPlanIndex(payload.plan_index || "");
+            if (createdCard) {
+              const placeholderTitle = String(payload.title || "").trim();
+              if (placeholderTitle) {
+                syncClipCardTitleUi(createdCard, placeholderTitle);
+                markClipTitleAutofillBaseline(createdCard, placeholderTitle);
+              }
+              void requestSuggestedClipTitle({
+                card: createdCard,
+                planIndex: String(payload.plan_index || ""),
+                excerpt: payload.excerpt || payload.transcript_full || "",
+                currentTitle: placeholderTitle,
+                expectedCurrentTitle: placeholderTitle,
+                applyMode: "if-pristine",
+                successMessage: "",
+              });
+            }
             return;
           }
         }
@@ -2971,6 +3091,7 @@ document.addEventListener("DOMContentLoaded", () => {
       clipList.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
+  bindClipTitleAutofillTracking();
 });
 </script>
 <script>
@@ -3114,6 +3235,8 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       initGenerateClipForms();
       initRemovePlanEntryAjax();
       initClipTitleRowAjax();
+      bindClipTitleAutofillTracking();
+      initClipSuggestTitleButtons();
       initClipCategoryAjax();
       initSendToYoutubeButtons();
       resumeQueuedClipJobs();
@@ -3139,6 +3262,134 @@ const getClipCardByPlanIndex = (planIndex) => {
     const planIndexInput = card.querySelector("input[name='plan_index']");
     return planIndexInput && String(planIndexInput.value || "").trim() === normalizedPlanIndex;
   }) || null;
+};
+
+const syncClipCardTitleUi = (card, title) => {
+  const safeTitle = String(title || "").trim();
+  if (!card || !safeTitle) {
+    return;
+  }
+  const titleInput = card.querySelector(".clip-title-input");
+  if (titleInput) {
+    titleInput.value = safeTitle;
+  }
+  const railItem = document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(String(card.dataset.planIndex || titleInput?.closest(".clip-card")?.querySelector("input[name='plan_index']")?.value || ""))}"]`);
+  const railTitle = railItem?.querySelector(".clip-rail-title");
+  if (railTitle) {
+    railTitle.textContent = safeTitle;
+  }
+  if (card.classList.contains("is-active")) {
+    const detailTitle = document.getElementById("clip-rail-detail-title");
+    if (detailTitle) {
+      detailTitle.textContent = safeTitle;
+    }
+  }
+};
+
+const markClipTitleAutofillBaseline = (card, baselineTitle) => {
+  const titleInput = card?.querySelector(".clip-title-input");
+  if (!titleInput) {
+    return;
+  }
+  titleInput.dataset.autoTitleBaseline = String(baselineTitle || "").trim();
+  titleInput.dataset.autoTitleDirty = "0";
+};
+
+const bindClipTitleAutofillTracking = () => {
+  document.querySelectorAll(".clip-title-input").forEach((input) => {
+    if (input.dataset.autoTitleTrackingBound === "1") {
+      return;
+    }
+    input.dataset.autoTitleTrackingBound = "1";
+    input.addEventListener("input", () => {
+      const baseline = String(input.dataset.autoTitleBaseline || "").trim();
+      const currentValue = String(input.value || "").trim();
+      input.dataset.autoTitleDirty = baseline && currentValue !== baseline ? "1" : "0";
+    });
+  });
+};
+
+const requestSuggestedClipTitle = async ({
+  button = null,
+  card,
+  planIndex,
+  excerpt = "",
+  currentTitle = "",
+  expectedCurrentTitle = "",
+  applyMode = "always",
+  successMessage = "New title suggested.",
+} = {}) => {
+  if (!card || !planIndex) {
+    return { success: false, skipped: true };
+  }
+  const triggerButton = button || card.querySelector(".clip-suggest-title-btn");
+  const url = triggerButton?.dataset.suggestUrl;
+  if (!url) {
+    return { success: false, skipped: true };
+  }
+  const titleInput = card.querySelector(".clip-title-input");
+  const feedback = card.querySelector(".clip-title-suggestion-feedback");
+  const previousText = triggerButton?.innerHTML || "";
+  if (triggerButton) {
+    triggerButton.disabled = true;
+    triggerButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+  }
+  try {
+    const params = new URLSearchParams();
+    params.append("plan_index", planIndex);
+    params.append("excerpt", excerpt);
+    params.append("current_title", currentTitle || titleInput?.value || "");
+    if (expectedCurrentTitle) {
+      params.append("expected_current_title", expectedCurrentTitle);
+    }
+    const response = await fetch(url, {
+      method: "POST",
+      body: params,
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "Title suggestion could not be created.");
+    }
+    if (payload.skipped) {
+      return { success: true, skipped: true, title: payload.title || "" };
+    }
+    const suggestedTitle = String(payload.title || "").trim();
+    if (!suggestedTitle) {
+      return { success: true, skipped: true, title: "" };
+    }
+    const currentValue = String(titleInput?.value || "").trim();
+    const isDirty = String(titleInput?.dataset.autoTitleDirty || "") === "1";
+    const baseline = String(titleInput?.dataset.autoTitleBaseline || "").trim();
+    const shouldApply = applyMode === "always" || (!isDirty && currentValue === (expectedCurrentTitle || baseline || currentValue));
+    if (shouldApply) {
+      syncClipCardTitleUi(card, suggestedTitle);
+      markClipTitleAutofillBaseline(card, suggestedTitle);
+    }
+    if (feedback && successMessage) {
+      feedback.textContent = successMessage;
+      feedback.classList.remove("text-danger");
+      feedback.classList.add("text-success");
+      feedback.classList.remove("d-none");
+    }
+    return { success: true, skipped: false, title: suggestedTitle };
+  } catch (err) {
+    if (feedback) {
+      feedback.textContent = err.message || "Title suggestion could not be retrieved.";
+      feedback.classList.remove("text-success");
+      feedback.classList.add("text-danger");
+      feedback.classList.remove("d-none");
+    }
+    return { success: false, skipped: false, error: err };
+  } finally {
+    if (triggerButton) {
+      triggerButton.disabled = false;
+      triggerButton.innerHTML = previousText;
+    }
+  }
 };
 
 const isCreatedClipRendered = (planIndex) => {
@@ -4744,11 +4995,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const createdVisualOptions = createdSelector ? JSON.parse(createdSelector.dataset.createdVisuals || "[]") : [];
   const bgSelector = modalEl.querySelector(".background-visual-selector");
   const bgVisualOptions = bgSelector ? JSON.parse(bgSelector.dataset.bgVisuals || "[]") : [];
+  const backgroundSelectionUrl = bgSelector?.dataset.selectionUrl || "";
   const staticVisualMap = new Map(staticVisualOptions.map((option) => [option.key, option]));
   const createdVisualMap = new Map(createdVisualOptions.map((option) => [option.key, option]));
   const staticVisualButtons = Array.from(modalEl.querySelectorAll("#static-visual-grid .static-visual-option"));
   const createdVisualButtons = Array.from(modalEl.querySelectorAll("#created-visual-grid .created-visual-option"));
   const bgVisualButtons = Array.from(modalEl.querySelectorAll(".bg-visual-option"));
+  const backgroundSelectedThumb = modalEl.querySelector("#background-selected-thumb");
+  const backgroundSelectedLabel = modalEl.querySelector("#background-selected-label");
+  const backgroundSelectedNote = modalEl.querySelector("#background-selected-note");
+  const backgroundEditBtn = modalEl.querySelector("#background-edit-btn");
+  const backgroundPickerPanel = modalEl.querySelector("#background-picker-panel");
+  const backgroundPickerCloseBtn = modalEl.querySelector("#background-picker-close");
   const cropAspectSelector = modalEl.querySelector("#crop-aspect-selector");
   const cropAspectButtons = cropAspectSelector
     ? Array.from(cropAspectSelector.querySelectorAll("[data-crop-aspect]"))
@@ -4765,6 +5023,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeCropAspect = "landscape";
   let activeVisualMode = "video";
   let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
+  let backgroundPreferenceSyncInFlight = false;
   const clampRatio = (value) => Math.max(0, Math.min(1, Number(value) || 0));
   const showLoader = () => previewLoader?.classList.remove("d-none");
   const hideLoader = () => previewLoader?.classList.add("d-none");
@@ -5011,6 +5270,51 @@ document.addEventListener("DOMContentLoaded", () => {
   const getActiveBackgroundUrl = () => {
     const selected = bgVisualOptions.find((opt) => opt.key === activeBackgroundKey);
     return selected?.image_url || "";
+  };
+  const getActiveBackgroundOption = () => (
+    bgVisualOptions.find((opt) => opt.key === activeBackgroundKey) || null
+  );
+  const setBackgroundPickerOpen = (isOpen) => {
+    backgroundPickerPanel?.classList.toggle("is-open", !!isOpen);
+    backgroundEditBtn?.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+  const syncActiveBackgroundCard = () => {
+    const selected = getActiveBackgroundOption();
+    if (backgroundSelectedThumb) {
+      backgroundSelectedThumb.src = selected?.image_url || "";
+      backgroundSelectedThumb.alt = selected ? `Background ${selected.label || ""}` : "";
+      backgroundSelectedThumb.style.visibility = selected?.image_url ? "visible" : "hidden";
+    }
+    if (backgroundSelectedLabel) {
+      backgroundSelectedLabel.textContent = selected?.label || "No background selected";
+    }
+    if (backgroundSelectedNote) {
+      backgroundSelectedNote.textContent = selected?.description || "Default background";
+    }
+  };
+  const persistBackgroundPreference = async (key) => {
+    if (!backgroundSelectionUrl) return;
+    backgroundPreferenceSyncInFlight = true;
+    try {
+      const formData = new FormData();
+      formData.append("background_key", key || "");
+      const response = await fetch(backgroundSelectionUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: formData,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Background preference could not be updated.");
+      }
+    } catch (error) {
+      updateInfo(error.message || "Background preference could not be updated.");
+    } finally {
+      backgroundPreferenceSyncInFlight = false;
+    }
   };
   const getOverlayDims = () => {
     const isPortrait = activeCropAspect === "portrait";
@@ -5397,7 +5701,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   };
-  const setActiveBackground = (key) => {
+  const setActiveBackground = (key, options = {}) => {
+    const { persistPreference = false, closePicker = false } = options;
     const normalizedKey = hasBackgroundOption(key) ? String(key || "") : "";
     activeBackgroundKey = normalizedKey;
     bgVisualButtons.forEach((button) => {
@@ -5405,9 +5710,16 @@ document.addEventListener("DOMContentLoaded", () => {
       button.classList.toggle("active", matches);
       button.setAttribute("aria-pressed", matches ? "true" : "false");
     });
+    syncActiveBackgroundCard();
     if (previewFrame) {
       const bgUrl = getActiveBackgroundUrl();
       previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
+    }
+    if (closePicker) {
+      setBackgroundPickerOpen(false);
+    }
+    if (persistPreference && !backgroundPreferenceSyncInFlight) {
+      void persistBackgroundPreference(normalizedKey);
     }
   };
   const setActiveCropAspect = (value) => {
@@ -5447,8 +5759,17 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   bgVisualButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      setActiveBackground(button.dataset.bgVisualKey || "");
+      setActiveBackground(button.dataset.bgVisualKey || "", {
+        persistPreference: true,
+        closePicker: true,
+      });
     });
+  });
+  backgroundEditBtn?.addEventListener("click", () => {
+    setBackgroundPickerOpen(!backgroundPickerPanel?.classList.contains("is-open"));
+  });
+  backgroundPickerCloseBtn?.addEventListener("click", () => {
+    setBackgroundPickerOpen(false);
   });
   visualModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -5473,6 +5794,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   setActiveStaticVisual(activeStaticVisualKey);
+  syncActiveBackgroundCard();
   loadPodcastAudios();
   loadPodcastShortClips();
 
@@ -5547,6 +5869,7 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
     setActiveBackground(trigger.dataset.backgroundVisualKey || "");
+    setBackgroundPickerOpen(false);
     setActiveCropAspect(trigger.dataset.cropAspect || "landscape");
     const triggerVisualKey = trigger.dataset.staticVisualKey || "";
     const preferredMode = (settingsContainer?.dataset.selectedVisualMode || "").toLowerCase();
@@ -5767,60 +6090,35 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-document.addEventListener("DOMContentLoaded", () => {
+const initClipSuggestTitleButtons = () => {
   document.querySelectorAll(".clip-suggest-title-btn").forEach((button) => {
+    if (button.dataset.clipSuggestTitleBound === "1") {
+      return;
+    }
+    button.dataset.clipSuggestTitleBound = "1";
     button.addEventListener("click", async () => {
-      const url = button.dataset.suggestUrl;
       const planIndex = button.dataset.planIndex;
       const excerpt = button.dataset.excerpt || "";
-      if (!url || !planIndex) {
+      if (!planIndex) {
         return;
       }
       const card = button.closest(".clip-card");
       const titleInput = card?.querySelector(".clip-title-input");
-      const feedback = card?.querySelector(".clip-title-suggestion-feedback");
-      const previousText = button.innerHTML;
-      button.disabled = true;
-      button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-      try {
-        const params = new URLSearchParams();
-        params.append("plan_index", planIndex);
-        params.append("excerpt", excerpt);
-        params.append("current_title", titleInput?.value || "");
-        const response = await fetch(url, {
-          method: "POST",
-          body: params,
-          credentials: "same-origin",
-          headers: {
-            "X-Requested-With": "XMLHttpRequest",
-          },
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Title suggestion could not be created.");
-        }
-        if (titleInput) {
-          titleInput.value = payload.title || titleInput.value;
-        }
-        if (feedback) {
-          feedback.textContent = "New title suggested.";
-          feedback.classList.remove("text-danger");
-          feedback.classList.add("text-success");
-          feedback.classList.remove("d-none");
-        }
-      } catch (err) {
-        if (feedback) {
-          feedback.textContent = err.message || "Title suggestion could not be retrieved.";
-          feedback.classList.remove("text-success");
-          feedback.classList.add("text-danger");
-          feedback.classList.remove("d-none");
-        }
-      } finally {
-        button.disabled = false;
-        button.innerHTML = previousText;
-      }
+      await requestSuggestedClipTitle({
+        button,
+        card,
+        planIndex,
+        excerpt,
+        currentTitle: titleInput?.value || "",
+        applyMode: "always",
+        successMessage: "New title suggested.",
+      });
     });
   });
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  initClipSuggestTitleButtons();
 });
 </script>
 <script>
