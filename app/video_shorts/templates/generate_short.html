@@ -177,7 +177,6 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  .editor-ai-inline-controls .form-select,
   .editor-ai-inline-controls .btn {
     font-size: 0.82rem;
   }
@@ -532,6 +531,7 @@
   }
   .clip-rail-detail {
     margin-top: 0;
+    padding: 2px 8px 10px;
   }
   .clip-rail-detail-header {
     display: flex;
@@ -567,9 +567,46 @@
   }
   .clip-rail-detail .clip-card {
     display: none;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   .clip-rail-detail .clip-card.is-active {
     display: block;
+  }
+  .clip-rail-detail .clip-card-body,
+  .clip-rail-detail .clip-card-main,
+  .clip-rail-detail .clip-card-transcript,
+  .clip-rail-detail .clip-card-action-bar,
+  .clip-rail-detail .clip-card-save-feedback,
+  .clip-rail-detail .clip-title-suggestion-feedback {
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .clip-rail-detail .clip-card-main {
+    padding-right: 8px;
+  }
+  .clip-rail-detail .clip-card-title-row {
+    display: grid;
+    grid-template-columns: minmax(92px, 108px) minmax(0, 1fr) 42px minmax(92px, 108px) 42px;
+    gap: 10px;
+    align-items: end;
+    width: 100%;
+    max-width: 100%;
+  }
+  .clip-rail-detail .clip-title-field {
+    min-width: 0;
+  }
+  .clip-rail-detail .clip-title-input,
+  .clip-rail-detail .clip-time-input,
+  .clip-rail-detail .clip-card-transcript textarea {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .clip-rail-detail .clip-card-transcript textarea {
+    overflow-wrap: anywhere;
   }
   .clip-detail-back {
     display: inline-flex;
@@ -605,6 +642,16 @@
     }
     .clip-rail-list {
       max-height: none;
+    }
+    .clip-rail-detail {
+      padding: 0;
+    }
+    .clip-rail-detail .clip-card-main {
+      padding-right: 0;
+    }
+    .clip-rail-detail .clip-card-title-row {
+      grid-template-columns: 1fr;
+      gap: 8px;
     }
   }
 </style>
@@ -721,22 +768,17 @@
     </div>
   </div>
   <div class="editor-ai-inline">
-    <div class="editor-ai-inline-label">AI ile otomatik plan — opsiyonel (manuel seçim ana yöntem)</div>
+    <div class="editor-ai-inline-label">opsiyonel · manuel seçim ana yöntem</div>
     <div class="editor-ai-inline-controls">
-      <select id="ai-plan-style" class="form-select form-select-sm" {% if not step2_enabled %}disabled{% endif %}>
-        <option value="standard">Standart</option>
-        <option value="en">İngilizce</option>
-        <option value="story">Hikaye</option>
-      </select>
       <button type="submit"
               form="step2-form"
-              id="ai-plan-run-btn"
+              id="ai-generate-btn"
               class="btn btn-outline-light btn-sm"
               {% if step2_done %}
-                data-confirm-message="The selected AI plan will replace the current plan. Continue?"
+                data-confirm-message="The current AI plan will be replaced. Continue?"
               {% endif %}
               {% if not step2_enabled %}disabled{% endif %}>
-        Plandan üret
+        AI ile oluştur
       </button>
     </div>
   </div>
@@ -2238,7 +2280,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let consecutivePollFailures = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 8;
   let activeButton = null;
-  const aiPlanSelect = document.getElementById("ai-plan-style");
 
   const esc = (value) => String(value || "")
     .replace(/&/g, "&amp;")
@@ -2344,19 +2385,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (submitter && submitter.getAttribute("name")) {
       formData.set(submitter.getAttribute("name"), submitter.getAttribute("value") || "");
     }
-    if (submitter?.id === "ai-plan-run-btn") {
-      const selectedStyle = aiPlanSelect?.value || "standard";
+    if (submitter?.id === "ai-generate-btn") {
       formData.delete("language");
       formData.delete("plan_focus");
-      if (selectedStyle === "en") {
-        formData.set("language", "en");
-      } else if (selectedStyle === "story") {
-        formData.set("plan_focus", "anecdote_memory_scene");
-      }
     }
 
-    const buttonLabel = submitter?.id === "ai-plan-run-btn"
-      ? `AI plan (${aiPlanSelect?.selectedOptions?.[0]?.textContent?.trim() || "Standart"})`
+    const buttonLabel = submitter?.id === "ai-generate-btn"
+      ? "AI generation"
       : submitter?.querySelector(".step-title")?.textContent?.trim() || "clip plan";
     showStatus(`Starting ${buttonLabel}...`, false, true);
 
