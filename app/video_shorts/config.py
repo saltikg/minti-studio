@@ -134,7 +134,8 @@ FFMPEG_TIMEOUT = int(_timeout_env) if (_timeout_env and _timeout_env.isdigit()) 
 MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip duration
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))
-OPENAI_MODEL = os.getenv("OPENAI_MODEL_GPT", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL_GPT", "gpt-4.1-mini")
+
 _openai_api_key = os.getenv("OPENAI_API_KEY")
 _openai_client = OpenAI(api_key=_openai_api_key) if (OPENAI_MODEL and _openai_api_key and OpenAI) else None
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
