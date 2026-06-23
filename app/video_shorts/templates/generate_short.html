@@ -159,6 +159,28 @@
     font-size: 0.8rem;
     padding: 7px 10px;
   }
+  .editor-ai-inline {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .editor-ai-inline-label {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.78rem;
+    margin-bottom: 8px;
+  }
+  .editor-ai-inline-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .editor-ai-inline-controls .form-select,
+  .editor-ai-inline-controls .btn {
+    font-size: 0.82rem;
+  }
   .editor-toolbar {
     display: flex;
     align-items: center;
@@ -289,20 +311,32 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .trs-row-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .trs-row-content-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     min-width: 0;
   }
   .trs-row-view {
     min-width: 0;
+    flex: 1 1 auto;
     color: rgba(255, 255, 255, 0.92);
-    word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .trs-row-edit {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    width: 100%;
   }
   .trs-row-edit textarea {
-    min-height: 84px;
+    min-height: 68px;
     resize: vertical;
   }
   .trs-row-edit-actions {
@@ -310,18 +344,11 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  .trs-row-meta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 2px;
-    min-height: 18px;
-  }
   .trs-row-badges {
     display: inline-flex;
     flex-wrap: wrap;
     gap: 6px;
+    flex: 0 0 auto;
   }
   .trs-row-badge {
     display: inline-flex;
@@ -337,7 +364,7 @@
   }
   .trs-row-actions {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 6px;
   }
   .trs-row-action-btn {
@@ -564,6 +591,15 @@
       grid-template-columns: 1fr;
       gap: 8px;
     }
+    .trs-row-content-inline {
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+    .trs-row-view {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
     .trs-row-actions {
       justify-content: flex-end;
     }
@@ -684,49 +720,26 @@
       </button>
     </div>
   </div>
-  <details class="editor-ai-expander">
-    <summary>Plan (AI) ▾</summary>
-    <div class="editor-ai-actions">
+  <div class="editor-ai-inline">
+    <div class="editor-ai-inline-label">AI ile otomatik plan — opsiyonel (manuel seçim ana yöntem)</div>
+    <div class="editor-ai-inline-controls">
+      <select id="ai-plan-style" class="form-select form-select-sm" {% if not step2_enabled %}disabled{% endif %}>
+        <option value="standard">Standart</option>
+        <option value="en">İngilizce</option>
+        <option value="story">Hikaye</option>
+      </select>
       <button type="submit"
               form="step2-form"
-              id="step2-btn"
-              class="btn btn-outline-light"
+              id="ai-plan-run-btn"
+              class="btn btn-outline-light btn-sm"
               {% if step2_done %}
-                data-confirm-message="A clip plan already exists; rerunning will regenerate it and may take time. Continue?"
+                data-confirm-message="The selected AI plan will replace the current plan. Continue?"
               {% endif %}
               {% if not step2_enabled %}disabled{% endif %}>
-        Create clip plan
-      </button>
-      <button type="submit"
-              form="step2-form"
-              name="language"
-              value="en"
-              class="btn btn-outline-light"
-              {% if step2_done %}
-                data-confirm-message="An English clip plan will replace the current plan. Continue?"
-              {% endif %}
-              {% if not step2_enabled %}disabled{% endif %}>
-        Create clip plan (EN)
-      </button>
-      <button type="submit"
-              form="step2-form"
-              name="plan_focus"
-              value="anecdote_memory_scene"
-              class="btn btn-outline-light"
-              {% if step2_done %}
-                data-confirm-message="A story/relaxing clip plan will replace the current plan. Continue?"
-              {% endif %}
-              {% if not step2_enabled %}disabled{% endif %}>
-        Story / relaxing plan
-      </button>
-      <button type="button"
-              class="btn btn-outline-secondary"
-              {% if not step3_enabled %}disabled{% endif %}
-              onclick="document.getElementById('step3-btn')?.click()">
-        Generate short clips
+        Plandan üret
       </button>
     </div>
-  </details>
+  </div>
   <div class="editor-toolbar">
     <span id="create-long-from-shorts-elapsed" class="editor-toolbar-note"></span>
     <span id="crop-status-text" class="editor-toolbar-note">
@@ -2225,6 +2238,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let consecutivePollFailures = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 8;
   let activeButton = null;
+  const aiPlanSelect = document.getElementById("ai-plan-style");
 
   const esc = (value) => String(value || "")
     .replace(/&/g, "&amp;")
@@ -2330,8 +2344,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (submitter && submitter.getAttribute("name")) {
       formData.set(submitter.getAttribute("name"), submitter.getAttribute("value") || "");
     }
+    if (submitter?.id === "ai-plan-run-btn") {
+      const selectedStyle = aiPlanSelect?.value || "standard";
+      formData.delete("language");
+      formData.delete("plan_focus");
+      if (selectedStyle === "en") {
+        formData.set("language", "en");
+      } else if (selectedStyle === "story") {
+        formData.set("plan_focus", "anecdote_memory_scene");
+      }
+    }
 
-    const buttonLabel = submitter?.querySelector(".step-title")?.textContent?.trim() || "clip plan";
+    const buttonLabel = submitter?.id === "ai-plan-run-btn"
+      ? `AI plan (${aiPlanSelect?.selectedOptions?.[0]?.textContent?.trim() || "Standart"})`
+      : submitter?.querySelector(".step-title")?.textContent?.trim() || "clip plan";
     showStatus(`Starting ${buttonLabel}...`, false, true);
 
     try {
@@ -2470,9 +2496,12 @@ document.addEventListener("DOMContentLoaded", () => {
         rowEl: null,
         textEl: null,
         badgeEl: null,
+        contentEl: null,
         viewEl: null,
         editWrapEl: null,
         textareaEl: null,
+        saveBtnEl: null,
+        cancelBtnEl: null,
         feedbackEl: null,
         isEditing: false,
       };
@@ -2516,23 +2545,89 @@ document.addEventListener("DOMContentLoaded", () => {
       if (segment.rowEl) {
         segment.rowEl.classList.toggle("is-editing", enabled);
       }
-      if (segment.viewEl) {
-        segment.viewEl.classList.toggle("d-none", enabled);
-      }
-      if (segment.editWrapEl) {
-        segment.editWrapEl.classList.toggle("d-none", !enabled);
-      }
       if (segment.feedbackEl && !enabled) {
         segment.feedbackEl.className = "trs-row-feedback d-none";
         segment.feedbackEl.textContent = "";
       }
-      if (enabled && segment.textareaEl) {
-        segment.textareaEl.value = segment.text;
+      renderSegmentContent(segment);
+    };
+
+    const renderSegmentContent = (segment) => {
+      if (!segment.contentEl) {
+        return;
+      }
+      segment.contentEl.innerHTML = "";
+      segment.textEl = null;
+      segment.viewEl = null;
+      segment.editWrapEl = null;
+      segment.textareaEl = null;
+      segment.saveBtnEl = null;
+      segment.cancelBtnEl = null;
+      if (segment.isEditing) {
+        const editWrapEl = document.createElement("div");
+        editWrapEl.className = "trs-row-edit";
+        const textareaEl = document.createElement("textarea");
+        textareaEl.className = "form-control form-control-sm";
+        textareaEl.setAttribute("rows", "2");
+        textareaEl.value = segment.text;
+        const editActions = document.createElement("div");
+        editActions.className = "trs-row-edit-actions";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "btn btn-outline-secondary btn-sm";
+        cancelBtn.dataset.action = "cancel";
+        cancelBtn.textContent = "Cancel";
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "btn btn-primary btn-sm";
+        saveBtn.dataset.action = "save";
+        saveBtn.textContent = "Save";
+        editActions.append(cancelBtn, saveBtn);
+        editWrapEl.append(textareaEl, editActions);
+        segment.contentEl.appendChild(editWrapEl);
+        segment.editWrapEl = editWrapEl;
+        segment.textareaEl = textareaEl;
+        segment.saveBtnEl = saveBtn;
+        segment.cancelBtnEl = cancelBtn;
+        cancelBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditingState(segment, false);
+        });
+        saveBtn.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await saveSegment(segment);
+        });
+        textareaEl.addEventListener("click", (event) => event.stopPropagation());
+        textareaEl.addEventListener("keydown", async (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            await saveSegment(segment);
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setEditingState(segment, false);
+          }
+        });
         window.setTimeout(() => {
           segment.textareaEl?.focus();
           segment.textareaEl?.setSelectionRange(segment.textareaEl.value.length, segment.textareaEl.value.length);
         }, 0);
+        return;
       }
+      const inlineEl = document.createElement("div");
+      inlineEl.className = "trs-row-content-inline";
+      const viewEl = document.createElement("div");
+      viewEl.className = "trs-row-view";
+      const textEl = document.createElement("span");
+      textEl.className = "trs-row-text";
+      viewEl.appendChild(textEl);
+      inlineEl.append(viewEl, segment.badgeEl);
+      segment.contentEl.appendChild(inlineEl);
+      segment.viewEl = viewEl;
+      segment.textEl = textEl;
+      updateSegmentTextMarkup(segment);
     };
 
     const updateRowSelection = (segment) => {
@@ -2625,11 +2720,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (typeof payload.transcript === "string") {
           onTranscriptSaved?.(payload.transcript);
         }
-        updateSegmentTextMarkup(segment);
-        if (segment.feedbackEl) {
-          segment.feedbackEl.className = "trs-row-feedback is-success";
-          segment.feedbackEl.textContent = "Saved.";
-        }
         setEditingState(segment, false);
         renderMatches(false);
       } catch (error) {
@@ -2665,43 +2755,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const mainEl = document.createElement("div");
         mainEl.className = "trs-row-main";
-
-        const metaEl = document.createElement("div");
-        metaEl.className = "trs-row-meta";
         const badgeEl = document.createElement("div");
         badgeEl.className = "trs-row-badges";
-        metaEl.appendChild(badgeEl);
-
-        const viewEl = document.createElement("div");
-        viewEl.className = "trs-row-view";
-        const textEl = document.createElement("span");
-        textEl.className = "trs-row-text";
-        viewEl.appendChild(textEl);
-
-        const editWrapEl = document.createElement("div");
-        editWrapEl.className = "trs-row-edit d-none";
-        const textareaEl = document.createElement("textarea");
-        textareaEl.className = "form-control form-control-sm";
-        textareaEl.setAttribute("rows", "3");
-        const editActions = document.createElement("div");
-        editActions.className = "trs-row-edit-actions";
-        const cancelBtn = document.createElement("button");
-        cancelBtn.type = "button";
-        cancelBtn.className = "btn btn-outline-secondary btn-sm";
-        cancelBtn.dataset.action = "cancel";
-        cancelBtn.textContent = "Cancel";
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button";
-        saveBtn.className = "btn btn-primary btn-sm";
-        saveBtn.dataset.action = "save";
-        saveBtn.textContent = "Save";
-        editActions.append(cancelBtn, saveBtn);
-        editWrapEl.append(textareaEl, editActions);
+        const contentEl = document.createElement("div");
+        contentEl.className = "trs-row-content";
 
         const feedbackEl = document.createElement("div");
         feedbackEl.className = "trs-row-feedback d-none";
 
-        mainEl.append(metaEl, viewEl, editWrapEl, feedbackEl);
+        mainEl.append(contentEl, feedbackEl);
 
         const actionsEl = document.createElement("div");
         actionsEl.className = "trs-row-actions";
@@ -2716,11 +2778,8 @@ document.addEventListener("DOMContentLoaded", () => {
         fragment.appendChild(row);
 
         segment.rowEl = row;
-        segment.textEl = textEl;
         segment.badgeEl = badgeEl;
-        segment.viewEl = viewEl;
-        segment.editWrapEl = editWrapEl;
-        segment.textareaEl = textareaEl;
+        segment.contentEl = contentEl;
         segment.feedbackEl = feedbackEl;
 
         editBtn.addEventListener("click", (event) => {
@@ -2728,30 +2787,9 @@ document.addEventListener("DOMContentLoaded", () => {
           event.stopPropagation();
           setEditingState(segment, true);
         });
-        cancelBtn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setEditingState(segment, false);
-        });
-        saveBtn.addEventListener("click", async (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          await saveSegment(segment);
-        });
-        textareaEl.addEventListener("click", (event) => event.stopPropagation());
-        textareaEl.addEventListener("keydown", async (event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            await saveSegment(segment);
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            setEditingState(segment, false);
-          }
-        });
 
         bindRowEvents(segment);
-        updateSegmentTextMarkup(segment);
+        renderSegmentContent(segment);
       });
       documentEl.appendChild(fragment);
     };
