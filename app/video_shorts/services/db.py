@@ -837,6 +837,42 @@ def ensure_static_images_schema(conn) -> None:
         pass
 
 
+def ensure_background_preferences_schema(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shorts_background_preferences (
+            id UUID PRIMARY KEY DEFAULT uuid(),
+            user_id VARCHAR NOT NULL,
+            brand_id VARCHAR,
+            background_key VARCHAR,
+            created_at TIMESTAMP DEFAULT now(),
+            updated_at TIMESTAMP DEFAULT now()
+        )
+        """
+    )
+    cols = table_columns(conn, "shorts_background_preferences")
+    if "brand_id" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_background_preferences ADD COLUMN brand_id VARCHAR")
+        except Exception:
+            pass
+    if "background_key" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_background_preferences ADD COLUMN background_key VARCHAR")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shorts_background_preferences_user_brand ON shorts_background_preferences(user_id, brand_id)"
+        )
+    except Exception:
+        pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
 def ensure_static_image_categories_schema(
     conn,
     owner_id: str | None = None,

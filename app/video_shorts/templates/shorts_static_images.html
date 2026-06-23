@@ -151,6 +151,40 @@
         color: rgba(255, 255, 255, 0.92);
         background: rgba(255, 255, 255, 0.1);
       }
+      .static-group + .static-group {
+        margin-top: 1.5rem;
+      }
+      .static-group-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 0.9rem;
+      }
+      .static-group-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.96);
+      }
+      .static-group-note {
+        font-size: 0.78rem;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .static-card-selected {
+        border-color: rgba(45, 212, 191, 0.7) !important;
+        box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.28);
+      }
+      .static-card-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: auto;
+      }
+      .static-select-btn.is-selected {
+        border-color: rgba(45, 212, 191, 0.72);
+        background: rgba(45, 212, 191, 0.16);
+        color: #d9fffa;
+      }
       @media (max-width: 991.98px) {
         .static-upload-card {
           padding: 14px;
@@ -246,19 +280,80 @@
     </form>
 
     <div class="card shadow-sm vs-card">
-      <div class="card-header">Yuklenen gorseller</div>
+      <div class="card-header">Static image library</div>
       <div class="card-body">
-        {% if images %}
-          <div class="row g-3">
-            {% for image in images %}
-              <div class="col-sm-6 col-md-4 col-lg-2">
-                <div class="card vs-card h-100">
+        <div class="static-group">
+          <div class="static-group-header">
+            <div>
+              <div class="static-group-title">System backgrounds</div>
+              <div class="static-group-note">Sistem gorselleri · secilebilir, silinemez</div>
+            </div>
+          </div>
+          {% if system_images %}
+            <div class="row g-3">
+              {% for image in system_images %}
+                {% set is_selected = selected_background_key == image.background_key %}
+                <div class="col-sm-6 col-md-4 col-lg-2">
+                  <div class="card vs-card h-100 {% if is_selected %}static-card-selected{% endif %}">
+                    <img src="{{ image.image_url }}" class="card-img-top" alt="{{ image.label or 'System background' }}" data-static-image-preview>
+                    <div class="card-body d-flex flex-column gap-2">
+                      <div class="small text-white-50">
+                        <span>{{ image.label or image.filename }}</span>
+                        <span data-static-image-dimensions> (-)</span>
+                      </div>
+                      {% if is_selected %}
+                        <div class="static-badge">Selected background</div>
+                      {% endif %}
+                      <div class="static-card-actions">
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-light w-100 static-select-btn {% if is_selected %}is-selected{% endif %}"
+                          data-background-select
+                          data-background-key="{{ image.background_key }}"
+                        >
+                          {% if is_selected %}Secili{% else %}Background olarak sec{% endif %}
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-light w-100"
+                          disabled
+                          title="Sistem gorseli, silinemez"
+                        >
+                          Sistem gorseli
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-center text-white-50 py-3">Sistem background bulunamadi.</div>
+          {% endif %}
+        </div>
+
+        <div class="static-group">
+          <div class="static-group-header">
+            <div>
+              <div class="static-group-title">Your images</div>
+              <div class="static-group-note">Senin gorsellerin · secilebilir ve silinebilir</div>
+            </div>
+          </div>
+          {% if user_images %}
+            <div class="row g-3">
+              {% for image in user_images %}
+                {% set is_selected = selected_background_key == image.background_key %}
+                <div class="col-sm-6 col-md-4 col-lg-2">
+                  <div class="card vs-card h-100 {% if is_selected %}static-card-selected{% endif %}">
                   <img src="{{ image.image_url }}" class="card-img-top" alt="{{ image.label or 'Static image' }}" data-static-image-preview>
                   <div class="card-body d-flex flex-column gap-2">
                     <div class="small text-white-50">
                       <span>{{ image.label or 'Image' }}</span>
                       <span data-static-image-dimensions> (-)</span>
                     </div>
+                    {% if is_selected %}
+                      <div class="static-badge">Selected background</div>
+                    {% endif %}
                     {% if image.use_as_background %}
                       <div class="static-badge">Background</div>
                     {% endif %}
@@ -289,20 +384,31 @@
                         >
                       </div>
                     </div>
-                    <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="mt-auto">
-                      <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Gorseli kaldirmak istediginize emin misiniz?">
-                        <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
-                        <span>Kaldir</span>
+                    <div class="static-card-actions">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-light w-100 static-select-btn {% if is_selected %}is-selected{% endif %}"
+                        data-background-select
+                        data-background-key="{{ image.background_key }}"
+                      >
+                        {% if is_selected %}Secili{% else %}Background olarak sec{% endif %}
                       </button>
-                    </form>
+                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="m-0">
+                        <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Gorseli kaldirmak istediginize emin misiniz?">
+                          <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
+                          <span>Kaldir</span>
+                        </button>
+                      </form>
+                    </div>
                   </div>
                 </div>
               </div>
             {% endfor %}
           </div>
         {% else %}
-          <div class="text-center text-white-50 py-4">Henuz gorsel yok.</div>
+            <div class="text-center text-white-50 py-4">Henuz gorsel yok.</div>
         {% endif %}
+        </div>
       </div>
     </div>
   </div>
@@ -326,6 +432,7 @@
   const categoryNewName = document.getElementById("static-category-new-name");
   const imageCategorySelects = document.querySelectorAll("[data-image-category-select]");
   const imageBackgroundToggles = document.querySelectorAll("[data-image-background-toggle]");
+  const backgroundSelectButtons = document.querySelectorAll("[data-background-select]");
   const fileInput = document.getElementById("static-image-file-input");
   const pickFileBtn = document.getElementById("static-pick-file-btn");
   const dropzone = document.getElementById("static-dropzone");
@@ -333,6 +440,7 @@
   const fileThumb = document.getElementById("static-file-thumb");
   const fileMeta = document.getElementById("static-file-meta");
   const uploadSubmitBtn = document.getElementById("static-upload-submit");
+  const backgroundSelectionUrl = "{{ url_for('video_shorts_bp.update_selected_background') }}";
   let previewObjectUrl = null;
 
   const updateImageDimensions = (img) => {
@@ -583,6 +691,38 @@
         toggleEl.checked = toggleEl.dataset.prevChecked === "1";
       } finally {
         toggleEl.disabled = false;
+      }
+    });
+  });
+
+  backgroundSelectButtons.forEach((buttonEl) => {
+    buttonEl.addEventListener("click", async () => {
+      const backgroundKey = (buttonEl.dataset.backgroundKey || "").trim();
+      if (!backgroundSelectionUrl || !backgroundKey) return;
+      hideError();
+      backgroundSelectButtons.forEach((btn) => {
+        btn.disabled = true;
+      });
+      try {
+        const formData = new FormData();
+        formData.append("background_key", backgroundKey);
+        const response = await fetch(backgroundSelectionUrl, {
+          method: "POST",
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) {
+          showError(payload?.message || "Background secimi kaydedilemedi.");
+          return;
+        }
+        window.location.reload();
+      } catch (err) {
+        showError("Background seciminde baglanti hatasi oldu.");
+      } finally {
+        backgroundSelectButtons.forEach((btn) => {
+          btn.disabled = false;
+        });
       }
     });
   });

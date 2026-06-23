@@ -10,14 +10,25 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import SHORTS_DIR, STATIC_IMAGE_MAX_BYTES, STATIC_USER_IMAGES_DIR
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
+    ensure_background_preferences_schema,
     ensure_categories_schema,
     ensure_prompt_settings_schema,
     ensure_static_image_categories_schema,
     ensure_static_images_schema,
     get_db,
 )
+from app.video_shorts.services.background_preferences import (
+    load_background_preference,
+    save_background_preference,
+)
 from app.video_shorts.services.comment_moderation import DEFAULT_COMMENT_MODERATION_PROMPT, _prompt_key
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.system_backgrounds import (
+    is_system_background_key,
+    list_system_background_paths,
+    make_system_background_key,
+    resolve_system_background_path,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +60,33 @@ def _delete_user_image_asset(user_id: str, filename: str) -> None:
     )
     target_storage = get_media_storage("local") if resolved.backend == "local" else storage
     target_storage.delete(key)
+
+
+def _resolve_selected_background_key(user_id: str, brand_id: str | None, background_key: str | None) -> str | None:
+    candidate_key = str(background_key or "").strip()
+    if not candidate_key:
+        return None
+    if is_system_background_key(candidate_key):
+        return candidate_key if resolve_system_background_path(candidate_key) else None
+    if candidate_key.startswith("userbg:"):
+        image_id = candidate_key.split(":", 1)[1].strip()
+        if not image_id:
+            return None
+        conn = get_db()
+        try:
+            ensure_static_images_schema(conn)
+            row = conn.execute(
+                """
+                SELECT id
+                FROM shorts_static_images
+                WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+                """,
+                [image_id, user_id, brand_id],
+            ).fetchone()
+            return candidate_key if row else None
+        finally:
+            conn.close()
+    return None
 
 
 def _update_plan_category_label(old_name: str, new_name: str | None, owner_id: str) -> None:
@@ -348,6 +386,7 @@ def static_images_page():
     conn = get_db()
     ensure_brand_schema(conn)
     ensure_static_images_schema(conn)
+    ensure_background_preferences_schema(conn)
     ensure_static_image_categories_schema(conn, current_user.get("id"), brand_id=brand_id)
 
     if request.method == "POST":
@@ -642,6 +681,7 @@ def static_images_page():
         images.append(
             {
                 "id": row[0],
+                "background_key": f"userbg:{row[0]}",
                 "label": row[1],
                 "filename": row[2],
                 "created_at": row[3],
@@ -652,8 +692,27 @@ def static_images_page():
                 "image_url": _user_image_public_url(current_user.get("id"), row[2]),
             }
         )
+    selected_background_key = load_background_preference(current_user.get("id"), brand_id)
+    system_images = []
+    for system_path in list_system_background_paths():
+        system_images.append(
+            {
+                "id": system_path.name,
+                "background_key": make_system_background_key(system_path.name),
+                "label": system_path.stem.replace("_", " "),
+                "filename": system_path.name,
+                "image_url": url_for("video_shorts_bp.static", filename=f"mintibackgrounds/{system_path.name}"),
+            }
+        )
     categories = [{"id": str(row[0]), "name": row[1]} for row in category_rows]
-    return render_template("shorts_static_images.html", images=images, categories=categories)
+    return render_template(
+        "shorts_static_images.html",
+        images=images,
+        user_images=images,
+        system_images=system_images,
+        categories=categories,
+        selected_background_key=selected_background_key,
+    )
 
 
 @video_shorts_bp.route("/settings/podcast-audios")
@@ -763,12 +822,34 @@ def update_static_image_background(image_id):
     return jsonify(success=True, use_as_background=use_as_background), 200
 
 
+@video_shorts_bp.route("/settings/static-images/background-selection", methods=["POST"])
+def update_selected_background():
+    current_user = getattr(g, "vs_current_user", None)
+    brand_id = current_brand_id()
+    if not current_user:
+        return jsonify(success=False, message="Unauthorized."), 401
+
+    requested_key = (request.form.get("background_key") or "").strip()
+    if requested_key:
+        resolved_key = _resolve_selected_background_key(current_user.get("id"), brand_id, requested_key)
+        if not resolved_key:
+            return jsonify(success=False, message="Background bulunamadi."), 404
+        save_background_preference(current_user.get("id"), brand_id, resolved_key)
+        return jsonify(success=True, background_key=resolved_key), 200
+
+    save_background_preference(current_user.get("id"), brand_id, None)
+    return jsonify(success=True, background_key=""), 200
+
+
 @video_shorts_bp.route("/settings/static-images/<image_id>/delete", methods=["POST"])
 def delete_static_image(image_id):
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if is_system_background_key(image_id):
+        flash("Sistem gorseli silinemez.", "warning")
+        return redirect(url_for("video_shorts_bp.static_images_page"))
 
     conn = get_db()
     ensure_brand_schema(conn)
@@ -794,6 +875,9 @@ def delete_static_image(image_id):
     )
     conn.commit()
     conn.close()
+    selected_background_key = load_background_preference(current_user.get("id"), brand_id)
+    if selected_background_key == f"userbg:{image_id}":
+        save_background_preference(current_user.get("id"), brand_id, None)
     try:
         _delete_user_image_asset(current_user.get("id"), str(row[0] or ""))
     except Exception:
