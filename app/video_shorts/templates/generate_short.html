@@ -52,23 +52,20 @@
   .trs-shell {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
   }
   .trs-toolbar {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
     flex-wrap: wrap;
   }
   .trs-search-group {
-    display: flex;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     flex: 1 1 320px;
-    min-width: 0;
-  }
-  .trs-search-group .form-control {
     min-width: 0;
   }
   .trs-match-nav {
@@ -84,16 +81,99 @@
     color: rgba(255, 255, 255, 0.72);
     font-size: 0.88rem;
   }
+  .trs-match-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .trs-match-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.86);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    text-align: left;
+  }
+  .trs-match-chip.is-active {
+    border-color: rgba(45, 212, 191, 0.6);
+    background: rgba(45, 212, 191, 0.12);
+    color: #d7fffb;
+  }
+  .trs-match-chip-time {
+    color: rgba(255, 255, 255, 0.58);
+    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+  }
+  .trs-match-chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trs-panel {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    overflow: hidden;
+  }
+  .trs-document {
+    max-height: 620px;
+    overflow: auto;
+    padding: 20px 20px 96px;
+    line-height: 1.9;
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.92);
+    user-select: text;
+  }
+  .trs-paragraph {
+    margin: 0 0 18px;
+  }
+  .trs-paragraph:last-child {
+    margin-bottom: 0;
+  }
+  .trs-timecode {
+    display: block;
+    margin-bottom: 8px;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.76rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
+  .trs-segment {
+    display: inline;
+    border-radius: 6px;
+    padding: 0 1px;
+    cursor: text;
+  }
+  .trs-segment.is-match {
+    background: rgba(45, 212, 191, 0.08);
+  }
+  .trs-segment.is-match-current {
+    background: rgba(45, 212, 191, 0.16);
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.65);
+  }
+  .trs-segment.is-selected {
+    background: rgba(59, 130, 246, 0.22);
+  }
   .trs-selection-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     flex-wrap: wrap;
-    padding: 10px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.03);
+    padding: 12px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(8, 13, 20, 0.86), rgba(8, 13, 20, 0.98));
+    backdrop-filter: blur(10px);
   }
   .trs-selection-summary {
     color: rgba(255, 255, 255, 0.84);
@@ -103,60 +183,21 @@
   .trs-selection-summary.is-empty {
     color: rgba(255, 255, 255, 0.58);
   }
-  .trs-segment-row {
-    cursor: pointer;
-    transition: background-color 0.16s ease, box-shadow 0.16s ease;
-  }
-  .trs-segment-row:hover {
-    background: rgba(45, 212, 191, 0.05);
-  }
-  .trs-segment-row.is-match {
-    background: rgba(45, 212, 191, 0.06);
-  }
-  .trs-segment-row.is-match-current {
-    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.8);
-    background: rgba(45, 212, 191, 0.12);
-  }
-  .trs-segment-row.is-selected-range {
-    background: rgba(56, 189, 248, 0.1);
-  }
-  .trs-segment-row.is-selected-start,
-  .trs-segment-row.is-selected-end {
-    background: rgba(59, 130, 246, 0.16);
-  }
-  .trs-segment-badges {
-    min-height: 20px;
-  }
-  .trs-point-badge {
-    display: inline-flex;
-    align-items: center;
-    border-radius: 999px;
-    padding: 2px 8px;
-    font-size: 0.72rem;
-    line-height: 1.2;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-    border: 1px solid transparent;
-  }
-  .trs-point-badge.is-start {
-    background: rgba(45, 212, 191, 0.14);
-    color: #9ff4e3;
-    border-color: rgba(45, 212, 191, 0.26);
-  }
-  .trs-point-badge.is-end {
-    background: rgba(251, 191, 36, 0.14);
-    color: #fde68a;
-    border-color: rgba(251, 191, 36, 0.26);
-  }
   .trs-match-mark {
     background: rgba(250, 204, 21, 0.24);
     color: #fff7cc;
     border-radius: 4px;
     padding: 0 1px;
   }
+  @media (max-width: 991.98px) {
+    .trs-document {
+      max-height: 520px;
+      padding: 18px 16px 94px;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .trs-segment-row {
-      transition: none;
+    .trs-document {
+      scroll-behavior: auto;
     }
   }
 </style>
@@ -1511,21 +1552,11 @@
     <div class="col-lg-6 order-lg-1">
     <div class="gs-card">
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <h5 class="mb-0">Segments (with timing)</h5>
-        {% if segments_view %}
-          <div class="d-flex align-items-center gap-2">
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="segments-copy-btn">
-              Copy
-            </button>
-            <span id="segments-copy-status" class="small text-muted"></span>
-          </div>
-        {% endif %}
+        <h5 class="mb-0">Transcript</h5>
       </div>
       {% if segments_view %}
-        <div
-          class="trs-shell"
-          id="transcript-range-selector"
-          data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
+        <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
+          <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
           <div class="trs-toolbar">
             <div class="trs-search-group">
               <input
@@ -1541,64 +1572,16 @@
               <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
             </div>
           </div>
-          <div class="trs-selection-bar">
-            <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-selection-clear" disabled>Clear</button>
-              <button type="button" class="btn btn-primary btn-sm" id="trs-create-clip" disabled>Create clip</button>
+          <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
+          <div class="trs-panel">
+            <div class="trs-document" id="trs-document" aria-label="Transcript document"></div>
+            <div class="trs-selection-bar">
+              <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-selection-clear" disabled>Clear</button>
+                <button type="button" class="btn btn-primary btn-sm" id="trs-create-clip" disabled>Create clip</button>
+              </div>
             </div>
-          </div>
-          <div class="table-responsive gs-table-scroll-520">
-            <table class="table table-sm align-middle" id="segments-table">
-              <thead class="table-light">
-                <tr>
-                  <th class="gs-col-start">Start</th>
-                  <th class="gs-col-end">End</th>
-                  <th>Text</th>
-                  <th class="gs-col-actions">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for seg in segments_view %}
-                  <tr
-                    data-index="{{ loop.index0 }}"
-                    data-segment-row
-                    data-start-seconds="{{ seg.start if seg.start is not none else '' }}"
-                    data-end-seconds="{{ seg.end if seg.end is not none else '' }}"
-                    data-start-label="{{ seg.start_label or seg.start }}"
-                    data-end-label="{{ seg.end_label or seg.end }}"
-                    class="trs-segment-row">
-                    <td class="text-nowrap">{{ seg.start_label or seg.start }}</td>
-                    <td class="text-nowrap">{{ seg.end_label or seg.end }}</td>
-                    <td class="seg-text-cell gs-prewrap gs-col-seg-text">
-                      <div class="trs-segment-badges"></div>
-                      <div class="seg-text-view small trs-segment-text">{{ seg.tr_text or seg.text }}</div>
-                      <input type="text" class="form-control form-control-sm seg-text-input d-none" value="{{ seg.tr_text or seg.text }}">
-                    </td>
-                    <td>
-                      <div class="d-flex align-items-center flex-nowrap gap-1 seg-actions-row">
-                        <button type="button" class="seg-edit-btn seg-action-btn edit-btn" data-mode="view" title="Edit segment">
-                          <svg viewBox="0 0 16 16" aria-hidden="true">
-                            <path d="M12.146 1.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708L5.207 13.5H2v-3.207L12.146 1.146zM11.207 2.5 3 10.707V12h1.293L13.5 3.793 11.207 2.5z"/>
-                          </svg>
-                        </button>
-                        <button type="button" class="seg-save-btn d-none seg-action-btn save-btn" title="Save changes">
-                          <svg viewBox="0 0 16 16" aria-hidden="true">
-                            <path d="M13.854 3.146a.5.5 0 0 1 0 .708L7 10.707l-2.854-2.853a.5.5 0 1 1 .708-.708L7 9.293l6.146-6.147a.5.5 0 0 1 .708 0z"/>
-                          </svg>
-                        </button>
-                        <button type="button" class="seg-cancel-btn d-none seg-action-btn cancel-btn" title="Cancel edit">
-                          <svg viewBox="0 0 16 16" aria-hidden="true">
-                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-                          </svg>
-                        </button>
-                        <button type="button" class="seg-ns-btn btn btn-outline-secondary btn-sm" data-ns-type="other">Set</button>
-                      </div>
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
           </div>
         </div>
       {% else %}
@@ -2097,105 +2080,147 @@ document.addEventListener("DOMContentLoaded", () => {
       return null;
     }
 
-    const rows = Array.from(root.querySelectorAll("[data-segment-row]"));
     const searchInput = root.querySelector("#trs-search-input");
     const clearSearchBtn = root.querySelector("#trs-search-clear");
     const prevBtn = root.querySelector("#trs-match-prev");
     const nextBtn = root.querySelector("#trs-match-next");
     const matchCount = root.querySelector("#trs-match-count");
+    const matchList = root.querySelector("#trs-match-list");
+    const documentEl = root.querySelector("#trs-document");
     const selectionSummary = root.querySelector("#trs-selection-summary");
     const clearSelectionBtn = root.querySelector("#trs-selection-clear");
     const createClipBtn = root.querySelector("#trs-create-clip");
+    const segmentsScript = root.querySelector("#trs-segments-json");
     const onCreateClip = typeof options.onCreateClip === "function" ? options.onCreateClip : null;
+
+    let parsedSegments = [];
+    try {
+      parsedSegments = JSON.parse(segmentsScript?.textContent || "[]");
+    } catch (error) {
+      parsedSegments = [];
+    }
+
+    const segments = parsedSegments.map((segment, index) => {
+      const start = Number(segment?.start || 0);
+      const end = Number(segment?.end || start);
+      const text = String(segment?.tr_text || segment?.text || "").trim();
+      return {
+        index,
+        start,
+        end,
+        startLabel: segment?.start_label || formatSeconds(start),
+        endLabel: segment?.end_label || formatSeconds(end),
+        text,
+        normalized: normalizeSearchText(text),
+        element: null,
+      };
+    }).filter((segment) => segment.text);
 
     const state = {
       query: "",
       matches: [],
       currentMatchIndex: -1,
-      startIndex: null,
-      endIndex: null,
+      selectionStart: null,
+      selectionEnd: null,
       creating: false,
     };
 
-    const rowMeta = rows.map((row) => {
-      const viewEl = row.querySelector(".seg-text-view");
-      const inputEl = row.querySelector(".seg-text-input");
-      const badgesEl = row.querySelector(".trs-segment-badges");
-      const start = Number(row.dataset.startSeconds || 0);
-      const end = Number(row.dataset.endSeconds || 0);
-      const text = String(viewEl?.textContent || "").trim();
-      row.dataset.segmentText = text;
-      return {
-        row,
-        viewEl,
-        inputEl,
-        badgesEl,
-        start,
-        end,
-        startLabel: row.dataset.startLabel || formatSeconds(start),
-        endLabel: row.dataset.endLabel || formatSeconds(end),
-      };
-    });
+    const buildParagraphs = (items) => {
+      const paragraphs = [];
+      let current = [];
+      items.forEach((item, idx) => {
+        const prev = current.length ? current[current.length - 1] : null;
+        const gap = prev ? item.start - prev.end : 0;
+        const prevText = prev?.text || "";
+        const shouldBreak = Boolean(
+          current.length &&
+          (
+            gap > 1.8 ||
+            current.length >= 8 ||
+            /[.!?…:]["')\]]*$/.test(prevText)
+          )
+        );
+        if (shouldBreak) {
+          paragraphs.push(current);
+          current = [];
+        }
+        current.push(item);
+        if (idx === items.length - 1 && current.length) {
+          paragraphs.push(current);
+        }
+      });
+      return paragraphs;
+    };
 
-    const syncSelectionSummary = () => {
-      const hasRange = state.startIndex !== null && state.endIndex !== null;
-      selectionSummary.classList.toggle("is-empty", !hasRange);
-      clearSelectionBtn.disabled = state.startIndex === null && state.endIndex === null;
-      createClipBtn.disabled = !hasRange || state.creating;
-      if (!hasRange) {
-        selectionSummary.textContent = state.startIndex === null
-          ? "Seçim yok."
-          : `Başlangıç: ${rowMeta[state.startIndex]?.startLabel || "-"}. Bitiş için ikinci segmenti seçin.`;
+    const getSelectedRange = () => {
+      if (state.selectionStart === null || state.selectionEnd === null) {
+        return null;
+      }
+      return {
+        startIndex: state.selectionStart,
+        endIndex: state.selectionEnd,
+        start: segments[state.selectionStart],
+        end: segments[state.selectionEnd],
+      };
+    };
+
+    const renderDocument = () => {
+      documentEl.innerHTML = "";
+      const fragment = document.createDocumentFragment();
+      buildParagraphs(segments).forEach((paragraph) => {
+        const paragraphEl = document.createElement("p");
+        paragraphEl.className = "trs-paragraph";
+        const timecode = document.createElement("span");
+        timecode.className = "trs-timecode";
+        timecode.textContent = paragraph[0]?.startLabel || "";
+        paragraphEl.appendChild(timecode);
+        paragraph.forEach((segment, segmentIdx) => {
+          const span = document.createElement("span");
+          span.className = "trs-segment";
+          span.dataset.segmentIndex = String(segment.index);
+          span.innerHTML = renderHighlightedText(segment.text, "");
+          segment.element = span;
+          paragraphEl.appendChild(span);
+          if (segmentIdx < paragraph.length - 1) {
+            paragraphEl.appendChild(document.createTextNode(" "));
+          }
+        });
+        fragment.appendChild(paragraphEl);
+      });
+      documentEl.appendChild(fragment);
+    };
+
+    const renderSelectionSummary = () => {
+      const range = getSelectedRange();
+      selectionSummary.classList.toggle("is-empty", !range);
+      clearSelectionBtn.disabled = !range;
+      createClipBtn.disabled = !range || state.creating;
+      if (!range) {
+        selectionSummary.textContent = "Seçim yok.";
         return;
       }
-      const startMeta = rowMeta[state.startIndex];
-      const endMeta = rowMeta[state.endIndex];
-      const duration = Math.max((endMeta?.end || 0) - (startMeta?.start || 0), 0);
-      selectionSummary.textContent = `Seçim: ${startMeta?.startLabel || "-"} → ${endMeta?.endLabel || "-"} · ${formatSeconds(duration)}`;
+      const duration = Math.max(range.end.end - range.start.start, 0);
+      selectionSummary.textContent = `Seçim: ${range.start.startLabel} → ${range.end.endLabel} · ${formatSeconds(duration)}`;
     };
 
-    const syncBadgesAndRange = () => {
-      rowMeta.forEach((meta, index) => {
-        const { row, badgesEl } = meta;
-        const isStart = state.startIndex === index;
-        const isEnd = state.endIndex === index;
-        const hasRange = state.startIndex !== null && state.endIndex !== null;
-        const inRange = hasRange && index >= state.startIndex && index <= state.endIndex;
-        row.classList.toggle("is-selected-start", isStart);
-        row.classList.toggle("is-selected-end", isEnd);
-        row.classList.toggle("is-selected-range", inRange);
-        if (!badgesEl) {
+    const renderSelection = () => {
+      const range = getSelectedRange();
+      segments.forEach((segment) => {
+        if (!segment.element) {
           return;
         }
-        const pieces = [];
-        if (isStart) {
-          pieces.push('<span class="trs-point-badge is-start">start</span>');
-        }
-        if (isEnd) {
-          pieces.push('<span class="trs-point-badge is-end">end</span>');
-        }
-        badgesEl.innerHTML = pieces.join("");
+        const selected = Boolean(range && segment.index >= range.startIndex && segment.index <= range.endIndex);
+        segment.element.classList.toggle("is-selected", selected);
       });
-      syncSelectionSummary();
+      renderSelectionSummary();
     };
 
-    const syncMatches = (scrollToCurrent = false) => {
-      state.matches = [];
+    const renderMatches = (scrollToCurrent = false) => {
       const query = state.query.trim();
-      rowMeta.forEach((meta, index) => {
-        const sourceText = meta.inputEl?.classList.contains("d-none")
-          ? String(meta.row.dataset.segmentText || meta.viewEl?.textContent || "")
-          : String(meta.inputEl?.value || "");
-        meta.row.dataset.segmentText = sourceText;
-        const matched = query && normalizeSearchText(sourceText).includes(normalizeSearchText(query));
-        meta.row.classList.toggle("is-match", Boolean(matched));
-        if (matched) {
-          state.matches.push(index);
-        }
-        if (meta.viewEl && meta.inputEl?.classList.contains("d-none")) {
-          meta.viewEl.innerHTML = renderHighlightedText(sourceText, matched ? query : "");
-        }
-      });
+      const queryNormalized = normalizeSearchText(query);
+      state.matches = queryNormalized
+        ? segments.filter((segment) => segment.normalized.includes(queryNormalized)).map((segment) => segment.index)
+        : [];
 
       if (!state.matches.length) {
         state.currentMatchIndex = -1;
@@ -2203,65 +2228,119 @@ document.addEventListener("DOMContentLoaded", () => {
         state.currentMatchIndex = 0;
       }
 
-      rowMeta.forEach((meta) => meta.row.classList.remove("is-match-current"));
-      if (state.matches.length && state.currentMatchIndex >= 0) {
-        const activeRow = rowMeta[state.matches[state.currentMatchIndex]]?.row;
-        if (activeRow) {
-          activeRow.classList.add("is-match-current");
-          if (scrollToCurrent) {
-            activeRow.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
+      segments.forEach((segment) => {
+        if (!segment.element) {
+          return;
         }
-      }
+        const isMatch = state.matches.includes(segment.index);
+        const isCurrent = isMatch && state.matches[state.currentMatchIndex] === segment.index;
+        segment.element.classList.toggle("is-match", isMatch);
+        segment.element.classList.toggle("is-match-current", isCurrent);
+        segment.element.innerHTML = renderHighlightedText(segment.text, isMatch ? query : "");
+      });
 
       matchCount.textContent = state.matches.length
         ? `${state.currentMatchIndex + 1} / ${state.matches.length}`
         : "0 / 0";
       prevBtn.disabled = state.matches.length <= 1;
       nextBtn.disabled = state.matches.length <= 1;
+
+      matchList.innerHTML = "";
+      if (state.matches.length) {
+        const fragment = document.createDocumentFragment();
+        state.matches.forEach((matchIndex, listIndex) => {
+          const segment = segments[matchIndex];
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `trs-match-chip${listIndex === state.currentMatchIndex ? " is-active" : ""}`;
+          button.innerHTML = `<span class="trs-match-chip-time">${escapeHtml(segment.startLabel)}</span><span class="trs-match-chip-text">${escapeHtml(segment.text)}</span>`;
+          button.addEventListener("click", () => {
+            state.currentMatchIndex = listIndex;
+            renderMatches(true);
+          });
+          fragment.appendChild(button);
+        });
+        matchList.appendChild(fragment);
+      }
+
+      const activeIndex = state.matches[state.currentMatchIndex];
+      const activeSegment = activeIndex !== undefined ? segments[activeIndex] : null;
+      if (scrollToCurrent && activeSegment?.element) {
+        activeSegment.element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      }
+      renderSelection();
+    };
+
+    const clearNativeSelection = () => {
+      const selection = window.getSelection();
+      if (selection && typeof selection.removeAllRanges === "function") {
+        selection.removeAllRanges();
+      }
+    };
+
+    const setSelectionFromIndexes = (firstIndex, secondIndex) => {
+      if (firstIndex === null || firstIndex === undefined || secondIndex === null || secondIndex === undefined) {
+        state.selectionStart = null;
+        state.selectionEnd = null;
+      } else {
+        const ordered = [firstIndex, secondIndex].sort((left, right) => left - right);
+        state.selectionStart = ordered[0];
+        state.selectionEnd = ordered[1];
+      }
+      renderSelection();
+    };
+
+    const segmentFromNode = (node) => {
+      if (!node) {
+        return null;
+      }
+      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+      const span = element?.closest?.(".trs-segment");
+      if (!span || !documentEl.contains(span)) {
+        return null;
+      }
+      const index = Number(span.dataset.segmentIndex);
+      return Number.isFinite(index) ? index : null;
+    };
+
+    const applySelectionFromEvent = (eventTarget) => {
+      const selection = window.getSelection();
+      const anchorIndex = segmentFromNode(selection?.anchorNode);
+      const focusIndex = segmentFromNode(selection?.focusNode);
+      const clickIndex = segmentFromNode(eventTarget);
+
+      if (anchorIndex !== null && focusIndex !== null) {
+        setSelectionFromIndexes(anchorIndex, focusIndex);
+        clearNativeSelection();
+        return;
+      }
+      if (clickIndex !== null) {
+        setSelectionFromIndexes(clickIndex, clickIndex);
+        clearNativeSelection();
+      }
     };
 
     const cycleMatches = (direction) => {
       if (!state.matches.length) {
         return;
       }
-      const nextIndex = (state.currentMatchIndex + direction + state.matches.length) % state.matches.length;
-      state.currentMatchIndex = nextIndex;
-      syncMatches(true);
+      state.currentMatchIndex = (state.currentMatchIndex + direction + state.matches.length) % state.matches.length;
+      renderMatches(true);
     };
 
-    const clearSelection = () => {
-      state.startIndex = null;
-      state.endIndex = null;
-      syncBadgesAndRange();
-    };
+    renderDocument();
+    renderMatches(false);
 
-    const handleRowClick = (index) => {
-      if (state.startIndex === null || (state.startIndex !== null && state.endIndex !== null)) {
-        state.startIndex = index;
-        state.endIndex = null;
-        syncBadgesAndRange();
-        return;
-      }
-      const ordered = [state.startIndex, index].sort((left, right) => left - right);
-      state.startIndex = ordered[0];
-      state.endIndex = ordered[1];
-      syncBadgesAndRange();
-    };
-
-    rowMeta.forEach((meta, index) => {
-      meta.row.addEventListener("click", () => handleRowClick(index));
-      meta.row.querySelectorAll("button, input").forEach((element) => {
-        element.addEventListener("click", (event) => event.stopPropagation());
-      });
-      meta.row.addEventListener("trs:text-updated", () => {
-        window.requestAnimationFrame(() => syncMatches(false));
-      });
+    documentEl.addEventListener("mouseup", (event) => {
+      window.setTimeout(() => applySelectionFromEvent(event.target), 0);
+    });
+    documentEl.addEventListener("touchend", (event) => {
+      window.setTimeout(() => applySelectionFromEvent(event.target), 0);
     });
 
     searchInput?.addEventListener("input", () => {
       state.query = searchInput.value || "";
-      syncMatches(true);
+      renderMatches(true);
     });
     clearSearchBtn?.addEventListener("click", () => {
       state.query = "";
@@ -2269,40 +2348,39 @@ document.addEventListener("DOMContentLoaded", () => {
         searchInput.value = "";
         searchInput.focus();
       }
-      syncMatches(false);
+      renderMatches(false);
     });
     prevBtn?.addEventListener("click", () => cycleMatches(-1));
     nextBtn?.addEventListener("click", () => cycleMatches(1));
-    clearSelectionBtn?.addEventListener("click", clearSelection);
+    clearSelectionBtn?.addEventListener("click", () => {
+      setSelectionFromIndexes(null, null);
+      clearNativeSelection();
+    });
 
     createClipBtn?.addEventListener("click", async () => {
-      if (!onCreateClip || state.startIndex === null || state.endIndex === null || state.creating) {
+      const range = getSelectedRange();
+      if (!range || !onCreateClip || state.creating) {
         return;
       }
-      const startMeta = rowMeta[state.startIndex];
-      const endMeta = rowMeta[state.endIndex];
       state.creating = true;
-      createClipBtn.disabled = true;
-      clearSelectionBtn.disabled = true;
+      renderSelectionSummary();
       try {
         await onCreateClip({
-          startTime: formatSeconds(startMeta.start),
-          endTime: formatSeconds(endMeta.end),
-          startSeconds: startMeta.start,
-          endSeconds: endMeta.end,
+          startTime: formatSeconds(range.start.start),
+          endTime: formatSeconds(range.end.end),
+          startSeconds: range.start.start,
+          endSeconds: range.end.end,
         });
       } catch (error) {
         alert(error?.message || "Could not create clip.");
       } finally {
         state.creating = false;
-        syncSelectionSummary();
+        renderSelectionSummary();
       }
     });
 
-    syncMatches(false);
-    syncBadgesAndRange();
     return {
-      clearSelection,
+      clearSelection: () => setSelectionFromIndexes(null, null),
     };
   };
 
