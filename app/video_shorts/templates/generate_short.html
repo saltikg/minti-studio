@@ -124,45 +124,138 @@
   .trs-document {
     max-height: 620px;
     overflow: auto;
-    padding: 16px 18px 96px;
-    line-height: 1.6;
-    font-size: 0.98rem;
+    padding: 10px 12px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    line-height: 1.45;
+    font-size: 0.95rem;
     color: rgba(255, 255, 255, 0.92);
-    user-select: text;
   }
-  .trs-paragraph {
-    margin: 0 0 10px;
+  .trs-row {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.02);
+    transition: background-color 0.18s ease, border-color 0.18s ease;
+    cursor: pointer;
   }
-  .trs-paragraph:last-child {
-    margin-bottom: 0;
+  .trs-row:hover {
+    background: rgba(255, 255, 255, 0.045);
   }
-  .trs-timecode {
-    display: block;
-    margin-bottom: 8px;
-    color: rgba(255, 255, 255, 0.48);
-    font-size: 0.76rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+  .trs-row.is-selected {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.38);
+  }
+  .trs-row.is-selection-start,
+  .trs-row.is-selection-end {
+    background: rgba(45, 212, 191, 0.12);
+    border-color: rgba(45, 212, 191, 0.52);
+  }
+  .trs-row-time {
+    padding-top: 3px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.74rem;
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0.03em;
   }
-  .trs-segment {
-    display: inline;
-    border-radius: 6px;
-    padding: 0 1px;
-    cursor: text;
+  .trs-row-main {
+    min-width: 0;
   }
-  .trs-segment.is-match {
+  .trs-row-view {
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.92);
+    word-break: break-word;
+  }
+  .trs-row-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .trs-row-edit textarea {
+    min-height: 84px;
+    resize: vertical;
+  }
+  .trs-row-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .trs-row-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .trs-row-badges {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .trs-row-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: rgba(45, 212, 191, 0.14);
+    color: #c9fff7;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .trs-row-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .trs-row-action-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.82);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .trs-row-action-btn:hover {
+    color: #fff;
+    border-color: rgba(45, 212, 191, 0.34);
     background: rgba(45, 212, 191, 0.08);
   }
-  .trs-segment.is-match-current {
+  .trs-row-action-btn .material-symbols-outlined {
+    font-size: 18px;
+  }
+  .trs-row-feedback {
+    margin-top: 6px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.58);
+  }
+  .trs-row-feedback.is-error {
+    color: #fda4af;
+  }
+  .trs-row-feedback.is-success {
+    color: #86efac;
+  }
+  .trs-match-mark {
+    background: rgba(250, 204, 21, 0.24);
+    color: #fff7cc;
+    border-radius: 4px;
+    padding: 0 1px;
+  }
+  .trs-row-text.is-match {
+    background: rgba(45, 212, 191, 0.08);
+  }
+  .trs-row-text.is-match-current {
     background: rgba(45, 212, 191, 0.16);
     box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.65);
-  }
-  .trs-segment.is-selected {
-    background: rgba(59, 130, 246, 0.22);
-  }
-  .trs-segment.is-live-selected {
-    background: rgba(45, 212, 191, 0.16);
   }
   .trs-selection-bar {
     position: sticky;
@@ -185,12 +278,6 @@
   }
   .trs-selection-summary.is-empty {
     color: rgba(255, 255, 255, 0.58);
-  }
-  .trs-match-mark {
-    background: rgba(250, 204, 21, 0.24);
-    color: #fff7cc;
-    border-radius: 4px;
-    padding: 0 1px;
   }
   .clip-workbench-row {
     align-items: start;
@@ -300,15 +387,20 @@
   .clip-rail-detail .clip-card.is-active {
     display: block;
   }
+  .clip-detail-panel {
+    margin-top: 16px;
+  }
   @media (max-width: 991.98px) {
     .trs-document {
       max-height: 520px;
-      padding: 14px 14px 94px;
+      padding: 10px 10px 94px;
     }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .trs-document {
-      scroll-behavior: auto;
+    .trs-row {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    .trs-row-actions {
+      justify-content: flex-end;
     }
   }
 </style>
@@ -599,6 +691,7 @@
     {% if has_transcript %}
       {% set total_clip_count = clip_rows|length %}
       {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
+      <div id="clip-workbench-shell">
       <div class="row g-3 clip-workbench-row">
         <div class="col-12 col-xl-8">
           <div class="gs-card h-100">
@@ -607,7 +700,7 @@
             </div>
             <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
-              <div class="small text-white-50">Metni seçerek klip yap.</div>
+              <div class="small text-white-50">Bir satıra tıkla = başlangıç, ikinciye tıkla = bitiş.</div>
               <div class="trs-toolbar">
                 <div class="trs-search-group">
                   <input
@@ -625,7 +718,7 @@
               </div>
               <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
               <div class="trs-panel">
-                <div class="trs-document" id="trs-document" aria-label="Transcript document"></div>
+                <div class="trs-document" id="trs-document" aria-label="Transcript segments"></div>
                 <div class="trs-selection-bar">
                   <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
                   <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -702,7 +795,11 @@
                 </button>
               {% endfor %}
             </div>
-            <div id="clip-list" class="clip-list clip-rail-detail">
+          </div>
+        </div>
+      </div>
+      <div class="gs-card clip-detail-panel" id="clip-detail-panel">
+        <div id="clip-list" class="clip-list clip-rail-detail">
               <div class="clip-rail-detail-header" id="clip-rail-detail-header">
                 <div>
                   <div class="clip-rail-detail-title" id="clip-rail-detail-title">Clip details</div>
@@ -1010,8 +1107,8 @@
             </div>
               {% endfor %}
             </div>
-          </div>
-        </div>
+            </div>
+      </div>
       </div>
     {% else %}
       <div class="gs-card">
@@ -1903,83 +2000,49 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const transcriptEl = document.getElementById("transcript-text");
-  const editUrl = "{{ url_for('video_shorts_bp.edit_segment_text', video_pk=video.id) }}";
-  if (!transcriptEl) {
-    return;
-  }
-
-  document.querySelectorAll("#segments-table tbody tr").forEach((row) => {
-    const editBtn = row.querySelector(".seg-edit-btn");
-    const saveBtn = row.querySelector(".seg-save-btn");
-    const cancelBtn = row.querySelector(".seg-cancel-btn");
-    const inputEl = row.querySelector(".seg-text-input");
-    const view = row.querySelector(".seg-text-view");
-    if (!editBtn || !saveBtn || !cancelBtn || !inputEl || !view) {
+  window.mountTranscriptClipSelector = () => {
+    const root = document.getElementById("transcript-range-selector");
+    if (!root || root.dataset.trsMounted === "1") {
       return;
     }
-
-    const idx = Number(row.dataset.index);
-    const resetUI = (textValue) => {
-      saveBtn.classList.add("d-none");
-      cancelBtn.classList.add("d-none");
-      editBtn.classList.remove("d-none");
-      inputEl.classList.add("d-none");
-      view.classList.remove("d-none");
-      view.textContent = textValue;
-    };
-
-    editBtn.addEventListener("click", () => {
-      inputEl.dataset.original = inputEl.value || view.textContent || "";
-      inputEl.value = view.textContent || "";
-      view.classList.add("d-none");
-      inputEl.classList.remove("d-none");
-      editBtn.classList.add("d-none");
-      saveBtn.classList.remove("d-none");
-      cancelBtn.classList.remove("d-none");
-      inputEl.focus();
-    });
-
-    cancelBtn.addEventListener("click", () => {
-      const original = inputEl.dataset.original || view.textContent || "";
-      inputEl.value = original;
-      resetUI(original);
-    });
-
-    saveBtn.addEventListener("click", async () => {
-      const newText = inputEl.value;
-      saveBtn.disabled = true;
-      cancelBtn.disabled = true;
-      try {
-        const response = await fetch(editUrl, {
+    root.dataset.trsMounted = "1";
+    const transcriptEl = document.getElementById("transcript-text");
+    const editUrl = "{{ url_for('video_shorts_bp.edit_segment_text', video_pk=video.id) }}";
+    window.initTranscriptClipSelector?.(root, {
+      editUrl,
+      onTranscriptSaved: (fullText) => {
+        if (transcriptEl && typeof fullText === "string") {
+          transcriptEl.textContent = fullText;
+        }
+      },
+      onCreateClip: async ({ startTime, endTime }) => {
+        const response = await fetch(root.dataset.addClipUrl || "", {
           method: "POST",
+          credentials: "same-origin",
           headers: {
-            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
           },
-          body: JSON.stringify({ index: idx, text: newText }),
+          body: new URLSearchParams({
+            start_time: startTime,
+            end_time: endTime,
+            title: "",
+          }),
         });
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-          throw new Error(data.message || "Segment update failed.");
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Could not create clip.");
         }
-        const updatedText = data.segment_text ?? newText;
-        if (data.transcript) {
-          transcriptEl.textContent = data.transcript;
+        if (typeof refreshClipList === "function") {
+          const ok = await refreshClipList();
+          if (ok) {
+            return;
+          }
         }
-        row.dataset.segmentText = updatedText;
-        row.dispatchEvent(new CustomEvent("trs:text-updated", {
-          bubbles: true,
-          detail: { text: updatedText },
-        }));
-        resetUI(updatedText);
-      } catch (err) {
-        alert(err.message || "Segment update failed.");
-      } finally {
-        saveBtn.disabled = false;
-        cancelBtn.disabled = false;
-      }
+        window.location.reload();
+      },
     });
-  });
+  };
+
 });
 </script>
 <script>
@@ -2221,6 +2284,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const createClipBtn = root.querySelector("#trs-create-clip");
     const segmentsScript = root.querySelector("#trs-segments-json");
     const onCreateClip = typeof options.onCreateClip === "function" ? options.onCreateClip : null;
+    const onTranscriptSaved = typeof options.onTranscriptSaved === "function" ? options.onTranscriptSaved : null;
+    const editUrl = options.editUrl || "";
 
     let parsedSegments = [];
     try {
@@ -2241,7 +2306,14 @@ document.addEventListener("DOMContentLoaded", () => {
         endLabel: segment?.end_label || formatSeconds(end),
         text,
         normalized: normalizeSearchText(text),
-        element: null,
+        rowEl: null,
+        textEl: null,
+        badgeEl: null,
+        viewEl: null,
+        editWrapEl: null,
+        textareaEl: null,
+        feedbackEl: null,
+        isEditing: false,
       };
     }).filter((segment) => segment.text);
 
@@ -2252,34 +2324,7 @@ document.addEventListener("DOMContentLoaded", () => {
       selectionStart: null,
       selectionEnd: null,
       creating: false,
-      dragAnchorIndex: null,
-    };
-
-    const buildParagraphs = (items) => {
-      const paragraphs = [];
-      let current = [];
-      items.forEach((item, idx) => {
-        const prev = current.length ? current[current.length - 1] : null;
-        const gap = prev ? item.start - prev.end : 0;
-        const prevText = prev?.text || "";
-        const shouldBreak = Boolean(
-          current.length &&
-          (
-            gap > 2.8 ||
-            current.length >= 14 ||
-            (current.length >= 6 && /[.!?…:]["')\]]*$/.test(prevText))
-          )
-        );
-        if (shouldBreak) {
-          paragraphs.push(current);
-          current = [];
-        }
-        current.push(item);
-        if (idx === items.length - 1 && current.length) {
-          paragraphs.push(current);
-        }
-      });
-      return paragraphs;
+      anchorIndex: null,
     };
 
     const getSelectedRange = () => {
@@ -2294,28 +2339,251 @@ document.addEventListener("DOMContentLoaded", () => {
       };
     };
 
-    const renderDocument = () => {
+    const updateSegmentTextMarkup = (segment) => {
+      if (!segment.textEl) {
+        return;
+      }
+      const isMatch = state.matches.includes(segment.index);
+      const isCurrent = isMatch && state.matches[state.currentMatchIndex] === segment.index;
+      segment.textEl.classList.toggle("is-match", isMatch);
+      segment.textEl.classList.toggle("is-match-current", isCurrent);
+      segment.textEl.innerHTML = renderHighlightedText(segment.text, isMatch ? state.query : "");
+    };
+
+    const setEditingState = (segment, enabled) => {
+      segment.isEditing = enabled;
+      if (segment.viewEl) {
+        segment.viewEl.classList.toggle("d-none", enabled);
+      }
+      if (segment.editWrapEl) {
+        segment.editWrapEl.classList.toggle("d-none", !enabled);
+      }
+      if (segment.feedbackEl && !enabled) {
+        segment.feedbackEl.className = "trs-row-feedback d-none";
+        segment.feedbackEl.textContent = "";
+      }
+      if (enabled && segment.textareaEl) {
+        segment.textareaEl.value = segment.text;
+        window.setTimeout(() => {
+          segment.textareaEl?.focus();
+          segment.textareaEl?.setSelectionRange(segment.textareaEl.value.length, segment.textareaEl.value.length);
+        }, 0);
+      }
+    };
+
+    const updateRowSelection = (segment) => {
+      if (!segment.rowEl || !segment.badgeEl) {
+        return;
+      }
+      const range = getSelectedRange();
+      const isSelected = Boolean(range && segment.index >= range.startIndex && segment.index <= range.endIndex);
+      const isStart = Boolean(range && segment.index === range.startIndex);
+      const isEnd = Boolean(range && segment.index === range.endIndex);
+      segment.rowEl.classList.toggle("is-selected", isSelected);
+      segment.rowEl.classList.toggle("is-selection-start", isStart);
+      segment.rowEl.classList.toggle("is-selection-end", isEnd);
+      segment.badgeEl.innerHTML = "";
+      if (isStart) {
+        const badge = document.createElement("span");
+        badge.className = "trs-row-badge";
+        badge.textContent = "Başlangıç";
+        segment.badgeEl.appendChild(badge);
+      }
+      if (isEnd) {
+        const badge = document.createElement("span");
+        badge.className = "trs-row-badge";
+        badge.textContent = "Bitiş";
+        segment.badgeEl.appendChild(badge);
+      }
+    };
+
+    const bindRowEvents = (segment) => {
+      if (!segment.rowEl) {
+        return;
+      }
+      segment.rowEl.addEventListener("click", (event) => {
+        if (event.target.closest("button, textarea, input, form, a, label")) {
+          return;
+        }
+        if (state.anchorIndex === null) {
+          state.anchorIndex = segment.index;
+          state.selectionStart = segment.index;
+          state.selectionEnd = segment.index;
+          renderSelection();
+          return;
+        }
+        if (state.anchorIndex === segment.index) {
+          state.selectionStart = segment.index;
+          state.selectionEnd = segment.index;
+          renderSelection();
+          return;
+        }
+        const ordered = [state.anchorIndex, segment.index].sort((left, right) => left - right);
+        state.selectionStart = ordered[0];
+        state.selectionEnd = ordered[1];
+        state.anchorIndex = null;
+        renderSelection();
+      });
+    };
+
+    const saveSegment = async (segment) => {
+      if (!editUrl || !segment.textareaEl) {
+        return;
+      }
+      const saveBtn = segment.editWrapEl?.querySelector("[data-action='save']");
+      const cancelBtn = segment.editWrapEl?.querySelector("[data-action='cancel']");
+      const nextText = segment.textareaEl.value.trim();
+      if (saveBtn) {
+        saveBtn.disabled = true;
+      }
+      if (cancelBtn) {
+        cancelBtn.disabled = true;
+      }
+      if (segment.feedbackEl) {
+        segment.feedbackEl.className = "trs-row-feedback";
+        segment.feedbackEl.textContent = "Saving…";
+      }
+      try {
+        const response = await fetch(editUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ index: segment.index, text: nextText }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Segment update failed.");
+        }
+        segment.text = payload.segment_text ?? nextText;
+        segment.normalized = normalizeSearchText(segment.text);
+        if (typeof payload.transcript === "string") {
+          onTranscriptSaved?.(payload.transcript);
+        }
+        updateSegmentTextMarkup(segment);
+        if (segment.feedbackEl) {
+          segment.feedbackEl.className = "trs-row-feedback is-success";
+          segment.feedbackEl.textContent = "Saved.";
+        }
+        setEditingState(segment, false);
+        renderMatches(false);
+      } catch (error) {
+        if (segment.feedbackEl) {
+          segment.feedbackEl.className = "trs-row-feedback is-error";
+          segment.feedbackEl.textContent = error?.message || "Segment update failed.";
+        }
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+        }
+        if (cancelBtn) {
+          cancelBtn.disabled = false;
+        }
+      }
+    };
+
+    const renderRows = () => {
       documentEl.innerHTML = "";
       const fragment = document.createDocumentFragment();
-      buildParagraphs(segments).forEach((paragraph) => {
-        const paragraphEl = document.createElement("p");
-        paragraphEl.className = "trs-paragraph";
-        const timecode = document.createElement("span");
-        timecode.className = "trs-timecode";
-        timecode.textContent = paragraph[0]?.startLabel || "";
-        paragraphEl.appendChild(timecode);
-        paragraph.forEach((segment, segmentIdx) => {
-          const span = document.createElement("span");
-          span.className = "trs-segment";
-          span.dataset.segmentIndex = String(segment.index);
-          span.innerHTML = renderHighlightedText(segment.text, "");
-          segment.element = span;
-          paragraphEl.appendChild(span);
-          if (segmentIdx < paragraph.length - 1) {
-            paragraphEl.appendChild(document.createTextNode(" "));
+      segments.forEach((segment) => {
+        const row = document.createElement("div");
+        row.className = "trs-row";
+        row.dataset.segmentIndex = String(segment.index);
+
+        const timeEl = document.createElement("div");
+        timeEl.className = "trs-row-time";
+        timeEl.textContent = segment.startLabel;
+
+        const mainEl = document.createElement("div");
+        mainEl.className = "trs-row-main";
+
+        const metaEl = document.createElement("div");
+        metaEl.className = "trs-row-meta";
+        const badgeEl = document.createElement("div");
+        badgeEl.className = "trs-row-badges";
+        metaEl.appendChild(badgeEl);
+
+        const viewEl = document.createElement("div");
+        viewEl.className = "trs-row-view";
+        const textEl = document.createElement("span");
+        textEl.className = "trs-row-text";
+        viewEl.appendChild(textEl);
+
+        const editWrapEl = document.createElement("div");
+        editWrapEl.className = "trs-row-edit d-none";
+        const textareaEl = document.createElement("textarea");
+        textareaEl.className = "form-control form-control-sm";
+        textareaEl.setAttribute("rows", "3");
+        const editActions = document.createElement("div");
+        editActions.className = "trs-row-edit-actions";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "btn btn-outline-secondary btn-sm";
+        cancelBtn.dataset.action = "cancel";
+        cancelBtn.textContent = "Cancel";
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "btn btn-primary btn-sm";
+        saveBtn.dataset.action = "save";
+        saveBtn.textContent = "Save";
+        editActions.append(cancelBtn, saveBtn);
+        editWrapEl.append(textareaEl, editActions);
+
+        const feedbackEl = document.createElement("div");
+        feedbackEl.className = "trs-row-feedback d-none";
+
+        mainEl.append(metaEl, viewEl, editWrapEl, feedbackEl);
+
+        const actionsEl = document.createElement("div");
+        actionsEl.className = "trs-row-actions";
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "trs-row-action-btn";
+        editBtn.setAttribute("aria-label", "Edit segment text");
+        editBtn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">edit</span>';
+        actionsEl.appendChild(editBtn);
+
+        row.append(timeEl, mainEl, actionsEl);
+        fragment.appendChild(row);
+
+        segment.rowEl = row;
+        segment.textEl = textEl;
+        segment.badgeEl = badgeEl;
+        segment.viewEl = viewEl;
+        segment.editWrapEl = editWrapEl;
+        segment.textareaEl = textareaEl;
+        segment.feedbackEl = feedbackEl;
+
+        editBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditingState(segment, true);
+        });
+        cancelBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditingState(segment, false);
+        });
+        saveBtn.addEventListener("click", async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await saveSegment(segment);
+        });
+        textareaEl.addEventListener("click", (event) => event.stopPropagation());
+        textareaEl.addEventListener("keydown", async (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            await saveSegment(segment);
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setEditingState(segment, false);
           }
         });
-        fragment.appendChild(paragraphEl);
+
+        bindRowEvents(segment);
+        updateSegmentTextMarkup(segment);
       });
       documentEl.appendChild(fragment);
     };
@@ -2334,32 +2602,8 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const renderSelection = () => {
-      const range = getSelectedRange();
-      segments.forEach((segment) => {
-        if (!segment.element) {
-          return;
-        }
-        const selected = Boolean(range && segment.index >= range.startIndex && segment.index <= range.endIndex);
-        segment.element.classList.toggle("is-selected", selected);
-      });
+      segments.forEach((segment) => updateRowSelection(segment));
       renderSelectionSummary();
-    };
-
-    const renderLiveSelection = (firstIndex, secondIndex) => {
-      segments.forEach((segment) => segment.element?.classList.remove("is-live-selected"));
-      if (firstIndex === null || secondIndex === null || firstIndex === undefined || secondIndex === undefined) {
-        return;
-      }
-      const ordered = [firstIndex, secondIndex].sort((left, right) => left - right);
-      segments.forEach((segment) => {
-        if (!segment.element) {
-          return;
-        }
-        segment.element.classList.toggle(
-          "is-live-selected",
-          segment.index >= ordered[0] && segment.index <= ordered[1],
-        );
-      });
     };
 
     const renderMatches = (scrollToCurrent = false) => {
@@ -2376,14 +2620,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       segments.forEach((segment) => {
-        if (!segment.element) {
-          return;
-        }
-        const isMatch = state.matches.includes(segment.index);
-        const isCurrent = isMatch && state.matches[state.currentMatchIndex] === segment.index;
-        segment.element.classList.toggle("is-match", isMatch);
-        segment.element.classList.toggle("is-match-current", isCurrent);
-        segment.element.innerHTML = renderHighlightedText(segment.text, isMatch ? query : "");
+        updateSegmentTextMarkup(segment);
       });
 
       matchCount.textContent = state.matches.length
@@ -2412,67 +2649,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const activeIndex = state.matches[state.currentMatchIndex];
       const activeSegment = activeIndex !== undefined ? segments[activeIndex] : null;
-      if (scrollToCurrent && activeSegment?.element) {
-        activeSegment.element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      if (scrollToCurrent && activeSegment?.rowEl) {
+        activeSegment.rowEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
       }
       renderSelection();
-    };
-
-    const clearNativeSelection = () => {
-      const selection = window.getSelection();
-      if (selection && typeof selection.removeAllRanges === "function") {
-        selection.removeAllRanges();
-      }
-    };
-
-    const setSelectionFromIndexes = (firstIndex, secondIndex) => {
-      if (firstIndex === null || firstIndex === undefined || secondIndex === null || secondIndex === undefined) {
-        state.selectionStart = null;
-        state.selectionEnd = null;
-      } else {
-        const ordered = [firstIndex, secondIndex].sort((left, right) => left - right);
-        state.selectionStart = ordered[0];
-        state.selectionEnd = ordered[1];
-      }
-      renderSelection();
-    };
-
-    const segmentFromNode = (node) => {
-      if (!node) {
-        return null;
-      }
-      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-      const span = element?.closest?.(".trs-segment");
-      if (!span || !documentEl.contains(span)) {
-        return null;
-      }
-      const index = Number(span.dataset.segmentIndex);
-      return Number.isFinite(index) ? index : null;
-    };
-
-    const applySelectionFromEvent = (eventTarget) => {
-      const selection = window.getSelection();
-      const anchorIndex = segmentFromNode(selection?.anchorNode);
-      const focusIndex = segmentFromNode(selection?.focusNode);
-      const clickIndex = segmentFromNode(eventTarget);
-
-      if (anchorIndex !== null && focusIndex !== null) {
-        setSelectionFromIndexes(anchorIndex, focusIndex);
-        renderLiveSelection(null, null);
-        clearNativeSelection();
-        return;
-      }
-      if (clickIndex !== null) {
-        setSelectionFromIndexes(clickIndex, clickIndex);
-        renderLiveSelection(null, null);
-        clearNativeSelection();
-        return;
-      }
-      if (state.dragAnchorIndex !== null) {
-        setSelectionFromIndexes(state.dragAnchorIndex, state.dragAnchorIndex);
-      }
-      renderLiveSelection(null, null);
-      clearNativeSelection();
     };
 
     const cycleMatches = (direction) => {
@@ -2483,40 +2663,8 @@ document.addEventListener("DOMContentLoaded", () => {
       renderMatches(true);
     };
 
-    renderDocument();
+    renderRows();
     renderMatches(false);
-
-    documentEl.addEventListener("mousedown", (event) => {
-      state.dragAnchorIndex = segmentFromNode(event.target);
-      if (state.dragAnchorIndex !== null) {
-        renderLiveSelection(state.dragAnchorIndex, state.dragAnchorIndex);
-      }
-    });
-    document.addEventListener("selectionchange", () => {
-      if (state.dragAnchorIndex === null) {
-        return;
-      }
-      const selection = window.getSelection();
-      const anchorIndex = segmentFromNode(selection?.anchorNode);
-      const focusIndex = segmentFromNode(selection?.focusNode);
-      if (anchorIndex !== null && focusIndex !== null) {
-        renderLiveSelection(anchorIndex, focusIndex);
-      } else {
-        renderLiveSelection(state.dragAnchorIndex, state.dragAnchorIndex);
-      }
-    });
-    documentEl.addEventListener("mouseup", (event) => {
-      window.setTimeout(() => {
-        applySelectionFromEvent(event.target);
-        state.dragAnchorIndex = null;
-      }, 0);
-    });
-    documentEl.addEventListener("touchend", (event) => {
-      window.setTimeout(() => {
-        applySelectionFromEvent(event.target);
-        state.dragAnchorIndex = null;
-      }, 0);
-    });
 
     searchInput?.addEventListener("input", () => {
       state.query = searchInput.value || "";
@@ -2533,8 +2681,10 @@ document.addEventListener("DOMContentLoaded", () => {
     prevBtn?.addEventListener("click", () => cycleMatches(-1));
     nextBtn?.addEventListener("click", () => cycleMatches(1));
     clearSelectionBtn?.addEventListener("click", () => {
-      setSelectionFromIndexes(null, null);
-      clearNativeSelection();
+      state.anchorIndex = null;
+      state.selectionStart = null;
+      state.selectionEnd = null;
+      renderSelection();
     });
 
     createClipBtn?.addEventListener("click", async () => {
@@ -2560,150 +2710,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     return {
-      clearSelection: () => setSelectionFromIndexes(null, null),
+      clearSelection: () => {
+        state.anchorIndex = null;
+        state.selectionStart = null;
+        state.selectionEnd = null;
+        renderSelection();
+      },
     };
   };
-
-  const root = document.getElementById("transcript-range-selector");
-  if (!root) {
-    return;
-  }
-  window.initTranscriptClipSelector(root, {
-    onCreateClip: async ({ startTime, endTime }) => {
-      const response = await fetch(root.dataset.addClipUrl || "", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "X-Requested-With": "XMLHttpRequest",
-        },
-        body: new URLSearchParams({
-          start_time: startTime,
-          end_time: endTime,
-          title: "",
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Could not create clip.");
-      }
-      window.location.reload();
-    },
-  });
-});
-</script>
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-  const copyBtn = document.getElementById("segments-copy-btn");
-  const statusEl = document.getElementById("segments-copy-status");
-  const table = document.getElementById("segments-table");
-  if (!copyBtn || !table) {
-    return;
-  }
-
-  const setStatus = (message) => {
-    if (!statusEl) {
-      return;
-    }
-    statusEl.textContent = message || "";
-  };
-
-  const toCellText = (value) => {
-    return (value || "").replace(/\s+/g, " ").trim();
-  };
-
-  const buildTsv = () => {
-    const rows = Array.from(table.querySelectorAll("tbody tr"));
-    const lines = ["Start\tEnd\tText"];
-    rows.forEach((row) => {
-      const cells = row.querySelectorAll("td");
-      if (cells.length < 3) {
-        return;
-      }
-      const start = toCellText(cells[0]?.textContent);
-      const end = toCellText(cells[1]?.textContent);
-      const textEl = row.querySelector(".seg-text-view");
-      const text = toCellText(textEl?.textContent || cells[2]?.textContent || "");
-      lines.push([start, end, text].join("\t"));
-    });
-    return lines.join("\n");
-  };
-
-  const writeClipboard = async (text) => {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-    const temp = document.createElement("textarea");
-    temp.value = text;
-    temp.setAttribute("readonly", "readonly");
-    temp.style.position = "absolute";
-    temp.style.left = "-9999px";
-    document.body.appendChild(temp);
-    temp.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(temp);
-    return ok;
-  };
-
-  copyBtn.addEventListener("click", async () => {
-    const payload = buildTsv();
-    if (!payload.trim()) {
-      setStatus("No rows to copy.");
-      return;
-    }
-    copyBtn.disabled = true;
-    setStatus("Copying...");
-    try {
-      const ok = await writeClipboard(payload);
-      setStatus(ok ? "Copied." : "Copy failed.");
-    } catch (err) {
-      setStatus("Copy failed.");
-    } finally {
-      copyBtn.disabled = false;
-      setTimeout(() => setStatus(""), 2000);
-    }
-  });
-});
-</script>
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-  const nonSpeechUrl = "{{ url_for('video_shorts_bp.update_segment_non_speech', video_pk=video.id) }}";
-  document.querySelectorAll("#segments-table tbody tr").forEach((row) => {
-    const setBtn = row.querySelector(".seg-ns-btn");
-    if (!setBtn) {
-      return;
-    }
-    const idx = Number(row.dataset.index);
-    setBtn.addEventListener("click", async () => {
-      setBtn.disabled = true;
-      try {
-        const response = await fetch(nonSpeechUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            index: idx,
-            non_speech_type: setBtn.dataset.nsType || "other",
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.success) {
-          throw new Error(payload.message || "Non-speech update failed.");
-        }
-      } catch (err) {
-        alert(err.message || "Non-speech update failed.");
-      } finally {
-        setBtn.disabled = false;
-      }
-    });
-  });
+  window.mountTranscriptClipSelector?.();
 });
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const step3Btn = document.getElementById("step3-btn");
-  const clipList = document.getElementById("clip-management-panel");
+  const clipList = document.getElementById("clip-detail-panel");
   if (step3Btn && clipList) {
     step3Btn.addEventListener("click", () => {
       clipList.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2798,8 +2819,9 @@ const initAddClipToggle = () => {
 </script>
 <script>
 const refreshClipList = async () => {
+  const workbench = document.getElementById("clip-workbench-shell");
   const clipPanel = document.getElementById("clip-management-panel");
-  if (!clipPanel) {
+  if (!workbench || !clipPanel) {
     return false;
   }
   const activePlanIndex = clipPanel.dataset.activePlanIndex || "";
@@ -2814,13 +2836,15 @@ const refreshClipList = async () => {
     const html = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
-    const newClipPanel = doc.getElementById("clip-management-panel");
-    if (newClipPanel) {
-      clipPanel.replaceWith(newClipPanel);
+    const newWorkbench = doc.getElementById("clip-workbench-shell");
+    if (newWorkbench) {
+      workbench.replaceWith(newWorkbench);
+      window.mountTranscriptClipSelector?.();
+      loadGenerateUsageSummary();
       initClipRail(activePlanIndex);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
-        document.querySelectorAll("#clip-management-panel [data-bs-toggle='tooltip']").forEach((el) => {
+        document.querySelectorAll("#clip-workbench-shell [data-bs-toggle='tooltip']").forEach((el) => {
           new bootstrap.Tooltip(el);
         });
       }
