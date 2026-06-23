@@ -841,7 +841,7 @@ def ensure_background_preferences_schema(conn) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS shorts_background_preferences (
-            id UUID PRIMARY KEY DEFAULT uuid(),
+            id UUID PRIMARY KEY,
             user_id VARCHAR NOT NULL,
             brand_id VARCHAR,
             background_key VARCHAR,
