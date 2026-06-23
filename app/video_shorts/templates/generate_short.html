@@ -48,6 +48,118 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
 <link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.css') }}">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Merriweather:wght@700&family=Source+Code+Pro:wght@700&family=Arimo:wght@400;700&family=Open+Sans+Condensed:wght@400;700&display=swap">
+<style>
+  .trs-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .trs-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .trs-search-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 320px;
+    min-width: 0;
+  }
+  .trs-search-group .form-control {
+    min-width: 0;
+  }
+  .trs-match-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .trs-match-count {
+    min-width: 48px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.88rem;
+  }
+  .trs-selection-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .trs-selection-summary {
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 0.92rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .trs-selection-summary.is-empty {
+    color: rgba(255, 255, 255, 0.58);
+  }
+  .trs-segment-row {
+    cursor: pointer;
+    transition: background-color 0.16s ease, box-shadow 0.16s ease;
+  }
+  .trs-segment-row:hover {
+    background: rgba(45, 212, 191, 0.05);
+  }
+  .trs-segment-row.is-match {
+    background: rgba(45, 212, 191, 0.06);
+  }
+  .trs-segment-row.is-match-current {
+    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.8);
+    background: rgba(45, 212, 191, 0.12);
+  }
+  .trs-segment-row.is-selected-range {
+    background: rgba(56, 189, 248, 0.1);
+  }
+  .trs-segment-row.is-selected-start,
+  .trs-segment-row.is-selected-end {
+    background: rgba(59, 130, 246, 0.16);
+  }
+  .trs-segment-badges {
+    min-height: 20px;
+  }
+  .trs-point-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+  }
+  .trs-point-badge.is-start {
+    background: rgba(45, 212, 191, 0.14);
+    color: #9ff4e3;
+    border-color: rgba(45, 212, 191, 0.26);
+  }
+  .trs-point-badge.is-end {
+    background: rgba(251, 191, 36, 0.14);
+    color: #fde68a;
+    border-color: rgba(251, 191, 36, 0.26);
+  }
+  .trs-match-mark {
+    background: rgba(250, 204, 21, 0.24);
+    color: #fff7cc;
+    border-radius: 4px;
+    padding: 0 1px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .trs-segment-row {
+      transition: none;
+    }
+  }
+</style>
 
 
 <div class="gs-header mb-3">
@@ -1397,7 +1509,7 @@
     </div>
   </div>
     <div class="col-lg-6 order-lg-1">
-      <div class="gs-card">
+    <div class="gs-card">
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
         <h5 class="mb-0">Segments (with timing)</h5>
         {% if segments_view %}
@@ -1410,49 +1522,84 @@
         {% endif %}
       </div>
       {% if segments_view %}
-        <div class="table-responsive gs-table-scroll-520">
-          <table class="table table-sm align-middle" id="segments-table">
-            <thead class="table-light">
-              <tr>
-                <th class="gs-col-start">Start</th>
-                <th class="gs-col-end">End</th>
-                <th>Text</th>
-                <th class="gs-col-actions">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for seg in segments_view %}
-                <tr data-index="{{ loop.index0 }}">
-                  <td class="text-nowrap">{{ seg.start_label or seg.start }}</td>
-                  <td class="text-nowrap">{{ seg.end_label or seg.end }}</td>
-                  <td class="seg-text-cell gs-prewrap gs-col-seg-text">
-                    <div class="seg-text-view small">{{ seg.tr_text or seg.text }}</div>
-                    <input type="text" class="form-control form-control-sm seg-text-input d-none" value="{{ seg.tr_text or seg.text }}">
-                  </td>
-                  <td>
-                    <div class="d-flex align-items-center flex-nowrap gap-1 seg-actions-row">
-                      <button type="button" class="seg-edit-btn seg-action-btn edit-btn" data-mode="view" title="Edit segment">
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <path d="M12.146 1.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708L5.207 13.5H2v-3.207L12.146 1.146zM11.207 2.5 3 10.707V12h1.293L13.5 3.793 11.207 2.5z"/>
-                        </svg>
-                      </button>
-                      <button type="button" class="seg-save-btn d-none seg-action-btn save-btn" title="Save changes">
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <path d="M13.854 3.146a.5.5 0 0 1 0 .708L7 10.707l-2.854-2.853a.5.5 0 1 1 .708-.708L7 9.293l6.146-6.147a.5.5 0 0 1 .708 0z"/>
-                        </svg>
-                      </button>
-                      <button type="button" class="seg-cancel-btn d-none seg-action-btn cancel-btn" title="Cancel edit">
-                        <svg viewBox="0 0 16 16" aria-hidden="true">
-                          <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-                        </svg>
-                      </button>
-                      <button type="button" class="seg-ns-btn btn btn-outline-secondary btn-sm" data-ns-type="other">Set</button>
-                    </div>
-                  </td>
+        <div
+          class="trs-shell"
+          id="transcript-range-selector"
+          data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
+          <div class="trs-toolbar">
+            <div class="trs-search-group">
+              <input
+                type="search"
+                class="form-control form-control-sm"
+                id="trs-search-input"
+                placeholder="Search transcript">
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
+            </div>
+            <div class="trs-match-nav">
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-prev" aria-label="Previous match">↑</button>
+              <span class="trs-match-count" id="trs-match-count">0 / 0</span>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
+            </div>
+          </div>
+          <div class="trs-selection-bar">
+            <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-selection-clear" disabled>Clear</button>
+              <button type="button" class="btn btn-primary btn-sm" id="trs-create-clip" disabled>Create clip</button>
+            </div>
+          </div>
+          <div class="table-responsive gs-table-scroll-520">
+            <table class="table table-sm align-middle" id="segments-table">
+              <thead class="table-light">
+                <tr>
+                  <th class="gs-col-start">Start</th>
+                  <th class="gs-col-end">End</th>
+                  <th>Text</th>
+                  <th class="gs-col-actions">Actions</th>
                 </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {% for seg in segments_view %}
+                  <tr
+                    data-index="{{ loop.index0 }}"
+                    data-segment-row
+                    data-start-seconds="{{ seg.start if seg.start is not none else '' }}"
+                    data-end-seconds="{{ seg.end if seg.end is not none else '' }}"
+                    data-start-label="{{ seg.start_label or seg.start }}"
+                    data-end-label="{{ seg.end_label or seg.end }}"
+                    class="trs-segment-row">
+                    <td class="text-nowrap">{{ seg.start_label or seg.start }}</td>
+                    <td class="text-nowrap">{{ seg.end_label or seg.end }}</td>
+                    <td class="seg-text-cell gs-prewrap gs-col-seg-text">
+                      <div class="trs-segment-badges"></div>
+                      <div class="seg-text-view small trs-segment-text">{{ seg.tr_text or seg.text }}</div>
+                      <input type="text" class="form-control form-control-sm seg-text-input d-none" value="{{ seg.tr_text or seg.text }}">
+                    </td>
+                    <td>
+                      <div class="d-flex align-items-center flex-nowrap gap-1 seg-actions-row">
+                        <button type="button" class="seg-edit-btn seg-action-btn edit-btn" data-mode="view" title="Edit segment">
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M12.146 1.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708L5.207 13.5H2v-3.207L12.146 1.146zM11.207 2.5 3 10.707V12h1.293L13.5 3.793 11.207 2.5z"/>
+                          </svg>
+                        </button>
+                        <button type="button" class="seg-save-btn d-none seg-action-btn save-btn" title="Save changes">
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M13.854 3.146a.5.5 0 0 1 0 .708L7 10.707l-2.854-2.853a.5.5 0 1 1 .708-.708L7 9.293l6.146-6.147a.5.5 0 0 1 .708 0z"/>
+                          </svg>
+                        </button>
+                        <button type="button" class="seg-cancel-btn d-none seg-action-btn cancel-btn" title="Cancel edit">
+                          <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                          </svg>
+                        </button>
+                        <button type="button" class="seg-ns-btn btn btn-outline-secondary btn-sm" data-ns-type="other">Set</button>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </div>
       {% else %}
         <div class="text-muted">No segment data stored yet.</div>
@@ -1707,6 +1854,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.transcript) {
           transcriptEl.textContent = data.transcript;
         }
+        row.dataset.segmentText = updatedText;
+        row.dispatchEvent(new CustomEvent("trs:text-updated", {
+          bubbles: true,
+          detail: { text: updatedText },
+        }));
         resetUI(updatedText);
       } catch (err) {
         alert(err.message || "Segment update failed.");
@@ -1872,6 +2024,312 @@ document.addEventListener("DOMContentLoaded", () => {
       stopPolling();
       showStatus(`Start failed: ${err.message || err}`, true);
     }
+  });
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const formatSeconds = (value) => {
+    const total = Number(value || 0);
+    if (!Number.isFinite(total) || total < 0) {
+      return "-";
+    }
+    const minutes = Math.floor(total / 60);
+    const seconds = total - (minutes * 60);
+    const secondLabel = seconds.toFixed(3).padStart(6, "0");
+    return `${String(minutes).padStart(2, "0")}:${secondLabel}`;
+  };
+
+  const normalizeSearchText = (value) => {
+    return String(value || "")
+      .replace(/İ/g, "I")
+      .replace(/ı/g, "i")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  };
+
+  const buildSearchMap = (value) => {
+    const original = String(value || "");
+    let normalized = "";
+    const map = [];
+    for (let index = 0; index < original.length; index += 1) {
+      const char = original[index];
+      const replaced = char === "İ" ? "I" : char === "ı" ? "i" : char;
+      const folded = replaced.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      for (let inner = 0; inner < folded.length; inner += 1) {
+        normalized += folded[inner];
+        map.push(index);
+      }
+    }
+    return { original, normalized, map };
+  };
+
+  const escapeHtml = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const renderHighlightedText = (text, query) => {
+    const source = String(text || "");
+    if (!query) {
+      return escapeHtml(source);
+    }
+    const queryNormalized = normalizeSearchText(query);
+    if (!queryNormalized) {
+      return escapeHtml(source);
+    }
+    const mapped = buildSearchMap(source);
+    const start = mapped.normalized.indexOf(queryNormalized);
+    if (start < 0) {
+      return escapeHtml(source);
+    }
+    const endMapIndex = start + queryNormalized.length - 1;
+    const startOriginal = mapped.map[start] ?? 0;
+    const endOriginal = mapped.map[endMapIndex] ?? (source.length - 1);
+    return `${escapeHtml(source.slice(0, startOriginal))}<mark class="trs-match-mark">${escapeHtml(source.slice(startOriginal, endOriginal + 1))}</mark>${escapeHtml(source.slice(endOriginal + 1))}`;
+  };
+
+  window.initTranscriptClipSelector = (root, options = {}) => {
+    if (!root) {
+      return null;
+    }
+
+    const rows = Array.from(root.querySelectorAll("[data-segment-row]"));
+    const searchInput = root.querySelector("#trs-search-input");
+    const clearSearchBtn = root.querySelector("#trs-search-clear");
+    const prevBtn = root.querySelector("#trs-match-prev");
+    const nextBtn = root.querySelector("#trs-match-next");
+    const matchCount = root.querySelector("#trs-match-count");
+    const selectionSummary = root.querySelector("#trs-selection-summary");
+    const clearSelectionBtn = root.querySelector("#trs-selection-clear");
+    const createClipBtn = root.querySelector("#trs-create-clip");
+    const onCreateClip = typeof options.onCreateClip === "function" ? options.onCreateClip : null;
+
+    const state = {
+      query: "",
+      matches: [],
+      currentMatchIndex: -1,
+      startIndex: null,
+      endIndex: null,
+      creating: false,
+    };
+
+    const rowMeta = rows.map((row) => {
+      const viewEl = row.querySelector(".seg-text-view");
+      const inputEl = row.querySelector(".seg-text-input");
+      const badgesEl = row.querySelector(".trs-segment-badges");
+      const start = Number(row.dataset.startSeconds || 0);
+      const end = Number(row.dataset.endSeconds || 0);
+      const text = String(viewEl?.textContent || "").trim();
+      row.dataset.segmentText = text;
+      return {
+        row,
+        viewEl,
+        inputEl,
+        badgesEl,
+        start,
+        end,
+        startLabel: row.dataset.startLabel || formatSeconds(start),
+        endLabel: row.dataset.endLabel || formatSeconds(end),
+      };
+    });
+
+    const syncSelectionSummary = () => {
+      const hasRange = state.startIndex !== null && state.endIndex !== null;
+      selectionSummary.classList.toggle("is-empty", !hasRange);
+      clearSelectionBtn.disabled = state.startIndex === null && state.endIndex === null;
+      createClipBtn.disabled = !hasRange || state.creating;
+      if (!hasRange) {
+        selectionSummary.textContent = state.startIndex === null
+          ? "Seçim yok."
+          : `Başlangıç: ${rowMeta[state.startIndex]?.startLabel || "-"}. Bitiş için ikinci segmenti seçin.`;
+        return;
+      }
+      const startMeta = rowMeta[state.startIndex];
+      const endMeta = rowMeta[state.endIndex];
+      const duration = Math.max((endMeta?.end || 0) - (startMeta?.start || 0), 0);
+      selectionSummary.textContent = `Seçim: ${startMeta?.startLabel || "-"} → ${endMeta?.endLabel || "-"} · ${formatSeconds(duration)}`;
+    };
+
+    const syncBadgesAndRange = () => {
+      rowMeta.forEach((meta, index) => {
+        const { row, badgesEl } = meta;
+        const isStart = state.startIndex === index;
+        const isEnd = state.endIndex === index;
+        const hasRange = state.startIndex !== null && state.endIndex !== null;
+        const inRange = hasRange && index >= state.startIndex && index <= state.endIndex;
+        row.classList.toggle("is-selected-start", isStart);
+        row.classList.toggle("is-selected-end", isEnd);
+        row.classList.toggle("is-selected-range", inRange);
+        if (!badgesEl) {
+          return;
+        }
+        const pieces = [];
+        if (isStart) {
+          pieces.push('<span class="trs-point-badge is-start">start</span>');
+        }
+        if (isEnd) {
+          pieces.push('<span class="trs-point-badge is-end">end</span>');
+        }
+        badgesEl.innerHTML = pieces.join("");
+      });
+      syncSelectionSummary();
+    };
+
+    const syncMatches = (scrollToCurrent = false) => {
+      state.matches = [];
+      const query = state.query.trim();
+      rowMeta.forEach((meta, index) => {
+        const sourceText = meta.inputEl?.classList.contains("d-none")
+          ? String(meta.row.dataset.segmentText || meta.viewEl?.textContent || "")
+          : String(meta.inputEl?.value || "");
+        meta.row.dataset.segmentText = sourceText;
+        const matched = query && normalizeSearchText(sourceText).includes(normalizeSearchText(query));
+        meta.row.classList.toggle("is-match", Boolean(matched));
+        if (matched) {
+          state.matches.push(index);
+        }
+        if (meta.viewEl && meta.inputEl?.classList.contains("d-none")) {
+          meta.viewEl.innerHTML = renderHighlightedText(sourceText, matched ? query : "");
+        }
+      });
+
+      if (!state.matches.length) {
+        state.currentMatchIndex = -1;
+      } else if (state.currentMatchIndex < 0 || state.currentMatchIndex >= state.matches.length) {
+        state.currentMatchIndex = 0;
+      }
+
+      rowMeta.forEach((meta) => meta.row.classList.remove("is-match-current"));
+      if (state.matches.length && state.currentMatchIndex >= 0) {
+        const activeRow = rowMeta[state.matches[state.currentMatchIndex]]?.row;
+        if (activeRow) {
+          activeRow.classList.add("is-match-current");
+          if (scrollToCurrent) {
+            activeRow.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }
+      }
+
+      matchCount.textContent = state.matches.length
+        ? `${state.currentMatchIndex + 1} / ${state.matches.length}`
+        : "0 / 0";
+      prevBtn.disabled = state.matches.length <= 1;
+      nextBtn.disabled = state.matches.length <= 1;
+    };
+
+    const cycleMatches = (direction) => {
+      if (!state.matches.length) {
+        return;
+      }
+      const nextIndex = (state.currentMatchIndex + direction + state.matches.length) % state.matches.length;
+      state.currentMatchIndex = nextIndex;
+      syncMatches(true);
+    };
+
+    const clearSelection = () => {
+      state.startIndex = null;
+      state.endIndex = null;
+      syncBadgesAndRange();
+    };
+
+    const handleRowClick = (index) => {
+      if (state.startIndex === null || (state.startIndex !== null && state.endIndex !== null)) {
+        state.startIndex = index;
+        state.endIndex = null;
+        syncBadgesAndRange();
+        return;
+      }
+      const ordered = [state.startIndex, index].sort((left, right) => left - right);
+      state.startIndex = ordered[0];
+      state.endIndex = ordered[1];
+      syncBadgesAndRange();
+    };
+
+    rowMeta.forEach((meta, index) => {
+      meta.row.addEventListener("click", () => handleRowClick(index));
+      meta.row.querySelectorAll("button, input").forEach((element) => {
+        element.addEventListener("click", (event) => event.stopPropagation());
+      });
+      meta.row.addEventListener("trs:text-updated", () => {
+        window.requestAnimationFrame(() => syncMatches(false));
+      });
+    });
+
+    searchInput?.addEventListener("input", () => {
+      state.query = searchInput.value || "";
+      syncMatches(true);
+    });
+    clearSearchBtn?.addEventListener("click", () => {
+      state.query = "";
+      if (searchInput) {
+        searchInput.value = "";
+        searchInput.focus();
+      }
+      syncMatches(false);
+    });
+    prevBtn?.addEventListener("click", () => cycleMatches(-1));
+    nextBtn?.addEventListener("click", () => cycleMatches(1));
+    clearSelectionBtn?.addEventListener("click", clearSelection);
+
+    createClipBtn?.addEventListener("click", async () => {
+      if (!onCreateClip || state.startIndex === null || state.endIndex === null || state.creating) {
+        return;
+      }
+      const startMeta = rowMeta[state.startIndex];
+      const endMeta = rowMeta[state.endIndex];
+      state.creating = true;
+      createClipBtn.disabled = true;
+      clearSelectionBtn.disabled = true;
+      try {
+        await onCreateClip({
+          startTime: formatSeconds(startMeta.start),
+          endTime: formatSeconds(endMeta.end),
+          startSeconds: startMeta.start,
+          endSeconds: endMeta.end,
+        });
+      } catch (error) {
+        alert(error?.message || "Could not create clip.");
+      } finally {
+        state.creating = false;
+        syncSelectionSummary();
+      }
+    });
+
+    syncMatches(false);
+    syncBadgesAndRange();
+    return {
+      clearSelection,
+    };
+  };
+
+  const root = document.getElementById("transcript-range-selector");
+  if (!root) {
+    return;
+  }
+  window.initTranscriptClipSelector(root, {
+    onCreateClip: async ({ startTime, endTime }) => {
+      const response = await fetch(root.dataset.addClipUrl || "", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: new URLSearchParams({
+          start_time: startTime,
+          end_time: endTime,
+          title: "",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Could not create clip.");
+      }
+      window.location.reload();
+    },
   });
 });
 </script>
