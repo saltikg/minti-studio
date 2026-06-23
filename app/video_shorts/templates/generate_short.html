@@ -285,11 +285,34 @@
   .clip-management-panel {
     position: relative;
   }
+  .clip-pane {
+    display: none;
+  }
+  .clip-pane.is-active {
+    display: block;
+  }
+  .clip-pane-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .clip-pane-title {
+    color: #fff;
+    font-weight: 700;
+  }
+  .clip-pane-meta {
+    color: rgba(255, 255, 255, 0.64);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+  }
   .clip-rail-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 360px;
+    max-height: 560px;
     overflow: auto;
     padding-right: 2px;
   }
@@ -347,7 +370,7 @@
     font-variant-numeric: tabular-nums;
   }
   .clip-rail-detail {
-    margin-top: 4px;
+    margin-top: 0;
   }
   .clip-rail-detail-header {
     display: flex;
@@ -387,8 +410,13 @@
   .clip-rail-detail .clip-card.is-active {
     display: block;
   }
-  .clip-detail-panel {
-    margin-top: 16px;
+  .clip-detail-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .clip-workbench-side {
+    min-width: 0;
   }
   @media (max-width: 991.98px) {
     .trs-document {
@@ -401,6 +429,9 @@
     }
     .trs-row-actions {
       justify-content: flex-end;
+    }
+    .clip-rail-list {
+      max-height: none;
     }
   }
 </style>
@@ -693,7 +724,7 @@
       {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
       <div id="clip-workbench-shell">
       <div class="row g-3 clip-workbench-row">
-        <div class="col-12 col-xl-8">
+        <div class="col-12 col-xl-7">
           <div class="gs-card h-100">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
               <h5 class="mb-0">Transcript</h5>
@@ -736,76 +767,81 @@
             </div>
           </div>
         </div>
-        <div class="col-12 col-xl-4">
+        <div class="col-12 col-xl-5 clip-workbench-side">
           <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
-            <div class="d-flex align-items-start justify-content-between gap-2 mb-3 flex-wrap">
-              <div>
-                <div class="fw-semibold">Klipler · {{ total_clip_count }}</div>
-                <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
-                <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                id="add-clip-toggle-btn"
-                aria-expanded="false"
-                aria-controls="add-clip-panel">
-                <i class="bi bi-plus-lg" aria-hidden="true"></i>
-                Add
-              </button>
-            </div>
-            <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
-              <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
-                <div class="col-12 col-md-6 col-xl-12">
-                  <label class="form-label small mb-1">Start</label>
-                  <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+            <div class="clip-pane clip-pane-list is-active" id="clip-pane-list">
+              <div class="clip-pane-header">
+                <div>
+                  <div class="clip-pane-title">Klipler · {{ total_clip_count }}</div>
+                  <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
+                  <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
                 </div>
-                <div class="col-12 col-md-6 col-xl-12">
-                  <label class="form-label small mb-1">End</label>
-                  <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
-                </div>
-                <div class="col-12">
-                  <label class="form-label small mb-1">Title (optional)</label>
-                  <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
-                </div>
-                <div class="col-12 d-grid">
-                  <button type="submit" class="btn btn-sm btn-primary">
-                    <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
-                  </button>
-                </div>
-              </form>
-            </div>
-            <div class="clip-rail-list mb-3" id="clip-rail-list">
-              {% for row in clip_rows %}
-                {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
-                <button type="button" class="clip-rail-item" data-plan-index="{{ row.plan_index }}">
-                  <span class="clip-rail-thumb">
-                    {% if row.status == "created" and row.video_url %}
-                      <video muted playsinline preload="metadata">
-                        <source src="{{ row.video_url }}" type="video/mp4">
-                      </video>
-                    {% else %}
-                      <span class="material-symbols-outlined" aria-hidden="true">movie</span>
-                    {% endif %}
-                  </span>
-                  <span class="clip-rail-copy">
-                    <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
-                    <span class="clip-rail-meta">{{ rail_duration_label }}</span>
-                  </span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                  id="add-clip-toggle-btn"
+                  aria-expanded="false"
+                  aria-controls="add-clip-panel">
+                  <i class="bi bi-plus-lg" aria-hidden="true"></i>
+                  Add
                 </button>
-              {% endfor %}
+              </div>
+              <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
+                <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
+                  <div class="col-12 col-md-6 col-xl-12">
+                    <label class="form-label small mb-1">Start</label>
+                    <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+                  </div>
+                  <div class="col-12 col-md-6 col-xl-12">
+                    <label class="form-label small mb-1">End</label>
+                    <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label small mb-1">Title (optional)</label>
+                    <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
+                  </div>
+                  <div class="col-12 d-grid">
+                    <button type="submit" class="btn btn-sm btn-primary">
+                      <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
+                    </button>
+                  </div>
+                </form>
+              </div>
+              <div class="clip-rail-list" id="clip-rail-list">
+                {% for row in clip_rows %}
+                  {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
+                  <button type="button" class="clip-rail-item" data-plan-index="{{ row.plan_index }}">
+                    <span class="clip-rail-thumb">
+                      {% if row.status == "created" and row.video_url %}
+                        <video muted playsinline preload="metadata">
+                          <source src="{{ row.video_url }}" type="video/mp4">
+                        </video>
+                      {% else %}
+                        <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                      {% endif %}
+                    </span>
+                    <span class="clip-rail-copy">
+                      <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
+                      <span class="clip-rail-meta">{{ rail_duration_label }}</span>
+                    </span>
+                  </button>
+                {% endfor %}
+              </div>
             </div>
-          </div>
-        </div>
-      </div>
-      <div class="gs-card clip-detail-panel" id="clip-detail-panel">
-        <div id="clip-list" class="clip-list clip-rail-detail">
+            <div class="clip-pane clip-pane-detail" id="clip-detail-panel">
+              <div id="clip-list" class="clip-list clip-rail-detail">
               <div class="clip-rail-detail-header" id="clip-rail-detail-header">
                 <div>
                   <div class="clip-rail-detail-title" id="clip-rail-detail-title">Clip details</div>
                   <div class="clip-rail-detail-meta" id="clip-rail-detail-meta">Select a clip from the rail.</div>
                 </div>
-                <div class="clip-rail-detail-state">Düzenleniyor</div>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                  <div class="clip-rail-detail-state">Düzenleniyor</div>
+                  <button type="button" class="btn btn-sm btn-outline-light clip-detail-back" id="clip-detail-back-btn">
+                    <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                    Listeye dön
+                  </button>
+                </div>
               </div>
               {% for row in clip_rows %}
             {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
@@ -2033,7 +2069,7 @@ document.addEventListener("DOMContentLoaded", () => {
           throw new Error(payload.message || "Could not create clip.");
         }
         if (typeof refreshClipList === "function") {
-          const ok = await refreshClipList();
+          const ok = await refreshClipList(payload.plan_index || "", "detail");
           if (ok) {
             return;
           }
@@ -2724,7 +2760,7 @@ document.addEventListener("DOMContentLoaded", () => {
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const step3Btn = document.getElementById("step3-btn");
-  const clipList = document.getElementById("clip-detail-panel");
+  const clipList = document.getElementById("clip-management-panel");
   if (step3Btn && clipList) {
     step3Btn.addEventListener("click", () => {
       clipList.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2755,13 +2791,16 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-const initClipRail = (preferredPlanIndex = null) => {
+const initClipRail = (preferredPlanIndex = null, preferredViewMode = null) => {
   const panel = document.getElementById("clip-management-panel");
+  const listPane = document.getElementById("clip-pane-list");
+  const detailPane = document.getElementById("clip-detail-panel");
   const railList = document.getElementById("clip-rail-list");
   const clipList = document.getElementById("clip-list");
   const detailTitle = document.getElementById("clip-rail-detail-title");
   const detailMeta = document.getElementById("clip-rail-detail-meta");
-  if (!panel || !railList || !clipList) {
+  const detailBackBtn = document.getElementById("clip-detail-back-btn");
+  if (!panel || !listPane || !detailPane || !railList || !clipList) {
     return;
   }
   const railItems = Array.from(railList.querySelectorAll(".clip-rail-item"));
@@ -2770,7 +2809,14 @@ const initClipRail = (preferredPlanIndex = null) => {
     return;
   }
 
-  const selectPlan = (planIndex) => {
+  const setPanelMode = (mode) => {
+    const normalizedMode = mode === "detail" ? "detail" : "list";
+    panel.dataset.viewMode = normalizedMode;
+    listPane.classList.toggle("is-active", normalizedMode === "list");
+    detailPane.classList.toggle("is-active", normalizedMode === "detail");
+  };
+
+  const selectPlan = (planIndex, { openDetail = true } = {}) => {
     const normalized = String(planIndex || "").trim();
     panel.dataset.activePlanIndex = normalized;
     railItems.forEach((item) => {
@@ -2788,6 +2834,9 @@ const initClipRail = (preferredPlanIndex = null) => {
         }
       }
     });
+    if (openDetail) {
+      setPanelMode("detail");
+    }
   };
 
   railItems.forEach((item) => {
@@ -2796,12 +2845,20 @@ const initClipRail = (preferredPlanIndex = null) => {
     }
     item.dataset.clipRailBound = "1";
     item.addEventListener("click", () => {
-      selectPlan(item.dataset.planIndex || "");
+      selectPlan(item.dataset.planIndex || "", { openDetail: true });
     });
   });
+  if (detailBackBtn && detailBackBtn.dataset.clipDetailBackBound !== "1") {
+    detailBackBtn.dataset.clipDetailBackBound = "1";
+    detailBackBtn.addEventListener("click", () => {
+      setPanelMode("list");
+    });
+  }
 
   const fallbackPlanIndex = railItems[0]?.dataset.planIndex || clipCards[0]?.dataset.planIndex || "";
-  selectPlan(preferredPlanIndex || panel.dataset.activePlanIndex || fallbackPlanIndex);
+  const initialPlanIndex = preferredPlanIndex || panel.dataset.activePlanIndex || fallbackPlanIndex;
+  selectPlan(initialPlanIndex, { openDetail: false });
+  setPanelMode(preferredViewMode || panel.dataset.viewMode || (preferredPlanIndex ? "detail" : "list"));
 };
 
 const initAddClipToggle = () => {
@@ -2818,13 +2875,14 @@ const initAddClipToggle = () => {
 };
 </script>
 <script>
-const refreshClipList = async () => {
+const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = null) => {
   const workbench = document.getElementById("clip-workbench-shell");
   const clipPanel = document.getElementById("clip-management-panel");
   if (!workbench || !clipPanel) {
     return false;
   }
-  const activePlanIndex = clipPanel.dataset.activePlanIndex || "";
+  const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
+  const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   try {
     const response = await fetch(window.location.href, {
       credentials: "same-origin",
@@ -2841,7 +2899,7 @@ const refreshClipList = async () => {
       workbench.replaceWith(newWorkbench);
       window.mountTranscriptClipSelector?.();
       loadGenerateUsageSummary();
-      initClipRail(activePlanIndex);
+      initClipRail(activePlanIndex, activeViewMode);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
         document.querySelectorAll("#clip-workbench-shell [data-bs-toggle='tooltip']").forEach((el) => {
