@@ -158,6 +158,8 @@
   }
   .editor-topbar-card {
     padding: 12px 14px;
+    min-height: 0;
+    height: auto;
   }
   .editor-topbar-row {
     display: flex;
@@ -217,7 +219,10 @@
   }
   .editor-topbar-map-wrap {
     display: flex;
+    align-items: center;
     justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
   }
   .editor-topbar-card .editor-flow-map {
     margin: 0;
@@ -248,6 +253,11 @@
     opacity: 0.55;
     cursor: default;
     pointer-events: none;
+  }
+  .editor-topbar-editor-btn {
+    min-height: 40px;
+    padding: 0.5rem 0.95rem;
+    border-radius: 999px;
   }
   .editor-primary-action {
     display: inline-flex;
@@ -1189,9 +1199,27 @@
 {% set step3_enabled = plan_exists %}
 
 {% if has_transcript %}
-<div class="gs-card mb-3 steps-card editor-topbar-card">
+<div class="gs-card mb-3 editor-topbar-card">
   <div class="editor-topbar-map-wrap">
     {{ editor_flow_step_map(2, None, 'step2-jump-btn', 'publish-jump-btn', created_clip_count > 0) }}
+    <button
+      type="button"
+      class="editor-primary-action editor-primary-action-icon editor-topbar-editor-btn"
+      id="video-editor-btn"
+      data-bs-toggle="modal"
+      data-bs-target="#crop-area-modal"
+      data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
+      data-preview-url="{{ preview_url or '' }}"
+      data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
+      data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
+      data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
+      data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+      data-static-visual-key="{{ video_static_visual_key or '' }}"
+      data-background-visual-key="{{ video_background_visual_key or '' }}"
+      data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
+      <span class="material-icons-outlined" aria-hidden="true">tune</span>
+      <span>Editor</span>
+    </button>
   </div>
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
   <div id="plan-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
