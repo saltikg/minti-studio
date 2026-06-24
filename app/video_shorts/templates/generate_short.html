@@ -33,6 +33,12 @@
   "subtitleHeight": SUBTITLE_BAND_HEIGHT
 } %}
 {% set has_transcript = transcript_text or (segments_view|length > 0) %}
+{% set total_clip_count = clip_rows|default([], true)|length %}
+{% set created_clip_count = (clip_rows|default([], true)|selectattr('status','equalto','created')|list|length) %}
+{% set has_clips = total_clip_count > 0 %}
+{% set top_state_no_transcript = not has_transcript %}
+{% set top_state_ready_for_selection = has_transcript and not has_clips %}
+{% set top_state_working = has_transcript and has_clips %}
 
 {% macro format_stat(value) %}
   {% if value is none %}
@@ -86,110 +92,117 @@
     gap: 5px;
     white-space: nowrap;
   }
-  .editor-status-card {
+  .editor-topbar-card {
     padding: 12px 14px;
   }
-  .editor-status-strip {
+  .editor-topbar-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: 10px 14px;
     flex-wrap: wrap;
-    font-size: 0.84rem;
+    min-height: 42px;
   }
-  .editor-status-pill {
+  .editor-topbar-status {
+    display: flex;
+    align-items: center;
+    gap: 8px 10px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .editor-topbar-status-copy {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .editor-topbar-status-copy.is-muted {
+    color: rgba(255, 255, 255, 0.56);
+    font-weight: 500;
+  }
+  .editor-topbar-status-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 10px;
+    padding: 4px 10px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.03);
     color: rgba(255, 255, 255, 0.82);
+    font-size: 0.8rem;
   }
-  .editor-status-pill.is-done {
+  .editor-topbar-status-pill.is-done {
     border-color: rgba(45, 212, 191, 0.28);
     background: rgba(45, 212, 191, 0.1);
     color: #d7fffb;
   }
-  .editor-status-dot {
+  .editor-topbar-status-dot {
     width: 6px;
     height: 6px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.32);
   }
-  .editor-status-pill.is-done .editor-status-dot {
+  .editor-topbar-status-pill.is-done .editor-topbar-status-dot {
     background: #2dd4bf;
   }
-  .editor-strip-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-left: auto;
-  }
-  .editor-strip-btn {
-    padding: 5px 10px;
-    font-size: 0.8rem;
-  }
-  .editor-ai-expander {
-    margin-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    padding-top: 10px;
-  }
-  .editor-ai-expander summary {
-    cursor: pointer;
-    list-style: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: rgba(255, 255, 255, 0.74);
-    font-size: 0.82rem;
-  }
-  .editor-ai-expander summary::-webkit-details-marker {
-    display: none;
-  }
-  .editor-ai-actions {
-    display: flex;
-    align-items: stretch;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 10px;
-  }
-  .editor-ai-actions .btn {
-    font-size: 0.8rem;
-    padding: 7px 10px;
-  }
-  .editor-ai-inline {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.025);
-  }
-  .editor-ai-inline-label {
-    color: rgba(255, 255, 255, 0.62);
-    font-size: 0.78rem;
-    margin-bottom: 8px;
-  }
-  .editor-ai-inline-controls {
+  .editor-topbar-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .editor-ai-inline-controls .btn {
-    font-size: 0.82rem;
-  }
-  .editor-toolbar {
-    display: flex;
-    align-items: center;
+    justify-content: flex-end;
     gap: 8px 10px;
     flex-wrap: wrap;
-    margin-top: 10px;
+  }
+  .editor-primary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0.5rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .editor-primary-action:hover,
+  .editor-primary-action:focus-visible {
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+    filter: brightness(1.03);
+  }
+  .editor-secondary-action {
+    min-height: 36px;
+    border-radius: 12px;
+    font-size: 0.82rem;
+    padding: 0.46rem 0.85rem;
+  }
+  .editor-action-stack {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .editor-action-subtext {
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.68rem;
+    line-height: 1;
   }
   .editor-toolbar-note {
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.78rem;
+  }
+  .editor-toolbar-note.is-transient {
+    transition: opacity 160ms ease;
+  }
+  .editor-toolbar-note.is-hidden {
+    opacity: 0;
+  }
+  @media (max-width: 991.98px) {
+    .editor-topbar-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
   }
   .background-selected-card {
     display: flex;
@@ -900,31 +913,108 @@
 {% set step2_enabled = has_transcript %}
 {% set step3_enabled = plan_exists %}
 
-<div class="gs-card mb-3 steps-card editor-status-card">
-  <div class="editor-status-strip">
-    <button type="submit"
-            form="step1-form"
-            id="step1-btn"
-            class="editor-status-pill {% if step1_done %}is-done{% endif %}"
-            {% if step1_done %}data-confirm-message="A transcript already exists; re-running Whisper can take a while. Continue?"{% endif %}>
-      <span class="editor-status-dot" aria-hidden="true"></span>
-      Transcribe {% if step1_done %}✓{% else %}Run{% endif %}
-    </button>
-    <span class="editor-status-pill {% if step2_done %}is-done{% endif %}">
-      <span class="editor-status-dot" aria-hidden="true"></span>
-      Plan {% if step2_done %}ready{% else %}pending{% endif %}
-    </span>
-    <button type="button"
-            id="step3-btn"
-            class="editor-status-pill {% if step3_enabled %}is-done{% endif %}"
-            {% if not step3_enabled %}disabled{% endif %}>
-      <span class="editor-status-dot" aria-hidden="true"></span>
-      Generate
-    </button>
-    <div class="editor-strip-actions">
+<div class="gs-card mb-3 steps-card editor-topbar-card">
+  <div class="editor-topbar-row">
+    <div class="editor-topbar-status">
+      {% if top_state_no_transcript %}
+        <span class="editor-topbar-status-pill">
+          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
+          Henüz transkript yok
+        </span>
+      {% elif top_state_ready_for_selection %}
+        <span class="editor-topbar-status-pill is-done">
+          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
+          Transcribe ✓
+        </span>
+      {% elif top_state_working %}
+        <span class="editor-topbar-status-pill is-done">
+          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
+          Transcribe ✓
+        </span>
+        <span class="editor-topbar-status-copy">{{ total_clip_count }} klip</span>
+      {% endif %}
+      <span id="create-long-from-shorts-elapsed" class="editor-toolbar-note"></span>
+      <span id="crop-status-text" class="editor-toolbar-note is-transient {% if not static_visual_label and not created_visual_label and video.crop_x_ratio is none %}is-hidden{% endif %}">
+        {% if static_visual_label %}
+          Static visual {{ static_visual_label }} selected
+        {% elif created_visual_label %}
+          Created video {{ created_visual_label }} selected
+        {% elif video.crop_x_ratio is not none %}
+          Crop area saved
+        {% else %}
+        {% endif %}
+      </span>
+    </div>
+    <div class="editor-topbar-actions">
+      {% if top_state_no_transcript %}
+        <button type="submit"
+                form="step1-form"
+                id="step1-btn"
+                class="editor-primary-action"
+                {% if step1_done %}data-confirm-message="A transcript already exists; re-running Whisper can take a while. Continue?"{% endif %}>
+          Transcribe video
+        </button>
+      {% elif top_state_ready_for_selection %}
+        <button type="button"
+                id="step3-btn"
+                class="editor-primary-action">
+          Klip seçmeye başla
+        </button>
+        <div class="editor-action-stack">
+          <button type="submit"
+                  form="step2-form"
+                  id="ai-generate-btn"
+                  class="btn btn-outline-light editor-secondary-action"
+                  {% if step2_done %}
+                    data-confirm-message="The current AI plan will be replaced. Continue?"
+                  {% endif %}
+                  {% if not step2_enabled %}disabled{% endif %}>
+            AI ile oluştur
+          </button>
+          <span class="editor-action-subtext">opsiyonel</span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-outline-light editor-secondary-action"
+          id="create-long-from-shorts-btn"
+          data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
+          {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
+          Long video
+        </button>
+      {% elif top_state_working %}
+        <button type="button"
+                id="step3-btn"
+                class="btn btn-outline-light editor-secondary-action">
+          Kliplere git
+        </button>
+        <div class="editor-action-stack">
+          <button type="submit"
+                  form="step2-form"
+                  id="ai-generate-btn"
+                  class="btn btn-outline-light editor-secondary-action"
+                  {% if step2_done %}
+                    data-confirm-message="The current AI plan will be replaced. Continue?"
+                  {% endif %}
+                  {% if not step2_enabled %}disabled{% endif %}>
+            AI ile oluştur
+          </button>
+          <span class="editor-action-subtext">opsiyonel</span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-outline-light editor-secondary-action"
+          id="create-long-from-shorts-btn"
+          data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
+          {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
+          Long video
+        </button>
+      {% else %}
+        <button type="button" id="step3-btn" class="d-none" aria-hidden="true"></button>
+      {% endif %}
+      {% if top_state_working %}
       <button
         type="button"
-        class="btn btn-outline-light editor-strip-btn"
+        class="btn btn-outline-light editor-secondary-action"
         id="video-editor-btn"
         data-bs-toggle="modal"
         data-bs-target="#crop-area-modal"
@@ -939,43 +1029,8 @@
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
         Editor
       </button>
-      <button
-        type="button"
-        class="btn btn-outline-light editor-strip-btn"
-        id="create-long-from-shorts-btn"
-        data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
-        {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
-        Long video
-      </button>
-    </div>
-  </div>
-  <div class="editor-ai-inline">
-    <div class="editor-ai-inline-label">opsiyonel · manuel seçim ana yöntem</div>
-    <div class="editor-ai-inline-controls">
-      <button type="submit"
-              form="step2-form"
-              id="ai-generate-btn"
-              class="btn btn-outline-light btn-sm"
-              {% if step2_done %}
-                data-confirm-message="The current AI plan will be replaced. Continue?"
-              {% endif %}
-              {% if not step2_enabled %}disabled{% endif %}>
-        AI ile oluştur
-      </button>
-    </div>
-  </div>
-  <div class="editor-toolbar">
-    <span id="create-long-from-shorts-elapsed" class="editor-toolbar-note"></span>
-    <span id="crop-status-text" class="editor-toolbar-note">
-      {% if static_visual_label %}
-        Static visual {{ static_visual_label }} selected
-      {% elif created_visual_label %}
-        Created video {{ created_visual_label }} selected
-      {% elif video.crop_x_ratio is not none %}
-        Crop area saved
-      {% else %}
       {% endif %}
-    </span>
+    </div>
   </div>
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
   <div id="plan-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
@@ -1082,8 +1137,6 @@
 
   <div class="col-12">
     {% if has_transcript %}
-      {% set total_clip_count = clip_rows|length %}
-      {% set created_clip_count = (clip_rows|selectattr('status','equalto','created')|list|length) %}
       <div id="clip-workbench-shell">
       <div class="row g-3 clip-workbench-row">
         <div class="col-12 col-xl-6">
@@ -3424,10 +3477,10 @@ document.addEventListener("DOMContentLoaded", () => {
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const step3Btn = document.getElementById("step3-btn");
-  const clipList = document.getElementById("clip-management-panel");
-  if (step3Btn && clipList) {
+  const transcriptSelector = document.getElementById("transcript-range-selector");
+  if (step3Btn && transcriptSelector) {
     step3Btn.addEventListener("click", () => {
-      clipList.scrollIntoView({ behavior: "smooth", block: "start" });
+      transcriptSelector.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
   bindClipTitleAutofillTracking();
@@ -5326,6 +5379,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewCtx = previewCanvas?.getContext("2d");
   const previewConfig = JSON.parse('{{ PREVIEW_CONFIG | tojson | safe }}');
   const statusText = document.getElementById("crop-status-text");
+  let cropStatusTimer = null;
   const chooseBtn = document.getElementById("choose-crop-btn");
   const saveStatusEl = modalEl.querySelector("#crop-save-status");
   const staticSelector = modalEl.querySelector(".static-visual-selector");
@@ -6340,6 +6394,10 @@ document.addEventListener("DOMContentLoaded", () => {
       );
       setSaveStatus("Saved", "success");
       if (statusText) {
+        if (cropStatusTimer) {
+          window.clearTimeout(cropStatusTimer);
+        }
+        statusText.classList.remove("is-hidden");
         if (activeStaticVisualKey) {
           if (isCreatedKey(activeStaticVisualKey)) {
             const visual = createdVisualMap.get(activeStaticVisualKey);
@@ -6351,6 +6409,9 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
           statusText.textContent = "Crop area saved";
         }
+        cropStatusTimer = window.setTimeout(() => {
+          statusText.classList.add("is-hidden");
+        }, 2800);
       }
       if (latestTrigger) {
         latestTrigger.dataset.cropX = xRatio;
