@@ -50,7 +50,7 @@
 {% macro editor_flow_step_map(current_step=1, current_step_form=None) %}
   {% set steps = [
     {'label': 'Transcript', 'icon': 'description'},
-    {'label': 'Pick clip', 'icon': 'content_cut'},
+    {'label': 'Pick & Design', 'icon': 'content_cut'},
     {'label': 'Publish', 'icon': 'send'}
   ] %}
   <div class="editor-flow-map" aria-label="Short creation steps">
@@ -1715,10 +1715,7 @@
     {% else %}
       <div class="editor-empty-shell-wrap">
         <div class="editor-empty-shell">
-          <h4>Create your first short</h4>
-          <div class="editor-empty-shell-subtitle">
-            First transcribe the video, then pick the moment you want and publish it.
-          </div>
+          <h4>Create Your Short</h4>
           {{ editor_flow_step_map(1, 'step1-form') }}
           <div class="editor-empty-shell-actions">
             <button type="submit"
@@ -1727,8 +1724,8 @@
                     class="editor-empty-shell-primary">
               Transcribe video
             </button>
-            <div class="editor-empty-shell-helper">
-              Processing time depends on video length · the transcript will appear here when it's ready.
+            <div id="transcribe-shell-helper" class="editor-empty-shell-helper d-none">
+              Processing time depends on video length. The transcript will appear here when it's ready.
             </div>
             <div id="transcribe-live-status"
                  class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
@@ -2499,6 +2496,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("step1-form");
   const step1Btn = document.getElementById("step1-btn");
   const statusBox = document.getElementById("transcribe-live-status");
+  const shellHelper = document.getElementById("transcribe-shell-helper");
   if (!form || !step1Btn || !statusBox) {
     return;
   }
@@ -2522,6 +2520,9 @@ document.addEventListener("DOMContentLoaded", () => {
     .replace(/'/g, "&#39;");
 
   const showStatus = (text, isError = false, spinning = false) => {
+    if (shellHelper) {
+      shellHelper.classList.remove("d-none");
+    }
     statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
     statusBox.classList.add(isError ? "alert-danger" : "alert-secondary");
     const spinnerHtml = spinning
@@ -2531,6 +2532,9 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const showSuccess = (text) => {
+    if (shellHelper) {
+      shellHelper.classList.add("d-none");
+    }
     statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
     statusBox.classList.add("alert-success");
     statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
