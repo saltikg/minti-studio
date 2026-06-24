@@ -362,6 +362,59 @@
     background: rgba(255, 255, 255, 0.02);
     overflow: hidden;
   }
+  .trs-player-shell {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(9, 14, 22, 0.98), rgba(9, 14, 22, 0.92));
+    backdrop-filter: blur(10px);
+  }
+  .trs-player-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .trs-player-frame iframe,
+  .trs-player-frame video {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+    background: #000;
+  }
+  .trs-player-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 18px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.78);
+    background: rgba(6, 10, 16, 0.78);
+  }
+  .trs-player-status {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.76rem;
+  }
+  .trs-player-status strong {
+    color: rgba(255, 255, 255, 0.92);
+    font-weight: 600;
+  }
   .trs-document {
     max-height: 620px;
     overflow: auto;
@@ -395,18 +448,42 @@
   .trs-row.is-selection-end {
     background: rgba(45, 212, 191, 0.1);
   }
+  .trs-row.is-playing {
+    box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.42);
+    background: rgba(250, 204, 21, 0.08);
+  }
   .trs-row.has-gap {
     margin-top: 8px;
     padding-top: 12px;
     border-top: 1px dashed rgba(255, 255, 255, 0.12);
   }
   .trs-row-time {
-    padding-top: 2px;
-    color: rgba(255, 255, 255, 0.38);
+    width: 100%;
+    padding: 4px 6px;
+    border-radius: 8px;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.48);
     font-size: 0.68rem;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-align: left;
+    justify-content: flex-start;
+    transition: color 0.16s ease, background-color 0.16s ease;
+  }
+  .trs-row-time:hover,
+  .trs-row-time:focus-visible {
+    color: #fff;
+    background: rgba(45, 212, 191, 0.08);
+    outline: none;
+  }
+  .trs-row-time-icon {
+    font-size: 14px;
+    color: rgba(250, 204, 21, 0.92);
   }
   .trs-row-main {
     display: flex;
@@ -1010,6 +1087,7 @@
             </div>
             <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
+              <script type="application/json" id="trs-player-source-json">{{ transcript_player_source|tojson }}</script>
               <div class="small text-white-50">Bir satıra tıkla = başlangıç, ikinciye tıkla = bitiş.</div>
               <div class="trs-toolbar">
                 <div class="trs-search-group">
@@ -1028,6 +1106,15 @@
               </div>
               <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
               <div class="trs-panel">
+                <div class="trs-player-shell" id="trs-player-shell">
+                  <div class="trs-player-frame" id="trs-player-frame"></div>
+                  <div class="trs-player-status">
+                    <span><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
+                    {% if video.video_url %}
+                      <a href="{{ video.video_url }}" target="_blank" rel="noreferrer" class="btn btn-outline-secondary btn-sm">Watch source</a>
+                    {% endif %}
+                  </div>
+                </div>
                 <div class="trs-document" id="trs-document" aria-label="Transcript segments"></div>
                 <div class="trs-selection-bar">
                   <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
@@ -2330,9 +2417,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!root || root.dataset.trsMounted === "1") {
       return;
     }
+    try {
+      window.__trsClipSelectorController?.destroy?.();
+    } catch (_) {}
     root.dataset.trsMounted = "1";
     const editUrl = "{{ url_for('video_shorts_bp.edit_segment_text', video_pk=video.id) }}";
-    window.initTranscriptClipSelector?.(root, {
+    window.__trsClipSelectorController = window.initTranscriptClipSelector?.(root, {
       editUrl,
       onCreateClip: async ({ startTime, endTime }) => {
         const response = await fetch(root.dataset.addClipUrl || "", {
@@ -2376,7 +2466,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         window.location.reload();
       },
-    });
+    }) || null;
   };
 
 });
@@ -2609,6 +2699,221 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${escapeHtml(source.slice(0, startOriginal))}<mark class="trs-match-mark">${escapeHtml(source.slice(startOriginal, endOriginal + 1))}</mark>${escapeHtml(source.slice(endOriginal + 1))}`;
   };
 
+  let youtubeIframeApiPromise = null;
+  const loadYoutubeIframeApi = () => {
+    if (window.YT?.Player) {
+      return Promise.resolve(window.YT);
+    }
+    if (youtubeIframeApiPromise) {
+      return youtubeIframeApiPromise;
+    }
+    youtubeIframeApiPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-youtube-iframe-api="1"]');
+      const previousReady = window.onYouTubeIframeAPIReady;
+      const finish = () => resolve(window.YT);
+      window.onYouTubeIframeAPIReady = () => {
+        try {
+          previousReady?.();
+        } catch (_) {}
+        finish();
+      };
+      if (!existing) {
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        script.async = true;
+        script.dataset.youtubeIframeApi = "1";
+        script.onerror = () => reject(new Error("YouTube player could not be loaded."));
+        document.head.appendChild(script);
+      }
+      window.setTimeout(() => {
+        if (window.YT?.Player) {
+          finish();
+        }
+      }, 1500);
+    });
+    return youtubeIframeApiPromise;
+  };
+
+  const mountTranscriptPlayer = (root, source, segments, onPlaybackSegmentChange) => {
+    const frame = root.querySelector("#trs-player-frame");
+    const statusCopy = root.querySelector("#trs-player-status-copy");
+    if (!frame || !statusCopy) {
+      return {
+        seekAndPlay: () => false,
+        destroy: () => {},
+      };
+    }
+
+    let pollTimer = null;
+    let nowPlayingIndex = null;
+    const setStatus = (message) => {
+      statusCopy.textContent = message || "Unavailable";
+    };
+    const setNowPlayingByTime = (seconds) => {
+      if (!Number.isFinite(seconds)) {
+        return;
+      }
+      const seg = segments.find((item) => seconds >= item.start && seconds < item.end) || null;
+      const nextIndex = seg ? seg.index : null;
+      if (nextIndex === nowPlayingIndex) {
+        return;
+      }
+      nowPlayingIndex = nextIndex;
+      onPlaybackSegmentChange?.(nextIndex);
+    };
+    const clearPoll = () => {
+      if (pollTimer) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+    const destroy = () => {
+      clearPoll();
+      onPlaybackSegmentChange?.(null);
+      frame.innerHTML = "";
+    };
+    const renderFallback = (message, linkHref = "") => {
+      frame.innerHTML = `
+        <div class="trs-player-fallback">
+          <div>${escapeHtml(message || "Player unavailable.")}</div>
+          ${linkHref ? `<a class="btn btn-outline-secondary btn-sm" href="${escapeHtml(linkHref)}" target="_blank" rel="noreferrer">Open source</a>` : ""}
+        </div>
+      `;
+      setStatus("Unavailable");
+    };
+
+    if (!source || source.type === "unavailable") {
+      renderFallback("Source player unavailable for this video.", source?.watch_url || "");
+      return {
+        seekAndPlay: () => false,
+        destroy,
+      };
+    }
+
+    if (source.type === "file" && source.src) {
+      const video = document.createElement("video");
+      video.controls = true;
+      video.preload = "metadata";
+      video.playsInline = true;
+      video.src = source.src;
+      frame.replaceChildren(video);
+      const updateFromElement = () => setNowPlayingByTime(video.currentTime || 0);
+      video.addEventListener("loadedmetadata", () => setStatus("Ready"));
+      video.addEventListener("timeupdate", updateFromElement);
+      video.addEventListener("play", () => setStatus("Playing"));
+      video.addEventListener("pause", () => setStatus("Paused"));
+      video.addEventListener("ended", () => {
+        setStatus("Ended");
+        onPlaybackSegmentChange?.(null);
+      });
+      video.addEventListener("error", () => {
+        renderFallback("Source video could not be loaded.");
+      });
+      return {
+        seekAndPlay: (seconds) => {
+          try {
+            video.currentTime = Math.max(0, Number(seconds) || 0);
+            const playPromise = video.play();
+            if (playPromise?.catch) {
+              playPromise.catch(() => {});
+            }
+            setStatus(`Playing from ${formatSeconds(seconds)}`);
+            setNowPlayingByTime(Number(seconds) || 0);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        },
+        destroy,
+      };
+    }
+
+    if (source.type === "youtube" && source.youtube_id) {
+      const mountId = `trs-youtube-player-${Math.random().toString(36).slice(2, 10)}`;
+      const mount = document.createElement("div");
+      mount.id = mountId;
+      frame.replaceChildren(mount);
+      const adapter = {
+        player: null,
+        ready: false,
+        pendingSeek: null,
+        seekAndPlay(seconds) {
+          const safeSeconds = Math.max(0, Number(seconds) || 0);
+          if (!this.ready || !this.player) {
+            this.pendingSeek = safeSeconds;
+            setStatus(`Loading player…`);
+            return false;
+          }
+          try {
+            this.player.seekTo(safeSeconds, true);
+            this.player.playVideo();
+            setStatus(`Playing from ${formatSeconds(safeSeconds)}`);
+            setNowPlayingByTime(safeSeconds);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        },
+        destroy,
+      };
+      loadYoutubeIframeApi()
+        .then((YT) => {
+          adapter.player = new YT.Player(mountId, {
+            videoId: source.youtube_id,
+            playerVars: {
+              modestbranding: 1,
+              rel: 0,
+              playsinline: 1,
+              origin: window.location.origin,
+            },
+            events: {
+              onReady: () => {
+                adapter.ready = true;
+                setStatus("Ready");
+                if (adapter.pendingSeek !== null) {
+                  const pending = adapter.pendingSeek;
+                  adapter.pendingSeek = null;
+                  adapter.seekAndPlay(pending);
+                }
+              },
+              onStateChange: (event) => {
+                const state = event?.data;
+                if (state === YT.PlayerState.PLAYING) {
+                  setStatus("Playing");
+                  clearPoll();
+                  pollTimer = window.setInterval(() => {
+                    try {
+                      setNowPlayingByTime(adapter.player?.getCurrentTime?.() || 0);
+                    } catch (_) {}
+                  }, 300);
+                } else if (state === YT.PlayerState.PAUSED) {
+                  setStatus("Paused");
+                  clearPoll();
+                } else if (state === YT.PlayerState.ENDED) {
+                  setStatus("Ended");
+                  clearPoll();
+                  onPlaybackSegmentChange?.(null);
+                }
+              },
+              onError: () => {
+                renderFallback("This YouTube video cannot be embedded here.", source.watch_url || "");
+              },
+            },
+          });
+        })
+        .catch(() => {
+          renderFallback("YouTube player could not be loaded.", source.watch_url || "");
+        });
+      return adapter;
+    }
+
+    renderFallback("Source player unavailable for this video.", source?.watch_url || "");
+    return {
+      seekAndPlay: () => false,
+      destroy,
+    };
+  };
+
   window.initTranscriptClipSelector = (root, options = {}) => {
     if (!root) {
       return null;
@@ -2625,6 +2930,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const clearSelectionBtn = root.querySelector("#trs-selection-clear");
     const createClipBtn = root.querySelector("#trs-create-clip");
     const segmentsScript = root.querySelector("#trs-segments-json");
+    const playerSourceScript = root.querySelector("#trs-player-source-json");
     const onCreateClip = typeof options.onCreateClip === "function" ? options.onCreateClip : null;
     const onTranscriptSaved = typeof options.onTranscriptSaved === "function" ? options.onTranscriptSaved : null;
     const editUrl = options.editUrl || "";
@@ -2634,6 +2940,12 @@ document.addEventListener("DOMContentLoaded", () => {
       parsedSegments = JSON.parse(segmentsScript?.textContent || "[]");
     } catch (error) {
       parsedSegments = [];
+    }
+    let playerSource = {};
+    try {
+      playerSource = JSON.parse(playerSourceScript?.textContent || "{}");
+    } catch (error) {
+      playerSource = {};
     }
 
     const segments = parsedSegments.map((segment, index) => {
@@ -2658,6 +2970,7 @@ document.addEventListener("DOMContentLoaded", () => {
         saveBtnEl: null,
         cancelBtnEl: null,
         feedbackEl: null,
+        timeButtonEl: null,
         isEditing: false,
       };
     }).filter((segment) => segment.text);
@@ -2671,6 +2984,13 @@ document.addEventListener("DOMContentLoaded", () => {
       creating: false,
       anchorIndex: null,
     };
+    const player = mountTranscriptPlayer(root, playerSource, segments, (segmentIndex) => {
+      segments.forEach((segment) => {
+        if (segment.rowEl) {
+          segment.rowEl.classList.toggle("is-playing", segmentIndex !== null && segment.index === segmentIndex);
+        }
+      });
+    });
 
     const getSelectedRange = () => {
       if (state.selectionStart === null || state.selectionEnd === null) {
@@ -2904,9 +3224,11 @@ document.addEventListener("DOMContentLoaded", () => {
           row.classList.add("has-gap");
         }
 
-        const timeEl = document.createElement("div");
+        const timeEl = document.createElement("button");
         timeEl.className = "trs-row-time";
-        timeEl.textContent = segment.startLabel;
+        timeEl.type = "button";
+        timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
+        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)}</span>`;
 
         const mainEl = document.createElement("div");
         mainEl.className = "trs-row-main";
@@ -2936,11 +3258,17 @@ document.addEventListener("DOMContentLoaded", () => {
         segment.badgeEl = badgeEl;
         segment.contentEl = contentEl;
         segment.feedbackEl = feedbackEl;
+        segment.timeButtonEl = timeEl;
 
         editBtn.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
           setEditingState(segment, true);
+        });
+        timeEl.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          player.seekAndPlay(segment.start);
         });
 
         bindRowEvents(segment);
@@ -3076,6 +3404,9 @@ document.addEventListener("DOMContentLoaded", () => {
         state.selectionStart = null;
         state.selectionEnd = null;
         renderSelection();
+      },
+      destroy: () => {
+        player.destroy?.();
       },
     };
   };

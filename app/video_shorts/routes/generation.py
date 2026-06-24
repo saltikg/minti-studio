@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlencode, urlparse, parse_qsl
+from urllib.parse import urlencode, urlparse, parse_qsl, parse_qs
 
 from google.auth.exceptions import RefreshError
 
@@ -2814,6 +2814,83 @@ def _request_short_title_suggestion(
     return suggestion[:80].strip()
 
 
+def _extract_youtube_video_id(video_url: str, fallback_video_id: str = "") -> str:
+    raw_url = str(video_url or "").strip()
+    if not raw_url:
+        return ""
+    try:
+        parsed = urlparse(raw_url)
+    except Exception:
+        parsed = None
+    if not parsed:
+        return ""
+    host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").strip("/")
+    if "youtu.be" in host:
+        return path.split("/", 1)[0]
+    if "youtube.com" in host:
+        if path == "watch":
+            query_video_id = (parse_qs(parsed.query or "").get("v") or [""])[0].strip()
+            if query_video_id:
+                return query_video_id
+        if path.startswith("embed/"):
+            return path.split("/", 1)[1].strip()
+        if path.startswith("shorts/"):
+            return path.split("/", 1)[1].strip()
+    fallback = str(fallback_video_id or "").strip()
+    if fallback and re.fullmatch(r"[A-Za-z0-9_-]{8,20}", fallback):
+        return fallback
+    return ""
+
+
+def _resolve_source_video_public_url(video_id: str) -> str:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return ""
+    candidates = [
+        VIDEOS_DIR / f"{clean_video_id}.mp4",
+        VIDEOS_DIR / f"{clean_video_id}.mov",
+        VIDEOS_DIR / f"{clean_video_id}.mkv",
+        VIDEOS_DIR / f"{clean_video_id}.webm",
+    ]
+    storage = get_media_storage()
+    for candidate in candidates:
+        key = f"videos/{candidate.name}"
+        try:
+            resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
+        except Exception:
+            continue
+        if resolved.exists and resolved.public_url:
+            return resolved.public_url
+    return ""
+
+
+def _build_transcript_player_source(video: Dict[str, Any]) -> Dict[str, str]:
+    source_url = str(video.get("video_url") or "").strip()
+    youtube_video_id = _extract_youtube_video_id(source_url, fallback_video_id=str(video.get("video_id") or ""))
+    if youtube_video_id:
+        return {
+            "type": "youtube",
+            "youtube_id": youtube_video_id,
+            "watch_url": source_url or f"https://www.youtube.com/watch?v={youtube_video_id}",
+            "src": "",
+        }
+    direct_url = _resolve_source_video_public_url(str(video.get("video_id") or ""))
+    if direct_url:
+        return {
+            "type": "file",
+            "youtube_id": "",
+            "watch_url": "",
+            "src": direct_url,
+        }
+    return {
+        "type": "unavailable",
+        "youtube_id": "",
+        "watch_url": source_url,
+        "src": "",
+    }
+
+
 def _resolve_video_id_from_pk(video_pk: Any) -> Optional[str]:
     if not video_pk:
         return None
@@ -4202,6 +4279,7 @@ def generate_short(video_pk):
                 break
     category_owner_id = (current_user or {}).get("id")
     category_options = _load_category_options(category_owner_id)
+    transcript_player_source = _build_transcript_player_source(video)
 
     youtube_connected = has_refresh_token((current_user or {}).get("id"), brand_id=brand_id)
     instagram_connected = False
@@ -4426,6 +4504,7 @@ def generate_short(video_pk):
         selected_video_overlay_offset=selected_video_overlay_offset,
         debug_info=debug_info,
         clip_rows=clip_rows,
+        transcript_player_source=transcript_player_source,
         youtube_connected=youtube_connected,
         video_duration_label=video_duration_label,
         clip_duration_stats=clip_duration_stats,
