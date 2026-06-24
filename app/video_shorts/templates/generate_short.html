@@ -363,13 +363,7 @@
     overflow: hidden;
   }
   .trs-player-shell {
-    position: sticky;
-    top: 0;
-    z-index: 3;
     padding: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: linear-gradient(180deg, rgba(9, 14, 22, 0.98), rgba(9, 14, 22, 0.92));
-    backdrop-filter: blur(10px);
   }
   .trs-player-frame {
     position: relative;
@@ -621,6 +615,17 @@
   .clip-management-panel {
     position: relative;
   }
+  .clip-workbench-side {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .clip-source-player-card {
+    position: sticky;
+    top: 76px;
+    z-index: 4;
+  }
   .clip-pane {
     display: none;
   }
@@ -789,9 +794,6 @@
     align-items: center;
     gap: 6px;
   }
-  .clip-workbench-side {
-    min-width: 0;
-  }
   @media (max-width: 991.98px) {
     .editor-strip-actions {
       margin-left: 0;
@@ -828,6 +830,10 @@
     .clip-rail-detail .clip-card-title-row {
       grid-template-columns: 1fr;
       gap: 8px;
+    }
+    .clip-source-player-card {
+      position: static;
+      top: auto;
     }
   }
 </style>
@@ -1106,15 +1112,6 @@
               </div>
               <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
               <div class="trs-panel">
-                <div class="trs-player-shell" id="trs-player-shell">
-                  <div class="trs-player-frame" id="trs-player-frame"></div>
-                  <div class="trs-player-status">
-                    <span><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
-                    {% if video.video_url %}
-                      <a href="{{ video.video_url }}" target="_blank" rel="noreferrer" class="btn btn-outline-secondary btn-sm">Watch source</a>
-                    {% endif %}
-                  </div>
-                </div>
                 <div class="trs-document" id="trs-document" aria-label="Transcript segments"></div>
                 <div class="trs-selection-bar">
                   <div class="trs-selection-summary is-empty" id="trs-selection-summary">Seçim yok.</div>
@@ -1128,6 +1125,17 @@
           </div>
         </div>
         <div class="col-12 col-xl-6 clip-workbench-side">
+          <div class="gs-card clip-source-player-card">
+            <div class="trs-player-shell" id="trs-player-shell">
+              <div class="trs-player-frame" id="trs-player-frame"></div>
+              <div class="trs-player-status">
+                <span><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
+                {% if video.video_url %}
+                  <a href="{{ video.video_url }}" target="_blank" rel="noreferrer" class="btn btn-outline-secondary btn-sm">Watch source</a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
           <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
             <div class="clip-pane clip-pane-list is-active" id="clip-pane-list">
               <div class="clip-pane-header">
@@ -2735,8 +2743,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const mountTranscriptPlayer = (root, source, segments, onPlaybackSegmentChange) => {
-    const frame = root.querySelector("#trs-player-frame");
-    const statusCopy = root.querySelector("#trs-player-status-copy");
+    const frame = document.getElementById("trs-player-frame");
+    const statusCopy = document.getElementById("trs-player-status-copy");
     if (!frame || !statusCopy) {
       return {
         seekAndPlay: () => false,
