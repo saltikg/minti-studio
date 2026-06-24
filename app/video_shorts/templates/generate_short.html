@@ -36,7 +36,6 @@
 {% set total_clip_count = clip_rows|default([], true)|length %}
 {% set created_clip_count = (clip_rows|default([], true)|selectattr('status','equalto','created')|list|length) %}
 {% set has_clips = total_clip_count > 0 %}
-{% set top_state_no_transcript = not has_transcript %}
 {% set top_state_ready_for_selection = has_transcript and not has_clips %}
 {% set top_state_working = has_transcript and has_clips %}
 
@@ -46,6 +45,38 @@
   {% else %}
     {{ '{:,}'.format(value) }}
   {% endif %}
+{% endmacro %}
+
+{% macro editor_flow_step_map(current_step=1) %}
+  {% set steps = [
+    {'label': 'Transcript', 'icon': 'description'},
+    {'label': 'Klip seç', 'icon': 'content_cut'},
+    {'label': 'Yayınla', 'icon': 'send'}
+  ] %}
+  <div class="editor-flow-map" aria-label="Short oluşturma adımları">
+    {% for step in steps %}
+      {% set step_index = loop.index %}
+      {% set step_state = 'upcoming' %}
+      {% if step_index < current_step %}
+        {% set step_state = 'done' %}
+      {% elif step_index == current_step %}
+        {% set step_state = 'active' %}
+      {% endif %}
+      <div class="editor-flow-step is-{{ step_state }}">
+        <div class="editor-flow-step-circle" aria-hidden="true">
+          {% if step_state == 'done' %}
+            <span class="material-icons-outlined">check</span>
+          {% else %}
+            <span class="material-icons-outlined">{{ step.icon }}</span>
+          {% endif %}
+        </div>
+        <div class="editor-flow-step-label">{{ step.label }}</div>
+      </div>
+      {% if not loop.last %}
+        <div class="editor-flow-connector" aria-hidden="true"></div>
+      {% endif %}
+    {% endfor %}
+  </div>
 {% endmacro %}
 
 {% block title %}Generate Short – {{ video.title }}{% endblock %}
@@ -197,6 +228,148 @@
   }
   .editor-toolbar-note.is-hidden {
     opacity: 0;
+  }
+  .editor-empty-shell-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 24px 0 8px;
+  }
+  .editor-empty-shell {
+    width: min(100%, 760px);
+    padding: 32px 28px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    background:
+      radial-gradient(circle at top, rgba(45, 212, 191, 0.12), transparent 48%),
+      rgba(255, 255, 255, 0.03);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+    text-align: center;
+  }
+  .editor-empty-shell h4 {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.96);
+  }
+  .editor-empty-shell-subtitle {
+    margin: 10px auto 0;
+    max-width: 520px;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .editor-flow-map {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+    margin: 26px 0 24px;
+  }
+  .editor-flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-width: 112px;
+  }
+  .editor-flow-step-circle {
+    width: 54px;
+    height: 54px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.52);
+  }
+  .editor-flow-step-circle .material-icons-outlined {
+    font-size: 1.35rem;
+  }
+  .editor-flow-step-label {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
+    text-align: center;
+  }
+  .editor-flow-step.is-active .editor-flow-step-circle {
+    border: 2px solid var(--color-border-info, rgba(45, 212, 191, 0.6));
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+  }
+  .editor-flow-step.is-active .editor-flow-step-label {
+    color: var(--color-text-info);
+  }
+  .editor-flow-step.is-done .editor-flow-step-circle {
+    border-color: rgba(45, 212, 191, 0.35);
+    background: rgba(45, 212, 191, 0.12);
+    color: #d7fffb;
+  }
+  .editor-flow-step.is-done .editor-flow-step-label {
+    color: rgba(215, 255, 251, 0.88);
+  }
+  .editor-flow-connector {
+    width: 74px;
+    border-top: 2px dashed rgba(255, 255, 255, 0.14);
+    margin-top: -24px;
+    flex: 0 0 auto;
+  }
+  .editor-empty-shell-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .editor-empty-shell-primary {
+    min-width: min(100%, 280px);
+    min-height: 50px;
+    padding: 0.8rem 1.25rem;
+    border-radius: 16px;
+    border: 1px solid transparent;
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+    font-size: 0.98rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .editor-empty-shell-primary:hover,
+  .editor-empty-shell-primary:focus-visible {
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+    filter: brightness(1.03);
+  }
+  .editor-empty-shell-helper {
+    color: rgba(255, 255, 255, 0.52);
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+  .editor-empty-shell-status {
+    width: min(100%, 440px);
+    margin: 12px auto 0;
+    text-align: left;
+  }
+  @media (max-width: 767.98px) {
+    .editor-empty-shell {
+      padding: 24px 18px;
+      border-radius: 20px;
+    }
+    .editor-flow-map {
+      gap: 8px;
+    }
+    .editor-flow-step {
+      min-width: 84px;
+    }
+    .editor-flow-step-circle {
+      width: 46px;
+      height: 46px;
+    }
+    .editor-flow-step-label {
+      font-size: 0.76rem;
+    }
+    .editor-flow-connector {
+      width: 36px;
+    }
   }
   @media (max-width: 991.98px) {
     .editor-topbar-actions {
@@ -913,15 +1086,11 @@
 {% set step2_enabled = has_transcript %}
 {% set step3_enabled = plan_exists %}
 
+{% if has_transcript %}
 <div class="gs-card mb-3 steps-card editor-topbar-card">
   <div class="editor-topbar-row">
     <div class="editor-topbar-status">
-      {% if top_state_no_transcript %}
-        <span class="editor-topbar-status-pill">
-          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
-          Henüz transkript yok
-        </span>
-      {% elif top_state_ready_for_selection %}
+      {% if top_state_ready_for_selection %}
         <span class="editor-topbar-status-pill is-done">
           <span class="editor-topbar-status-dot" aria-hidden="true"></span>
           Transcribe ✓
@@ -946,15 +1115,7 @@
       </span>
     </div>
     <div class="editor-topbar-actions">
-      {% if top_state_no_transcript %}
-        <button type="submit"
-                form="step1-form"
-                id="step1-btn"
-                class="editor-primary-action"
-                {% if step1_done %}data-confirm-message="A transcript already exists; re-running Whisper can take a while. Continue?"{% endif %}>
-          Transcribe video
-        </button>
-      {% elif top_state_ready_for_selection %}
+      {% if top_state_ready_for_selection %}
         <button type="button"
                 id="step3-btn"
                 class="editor-primary-action">
@@ -1035,6 +1196,7 @@
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
   <div id="plan-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
 </div>
+{% endif %}
 
 {% if long_compilation_videos %}
 <div class="row g-3 mb-3">
@@ -1568,9 +1730,28 @@
       </div>
       </div>
     {% else %}
-      <div class="gs-card">
-        <div class="small text-muted">
-          <span class="text-white">After completing Step 1, the clip plan and CLIPS table will appear.</span>
+      <div class="editor-empty-shell-wrap">
+        <div class="editor-empty-shell">
+          <h4>İlk shortunu oluştur</h4>
+          <div class="editor-empty-shell-subtitle">
+            Önce videoyu yazıya dök, sonra istediğin anı seçip yayınla.
+          </div>
+          {{ editor_flow_step_map(1) }}
+          <div class="editor-empty-shell-actions">
+            <button type="submit"
+                    form="step1-form"
+                    id="step1-btn"
+                    class="editor-empty-shell-primary">
+              Transcribe video
+            </button>
+            <div class="editor-empty-shell-helper">
+              ~1-2 dakika sürer · bittiğinde transkript burada açılır
+            </div>
+            <div id="transcribe-live-status"
+                 class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
+                 role="status"
+                 aria-live="polite"></div>
+          </div>
         </div>
       </div>
     {% endif %}
