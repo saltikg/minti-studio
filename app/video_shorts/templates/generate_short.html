@@ -207,7 +207,7 @@
     gap: 8px;
     flex: 1 1 460px;
     min-width: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
   .editor-process-step {
     display: inline-flex;
@@ -285,14 +285,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 10px 12px;
+    gap: 8px 10px;
     flex-wrap: wrap;
-  }
-  .editor-process-helper {
-    color: rgba(219, 234, 254, 0.68);
-    font-size: 0.8rem;
-    line-height: 1.35;
-    white-space: nowrap;
   }
   .editor-primary-action {
     display: inline-flex;
@@ -526,6 +520,9 @@
     .editor-process-side {
       width: 100%;
       justify-content: flex-start;
+    }
+    .editor-process-map {
+      flex-wrap: wrap;
     }
   }
   .background-selected-card {
@@ -1268,7 +1265,6 @@
       </button>
     </div>
     <div class="editor-process-side">
-      <span class="editor-process-helper">Choose your start and end times below.</span>
       <button
         type="button"
         class="editor-primary-action editor-primary-action-icon"
@@ -1400,12 +1396,11 @@
         <div class="col-12 col-xl-6">
           <div class="gs-card h-100">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-              <h5 class="mb-0">Transcript</h5>
+              <h5 class="mb-0">Transcript <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
             </div>
             <div class="trs-shell" id="transcript-range-selector" data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
               <script type="application/json" id="trs-player-source-json">{{ transcript_player_source|tojson }}</script>
-              <div class="small text-white-50">Click one row to set the start, then click another row to set the end.</div>
               <div class="trs-toolbar">
                 <div class="trs-search-group">
                   <input
