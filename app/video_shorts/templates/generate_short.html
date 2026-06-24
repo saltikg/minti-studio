@@ -202,6 +202,14 @@
     color: var(--color-text-info);
     filter: brightness(1.03);
   }
+  .editor-primary-action-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .editor-primary-action-icon .material-icons-outlined {
+    font-size: 1rem;
+  }
   .editor-secondary-action {
     min-height: 36px;
     border-radius: 12px;
@@ -1090,92 +1098,15 @@
 <div class="gs-card mb-3 steps-card editor-topbar-card">
   <div class="editor-topbar-row">
     <div class="editor-topbar-status">
-      {% if top_state_ready_for_selection %}
-        <span class="editor-topbar-status-pill is-done">
-          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
-          Transcribe ✓
-        </span>
-      {% elif top_state_working %}
-        <span class="editor-topbar-status-pill is-done">
-          <span class="editor-topbar-status-dot" aria-hidden="true"></span>
-          Transcribe ✓
-        </span>
-        <span class="editor-topbar-status-copy">{{ total_clip_count }} klip</span>
-      {% endif %}
-      <span id="create-long-from-shorts-elapsed" class="editor-toolbar-note"></span>
-      <span id="crop-status-text" class="editor-toolbar-note is-transient {% if not static_visual_label and not created_visual_label and video.crop_x_ratio is none %}is-hidden{% endif %}">
-        {% if static_visual_label %}
-          Static visual {{ static_visual_label }} selected
-        {% elif created_visual_label %}
-          Created video {{ created_visual_label }} selected
-        {% elif video.crop_x_ratio is not none %}
-          Crop area saved
-        {% else %}
-        {% endif %}
+      <span class="editor-topbar-status-pill is-done">
+        <span class="editor-topbar-status-dot" aria-hidden="true"></span>
+        Transcribe ✓
       </span>
     </div>
     <div class="editor-topbar-actions">
-      {% if top_state_ready_for_selection %}
-        <button type="button"
-                id="step3-btn"
-                class="editor-primary-action">
-          Klip seçmeye başla
-        </button>
-        <div class="editor-action-stack">
-          <button type="submit"
-                  form="step2-form"
-                  id="ai-generate-btn"
-                  class="btn btn-outline-light editor-secondary-action"
-                  {% if step2_done %}
-                    data-confirm-message="The current AI plan will be replaced. Continue?"
-                  {% endif %}
-                  {% if not step2_enabled %}disabled{% endif %}>
-            AI ile oluştur
-          </button>
-          <span class="editor-action-subtext">opsiyonel</span>
-        </div>
-        <button
-          type="button"
-          class="btn btn-outline-light editor-secondary-action"
-          id="create-long-from-shorts-btn"
-          data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
-          {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
-          Long video
-        </button>
-      {% elif top_state_working %}
-        <button type="button"
-                id="step3-btn"
-                class="btn btn-outline-light editor-secondary-action">
-          Kliplere git
-        </button>
-        <div class="editor-action-stack">
-          <button type="submit"
-                  form="step2-form"
-                  id="ai-generate-btn"
-                  class="btn btn-outline-light editor-secondary-action"
-                  {% if step2_done %}
-                    data-confirm-message="The current AI plan will be replaced. Continue?"
-                  {% endif %}
-                  {% if not step2_enabled %}disabled{% endif %}>
-            AI ile oluştur
-          </button>
-          <span class="editor-action-subtext">opsiyonel</span>
-        </div>
-        <button
-          type="button"
-          class="btn btn-outline-light editor-secondary-action"
-          id="create-long-from-shorts-btn"
-          data-create-url="{{ url_for('video_shorts_bp.create_long_from_shorts', video_pk=video.id) }}"
-          {% if published_created_clip_count|default(0) <= 0 %}disabled title="No published short clips yet"{% endif %}>
-          Long video
-        </button>
-      {% else %}
-        <button type="button" id="step3-btn" class="d-none" aria-hidden="true"></button>
-      {% endif %}
-      {% if top_state_working %}
       <button
         type="button"
-        class="btn btn-outline-light editor-secondary-action"
+        class="editor-primary-action editor-primary-action-icon"
         id="video-editor-btn"
         data-bs-toggle="modal"
         data-bs-target="#crop-area-modal"
@@ -1188,9 +1119,22 @@
         data-static-visual-key="{{ video_static_visual_key or '' }}"
         data-background-visual-key="{{ video_background_visual_key or '' }}"
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
-        Editor
+        <span class="material-icons-outlined" aria-hidden="true">cut</span>
+        <span>Editor</span>
       </button>
-      {% endif %}
+      <div class="editor-action-stack">
+        <button type="submit"
+                form="step2-form"
+                id="ai-generate-btn"
+                class="btn btn-outline-light editor-secondary-action"
+                {% if step2_done %}
+                  data-confirm-message="The current AI plan will be replaced. Continue?"
+                {% endif %}
+                {% if not step2_enabled %}disabled{% endif %}>
+          AI ile oluştur
+        </button>
+        <span class="editor-action-subtext">opsiyonel</span>
+      </div>
     </div>
   </div>
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
