@@ -47,13 +47,13 @@
   {% endif %}
 {% endmacro %}
 
-{% macro editor_flow_step_map(current_step=1) %}
+{% macro editor_flow_step_map(current_step=1, current_step_form=None) %}
   {% set steps = [
     {'label': 'Transcript', 'icon': 'description'},
-    {'label': 'Klip seç', 'icon': 'content_cut'},
-    {'label': 'Yayınla', 'icon': 'send'}
+    {'label': 'Pick clip', 'icon': 'content_cut'},
+    {'label': 'Publish', 'icon': 'send'}
   ] %}
-  <div class="editor-flow-map" aria-label="Short oluşturma adımları">
+  <div class="editor-flow-map" aria-label="Short creation steps">
     {% for step in steps %}
       {% set step_index = loop.index %}
       {% set step_state = 'upcoming' %}
@@ -63,14 +63,26 @@
         {% set step_state = 'active' %}
       {% endif %}
       <div class="editor-flow-step is-{{ step_state }}">
-        <div class="editor-flow-step-circle" aria-hidden="true">
-          {% if step_state == 'done' %}
-            <span class="material-icons-outlined">check</span>
-          {% else %}
-            <span class="material-icons-outlined">{{ step.icon }}</span>
-          {% endif %}
-        </div>
-        <div class="editor-flow-step-label">{{ step.label }}</div>
+        {% if step_state == 'active' and current_step_form %}
+          <button type="submit"
+                  form="{{ current_step_form }}"
+                  class="editor-flow-step-button"
+                  aria-label="{{ step.label }}">
+            <span class="editor-flow-step-circle" aria-hidden="true">
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            </span>
+            <span class="editor-flow-step-label">{{ step.label }}</span>
+          </button>
+        {% else %}
+          <div class="editor-flow-step-circle" aria-hidden="true">
+            {% if step_state == 'done' %}
+              <span class="material-icons-outlined">check</span>
+            {% else %}
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            {% endif %}
+          </div>
+          <div class="editor-flow-step-label">{{ step.label }}</div>
+        {% endif %}
       </div>
       {% if not loop.last %}
         <div class="editor-flow-connector" aria-hidden="true"></div>
@@ -245,12 +257,12 @@
   .editor-empty-shell {
     width: min(100%, 760px);
     padding: 32px 28px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(144, 224, 239, 0.16);
     border-radius: 24px;
     background:
-      radial-gradient(circle at top, rgba(45, 212, 191, 0.12), transparent 48%),
-      rgba(255, 255, 255, 0.03);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+      radial-gradient(circle at top, rgba(127, 255, 212, 0.12), transparent 42%),
+      linear-gradient(180deg, rgba(10, 20, 44, 0.96), rgba(7, 14, 31, 0.96));
+    box-shadow: 0 18px 44px rgba(2, 8, 23, 0.34);
     text-align: center;
   }
   .editor-empty-shell h4 {
@@ -281,6 +293,17 @@
     gap: 10px;
     min-width: 112px;
   }
+  .editor-flow-step-button {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
   .editor-flow-step-circle {
     width: 54px;
     height: 54px;
@@ -303,11 +326,25 @@
   }
   .editor-flow-step.is-active .editor-flow-step-circle {
     border: 2px solid var(--color-border-info, rgba(45, 212, 191, 0.6));
-    background: var(--color-background-info);
-    color: var(--color-text-info);
+    background: linear-gradient(180deg, rgba(127, 255, 212, 0.2), rgba(127, 255, 212, 0.1));
+    color: #eaffff;
+    box-shadow: 0 0 0 6px rgba(127, 255, 212, 0.08);
   }
   .editor-flow-step.is-active .editor-flow-step-label {
-    color: var(--color-text-info);
+    color: #f4ffff;
+  }
+  .editor-flow-step-button:hover .editor-flow-step-circle,
+  .editor-flow-step-button:focus-visible .editor-flow-step-circle {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(127, 255, 212, 0.85);
+    color: #ffffff;
+  }
+  .editor-flow-step-button:hover .editor-flow-step-label,
+  .editor-flow-step-button:focus-visible .editor-flow-step-label {
+    color: #ffffff;
+  }
+  .editor-flow-step-button:focus-visible {
+    outline: none;
   }
   .editor-flow-step.is-done .editor-flow-step-circle {
     border-color: rgba(45, 212, 191, 0.35);
@@ -333,22 +370,24 @@
     min-width: min(100%, 280px);
     min-height: 50px;
     padding: 0.8rem 1.25rem;
-    border-radius: 16px;
-    border: 1px solid transparent;
-    background: var(--color-background-info);
-    color: var(--color-text-info);
+    border-radius: 999px;
+    border: 1px solid rgba(144, 224, 239, 0.28);
+    background: linear-gradient(180deg, rgba(130, 248, 224, 0.16), rgba(130, 248, 224, 0.08));
+    color: #f6ffff;
     font-size: 0.98rem;
     font-weight: 700;
     line-height: 1.1;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
   .editor-empty-shell-primary:hover,
   .editor-empty-shell-primary:focus-visible {
-    background: var(--color-background-info);
-    color: var(--color-text-info);
-    filter: brightness(1.03);
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(255, 255, 255, 0.98);
+    color: #09162f;
+    filter: none;
   }
   .editor-empty-shell-helper {
-    color: rgba(255, 255, 255, 0.52);
+    color: rgba(219, 234, 254, 0.62);
     font-size: 0.82rem;
     line-height: 1.35;
   }
@@ -1676,11 +1715,11 @@
     {% else %}
       <div class="editor-empty-shell-wrap">
         <div class="editor-empty-shell">
-          <h4>İlk shortunu oluştur</h4>
+          <h4>Create your first short</h4>
           <div class="editor-empty-shell-subtitle">
-            Önce videoyu yazıya dök, sonra istediğin anı seçip yayınla.
+            First transcribe the video, then pick the moment you want and publish it.
           </div>
-          {{ editor_flow_step_map(1) }}
+          {{ editor_flow_step_map(1, 'step1-form') }}
           <div class="editor-empty-shell-actions">
             <button type="submit"
                     form="step1-form"
@@ -1689,7 +1728,7 @@
               Transcribe video
             </button>
             <div class="editor-empty-shell-helper">
-              ~1-2 dakika sürer · bittiğinde transkript burada açılır
+              Processing time depends on video length · the transcript will appear here when it's ready.
             </div>
             <div id="transcribe-live-status"
                  class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
