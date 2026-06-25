@@ -1754,6 +1754,35 @@
               {% elif row.publish_status == "published" %}
                 {% set meta_row_classes = meta_row_classes + " published" %}
               {% endif %}
+              {% set modal_yt_tooltip = '' %}
+              {% set modal_yt_icon_class = '' %}
+              {% if row.publish_display %}
+                {% if row.publish_status == "published" %}
+                  {% set modal_yt_icon_class = "text-success" %}
+                {% elif row.publish_status == "scheduled" %}
+                  {% set modal_yt_icon_class = "text-warning" %}
+                {% else %}
+                  {% set modal_yt_icon_class = "text-danger" %}
+                {% endif %}
+                {% set modal_yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
+                {% set modal_yt_tooltip = modal_yt_tooltip_label ~ ": " ~ row.publish_display %}
+              {% endif %}
+              {% set modal_ig_tooltip = '' %}
+              {% set modal_ig_icon_class = '' %}
+              {% if row.instagram_display %}
+                {% set modal_ig_label_lower = (row.instagram_label or "")|lower %}
+                {% if "published" in modal_ig_label_lower %}
+                  {% set modal_ig_icon_class = "text-success" %}
+                {% elif "scheduled" in modal_ig_label_lower or "queued" in modal_ig_label_lower %}
+                  {% set modal_ig_icon_class = "text-warning" %}
+                {% elif "failed" in modal_ig_label_lower %}
+                  {% set modal_ig_icon_class = "text-danger" %}
+                {% else %}
+                  {% set modal_ig_icon_class = "text-warning" %}
+                {% endif %}
+                {% set modal_ig_tooltip_label = "Published date" if "published" in modal_ig_label_lower else "Schedule date" %}
+                {% set modal_ig_tooltip = modal_ig_tooltip_label ~ ": " ~ row.instagram_display %}
+              {% endif %}
             <div class="clip-card"
                  data-plan-index="{{ row.plan_index }}"
                  data-status="{{ row.status }}"
@@ -1761,7 +1790,11 @@
                  data-render-error="{{ row.render_error or '' }}"
                  data-publish="{{ row.publish_status }}"
                  data-start="{{ row.start or 0 }}"
-                 data-duration="{{ row.duration or 0 }}">
+                 data-duration="{{ row.duration or 0 }}"
+                 data-modal-yt-tooltip="{{ modal_yt_tooltip|e }}"
+                 data-modal-yt-icon-class="{{ modal_yt_icon_class }}"
+                 data-modal-ig-tooltip="{{ modal_ig_tooltip|e }}"
+                 data-modal-ig-icon-class="{{ modal_ig_icon_class }}">
               <div class="clip-card-strip {{ row.status }}"></div>
               <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
                 <div class="clip-card-meta-time">
@@ -3693,38 +3726,33 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     const coachmarkSteps = {
       1: {
-        progress: "1/7",
+        progress: "1/6",
         title: "Click a line to set the start",
         tip: "Tip: play the video first to find a good moment",
       },
       2: {
-        progress: "2/7",
+        progress: "2/6",
         title: "Now click another line to set the end",
         tip: "",
       },
       3: {
-        progress: "3/7",
+        progress: "3/6",
         title: "Now create your short",
         tip: "",
       },
       4: {
-        progress: "4/7",
+        progress: "4/6",
         title: "Creating video…",
         tip: "Please wait while generating.",
       },
       5: {
-        progress: "5/7",
+        progress: "5/6",
         title: "Video ready — click this clip to publish",
         tip: "",
       },
       6: {
-        progress: "6/7",
+        progress: "6/6",
         title: "Add a social caption, then schedule or publish",
-        tip: "",
-      },
-      7: {
-        progress: "7/7",
-        title: "Choose a time, then schedule your video",
         tip: "",
       },
     };
@@ -4525,8 +4553,18 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
     if (!modalPlatforms) {
       return;
     }
-    const source = activeCard?.querySelector(".clip-card-meta-status .small");
-    modalPlatforms.innerHTML = source ? source.innerHTML : "";
+    const ytTooltip = String(activeCard?.dataset.modalYtTooltip || "").trim();
+    const ytIconClass = String(activeCard?.dataset.modalYtIconClass || "").trim();
+    const igTooltip = String(activeCard?.dataset.modalIgTooltip || "").trim();
+    const igIconClass = String(activeCard?.dataset.modalIgIconClass || "").trim();
+    const parts = [];
+    if (ytTooltip && ytIconClass) {
+      parts.push(`<span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="${escapeHtml(ytTooltip)}"><i class="bi bi-youtube ${escapeHtml(ytIconClass)} gs-schedule-icon" aria-hidden="true"></i></span>`);
+    }
+    if (igTooltip && igIconClass) {
+      parts.push(`<span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="${escapeHtml(igTooltip)}"><i class="bi bi-instagram ${escapeHtml(igIconClass)} gs-schedule-icon" aria-hidden="true"></i></span>`);
+    }
+    modalPlatforms.innerHTML = parts.join("");
     if (typeof bootstrap !== "undefined") {
       modalPlatforms.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
         new bootstrap.Tooltip(el);
