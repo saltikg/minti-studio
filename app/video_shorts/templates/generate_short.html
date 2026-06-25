@@ -154,36 +154,38 @@
     flex-wrap: wrap;
   }
   .editor-topbar-map-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    flex-wrap: wrap;
+    display: grid;
+    gap: 10px;
   }
   .editor-topbar-card .editor-flow-map {
     margin: 0;
-    gap: 6px;
+    width: 100%;
+    gap: 10px;
   }
   .editor-topbar-card .editor-flow-step {
-    gap: 4px;
-    min-width: 96px;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 0;
   }
   .editor-topbar-card .editor-flow-step-button {
-    gap: 4px;
+    gap: 10px;
+    width: 100%;
   }
   .editor-topbar-card .editor-flow-step-circle {
-    width: 44px;
-    height: 44px;
+    width: 46px;
+    height: 46px;
   }
   .editor-topbar-card .editor-flow-step-circle .material-icons-outlined {
-    font-size: 1.1rem;
+    font-size: 1.15rem;
   }
   .editor-topbar-card .editor-flow-step-label {
-    font-size: 0.78rem;
+    font-size: 0.9rem;
   }
   .editor-topbar-card .editor-flow-connector {
-    width: 30px;
-    margin-top: -18px;
+    flex: 1 1 44px;
+    min-width: 44px;
+    width: auto;
+    margin-top: 23px;
   }
   .editor-flow-step-button.is-disabled {
     opacity: 0.55;
@@ -194,6 +196,7 @@
     min-height: 40px;
     padding: 0.5rem 0.95rem;
     border-radius: 999px;
+    justify-self: end;
   }
   .editor-primary-action {
     display: inline-flex;
@@ -251,12 +254,11 @@
     opacity: 0;
   }
   .editor-empty-shell-wrap {
-    display: flex;
-    justify-content: center;
+    display: block;
     padding: 24px 0 8px;
   }
   .editor-empty-shell {
-    width: min(100%, 760px);
+    width: 100%;
     padding: 32px 28px;
     border: 1px solid rgba(144, 224, 239, 0.16);
     border-radius: 24px;
@@ -282,17 +284,19 @@
   .editor-flow-map {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: 10px;
     flex-wrap: nowrap;
     margin: 26px 0 24px;
+    width: 100%;
   }
   .editor-flow-step {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    min-width: 112px;
+    min-width: 0;
+    flex: 1 1 0;
   }
   .editor-flow-step-button {
     display: inline-flex;
@@ -304,6 +308,7 @@
     background: transparent;
     color: inherit;
     cursor: pointer;
+    width: 100%;
   }
   .editor-flow-step-circle {
     width: 54px;
@@ -356,10 +361,11 @@
     color: rgba(215, 255, 251, 0.88);
   }
   .editor-flow-connector {
-    width: 74px;
+    width: auto;
     border-top: 2px dashed rgba(255, 255, 255, 0.14);
-    margin-top: -24px;
-    flex: 0 0 auto;
+    margin-top: 23px;
+    flex: 1 1 44px;
+    min-width: 44px;
   }
   .editor-empty-shell-actions {
     display: flex;
@@ -406,7 +412,7 @@
       gap: 8px;
     }
     .editor-flow-step {
-      min-width: 84px;
+      min-width: 0;
     }
     .editor-flow-step-circle {
       width: 46px;
@@ -416,7 +422,8 @@
       font-size: 0.76rem;
     }
     .editor-flow-connector {
-      width: 36px;
+      width: auto;
+      min-width: 24px;
     }
   }
   @media (max-width: 991.98px) {
