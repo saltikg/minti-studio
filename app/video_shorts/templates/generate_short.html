@@ -2793,7 +2793,7 @@ document.addEventListener("DOMContentLoaded", () => {
           throw new Error(payload.message || "Could not create clip.");
         }
         if (typeof refreshClipList === "function") {
-          const ok = await refreshClipList(payload.plan_index || "", "detail");
+          const ok = await refreshClipList(payload.plan_index || "", "list");
           if (ok) {
             const createdCard = getClipCardByPlanIndex(payload.plan_index || "");
             if (createdCard) {
@@ -3718,7 +3718,7 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.className = "trs-row-time";
         timeEl.type = "button";
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
-        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)} – ${escapeHtml(segment.endLabel)}</span>`;
+        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)} – ${escapeHtml(segment.endLabel)}&nbsp;</span>`;
 
         const mainEl = document.createElement("div");
         mainEl.className = "trs-row-main";
@@ -4498,7 +4498,7 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
 const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
   stopClipJobPolling(planIndex, { clearStored: true });
   for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
-    const refreshed = await refreshClipList(planIndex, "modal");
+    const refreshed = await refreshClipList(planIndex, "list");
     if (refreshed && isCreatedClipRendered(planIndex)) {
       if (cached) {
         injectClipNotice(planIndex, "You've already generated this clip.");
