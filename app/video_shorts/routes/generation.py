@@ -3971,8 +3971,7 @@ def generate_short(video_pk):
     v3_rules = load_non_speech_rules()
     v4_rules = load_planner_rules_v4()
 
-    plan_entries_sorted = sorted(plan_entries, key=lambda c: int(c.get("plan_index") or 0))
-    for entry in plan_entries_sorted:
+    for entry in plan_entries:
         pi = entry.get("plan_index")
         try:
             pi = int(pi)
@@ -4230,8 +4229,6 @@ def generate_short(video_pk):
             "facebook_schedule_date": fb_schedule_date,
             "any_platform_published": any_platform_published,
         })
-
-    clip_rows = sorted(clip_rows, key=lambda r: r["plan_index"])
     latest_schedule_iso, latest_schedule_dt = _find_latest_publish(plan_entries)
     latest_scheduled_display = (
         _format_publish_display(latest_schedule_iso, user_tz) if latest_schedule_iso else None
