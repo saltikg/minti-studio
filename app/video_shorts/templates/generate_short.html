@@ -1084,9 +1084,9 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    position: relative;
-    top: auto;
-    align-self: stretch;
+    position: sticky;
+    top: var(--clip-side-sticky-top);
+    align-self: start;
     max-height: none;
     overflow: visible;
   }
@@ -1100,8 +1100,8 @@
     display: block;
   }
   .clip-source-player-card {
-    position: sticky;
-    top: var(--clip-side-sticky-top);
+    position: relative;
+    top: auto;
     z-index: 4;
   }
   .clip-pane {
