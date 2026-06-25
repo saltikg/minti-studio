@@ -30,25 +30,29 @@
   margin: 0;
 }
 .qs-map {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
   margin-top: 20px;
-  align-items: start;
 }
 .qs-step {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 0 10px;
+  gap: 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 170px;
 }
 .qs-connector {
-  align-self: start;
+  align-self: flex-start;
   margin-top: 23px;
   border-top: 2px dashed rgba(255, 255, 255, 0.18);
-  width: 100%;
+  flex: 1 1 44px;
+  min-width: 44px;
 }
 .qs-step-button {
   display: inline-flex;
@@ -59,6 +63,7 @@
   background: transparent;
   color: inherit;
   padding: 0;
+  width: 100%;
 }
 .qs-step-circle {
   width: 46px;
@@ -358,15 +363,13 @@
 }
 @media (max-width: 992px) {
   .qs-map {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
     gap: 12px;
   }
   .qs-step {
-    flex-direction: row;
-    justify-content: flex-start;
-    gap: 12px;
     text-align: left;
-    padding: 0;
+    max-width: none;
   }
   .qs-step-button {
     flex-direction: row;
