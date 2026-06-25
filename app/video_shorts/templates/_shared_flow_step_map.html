@@ -1,0 +1,71 @@
+{% macro flow_step_map(current_step=1, current_step_form=None, current_step_button_id=None, publish_button_id=None, publish_enabled=False, class_prefix='editor-flow') %}
+  {% set steps = [
+    {'label': 'Add video', 'icon': 'videocam'},
+    {'label': 'AI analysis', 'icon': 'auto_awesome'},
+    {'label': 'Create short', 'icon': 'content_cut'},
+    {'label': 'Publish', 'icon': 'send'}
+  ] %}
+  {% set map_class = class_prefix ~ '-map' %}
+  {% set step_class = class_prefix ~ '-step' %}
+  {% set button_class = class_prefix ~ '-step-button' %}
+  {% set circle_class = class_prefix ~ '-step-circle' %}
+  {% set label_class = class_prefix ~ '-step-label' %}
+  {% set connector_class = class_prefix ~ '-connector' %}
+  <div class="{{ map_class }}" id="{{ class_prefix }}-stepper" aria-label="Short creation steps">
+    {% for step in steps %}
+      {% set step_index = loop.index %}
+      {% set step_state = 'upcoming' %}
+      {% if step_index < current_step %}
+        {% set step_state = 'done' %}
+      {% elif step_index == current_step %}
+        {% set step_state = 'active' %}
+      {% endif %}
+      <div class="{{ step_class }} is-{{ step_state }}" data-step-key="{{ step_index }}">
+        {% if step_state == 'active' and current_step_form and step_index != 4 %}
+          <button type="submit"
+                  form="{{ current_step_form }}"
+                  class="{{ button_class }}"
+                  aria-label="{{ step.label }}">
+            <span class="{{ circle_class }}" aria-hidden="true">
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            </span>
+            <span class="{{ label_class }}">{{ step.label }}</span>
+          </button>
+        {% elif step_state == 'active' and current_step_button_id and step_index != 4 %}
+          <button type="button"
+                  id="{{ current_step_button_id }}"
+                  class="{{ button_class }}"
+                  aria-label="{{ step.label }}">
+            <span class="{{ circle_class }}" aria-hidden="true">
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            </span>
+            <span class="{{ label_class }}">{{ step.label }}</span>
+          </button>
+        {% elif step_index == 4 and publish_button_id %}
+          <button type="button"
+                  id="{{ publish_button_id }}"
+                  class="{{ button_class }} {% if not publish_enabled %}is-disabled{% endif %}"
+                  {% if not publish_enabled %}aria-disabled="true"{% endif %}
+                  aria-label="{{ step.label }}">
+            <span class="{{ circle_class }}" aria-hidden="true">
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            </span>
+            <span class="{{ label_class }}">{{ step.label }}</span>
+          </button>
+        {% else %}
+          <div class="{{ circle_class }}" aria-hidden="true">
+            {% if step_state == 'done' %}
+              <span class="material-icons-outlined">check</span>
+            {% else %}
+              <span class="material-icons-outlined">{{ step.icon }}</span>
+            {% endif %}
+          </div>
+          <div class="{{ label_class }}">{{ step.label }}</div>
+        {% endif %}
+      </div>
+      {% if not loop.last %}
+        <div class="{{ connector_class }}" aria-hidden="true"></div>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endmacro %}

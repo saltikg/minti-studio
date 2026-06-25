@@ -1,4 +1,5 @@
 {% extends "vs_base.html" %}
+{% from "_shared_flow_step_map.html" import flow_step_map %}
 
 {% set short_bg_url = url_for('video_shorts_bp.static', filename='img/1-short_bg_8.png') %}
 {% set SHORT_BG_WIDTH = 900 %}
@@ -45,71 +46,6 @@
   {% else %}
     {{ '{:,}'.format(value) }}
   {% endif %}
-{% endmacro %}
-
-{% macro editor_flow_step_map(current_step=1, current_step_form=None, current_step_button_id=None, publish_button_id=None, publish_enabled=False) %}
-  {% set steps = [
-    {'label': 'Transcript', 'icon': 'description'},
-    {'label': 'Pick & Design', 'icon': 'content_cut'},
-    {'label': 'Publish', 'icon': 'send'}
-  ] %}
-  <div class="editor-flow-map" aria-label="Short creation steps">
-    {% for step in steps %}
-      {% set step_index = loop.index %}
-      {% set step_state = 'upcoming' %}
-      {% if step_index < current_step %}
-        {% set step_state = 'done' %}
-      {% elif step_index == current_step %}
-        {% set step_state = 'active' %}
-      {% endif %}
-      <div class="editor-flow-step is-{{ step_state }}">
-        {% if step_state == 'active' and current_step_form %}
-          <button type="submit"
-                  form="{{ current_step_form }}"
-                  class="editor-flow-step-button"
-                  aria-label="{{ step.label }}">
-            <span class="editor-flow-step-circle" aria-hidden="true">
-              <span class="material-icons-outlined">{{ step.icon }}</span>
-            </span>
-            <span class="editor-flow-step-label">{{ step.label }}</span>
-          </button>
-        {% elif step_state == 'active' and current_step_button_id %}
-          <button type="button"
-                  id="{{ current_step_button_id }}"
-                  class="editor-flow-step-button"
-                  aria-label="{{ step.label }}">
-            <span class="editor-flow-step-circle" aria-hidden="true">
-              <span class="material-icons-outlined">{{ step.icon }}</span>
-            </span>
-            <span class="editor-flow-step-label">{{ step.label }}</span>
-          </button>
-        {% elif step_index == 3 and publish_button_id %}
-          <button type="button"
-                  id="{{ publish_button_id }}"
-                  class="editor-flow-step-button {% if not publish_enabled %}is-disabled{% endif %}"
-                  {% if not publish_enabled %}aria-disabled="true"{% endif %}
-                  aria-label="{{ step.label }}">
-            <span class="editor-flow-step-circle" aria-hidden="true">
-              <span class="material-icons-outlined">{{ step.icon }}</span>
-            </span>
-            <span class="editor-flow-step-label">{{ step.label }}</span>
-          </button>
-        {% else %}
-          <div class="editor-flow-step-circle" aria-hidden="true">
-            {% if step_state == 'done' %}
-              <span class="material-icons-outlined">check</span>
-            {% else %}
-              <span class="material-icons-outlined">{{ step.icon }}</span>
-            {% endif %}
-          </div>
-          <div class="editor-flow-step-label">{{ step.label }}</div>
-        {% endif %}
-      </div>
-      {% if not loop.last %}
-        <div class="editor-flow-connector" aria-hidden="true"></div>
-      {% endif %}
-    {% endfor %}
-  </div>
 {% endmacro %}
 
 {% block title %}Generate Short – {{ video.title }}{% endblock %}
@@ -1276,7 +1212,7 @@
 {% if has_transcript %}
 <div class="gs-card mb-3 editor-topbar-card">
   <div class="editor-topbar-map-wrap">
-    {{ editor_flow_step_map(2, None, 'step2-jump-btn', 'publish-jump-btn', created_clip_count > 0) }}
+    {{ flow_step_map(4 if created_clip_count > 0 else 3, None, 'step2-jump-btn', 'publish-jump-btn', created_clip_count > 0, 'editor-flow') }}
     <button
       type="button"
       class="editor-primary-action editor-primary-action-icon editor-topbar-editor-btn"
@@ -1835,10 +1771,10 @@
         </div>
       </div>
     {% else %}
-      <div class="editor-empty-shell-wrap">
+        <div class="editor-empty-shell-wrap">
         <div class="editor-empty-shell">
           <h4>Create Your Short</h4>
-          {{ editor_flow_step_map(1, 'step1-form') }}
+          {{ flow_step_map(2, 'step1-form', None, None, False, 'editor-flow') }}
           <div class="editor-empty-shell-actions">
             <button type="submit"
                     form="step1-form"

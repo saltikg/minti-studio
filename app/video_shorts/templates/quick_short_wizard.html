@@ -1,8 +1,10 @@
 {% extends "vs_base.html" %}
+{% from "_shared_flow_step_map.html" import flow_step_map %}
 
 {% block title %}Create Your First Short{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
 <style>
 .qs-shell {
   display: grid;
@@ -27,7 +29,7 @@
   font-weight: 800;
   margin: 0;
 }
-.qs-stepper {
+.qs-map {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
@@ -42,18 +44,23 @@
   text-align: center;
   padding: 0 10px;
 }
-.qs-step::after {
-  content: "";
-  position: absolute;
-  top: 23px;
-  left: calc(50% + 28px);
-  width: calc(100% - 56px);
+.qs-connector {
+  align-self: start;
+  margin-top: 23px;
   border-top: 2px dashed rgba(255, 255, 255, 0.18);
+  width: 100%;
 }
-.qs-step:last-child::after {
-  display: none;
+.qs-step-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
 }
-.qs-step-num {
+.qs-step-circle {
   width: 46px;
   height: 46px;
   border-radius: 999px;
@@ -69,13 +76,16 @@
   position: relative;
   z-index: 1;
 }
-.qs-step.is-active .qs-step-num {
+.qs-step-circle .material-icons-outlined {
+  font-size: 1.15rem;
+}
+.qs-step.is-active .qs-step-circle {
   background: var(--mint);
   border-color: var(--mint);
   color: #07161d;
   box-shadow: 0 0 0 8px rgba(45, 212, 191, 0.14);
 }
-.qs-step.is-done .qs-step-num {
+.qs-step.is-done .qs-step-circle {
   background: rgba(45, 212, 191, 0.12);
   border-color: rgba(45, 212, 191, 0.34);
   color: #c7fff4;
@@ -86,18 +96,6 @@
 }
 .qs-step.is-active .qs-step-label {
   color: #d9fff8;
-}
-.qs-step-caret {
-  width: 0;
-  height: 0;
-  margin-top: 10px;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-top: 10px solid var(--mint);
-  opacity: 0;
-}
-.qs-step.is-active .qs-step-caret {
-  opacity: 1;
 }
 .qs-grid {
   display: grid;
@@ -359,7 +357,7 @@
   .qs-spinner { animation: none; }
 }
 @media (max-width: 992px) {
-  .qs-stepper {
+  .qs-map {
     grid-template-columns: 1fr;
     gap: 12px;
   }
@@ -370,7 +368,12 @@
     text-align: left;
     padding: 0;
   }
-  .qs-step::after {
+  .qs-step-button {
+    flex-direction: row;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .qs-connector {
     display: none;
   }
   .qs-publish-grid {
@@ -382,7 +385,7 @@
 <div class="qs-shell">
   <div class="qs-hero">
     <div class="qs-title">Create your first short</div>
-    <div class="qs-stepper" id="qs-stepper"></div>
+    {{ flow_step_map(1, none, none, none, false, 'qs') }}
     <div id="qs-stage-input" class="qs-hero-divider">
       <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 mb-3">
       <div class="qs-segmented" id="qs-source-toggle">
@@ -595,10 +598,10 @@
   };
 
   const steps = [
-    { key: "input", label: "Add video", icon: "bi-camera-video" },
-    { key: "ingest", label: "AI processing", icon: "bi-stars" },
-    { key: "review", label: "Pick & create", icon: "bi-scissors" },
-    { key: "done", label: "Publish", icon: "bi-send" },
+    { key: "input", label: "Add video", icon: "videocam" },
+    { key: "ingest", label: "AI analysis", icon: "auto_awesome" },
+    { key: "review", label: "Create short", icon: "content_cut" },
+    { key: "done", label: "Publish", icon: "send" },
   ];
 
   const setLiveMessage = (message) => {
@@ -635,13 +638,26 @@
       done: "done",
     };
     const currentKey = activeMap[stage] || "input";
-    stepperEl.innerHTML = steps.map((step, index) => `
-      <div class="qs-step ${step.key === currentKey ? "is-active" : ""} ${doneKeys.has(step.key) ? "is-done" : ""}">
-        <div class="qs-step-num">${doneKeys.has(step.key) ? "✓" : `<i class="bi ${step.icon}"></i>`}</div>
-        <div class="qs-step-label">${step.label}</div>
-        <div class="qs-step-caret"></div>
-      </div>
-    `).join("");
+    const stepNodes = Array.from(stepperEl.querySelectorAll(".qs-step"));
+    stepNodes.forEach((stepNode, index) => {
+      const step = steps[index];
+      if (!step) {
+        return;
+      }
+      stepNode.classList.toggle("is-active", step.key === currentKey);
+      stepNode.classList.toggle("is-done", doneKeys.has(step.key));
+      stepNode.classList.toggle("is-upcoming", !doneKeys.has(step.key) && step.key !== currentKey);
+      const circleEl = stepNode.querySelector(".qs-step-circle");
+      if (circleEl) {
+        circleEl.innerHTML = doneKeys.has(step.key)
+          ? '<span class="material-icons-outlined" aria-hidden="true">check</span>'
+          : `<span class="material-icons-outlined" aria-hidden="true">${step.icon}</span>`;
+      }
+      const labelEl = stepNode.querySelector(".qs-step-label");
+      if (labelEl) {
+        labelEl.textContent = step.label;
+      }
+    });
   };
 
   const showOnlyStage = (stageName) => {
