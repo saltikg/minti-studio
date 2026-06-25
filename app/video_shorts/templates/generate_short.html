@@ -3699,7 +3699,7 @@ document.addEventListener("DOMContentLoaded", () => {
       4: {
         progress: "4/7",
         title: "Creating video…",
-        tip: "",
+        tip: "Please wait while generating.",
       },
       5: {
         progress: "5/7",
@@ -3868,7 +3868,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
       if ((step === 6 || step === 7) && window.innerWidth > 991) {
-        const modalTarget = document.querySelector("#youtube-upload-form button[type='submit']");
+        const modalTarget =
+          document.querySelector("#clip-detail-modal.show .send-to-youtube-btn") ||
+          document.querySelector("#youtubeUploadModal.show #youtube-upload-form button[type='submit']") ||
+          document.querySelector("#youtube-upload-form button[type='submit']");
         if (modalTarget) {
           const rect = modalTarget.getBoundingClientRect();
           coachmarkEl.style.position = "fixed";
@@ -4396,7 +4399,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       showScheduleCoachmark: () => {
         clearCoachmarkModalTimer();
-        state.coachmarkStepOverride = 7;
+        state.coachmarkStepOverride = 6;
         renderCoachmark();
       },
       restoreReadyCoachmark: () => {
@@ -4541,9 +4544,15 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
   });
   if (modalEl.dataset.clipModalBound !== "1") {
     modalEl.dataset.clipModalBound = "1";
+    modalEl.addEventListener("shown.bs.modal", () => {
+      window.__trsClipSelectorController?.showScheduleCoachmark?.();
+    });
     modalEl.addEventListener("hidden.bs.modal", () => {
       restoreMountedCard();
       setPanelMode("list");
+      if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
+        window.__trsClipSelectorController?.restoreReadyCoachmark?.();
+      }
     });
   }
 
@@ -6147,7 +6156,9 @@ const initSendToYoutubeButtons = () => {
     window.__trsClipSelectorController?.showScheduleCoachmark?.();
   });
   publishModalEl?.addEventListener("hidden.bs.modal", () => {
-    window.__trsClipSelectorController?.restoreReadyCoachmark?.();
+    if (!document.getElementById("clip-detail-modal")?.classList.contains("show")) {
+      window.__trsClipSelectorController?.restoreReadyCoachmark?.();
+    }
   });
   const parseLongTitles = (raw) => {
     if (!raw) return [];
