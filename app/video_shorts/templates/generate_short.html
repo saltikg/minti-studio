@@ -1197,6 +1197,13 @@
     justify-content: center;
     gap: 4px;
   }
+  .clip-rail-platforms {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+    color: rgba(255, 255, 255, 0.72);
+  }
   .clip-rail-title {
     font-size: 0.92rem;
     font-weight: 600;
@@ -1757,6 +1764,37 @@
                     <span class="clip-rail-copy">
                       <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
                       <span class="clip-rail-meta">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                      <span class="clip-rail-platforms">
+                        {% if row.publish_display %}
+                          {% if row.publish_status == "published" %}
+                            {% set rail_yt_icon_class = "text-success" %}
+                          {% elif row.publish_status == "scheduled" %}
+                            {% set rail_yt_icon_class = "text-warning" %}
+                          {% else %}
+                            {% set rail_yt_icon_class = "text-danger" %}
+                          {% endif %}
+                          {% set rail_yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.publish_display }}">
+                            <i class="bi bi-youtube {{ rail_yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                          </span>
+                        {% endif %}
+                        {% if row.instagram_display %}
+                          {% set rail_ig_label_lower = (row.instagram_label or "")|lower %}
+                          {% if "published" in rail_ig_label_lower %}
+                            {% set rail_ig_icon_class = "text-success" %}
+                          {% elif "scheduled" in rail_ig_label_lower or "queued" in rail_ig_label_lower %}
+                            {% set rail_ig_icon_class = "text-warning" %}
+                          {% elif "failed" in rail_ig_label_lower %}
+                            {% set rail_ig_icon_class = "text-danger" %}
+                          {% else %}
+                            {% set rail_ig_icon_class = "text-warning" %}
+                          {% endif %}
+                          {% set rail_ig_tooltip_label = "Published date" if "published" in rail_ig_label_lower else "Schedule date" %}
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_ig_tooltip_label }}: {{ row.instagram_display }}">
+                            <i class="bi bi-instagram {{ rail_ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                          </span>
+                        {% endif %}
+                      </span>
                     </span>
                   </button>
                 {% endfor %}
@@ -4409,6 +4447,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     return {
+      hideCoachmark: () => {
+        clearCoachmarkModalTimer();
+        state.coachmarkStepOverride = null;
+        state.coachmarkTargetPlanIndex = null;
+        state.coachmarkDismissedSession = true;
+        renderCoachmark();
+      },
       clearSelection: () => {
         clearCoachmarkModalTimer();
         state.anchorIndex = null;
@@ -5692,6 +5737,7 @@ const youtubeModalContext = (() => {
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    window.__trsClipSelectorController?.hideCoachmark?.();
     if (!submitBtn) {
       return;
     }
