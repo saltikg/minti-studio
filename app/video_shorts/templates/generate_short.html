@@ -563,7 +563,8 @@
     right: auto;
   }
   .trs-coachmark[data-step="4"],
-  .trs-coachmark[data-step="5"] {
+  .trs-coachmark[data-step="5"],
+  .trs-coachmark[data-step="6"] {
     top: auto;
     right: auto;
   }
@@ -585,7 +586,8 @@
     border-color: #ffffff transparent transparent transparent;
   }
   .trs-coachmark[data-step="4"]::after,
-  .trs-coachmark[data-step="5"]::after {
+  .trs-coachmark[data-step="5"]::after,
+  .trs-coachmark[data-step="6"]::after {
     top: 50%;
     bottom: auto;
     left: -10px;
@@ -706,7 +708,8 @@
       transform-origin: bottom center;
     }
     .trs-coachmark[data-step="4"]::after,
-    .trs-coachmark[data-step="5"]::after {
+    .trs-coachmark[data-step="5"]::after,
+    .trs-coachmark[data-step="6"]::after {
       animation: trs-coachmark-pointer-pulse-right 1.4s ease-in-out infinite;
       transform-origin: center left;
     }
@@ -1218,6 +1221,13 @@
     color: rgba(255, 255, 255, 0.62);
     font-size: 0.84rem;
     font-variant-numeric: tabular-nums;
+  }
+  .clip-detail-modal-platforms {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 10px;
+    vertical-align: middle;
   }
   .clip-detail-modal-mount .clip-card {
     display: block;
@@ -2043,6 +2053,7 @@
               <div>
                 <div class="clip-detail-modal-title" id="clip-detail-modal-title">Clip details</div>
                 <div class="clip-detail-modal-meta" id="clip-detail-modal-meta"></div>
+                <div class="clip-detail-modal-platforms" id="clip-detail-modal-platforms"></div>
               </div>
               <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -3873,16 +3884,19 @@ document.addEventListener("DOMContentLoaded", () => {
           document.querySelector("#youtubeUploadModal.show #youtube-upload-form button[type='submit']") ||
           document.querySelector("#youtube-upload-form button[type='submit']");
         if (modalTarget) {
-          const rect = modalTarget.getBoundingClientRect();
-          const coachmarkWidth = Math.min(280, Math.max(220, window.innerWidth - 40));
-          const targetMidY = rect.top + (rect.height / 2);
-          const fitsLeft = rect.left >= (coachmarkWidth + 18);
-          coachmarkEl.style.position = "fixed";
-          coachmarkEl.style.top = `${Math.max(88, targetMidY - 72)}px`;
-          if (fitsLeft) {
-            coachmarkEl.style.left = `${Math.max(16, rect.left - coachmarkWidth - 14)}px`;
-          } else {
-            coachmarkEl.style.left = `${Math.max(16, Math.min(rect.right + 14, window.innerWidth - coachmarkWidth - 16))}px`;
+          const modalContent = modalTarget.closest(".modal-content");
+          if (modalContent) {
+            if (coachmarkEl.parentElement !== modalContent) {
+              modalContent.appendChild(coachmarkEl);
+            }
+            const rect = modalTarget.getBoundingClientRect();
+            const contentRect = modalContent.getBoundingClientRect();
+            const coachmarkWidth = Math.min(280, Math.max(220, modalContent.clientWidth - 24));
+            const targetMidY = rect.top + (rect.height / 2);
+            const localTop = Math.max(16, Math.min((rect.top - contentRect.top) + (rect.height / 2) - 72, modalContent.clientHeight - 120));
+            coachmarkEl.style.position = "absolute";
+            coachmarkEl.style.top = `${localTop}px`;
+            coachmarkEl.style.left = `${Math.max(12, rect.left - contentRect.left - coachmarkWidth - 14)}px`;
           }
         }
       }
@@ -4490,6 +4504,7 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
   const modalMount = document.getElementById("clip-detail-modal-mount");
   const modalTitle = document.getElementById("clip-detail-modal-title");
   const modalMeta = document.getElementById("clip-detail-modal-meta");
+  const modalPlatforms = document.getElementById("clip-detail-modal-platforms");
   if (!panel || !listPane || !railList || !repository || !modalEl || !modalMount) {
     return;
   }
@@ -4504,6 +4519,18 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
     const activeCard = modalMount.querySelector(".clip-card");
     if (activeCard) {
       repository.appendChild(activeCard);
+    }
+  };
+  const syncModalPlatforms = (activeCard) => {
+    if (!modalPlatforms) {
+      return;
+    }
+    const source = activeCard?.querySelector(".clip-card-meta-status .small");
+    modalPlatforms.innerHTML = source ? source.innerHTML : "";
+    if (typeof bootstrap !== "undefined") {
+      modalPlatforms.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
+        new bootstrap.Tooltip(el);
+      });
     }
   };
 
@@ -4532,6 +4559,7 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
     if (modalMeta) {
       modalMeta.textContent = activeCard.querySelector(".clip-card-meta-time")?.textContent?.trim() || "";
     }
+    syncModalPlatforms(activeCard);
     if (openModal) {
       restoreMountedCard();
       modalMount.appendChild(activeCard);
