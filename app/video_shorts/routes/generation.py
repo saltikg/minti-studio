@@ -6293,24 +6293,24 @@ def add_clip_section(video_pk):
     title = (request.form.get("title") or "").strip()
 
     if not start_time_raw or not end_time_raw:
-        return _respond("Start ve End alanları zorunlu.", status=400, category="warning")
+        return _respond("Start and End are required.", status=400, category="warning")
 
     start_time = _parse_time_input(start_time_raw)
     if start_time is None or start_time < 0:
         return _respond(
-            "Start formatı geçersiz. MM:SS.mmm veya saniye değeri kullanın.",
+            "Start format is invalid. Use MM:SS.mmm or seconds.",
             status=400,
             category="warning",
         )
     end_time = _parse_time_input(end_time_raw)
     if end_time is None or end_time < 0:
         return _respond(
-            "End formatı geçersiz. MM:SS.mmm veya saniye değeri kullanın.",
+            "End format is invalid. Use MM:SS.mmm or seconds.",
             status=400,
             category="warning",
         )
     if end_time <= start_time:
-        return _respond("End zamanı Start'tan büyük olmalı.", status=400, category="warning")
+        return _respond("End time must be greater than Start.", status=400, category="warning")
 
     conn = get_db_readonly()
     row = _fetch_scoped_video_row(conn, video_pk, "video_id, duration_seconds")
@@ -6385,10 +6385,10 @@ def add_clip_section(video_pk):
         _write_plan_entries(video_id, plan_entries)
     except Exception as exc:
         current_app.logger.warning("Failed to add manual plan entry for %s: %s", video_id, exc)
-        return _respond("Yeni klip bölümü kaydedilemedi.", status=500, category="danger")
+        return _respond("The new clip section could not be saved.", status=500, category="danger")
 
     return _respond(
-        f"Klip bölümü eklendi (#{next_plan_index}).",
+        f"Clip section added (#{next_plan_index}).",
         success=True,
         category="success",
         extras={
