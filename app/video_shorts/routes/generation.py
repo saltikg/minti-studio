@@ -6380,7 +6380,7 @@ def add_clip_section(video_pk):
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
     }
-    plan_entries.append(new_entry)
+    plan_entries.insert(0, new_entry)
     try:
         _write_plan_entries(video_id, plan_entries)
     except Exception as exc:

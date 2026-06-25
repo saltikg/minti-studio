@@ -4425,14 +4425,12 @@ const initAddClipToggle = () => {
 </script>
 <script>
 const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = null) => {
-  const workbench = document.getElementById("clip-workbench-shell");
   const clipPanel = document.getElementById("clip-management-panel");
-  if (!workbench || !clipPanel) {
+  if (!clipPanel) {
     return false;
   }
   const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
-  const playerState = window.__trsClipSelectorController?.capturePlayerState?.() || null;
   const currentModalEl = document.getElementById("clip-detail-modal");
   if (currentModalEl?.classList.contains("show")) {
     document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
@@ -4457,18 +4455,14 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const html = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
-    const newWorkbench = doc.getElementById("clip-workbench-shell");
-    if (newWorkbench) {
-      workbench.replaceWith(newWorkbench);
-      window.mountTranscriptClipSelector?.();
-      if (playerState) {
-        window.__trsClipSelectorController?.restorePlayerState?.(playerState);
-      }
+    const newClipPanel = doc.getElementById("clip-management-panel");
+    if (newClipPanel) {
+      clipPanel.replaceWith(newClipPanel);
       loadGenerateUsageSummary();
       initClipDetailModal(activePlanIndex, activeViewMode);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
-        document.querySelectorAll("#clip-workbench-shell [data-bs-toggle='tooltip']").forEach((el) => {
+        document.querySelectorAll("#clip-management-panel [data-bs-toggle='tooltip']").forEach((el) => {
           new bootstrap.Tooltip(el);
         });
       }
