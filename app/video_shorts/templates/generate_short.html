@@ -720,7 +720,7 @@
   }
   .trs-row {
     display: grid;
-    grid-template-columns: 78px minmax(0, 1fr) auto;
+    grid-template-columns: 136px minmax(0, 1fr) auto;
     gap: 8px;
     align-items: start;
     padding: 4px 4px 4px 2px;
@@ -770,6 +770,10 @@
     text-align: left;
     justify-content: flex-start;
     transition: color 0.16s ease, background-color 0.16s ease;
+    white-space: nowrap;
+  }
+  .trs-row-time span:last-child {
+    white-space: nowrap;
   }
   .trs-row-time:hover,
   .trs-row-time:focus-visible {
@@ -1164,7 +1168,7 @@
       padding: 6px 8px 88px;
     }
     .trs-row {
-      grid-template-columns: 1fr;
+      grid-template-columns: 120px minmax(0, 1fr) auto;
       gap: 8px;
     }
     .trs-row-content-inline {
@@ -2992,6 +2996,28 @@ document.addEventListener("DOMContentLoaded", () => {
     const seconds = total - (minutes * 60);
     const secondLabel = seconds.toFixed(3).padStart(6, "0");
     return `${String(minutes).padStart(2, "0")}:${secondLabel}`;
+  };
+
+  const parseTimeToSeconds = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return Number.NaN;
+    }
+    const parts = raw.split(":").map((part) => part.trim()).filter(Boolean);
+    if (!parts.length) {
+      return Number.NaN;
+    }
+    let total = 0;
+    let multiplier = 1;
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const numeric = Number(parts[index]);
+      if (!Number.isFinite(numeric) || numeric < 0) {
+        return Number.NaN;
+      }
+      total += numeric * multiplier;
+      multiplier *= 60;
+    }
+    return total;
   };
 
   const normalizeSearchText = (value) => {
@@ -6976,7 +7002,7 @@ const initRemovePlanEntryAjax = () => {
         }
         const refreshed = await refreshClipList(fallbackPlanIndex, "list");
         if (!refreshed) {
-          window.location.reload();
+          throw new Error("Plan section was deleted, but the editor could not refresh automatically.");
         }
       } catch (err) {
         alert(err.message || "Failed to delete plan section.");
@@ -7029,7 +7055,7 @@ const initDeleteClipAjax = () => {
         }
         const refreshed = await refreshClipList(planIndex, "detail");
         if (!refreshed) {
-          window.location.reload();
+          throw new Error("Clip was deleted, but the editor could not refresh automatically.");
         }
       } catch (err) {
         alert(err.message || "Failed to delete clip.");
