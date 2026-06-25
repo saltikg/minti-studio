@@ -3453,6 +3453,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const matchCount = root.querySelector("#trs-match-count");
     const matchList = root.querySelector("#trs-match-list");
     const documentEl = root.querySelector("#trs-document");
+    const selectionBarEl = root.querySelector(".trs-selection-bar");
     const selectionSummary = root.querySelector("#trs-selection-summary");
     const clearSelectionBtn = root.querySelector("#trs-selection-clear");
     const createClipBtn = root.querySelector("#trs-create-clip");
@@ -3539,6 +3540,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
     };
     let timeLinkFlashTimer = null;
+    let lastCoachmarkStep = null;
     const noteTranscriptInteraction = () => {
       state.lastTranscriptInteractionAt = Date.now();
     };
@@ -3625,6 +3627,12 @@ document.addEventListener("DOMContentLoaded", () => {
         coachmarkTipEl.classList.toggle("d-none", !config.tip);
       }
       coachmarkEl.classList.remove("is-hidden");
+      if (step === 3 && lastCoachmarkStep !== 3 && selectionBarEl) {
+        window.requestAnimationFrame(() => {
+          selectionBarEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        });
+      }
+      lastCoachmarkStep = step;
     };
 
     const dismissCoachmarkForSession = () => {
