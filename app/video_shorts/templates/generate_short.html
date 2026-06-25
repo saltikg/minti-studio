@@ -2964,7 +2964,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!response.ok || !payload.success) {
           throw new Error(payload.message || "Could not create clip.");
         }
-        window.__trsClipSelectorController?.showPublishCoachmark?.();
         if (typeof refreshClipList === "function") {
           const ok = await refreshClipList(payload.plan_index || "", "list");
           if (ok) {
@@ -4253,6 +4252,15 @@ document.addEventListener("DOMContentLoaded", () => {
       showPublishCoachmark: (planIndex = "") => {
         state.coachmarkStepOverride = 4;
         state.coachmarkTargetPlanIndex = String(planIndex || "").trim();
+        const targetPlanIndex = state.coachmarkTargetPlanIndex;
+        const targetEl = targetPlanIndex
+          ? document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)
+          : null;
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+          const clipPanel = document.getElementById("clip-management-panel");
+          clipPanel?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
         renderCoachmark();
       },
       focusTime: (seconds) => {
