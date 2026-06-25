@@ -2988,24 +2988,28 @@ document.addEventListener("DOMContentLoaded", () => {
           if (ok) {
             const createdCard = getClipCardByPlanIndex(payload.plan_index || "");
             if (createdCard) {
+              const createdPlanIndex = String(payload.plan_index || "").trim();
               const placeholderTitle = String(payload.title || "").trim();
               if (placeholderTitle) {
                 syncClipCardTitleUi(createdCard, placeholderTitle);
                 markClipTitleAutofillBaseline(createdCard, placeholderTitle);
               }
-              requestSuggestedClipTitle({
-                card: createdCard,
-                planIndex: String(payload.plan_index || ""),
-                excerpt: payload.excerpt || payload.transcript_full || "",
-                currentTitle: placeholderTitle,
-                expectedCurrentTitle: placeholderTitle,
-                applyMode: "if-pristine",
-                successMessage: "",
-              });
-              window.__trsClipSelectorController?.showPublishCoachmark?.(payload.plan_index || "");
+              renderClipJobProgressState(createdCard, "processing", 0);
+              window.__trsClipSelectorController?.showPublishCoachmark?.(createdPlanIndex);
               if (!triggerGenerateForClipCard(createdCard)) {
                 throw new Error("Clip was created, but automatic rendering could not be started.");
               }
+              window.setTimeout(() => {
+                requestSuggestedClipTitle({
+                  card: createdCard,
+                  planIndex: createdPlanIndex,
+                  excerpt: payload.excerpt || payload.transcript_full || "",
+                  currentTitle: placeholderTitle,
+                  expectedCurrentTitle: placeholderTitle,
+                  applyMode: "if-pristine",
+                  successMessage: "",
+                });
+              }, 180);
             }
             return;
           }
@@ -3816,9 +3820,17 @@ document.addEventListener("DOMContentLoaded", () => {
           document.getElementById("clip-management-panel");
         if (targetEl) {
           const rect = targetEl.getBoundingClientRect();
+          const coachmarkWidth = Math.min(280, Math.max(220, window.innerWidth - 40));
+          const fitsRight = (window.innerWidth - rect.right) >= (coachmarkWidth + 18);
+          const fitsLeft = rect.left >= (coachmarkWidth + 18);
+          const targetMidY = rect.top + (rect.height / 2);
           coachmarkEl.style.position = "fixed";
-          coachmarkEl.style.top = `${Math.max(88, rect.top + 12)}px`;
-          coachmarkEl.style.left = `${Math.max(16, rect.left - 296)}px`;
+          coachmarkEl.style.top = `${Math.max(88, targetMidY - 72)}px`;
+          if (fitsRight || !fitsLeft) {
+            coachmarkEl.style.left = `${Math.max(16, Math.min(rect.right + 14, window.innerWidth - coachmarkWidth - 16))}px`;
+          } else {
+            coachmarkEl.style.left = `${Math.max(16, rect.left - coachmarkWidth - 14)}px`;
+          }
         }
       }
       if ((step === 6 || step === 7) && window.innerWidth > 991) {
@@ -4316,7 +4328,11 @@ document.addEventListener("DOMContentLoaded", () => {
           const clipPanel = document.getElementById("clip-management-panel");
           clipPanel?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
         }
-        renderCoachmark();
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            renderCoachmark();
+          });
+        });
       },
       showReadyCoachmark: (planIndex = "") => {
         clearCoachmarkModalTimer();
@@ -4327,7 +4343,11 @@ document.addEventListener("DOMContentLoaded", () => {
           ? document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)
           : null;
         targetEl?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-        renderCoachmark();
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            renderCoachmark();
+          });
+        });
       },
       showDescriptionCoachmark: () => {
         clearCoachmarkModalTimer();
