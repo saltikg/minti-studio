@@ -558,6 +558,10 @@
     bottom: 72px;
     right: 14px;
   }
+  .trs-coachmark[data-step="2"] {
+    top: auto;
+    right: auto;
+  }
   .trs-coachmark[data-step="4"] {
     top: auto;
     right: auto;
@@ -636,6 +640,22 @@
     display: flex;
     justify-content: flex-end;
   }
+  .trs-coachmark-loading {
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(26, 26, 26, 0.74);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .trs-coachmark-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    border: 2px solid rgba(15, 110, 86, 0.18);
+    border-top-color: #0f6e56;
+  }
   .trs-coachmark-dismiss {
     border: 0;
     background: transparent;
@@ -653,6 +673,9 @@
   @media (prefers-reduced-motion: no-preference) {
     .trs-coachmark {
       animation: trs-coachmark-pop 0.24s ease-out;
+    }
+    .trs-coachmark-spinner {
+      animation: trs-coachmark-spin 0.8s linear infinite;
     }
     .trs-coachmark::after {
       animation: trs-coachmark-pointer-pulse 1.4s ease-in-out infinite;
@@ -675,6 +698,11 @@
     100% {
       transform: scale(1);
       opacity: 1;
+    }
+  }
+  @keyframes trs-coachmark-spin {
+    to {
+      transform: rotate(360deg);
     }
   }
   @keyframes trs-coachmark-pointer-pulse {
@@ -1548,6 +1576,10 @@
                 </div>
                 <div class="trs-coachmark-title" id="trs-coachmark-title">Click a line to set the start</div>
                 <div class="trs-coachmark-tip" id="trs-coachmark-tip">Tip: play the video first to find a good moment</div>
+                <div class="trs-coachmark-loading d-none" id="trs-coachmark-loading">
+                  <span class="trs-coachmark-spinner" aria-hidden="true"></span>
+                  <span>Creating video…</span>
+                </div>
                 <div class="trs-coachmark-actions">
                   <button type="button" class="trs-coachmark-dismiss" id="trs-coachmark-dismiss">Don't show again</button>
                 </div>
@@ -2932,6 +2964,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!response.ok || !payload.success) {
           throw new Error(payload.message || "Could not create clip.");
         }
+        window.__trsClipSelectorController?.showPublishCoachmark?.();
         if (typeof refreshClipList === "function") {
           const ok = await refreshClipList(payload.plan_index || "", "list");
           if (ok) {
@@ -2942,8 +2975,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 syncClipCardTitleUi(createdCard, placeholderTitle);
                 markClipTitleAutofillBaseline(createdCard, placeholderTitle);
               }
-              let resolvedTitle = placeholderTitle;
-              const titleResult = await requestSuggestedClipTitle({
+              requestSuggestedClipTitle({
                 card: createdCard,
                 planIndex: String(payload.plan_index || ""),
                 excerpt: payload.excerpt || payload.transcript_full || "",
@@ -2952,13 +2984,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 applyMode: "if-pristine",
                 successMessage: "",
               });
-              if (titleResult?.success && !titleResult.skipped && titleResult.title) {
-                resolvedTitle = String(titleResult.title || "").trim() || resolvedTitle;
-              }
-              if (resolvedTitle) {
-                syncClipCardTitleUi(createdCard, resolvedTitle);
-              }
-              window.__trsClipSelectorController?.showPublishCoachmark?.();
+              window.__trsClipSelectorController?.showPublishCoachmark?.(payload.plan_index || "");
               if (!triggerGenerateForClipCard(createdCard)) {
                 throw new Error("Clip was created, but automatic rendering could not be started.");
               }
@@ -3539,6 +3565,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const coachmarkStepEl = root.querySelector("#trs-coachmark-step");
     const coachmarkTitleEl = root.querySelector("#trs-coachmark-title");
     const coachmarkTipEl = root.querySelector("#trs-coachmark-tip");
+    const coachmarkLoadingEl = root.querySelector("#trs-coachmark-loading");
     const coachmarkCloseBtn = root.querySelector("#trs-coachmark-close");
     const coachmarkDismissBtn = root.querySelector("#trs-coachmark-dismiss");
     const segmentsScript = root.querySelector("#trs-segments-json");
@@ -3600,6 +3627,7 @@ document.addEventListener("DOMContentLoaded", () => {
       lastTranscriptInteractionAt: 0,
       coachmarkDismissedSession: false,
       coachmarkStepOverride: null,
+      coachmarkTargetPlanIndex: null,
     };
     const coachmarkSteps = {
       1: {
@@ -3620,7 +3648,7 @@ document.addEventListener("DOMContentLoaded", () => {
       4: {
         progress: "4/4",
         title: "Your short is being created — publish it next",
-        tip: "",
+        tip: "Creating video…",
       },
     };
     let timeLinkFlashTimer = null;
@@ -3642,6 +3670,16 @@ document.addEventListener("DOMContentLoaded", () => {
       timeLinkFlashTimer = window.setTimeout(() => {
         segment.rowEl?.classList.remove("is-time-linked");
       }, 1800);
+    };
+    const scrollSegmentToTop = (segment) => {
+      if (!documentEl || !segment?.rowEl) {
+        return;
+      }
+      const top = Math.max(0, segment.rowEl.offsetTop - 8);
+      documentEl.scrollTo({
+        top,
+        behavior: "smooth",
+      });
     };
     const findSegmentByTime = (seconds) => {
       const numeric = Number(seconds);
@@ -3718,12 +3756,27 @@ document.addEventListener("DOMContentLoaded", () => {
         coachmarkTipEl.textContent = config.tip || "";
         coachmarkTipEl.classList.toggle("d-none", !config.tip);
       }
-      if (step === 4 && window.innerWidth > 991) {
-        const clipPanel = document.getElementById("clip-management-panel");
-        if (clipPanel) {
-          const rect = clipPanel.getBoundingClientRect();
+      if (coachmarkLoadingEl) {
+        coachmarkLoadingEl.classList.toggle("d-none", step !== 4);
+      }
+      if (step === 2 && window.innerWidth > 991) {
+        const rect = documentEl?.getBoundingClientRect();
+        if (rect) {
           coachmarkEl.style.position = "fixed";
-          coachmarkEl.style.top = `${Math.max(88, rect.top + 20)}px`;
+          coachmarkEl.style.top = `${Math.max(96, rect.top + (rect.height * 0.34))}px`;
+          coachmarkEl.style.left = `${Math.max(16, rect.right - 304)}px`;
+        }
+      }
+      if (step === 4 && window.innerWidth > 991) {
+        const targetPlanIndex = String(state.coachmarkTargetPlanIndex || "").trim();
+        const targetEl =
+          (targetPlanIndex && document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)) ||
+          (targetPlanIndex && getClipCardByPlanIndex(targetPlanIndex)) ||
+          document.getElementById("clip-management-panel");
+        if (targetEl) {
+          const rect = targetEl.getBoundingClientRect();
+          coachmarkEl.style.position = "fixed";
+          coachmarkEl.style.top = `${Math.max(88, rect.top + 12)}px`;
           coachmarkEl.style.left = `${Math.max(16, rect.left - 296)}px`;
         }
       }
@@ -3918,6 +3971,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.anchorIndex = segment.index;
           state.selectionStart = segment.index;
           state.selectionEnd = segment.index;
+          scrollSegmentToTop(segment);
           renderSelection();
           return;
         }
@@ -4193,10 +4247,12 @@ document.addEventListener("DOMContentLoaded", () => {
         state.selectionStart = null;
         state.selectionEnd = null;
         state.coachmarkStepOverride = null;
+        state.coachmarkTargetPlanIndex = null;
         renderSelection();
       },
-      showPublishCoachmark: () => {
+      showPublishCoachmark: (planIndex = "") => {
         state.coachmarkStepOverride = 4;
+        state.coachmarkTargetPlanIndex = String(planIndex || "").trim();
         renderCoachmark();
       },
       focusTime: (seconds) => {
