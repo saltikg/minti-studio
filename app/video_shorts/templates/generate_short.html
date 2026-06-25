@@ -1078,6 +1078,7 @@
   }
   .clip-management-panel {
     position: relative;
+    overflow: visible;
   }
   .clip-workbench-side {
     min-width: 0;
@@ -3597,6 +3598,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const editUrl = options.editUrl || "";
     const coachmarkPreferenceUrl = root.dataset.coachmarkPreferenceUrl || "";
     let coachmarkPersistedHidden = String(root.dataset.coachmarkHidden || "").toLowerCase() === "true";
+    const coachmarkHomeParent = coachmarkEl?.parentElement || root;
 
     let parsedSegments = [];
     try {
@@ -3725,6 +3727,11 @@ document.addEventListener("DOMContentLoaded", () => {
         state.coachmarkModalTimerId = null;
       }
     };
+    const restoreCoachmarkHome = () => {
+      if (coachmarkEl && coachmarkHomeParent && coachmarkEl.parentElement !== coachmarkHomeParent) {
+        coachmarkHomeParent.insertBefore(coachmarkEl, coachmarkHomeParent.firstChild);
+      }
+    };
     const findSegmentByTime = (seconds) => {
       const numeric = Number(seconds);
       if (!Number.isFinite(numeric) || !segments.length) {
@@ -3785,6 +3792,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const step = getCoachmarkStep();
       const config = coachmarkSteps[step] || coachmarkSteps[1];
       coachmarkEl.dataset.step = String(step);
+      restoreCoachmarkHome();
       coachmarkEl.style.position = "";
       coachmarkEl.style.top = "";
       coachmarkEl.style.right = "";
@@ -3818,19 +3826,19 @@ document.addEventListener("DOMContentLoaded", () => {
           (targetPlanIndex && document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)) ||
           (targetPlanIndex && getClipCardByPlanIndex(targetPlanIndex)) ||
           document.getElementById("clip-management-panel");
-        if (targetEl) {
-          const rect = targetEl.getBoundingClientRect();
-          const coachmarkWidth = Math.min(280, Math.max(220, window.innerWidth - 40));
-          const fitsRight = (window.innerWidth - rect.right) >= (coachmarkWidth + 18);
-          const fitsLeft = rect.left >= (coachmarkWidth + 18);
-          const targetMidY = rect.top + (rect.height / 2);
-          coachmarkEl.style.position = "fixed";
-          coachmarkEl.style.top = `${Math.max(88, targetMidY - 72)}px`;
-          if (fitsRight || !fitsLeft) {
-            coachmarkEl.style.left = `${Math.max(16, Math.min(rect.right + 14, window.innerWidth - coachmarkWidth - 16))}px`;
-          } else {
-            coachmarkEl.style.left = `${Math.max(16, rect.left - coachmarkWidth - 14)}px`;
+        const clipPanel = document.getElementById("clip-management-panel");
+        if (targetEl && clipPanel) {
+          if (coachmarkEl.parentElement !== clipPanel) {
+            clipPanel.appendChild(coachmarkEl);
           }
+          const rect = targetEl.getBoundingClientRect();
+          const panelRect = clipPanel.getBoundingClientRect();
+          const coachmarkWidth = Math.min(280, Math.max(220, clipPanel.clientWidth - 24));
+          const targetMidY = rect.top + (rect.height / 2);
+          const localTop = Math.max(12, Math.min((rect.top - panelRect.top) + (rect.height / 2) - 68, clipPanel.clientHeight - 112));
+          coachmarkEl.style.position = "absolute";
+          coachmarkEl.style.top = `${localTop}px`;
+          coachmarkEl.style.left = `${Math.max(12, clipPanel.clientWidth - coachmarkWidth - 12)}px`;
         }
       }
       if ((step === 6 || step === 7) && window.innerWidth > 991) {
