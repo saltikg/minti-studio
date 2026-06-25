@@ -541,7 +541,7 @@
     position: absolute;
     top: 52px;
     right: 10px;
-    z-index: 6;
+    z-index: 1085;
     width: min(280px, calc(100% - 20px));
     padding: 12px 12px 10px;
     border-radius: 16px;
@@ -562,7 +562,8 @@
     top: auto;
     right: auto;
   }
-  .trs-coachmark[data-step="4"] {
+  .trs-coachmark[data-step="4"],
+  .trs-coachmark[data-step="5"] {
     top: auto;
     right: auto;
   }
@@ -583,7 +584,8 @@
     border-width: 10px 9px 0 9px;
     border-color: #ffffff transparent transparent transparent;
   }
-  .trs-coachmark[data-step="4"]::after {
+  .trs-coachmark[data-step="4"]::after,
+  .trs-coachmark[data-step="5"]::after {
     top: 50%;
     bottom: auto;
     right: -10px;
@@ -629,6 +631,9 @@
     line-height: 1.3;
     color: #1a1a1a;
   }
+  .trs-coachmark-title.d-none {
+    display: none;
+  }
   .trs-coachmark-tip {
     margin-top: 6px;
     color: rgba(26, 26, 26, 0.66);
@@ -655,6 +660,20 @@
     border-radius: 999px;
     border: 2px solid rgba(15, 110, 86, 0.18);
     border-top-color: #0f6e56;
+  }
+  .trs-coachmark[data-step="4"] .trs-coachmark-loading {
+    margin-top: 12px;
+    gap: 0;
+  }
+  .trs-coachmark[data-step="4"] .trs-coachmark-spinner {
+    width: 22px;
+    height: 22px;
+    border-width: 3px;
+  }
+  .trs-coachmark[data-step="4"] .trs-coachmark-title {
+    margin-top: 8px;
+    font-size: 1.08rem;
+    line-height: 1.25;
   }
   .trs-coachmark-dismiss {
     border: 0;
@@ -685,7 +704,8 @@
       animation: trs-coachmark-pointer-pulse-up 1.4s ease-in-out infinite;
       transform-origin: bottom center;
     }
-    .trs-coachmark[data-step="4"]::after {
+    .trs-coachmark[data-step="4"]::after,
+    .trs-coachmark[data-step="5"]::after {
       animation: trs-coachmark-pointer-pulse-right 1.4s ease-in-out infinite;
       transform-origin: center left;
     }
@@ -1569,7 +1589,7 @@
               <script type="application/json" id="trs-player-source-json">{{ transcript_player_source|tojson }}</script>
               <div class="trs-coachmark is-hidden" id="trs-coachmark" data-step="1" aria-live="polite">
                 <div class="trs-coachmark-head">
-                  <div class="trs-coachmark-step" id="trs-coachmark-step">1/3</div>
+                  <div class="trs-coachmark-step" id="trs-coachmark-step">1/7</div>
                   <button type="button" class="trs-coachmark-close" id="trs-coachmark-close" aria-label="Close coachmark">
                     <span class="material-symbols-outlined" aria-hidden="true">close</span>
                   </button>
@@ -1578,7 +1598,6 @@
                 <div class="trs-coachmark-tip" id="trs-coachmark-tip">Tip: play the video first to find a good moment</div>
                 <div class="trs-coachmark-loading d-none" id="trs-coachmark-loading">
                   <span class="trs-coachmark-spinner" aria-hidden="true"></span>
-                  <span>Creating video…</span>
                 </div>
                 <div class="trs-coachmark-actions">
                   <button type="button" class="trs-coachmark-dismiss" id="trs-coachmark-dismiss">Don't show again</button>
@@ -3627,27 +3646,43 @@ document.addEventListener("DOMContentLoaded", () => {
       coachmarkDismissedSession: false,
       coachmarkStepOverride: null,
       coachmarkTargetPlanIndex: null,
+      coachmarkModalTimerId: null,
     };
     const coachmarkSteps = {
       1: {
-        progress: "1/4",
+        progress: "1/7",
         title: "Click a line to set the start",
         tip: "Tip: play the video first to find a good moment",
       },
       2: {
-        progress: "2/4",
+        progress: "2/7",
         title: "Now click another line to set the end",
         tip: "",
       },
       3: {
-        progress: "3/4",
+        progress: "3/7",
         title: "Now create your short",
         tip: "",
       },
       4: {
-        progress: "4/4",
-        title: "Your short is being created — publish it next",
-        tip: "Creating video…",
+        progress: "4/7",
+        title: "Creating video…",
+        tip: "",
+      },
+      5: {
+        progress: "5/7",
+        title: "Video ready — click this clip to publish",
+        tip: "",
+      },
+      6: {
+        progress: "6/7",
+        title: "Add a video description",
+        tip: "",
+      },
+      7: {
+        progress: "7/7",
+        title: "Choose a time, then schedule your video",
+        tip: "",
       },
     };
     let timeLinkFlashTimer = null;
@@ -3679,6 +3714,12 @@ document.addEventListener("DOMContentLoaded", () => {
         top,
         behavior: "smooth",
       });
+    };
+    const clearCoachmarkModalTimer = () => {
+      if (state.coachmarkModalTimerId) {
+        window.clearTimeout(state.coachmarkModalTimerId);
+        state.coachmarkModalTimerId = null;
+      }
     };
     const findSegmentByTime = (seconds) => {
       const numeric = Number(seconds);
@@ -3750,6 +3791,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (coachmarkTitleEl) {
         coachmarkTitleEl.textContent = config.title;
+        coachmarkTitleEl.classList.toggle("d-none", !config.title);
       }
       if (coachmarkTipEl) {
         coachmarkTipEl.textContent = config.tip || "";
@@ -3766,7 +3808,7 @@ document.addEventListener("DOMContentLoaded", () => {
           coachmarkEl.style.left = `${Math.max(16, rect.right - 304)}px`;
         }
       }
-      if (step === 4 && window.innerWidth > 991) {
+      if ((step === 4 || step === 5) && window.innerWidth > 991) {
         const targetPlanIndex = String(state.coachmarkTargetPlanIndex || "").trim();
         const targetEl =
           (targetPlanIndex && document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)) ||
@@ -3777,6 +3819,17 @@ document.addEventListener("DOMContentLoaded", () => {
           coachmarkEl.style.position = "fixed";
           coachmarkEl.style.top = `${Math.max(88, rect.top + 12)}px`;
           coachmarkEl.style.left = `${Math.max(16, rect.left - 296)}px`;
+        }
+      }
+      if ((step === 6 || step === 7) && window.innerWidth > 991) {
+        const modalTarget = step === 6
+          ? document.getElementById("youtube-description-input")
+          : document.querySelector("#youtube-upload-form button[type='submit']");
+        if (modalTarget) {
+          const rect = modalTarget.getBoundingClientRect();
+          coachmarkEl.style.position = "fixed";
+          coachmarkEl.style.top = `${Math.max(88, rect.top - 122)}px`;
+          coachmarkEl.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 304))}px`;
         }
       }
       coachmarkEl.classList.remove("is-hidden");
@@ -4242,6 +4295,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     return {
       clearSelection: () => {
+        clearCoachmarkModalTimer();
         state.anchorIndex = null;
         state.selectionStart = null;
         state.selectionEnd = null;
@@ -4250,6 +4304,7 @@ document.addEventListener("DOMContentLoaded", () => {
         renderSelection();
       },
       showPublishCoachmark: (planIndex = "") => {
+        clearCoachmarkModalTimer();
         state.coachmarkStepOverride = 4;
         state.coachmarkTargetPlanIndex = String(planIndex || "").trim();
         const targetPlanIndex = state.coachmarkTargetPlanIndex;
@@ -4260,6 +4315,44 @@ document.addEventListener("DOMContentLoaded", () => {
           targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
           const clipPanel = document.getElementById("clip-management-panel");
           clipPanel?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
+        renderCoachmark();
+      },
+      showReadyCoachmark: (planIndex = "") => {
+        clearCoachmarkModalTimer();
+        state.coachmarkStepOverride = 5;
+        state.coachmarkTargetPlanIndex = String(planIndex || state.coachmarkTargetPlanIndex || "").trim();
+        const targetPlanIndex = state.coachmarkTargetPlanIndex;
+        const targetEl = targetPlanIndex
+          ? document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(targetPlanIndex)}"]`)
+          : null;
+        targetEl?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        renderCoachmark();
+      },
+      showDescriptionCoachmark: () => {
+        clearCoachmarkModalTimer();
+        state.coachmarkStepOverride = 6;
+        renderCoachmark();
+        state.coachmarkModalTimerId = window.setTimeout(() => {
+          const modalEl = document.getElementById("youtubeUploadModal");
+          if (!modalEl?.classList.contains("show")) {
+            return;
+          }
+          state.coachmarkStepOverride = 7;
+          renderCoachmark();
+        }, 2400);
+      },
+      showScheduleCoachmark: () => {
+        clearCoachmarkModalTimer();
+        state.coachmarkStepOverride = 7;
+        renderCoachmark();
+      },
+      restoreReadyCoachmark: () => {
+        clearCoachmarkModalTimer();
+        if (state.coachmarkTargetPlanIndex) {
+          state.coachmarkStepOverride = 5;
+        } else {
+          state.coachmarkStepOverride = null;
         }
         renderCoachmark();
       },
@@ -4275,6 +4368,7 @@ document.addEventListener("DOMContentLoaded", () => {
       capturePlayerState: () => player.captureState?.() || null,
       restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
       destroy: () => {
+        clearCoachmarkModalTimer();
         player.destroy?.();
       },
     };
@@ -4882,6 +4976,7 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
           href: window.location.href,
         });
       }
+      window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
       loadGenerateUsageSummary();
       return;
     }
@@ -4896,6 +4991,7 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
       href: window.location.href,
     });
   }
+  window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
   const card = getClipCardByPlanIndex(planIndex);
   if (card) {
     setClipFeedbackState(card, {
@@ -5994,6 +6090,42 @@ const initSendToYoutubeButtons = () => {
   if (!ctx) {
     return;
   }
+  const publishModalEl = document.getElementById("youtubeUploadModal");
+  let scheduleCoachmarkTimer = null;
+  const clearScheduleCoachmarkTimer = () => {
+    if (scheduleCoachmarkTimer) {
+      window.clearTimeout(scheduleCoachmarkTimer);
+      scheduleCoachmarkTimer = null;
+    }
+  };
+  ctx.descriptionInput?.addEventListener("focus", () => {
+    if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
+      return;
+    }
+    window.__trsClipSelectorController?.showScheduleCoachmark?.();
+    clearScheduleCoachmarkTimer();
+  });
+  ctx.descriptionInput?.addEventListener("input", () => {
+    if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
+      return;
+    }
+    window.__trsClipSelectorController?.showScheduleCoachmark?.();
+    clearScheduleCoachmarkTimer();
+  });
+  publishModalEl?.addEventListener("shown.bs.modal", () => {
+    clearScheduleCoachmarkTimer();
+    window.__trsClipSelectorController?.showDescriptionCoachmark?.();
+    scheduleCoachmarkTimer = window.setTimeout(() => {
+      if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
+        return;
+      }
+      window.__trsClipSelectorController?.showScheduleCoachmark?.();
+    }, 2600);
+  });
+  publishModalEl?.addEventListener("hidden.bs.modal", () => {
+    clearScheduleCoachmarkTimer();
+    window.__trsClipSelectorController?.restoreReadyCoachmark?.();
+  });
   const parseLongTitles = (raw) => {
     if (!raw) return [];
     try {
