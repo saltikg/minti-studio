@@ -873,6 +873,45 @@ def ensure_background_preferences_schema(conn) -> None:
         pass
 
 
+def ensure_user_preferences_schema(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shorts_user_preferences (
+            id UUID PRIMARY KEY,
+            user_id VARCHAR NOT NULL,
+            preference_key VARCHAR NOT NULL,
+            preference_value VARCHAR,
+            created_at TIMESTAMP DEFAULT now(),
+            updated_at TIMESTAMP DEFAULT now()
+        )
+        """
+    )
+    cols = table_columns(conn, "shorts_user_preferences")
+    if "preference_key" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_user_preferences ADD COLUMN preference_key VARCHAR")
+        except Exception:
+            pass
+    if "preference_value" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_user_preferences ADD COLUMN preference_value VARCHAR")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_user_preferences_user_key
+            ON shorts_user_preferences(user_id, preference_key)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
 def ensure_static_image_categories_schema(
     conn,
     owner_id: str | None = None,

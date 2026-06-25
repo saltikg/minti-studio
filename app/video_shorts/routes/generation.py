@@ -98,6 +98,10 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.background_preferences import load_background_preference
+from app.video_shorts.services.user_preferences import (
+    load_user_bool_preference,
+    save_user_bool_preference,
+)
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _find_source_video,
@@ -189,6 +193,7 @@ from app.video_shorts.youtube_api import fetch_video_stats
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
+HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
 TIMEZONE_LABELS = {
     "America/Los_Angeles": "Pacific (PST/PDT)",
     "America/Denver": "Mountain (MST/MDT)",
@@ -3375,6 +3380,11 @@ def generate_short(video_pk):
         except Exception:
             pass
     current_user = getattr(g, "vs_current_user", None)
+    hide_clip_coachmark = load_user_bool_preference(
+        current_user.get("id") if current_user else None,
+        HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
+        default=False,
+    )
     brand_id = current_brand_id()
     conn = get_db_readonly()
     video_sql = """
@@ -4533,6 +4543,8 @@ def generate_short(video_pk):
         video_background_visual_key=video_background_visual_key,
         background_visual_label=background_visual_label,
         background_preference_update_url=url_for("video_shorts_bp.update_selected_background"),
+        clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
+        hide_clip_coachmark=hide_clip_coachmark,
         video_crop_aspect=video.get("crop_aspect") if video else None,
         instagram_connected=instagram_connected,
         tiktok_connected=tiktok_connected,
@@ -4544,6 +4556,22 @@ def generate_short(video_pk):
         long_compilation_videos=long_compilation_videos,
         brand_subscribe_overlay_available=brand_subscribe_overlay_available,
     )
+
+
+@video_shorts_bp.route("/generate/preferences/clip-coachmark", methods=["POST"])
+def update_clip_coachmark_preference():
+    current_user = getattr(g, "vs_current_user", None)
+    user_id = str((current_user or {}).get("id") or "").strip()
+    if not user_id:
+        return jsonify({"success": False, "message": "Authentication required."}), 401
+    payload = request.get_json(silent=True) or {}
+    hide_value = bool(payload.get("hide"))
+    try:
+        save_user_bool_preference(user_id, HIDE_CLIP_COACHMARK_PREFERENCE_KEY, hide_value)
+    except Exception as exc:
+        current_app.logger.warning("Failed to save clip coachmark preference for %s: %s", user_id, exc)
+        return jsonify({"success": False, "message": "Preference could not be saved."}), 500
+    return jsonify({"success": True, "hide": hide_value})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_long_from_shorts", methods=["POST"])
