@@ -559,8 +559,8 @@
     right: 14px;
   }
   .trs-coachmark[data-step="4"] {
-    top: 116px;
-    right: 10px;
+    top: auto;
+    right: auto;
   }
   .trs-coachmark::after {
     content: "";
@@ -1274,6 +1274,7 @@
       position: relative;
       top: auto;
       right: auto;
+      left: auto;
       bottom: auto;
       width: 100%;
       margin-bottom: 2px;
@@ -3702,6 +3703,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const step = getCoachmarkStep();
       const config = coachmarkSteps[step] || coachmarkSteps[1];
       coachmarkEl.dataset.step = String(step);
+      coachmarkEl.style.position = "";
+      coachmarkEl.style.top = "";
+      coachmarkEl.style.right = "";
+      coachmarkEl.style.bottom = "";
+      coachmarkEl.style.left = "";
       if (coachmarkStepEl) {
         coachmarkStepEl.textContent = config.progress;
       }
@@ -3711,6 +3717,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (coachmarkTipEl) {
         coachmarkTipEl.textContent = config.tip || "";
         coachmarkTipEl.classList.toggle("d-none", !config.tip);
+      }
+      if (step === 4 && window.innerWidth > 991) {
+        const clipPanel = document.getElementById("clip-management-panel");
+        if (clipPanel) {
+          const rect = clipPanel.getBoundingClientRect();
+          coachmarkEl.style.position = "fixed";
+          coachmarkEl.style.top = `${Math.max(88, rect.top + 20)}px`;
+          coachmarkEl.style.left = `${Math.max(16, rect.left - 296)}px`;
+        }
       }
       coachmarkEl.classList.remove("is-hidden");
       if (step === 3 && lastCoachmarkStep !== 3 && selectionBarEl) {
