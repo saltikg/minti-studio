@@ -1080,28 +1080,40 @@
   .clip-workbench-side {
     --clip-side-sticky-top: 76px;
     --clip-side-stack-gap: 12px;
-    --clip-player-sticky-height: 0px;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
-  }
-  .clip-management-panel {
-    position: sticky;
-    top: calc(var(--clip-side-sticky-top) + var(--clip-player-sticky-height) + var(--clip-side-stack-gap));
-    overflow: visible;
-    z-index: 3;
-  }
-  .clip-source-player-card {
     position: sticky;
     top: var(--clip-side-sticky-top);
+    align-self: start;
+    max-height: calc(100vh - var(--clip-side-sticky-top) - 16px);
+    overflow: hidden;
+  }
+  .clip-management-panel {
+    position: relative;
+    top: auto;
+    overflow: visible;
+    z-index: 3;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .clip-source-player-card {
+    position: relative;
+    top: auto;
     z-index: 4;
+    flex: 0 0 auto;
   }
   .clip-pane {
     display: none;
   }
   .clip-pane.is-active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
   }
   .clip-pane-header {
     display: flex;
@@ -1124,9 +1136,10 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 560px;
+    max-height: none;
     overflow: auto;
     padding-right: 2px;
+    min-height: 0;
   }
   .clip-rail-item {
     display: grid;
@@ -1364,9 +1377,17 @@
     .clip-rail-list {
       max-height: none;
     }
+    .clip-workbench-side {
+      position: relative;
+      top: auto;
+      max-height: none;
+      overflow: visible;
+    }
     .clip-management-panel {
       position: relative;
       top: auto;
+      min-height: auto;
+      display: block;
     }
     .clip-rail-detail {
       padding: 0;
@@ -4435,19 +4456,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-const syncClipWorkbenchStickyOffsets = () => {
-  const side = document.querySelector(".clip-workbench-side");
-  const playerCard = document.querySelector(".clip-source-player-card");
-  if (!side || !playerCard) {
-    return;
-  }
-  side.style.setProperty("--clip-player-sticky-height", `${Math.ceil(playerCard.getBoundingClientRect().height)}px`);
-};
-</script>
-<script>
 document.addEventListener("DOMContentLoaded", () => {
-  syncClipWorkbenchStickyOffsets();
-  window.addEventListener("resize", syncClipWorkbenchStickyOffsets, { passive: true });
   loadGenerateUsageSummary();
   document.querySelectorAll("[data-confirm-message]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
@@ -4603,7 +4612,6 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     if (newClipPanel) {
       clipPanel.replaceWith(newClipPanel);
       loadGenerateUsageSummary();
-      syncClipWorkbenchStickyOffsets();
       initClipDetailModal(activePlanIndex, activeViewMode);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
