@@ -588,10 +588,11 @@
   .trs-coachmark[data-step="5"]::after {
     top: 50%;
     bottom: auto;
-    right: -10px;
+    left: -10px;
+    right: auto;
     transform: translateY(-50%);
-    border-width: 9px 0 9px 10px;
-    border-color: transparent transparent transparent #ffffff;
+    border-width: 9px 10px 9px 0;
+    border-color: transparent #ffffff transparent transparent;
   }
   .trs-coachmark-head {
     display: flex;
@@ -1076,19 +1077,24 @@
   .clip-workbench-row {
     align-items: start;
   }
-  .clip-management-panel {
-    position: relative;
-    overflow: visible;
-  }
   .clip-workbench-side {
+    --clip-side-sticky-top: 76px;
+    --clip-side-stack-gap: 12px;
+    --clip-player-sticky-height: 0px;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
+  .clip-management-panel {
+    position: sticky;
+    top: calc(var(--clip-side-sticky-top) + var(--clip-player-sticky-height) + var(--clip-side-stack-gap));
+    overflow: visible;
+    z-index: 3;
+  }
   .clip-source-player-card {
     position: sticky;
-    top: 76px;
+    top: var(--clip-side-sticky-top);
     z-index: 4;
   }
   .clip-pane {
@@ -1357,6 +1363,10 @@
     }
     .clip-rail-list {
       max-height: none;
+    }
+    .clip-management-panel {
+      position: relative;
+      top: auto;
     }
     .clip-rail-detail {
       padding: 0;
@@ -4425,7 +4435,19 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
+const syncClipWorkbenchStickyOffsets = () => {
+  const side = document.querySelector(".clip-workbench-side");
+  const playerCard = document.querySelector(".clip-source-player-card");
+  if (!side || !playerCard) {
+    return;
+  }
+  side.style.setProperty("--clip-player-sticky-height", `${Math.ceil(playerCard.getBoundingClientRect().height)}px`);
+};
+</script>
+<script>
 document.addEventListener("DOMContentLoaded", () => {
+  syncClipWorkbenchStickyOffsets();
+  window.addEventListener("resize", syncClipWorkbenchStickyOffsets, { passive: true });
   loadGenerateUsageSummary();
   document.querySelectorAll("[data-confirm-message]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
@@ -4581,6 +4603,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     if (newClipPanel) {
       clipPanel.replaceWith(newClipPanel);
       loadGenerateUsageSummary();
+      syncClipWorkbenchStickyOffsets();
       initClipDetailModal(activePlanIndex, activeViewMode);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
