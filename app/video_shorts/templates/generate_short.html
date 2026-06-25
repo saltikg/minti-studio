@@ -744,6 +744,10 @@
     box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.42);
     background: rgba(250, 204, 21, 0.08);
   }
+  .trs-row.is-time-linked {
+    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.58);
+    background: rgba(45, 212, 191, 0.12);
+  }
   .trs-row.has-gap {
     margin-top: 8px;
     padding-top: 12px;
@@ -1012,6 +1016,65 @@
     margin-top: 0;
     padding: 2px 8px 10px;
   }
+  .clip-card-repository {
+    display: none;
+  }
+  .clip-detail-modal .modal-dialog {
+    max-width: min(1080px, calc(100vw - 32px));
+  }
+  .clip-detail-modal .modal-content {
+    background: #0f1724;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 26px 80px rgba(0, 0, 0, 0.45);
+  }
+  .clip-detail-modal .modal-header,
+  .clip-detail-modal .modal-footer {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .clip-detail-modal .modal-body {
+    padding: 18px 18px 20px;
+  }
+  .clip-detail-modal-title {
+    color: #fff;
+    font-weight: 700;
+  }
+  .clip-detail-modal-meta {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.84rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .clip-detail-modal-mount .clip-card {
+    display: block;
+  }
+  .clip-detail-modal-mount .clip-card-main,
+  .clip-detail-modal-mount .clip-card-body,
+  .clip-detail-modal-mount .clip-card-transcript,
+  .clip-detail-modal-mount .clip-card-action-bar,
+  .clip-detail-modal-mount .clip-card-save-feedback,
+  .clip-detail-modal-mount .clip-title-suggestion-feedback {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .clip-detail-modal-mount .clip-card-main {
+    padding-right: 0;
+  }
+  .clip-detail-modal-mount .clip-card-transcript textarea {
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+  }
+  .clip-detail-modal-mount .clip-card-title-row {
+    display: grid;
+    grid-template-columns: minmax(100px, 116px) minmax(0, 1fr) 42px minmax(100px, 116px) 42px;
+    gap: 10px;
+    align-items: end;
+    width: 100%;
+  }
+  .clip-detail-modal-mount .clip-card-title-row > * {
+    min-width: 0;
+  }
   .clip-rail-detail-header {
     display: flex;
     align-items: flex-start;
@@ -1132,6 +1195,14 @@
     .clip-source-player-card {
       position: static;
       top: auto;
+    }
+    .clip-detail-modal .modal-dialog {
+      max-width: calc(100vw - 16px);
+      margin: 0.75rem auto;
+    }
+    .clip-detail-modal-mount .clip-card-title-row {
+      grid-template-columns: 1fr;
+      gap: 8px;
     }
   }
 </style>
@@ -1419,6 +1490,8 @@
               </div>
               <div class="clip-rail-list" id="clip-rail-list">
                 {% for row in clip_rows %}
+                  {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
+                  {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
                   <button type="button" class="clip-rail-item" data-plan-index="{{ row.plan_index }}">
                     <span class="clip-rail-thumb">
@@ -1432,27 +1505,13 @@
                     </span>
                     <span class="clip-rail-copy">
                       <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
-                      <span class="clip-rail-meta">{{ rail_duration_label }}</span>
+                      <span class="clip-rail-meta">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
                     </span>
                   </button>
                 {% endfor %}
               </div>
             </div>
-            <div class="clip-pane clip-pane-detail" id="clip-detail-panel">
-              <div id="clip-list" class="clip-list clip-rail-detail">
-              <div class="clip-rail-detail-header" id="clip-rail-detail-header">
-                <div>
-                  <div class="clip-rail-detail-title" id="clip-rail-detail-title">Clip details</div>
-                  <div class="clip-rail-detail-meta" id="clip-rail-detail-meta">Select a clip from the rail.</div>
-                </div>
-                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                  <div class="clip-rail-detail-state">Editing</div>
-                  <button type="button" class="btn btn-sm btn-outline-light clip-detail-back" id="clip-detail-back-btn">
-                    <i class="bi bi-arrow-left" aria-hidden="true"></i>
-                    Back to list
-                  </button>
-                </div>
-              </div>
+            <div id="clip-card-repository" class="clip-card-repository">
               {% for row in clip_rows %}
             {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
             {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
@@ -1753,8 +1812,23 @@
             </div>
               {% endfor %}
             </div>
-            </div>
       </div>
+      </div>
+      <div class="modal fade clip-detail-modal" id="clip-detail-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <div>
+                <div class="clip-detail-modal-title" id="clip-detail-modal-title">Clip details</div>
+                <div class="clip-detail-modal-meta" id="clip-detail-modal-meta"></div>
+              </div>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <div id="clip-detail-modal-mount" class="clip-detail-modal-mount"></div>
+            </div>
+          </div>
+        </div>
       </div>
     {% else %}
       <div class="editor-empty-shell-wrap">
@@ -2737,7 +2811,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
           }
         }
-        window.location.reload();
+        throw new Error("Clip was created, but the editor could not refresh automatically.");
       },
     }) || null;
   };
@@ -3013,12 +3087,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!frame || !statusCopy) {
       return {
         seekAndPlay: () => false,
+        captureState: () => null,
+        restoreState: () => false,
         destroy: () => {},
       };
     }
 
     let pollTimer = null;
     let nowPlayingIndex = null;
+    let pendingRestoreState = null;
     const setStatus = (message) => {
       statusCopy.textContent = message || "Unavailable";
     };
@@ -3059,6 +3136,8 @@ document.addEventListener("DOMContentLoaded", () => {
       renderFallback("Source player unavailable for this video.", source?.watch_url || "");
       return {
         seekAndPlay: () => false,
+        captureState: () => null,
+        restoreState: () => false,
         destroy,
       };
     }
@@ -3097,6 +3176,32 @@ document.addEventListener("DOMContentLoaded", () => {
             return false;
           }
         },
+        captureState: () => ({
+          currentTime: Number(video.currentTime || 0),
+          playing: !video.paused,
+        }),
+        restoreState: (snapshot) => {
+          if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
+            return false;
+          }
+          try {
+            const safeSeconds = Math.max(0, Number(snapshot.currentTime) || 0);
+            video.currentTime = safeSeconds;
+            if (snapshot.playing) {
+              const playPromise = video.play();
+              if (playPromise?.catch) {
+                playPromise.catch(() => {});
+              }
+              setStatus(`Playing from ${formatSeconds(safeSeconds)}`);
+            } else {
+              setStatus(`Ready at ${formatSeconds(safeSeconds)}`);
+            }
+            setNowPlayingByTime(safeSeconds);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        },
         destroy,
       };
     }
@@ -3127,6 +3232,50 @@ document.addEventListener("DOMContentLoaded", () => {
             return false;
           }
         },
+        captureState() {
+          if (!this.ready || !this.player) {
+            return pendingRestoreState;
+          }
+          try {
+            const playerState = this.player.getPlayerState?.();
+            return {
+              currentTime: Number(this.player.getCurrentTime?.() || 0),
+              playing: playerState === window.YT?.PlayerState?.PLAYING,
+            };
+          } catch (_) {
+            return pendingRestoreState;
+          }
+        },
+        restoreState(snapshot) {
+          if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
+            return false;
+          }
+          const safeSnapshot = {
+            currentTime: Math.max(0, Number(snapshot.currentTime) || 0),
+            playing: !!snapshot.playing,
+          };
+          if (!this.ready || !this.player) {
+            pendingRestoreState = safeSnapshot;
+            this.pendingSeek = safeSnapshot.currentTime;
+            return false;
+          }
+          try {
+            this.player.seekTo(safeSnapshot.currentTime, true);
+            if (safeSnapshot.playing) {
+              this.player.playVideo();
+              setStatus(`Playing from ${formatSeconds(safeSnapshot.currentTime)}`);
+            } else {
+              this.player.pauseVideo?.();
+              setStatus(`Ready at ${formatSeconds(safeSnapshot.currentTime)}`);
+            }
+            setNowPlayingByTime(safeSnapshot.currentTime);
+            pendingRestoreState = null;
+            return true;
+          } catch (_) {
+            pendingRestoreState = safeSnapshot;
+            return false;
+          }
+        },
         destroy,
       };
       loadYoutubeIframeApi()
@@ -3143,7 +3292,11 @@ document.addEventListener("DOMContentLoaded", () => {
               onReady: () => {
                 adapter.ready = true;
                 setStatus("Ready");
-                if (adapter.pendingSeek !== null) {
+                if (pendingRestoreState) {
+                  const restoreSnapshot = pendingRestoreState;
+                  pendingRestoreState = null;
+                  adapter.restoreState(restoreSnapshot);
+                } else if (adapter.pendingSeek !== null) {
                   const pending = adapter.pendingSeek;
                   adapter.pendingSeek = null;
                   adapter.seekAndPlay(pending);
@@ -3183,6 +3336,8 @@ document.addEventListener("DOMContentLoaded", () => {
     renderFallback("Source player unavailable for this video.", source?.watch_url || "");
     return {
       seekAndPlay: () => false,
+      captureState: () => null,
+      restoreState: () => false,
       destroy,
     };
   };
@@ -3256,6 +3411,39 @@ document.addEventListener("DOMContentLoaded", () => {
       selectionEnd: null,
       creating: false,
       anchorIndex: null,
+      lastTranscriptInteractionAt: 0,
+    };
+    let timeLinkFlashTimer = null;
+    const noteTranscriptInteraction = () => {
+      state.lastTranscriptInteractionAt = Date.now();
+    };
+    const canAutoScrollTranscript = () => (Date.now() - state.lastTranscriptInteractionAt) > 2500;
+    const flashLinkedSegment = (segment) => {
+      if (!segment?.rowEl) {
+        return;
+      }
+      if (timeLinkFlashTimer) {
+        window.clearTimeout(timeLinkFlashTimer);
+        timeLinkFlashTimer = null;
+      }
+      segments.forEach((item) => item.rowEl?.classList.remove("is-time-linked"));
+      segment.rowEl.classList.add("is-time-linked");
+      timeLinkFlashTimer = window.setTimeout(() => {
+        segment.rowEl?.classList.remove("is-time-linked");
+      }, 1800);
+    };
+    const findSegmentByTime = (seconds) => {
+      const numeric = Number(seconds);
+      if (!Number.isFinite(numeric) || !segments.length) {
+        return null;
+      }
+      return segments.find((segment) => numeric >= segment.start && numeric <= segment.end)
+        || segments.reduce((closest, segment) => {
+          if (!closest) {
+            return segment;
+          }
+          return Math.abs(segment.start - numeric) < Math.abs(closest.start - numeric) ? segment : closest;
+        }, null);
     };
     const player = mountTranscriptPlayer(root, playerSource, segments, (segmentIndex) => {
       segments.forEach((segment) => {
@@ -3263,6 +3451,9 @@ document.addEventListener("DOMContentLoaded", () => {
           segment.rowEl.classList.toggle("is-playing", segmentIndex !== null && segment.index === segmentIndex);
         }
       });
+      if (segmentIndex !== null && canAutoScrollTranscript()) {
+        segments[segmentIndex]?.rowEl?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      }
     });
 
     const getSelectedRange = () => {
@@ -3501,7 +3692,7 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.className = "trs-row-time";
         timeEl.type = "button";
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
-        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)}</span>`;
+        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)} – ${escapeHtml(segment.endLabel)}</span>`;
 
         const mainEl = document.createElement("div");
         mainEl.className = "trs-row-main";
@@ -3541,6 +3732,7 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
+          noteTranscriptInteraction();
           player.seekAndPlay(segment.start);
         });
 
@@ -3627,6 +3819,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     renderRows();
     renderMatches(false);
+    documentEl?.addEventListener("scroll", noteTranscriptInteraction, { passive: true });
+    documentEl?.addEventListener("wheel", noteTranscriptInteraction, { passive: true });
+    documentEl?.addEventListener("touchstart", noteTranscriptInteraction, { passive: true });
+    documentEl?.addEventListener("pointerdown", noteTranscriptInteraction);
+    documentEl?.addEventListener("keydown", noteTranscriptInteraction);
 
     searchInput?.addEventListener("input", () => {
       state.query = searchInput.value || "";
@@ -3678,6 +3875,17 @@ document.addEventListener("DOMContentLoaded", () => {
         state.selectionEnd = null;
         renderSelection();
       },
+      focusTime: (seconds) => {
+        const segment = findSegmentByTime(seconds);
+        if (!segment?.rowEl) {
+          return null;
+        }
+        flashLinkedSegment(segment);
+        segment.rowEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        return segment;
+      },
+      capturePlayerState: () => player.captureState?.() || null,
+      restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
       destroy: () => {
         player.destroy?.();
       },
@@ -3703,6 +3911,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
   bindClipTitleAutofillTracking();
+  bindClipTimeInputFocus();
 });
 </script>
 <script>
@@ -3728,51 +3937,62 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-const initClipRail = (preferredPlanIndex = null, preferredViewMode = null) => {
+const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null) => {
   const panel = document.getElementById("clip-management-panel");
   const listPane = document.getElementById("clip-pane-list");
-  const detailPane = document.getElementById("clip-detail-panel");
   const railList = document.getElementById("clip-rail-list");
-  const clipList = document.getElementById("clip-list");
-  const detailTitle = document.getElementById("clip-rail-detail-title");
-  const detailMeta = document.getElementById("clip-rail-detail-meta");
-  const detailBackBtn = document.getElementById("clip-detail-back-btn");
-  if (!panel || !listPane || !detailPane || !railList || !clipList) {
+  const repository = document.getElementById("clip-card-repository");
+  const modalEl = document.getElementById("clip-detail-modal");
+  const modalMount = document.getElementById("clip-detail-modal-mount");
+  const modalTitle = document.getElementById("clip-detail-modal-title");
+  const modalMeta = document.getElementById("clip-detail-modal-meta");
+  if (!panel || !listPane || !railList || !repository || !modalEl || !modalMount) {
     return;
   }
   const railItems = Array.from(railList.querySelectorAll(".clip-rail-item"));
-  const clipCards = Array.from(clipList.querySelectorAll(".clip-card"));
+  const clipCards = Array.from(repository.querySelectorAll(".clip-card"));
   if (!railItems.length || !clipCards.length) {
     return;
   }
+  const modal = typeof bootstrap !== "undefined" ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
 
-  const setPanelMode = (mode) => {
-    const normalizedMode = mode === "detail" ? "detail" : "list";
-    panel.dataset.viewMode = normalizedMode;
-    listPane.classList.toggle("is-active", normalizedMode === "list");
-    detailPane.classList.toggle("is-active", normalizedMode === "detail");
+  const restoreMountedCard = () => {
+    const activeCard = modalMount.querySelector(".clip-card");
+    if (activeCard) {
+      repository.appendChild(activeCard);
+    }
   };
 
-  const selectPlan = (planIndex, { openDetail = true } = {}) => {
+  const setPanelMode = (mode) => {
+    const normalizedMode = mode === "detail" || mode === "modal" ? "modal" : "list";
+    panel.dataset.viewMode = normalizedMode;
+    listPane.classList.add("is-active");
+  };
+
+  const selectPlan = (planIndex, { openModal = true } = {}) => {
     const normalized = String(planIndex || "").trim();
     panel.dataset.activePlanIndex = normalized;
     railItems.forEach((item) => {
       item.classList.toggle("is-active", String(item.dataset.planIndex || "").trim() === normalized);
     });
+    const activeCard = clipCards.find((card) => String(card.dataset.planIndex || "").trim() === normalized) || null;
     clipCards.forEach((card) => {
-      const isActive = String(card.dataset.planIndex || "").trim() === normalized;
-      card.classList.toggle("is-active", isActive);
-      if (isActive) {
-        if (detailTitle) {
-          detailTitle.textContent = card.querySelector(".clip-title-input")?.value?.trim() || "Clip details";
-        }
-        if (detailMeta) {
-          detailMeta.textContent = card.querySelector(".clip-card-meta-time")?.textContent?.trim() || "";
-        }
-      }
+      card.classList.toggle("is-active", card === activeCard);
     });
-    if (openDetail) {
-      setPanelMode("detail");
+    if (!activeCard) {
+      return;
+    }
+    if (modalTitle) {
+      modalTitle.textContent = activeCard.querySelector(".clip-title-input")?.value?.trim() || "Clip details";
+    }
+    if (modalMeta) {
+      modalMeta.textContent = activeCard.querySelector(".clip-card-meta-time")?.textContent?.trim() || "";
+    }
+    if (openModal) {
+      restoreMountedCard();
+      modalMount.appendChild(activeCard);
+      setPanelMode("modal");
+      modal?.show();
     }
   };
 
@@ -3782,20 +4002,24 @@ const initClipRail = (preferredPlanIndex = null, preferredViewMode = null) => {
     }
     item.dataset.clipRailBound = "1";
     item.addEventListener("click", () => {
-      selectPlan(item.dataset.planIndex || "", { openDetail: true });
+      selectPlan(item.dataset.planIndex || "", { openModal: true });
     });
   });
-  if (detailBackBtn && detailBackBtn.dataset.clipDetailBackBound !== "1") {
-    detailBackBtn.dataset.clipDetailBackBound = "1";
-    detailBackBtn.addEventListener("click", () => {
+  if (modalEl.dataset.clipModalBound !== "1") {
+    modalEl.dataset.clipModalBound = "1";
+    modalEl.addEventListener("hidden.bs.modal", () => {
+      restoreMountedCard();
       setPanelMode("list");
     });
   }
 
   const fallbackPlanIndex = railItems[0]?.dataset.planIndex || clipCards[0]?.dataset.planIndex || "";
   const initialPlanIndex = preferredPlanIndex || panel.dataset.activePlanIndex || fallbackPlanIndex;
-  selectPlan(initialPlanIndex, { openDetail: false });
-  setPanelMode(preferredViewMode || panel.dataset.viewMode || (preferredPlanIndex ? "detail" : "list"));
+  selectPlan(initialPlanIndex, { openModal: false });
+  setPanelMode(preferredViewMode || panel.dataset.viewMode || "list");
+  if ((preferredViewMode === "detail" || preferredViewMode === "modal") && initialPlanIndex) {
+    selectPlan(initialPlanIndex, { openModal: true });
+  }
 };
 
 const initAddClipToggle = () => {
@@ -3820,6 +4044,20 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   }
   const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
+  const playerState = window.__trsClipSelectorController?.capturePlayerState?.() || null;
+  const currentModalEl = document.getElementById("clip-detail-modal");
+  if (currentModalEl?.classList.contains("show")) {
+    document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
+    if (typeof bootstrap !== "undefined") {
+      bootstrap.Modal.getInstance(currentModalEl)?.hide();
+    }
+    currentModalEl.classList.remove("show");
+    currentModalEl.style.display = "none";
+    document.body.classList.remove("modal-open");
+    document.body.style.removeProperty("overflow");
+    document.body.style.removeProperty("padding-right");
+    document.querySelectorAll(".modal-backdrop").forEach((backdrop) => backdrop.remove());
+  }
   try {
     const response = await fetch(window.location.href, {
       credentials: "same-origin",
@@ -3835,8 +4073,11 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     if (newWorkbench) {
       workbench.replaceWith(newWorkbench);
       window.mountTranscriptClipSelector?.();
+      if (playerState) {
+        window.__trsClipSelectorController?.restorePlayerState?.(playerState);
+      }
       loadGenerateUsageSummary();
-      initClipRail(activePlanIndex, activeViewMode);
+      initClipDetailModal(activePlanIndex, activeViewMode);
       initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
         document.querySelectorAll("#clip-workbench-shell [data-bs-toggle='tooltip']").forEach((el) => {
@@ -3848,6 +4089,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       initDeleteClipAjax();
       initClipTitleRowAjax();
       bindClipTitleAutofillTracking();
+      bindClipTimeInputFocus();
       initClipSuggestTitleButtons();
       initClipCategoryAjax();
       initSendToYoutubeButtons();
@@ -3891,7 +4133,7 @@ const syncClipCardTitleUi = (card, title) => {
     railTitle.textContent = safeTitle;
   }
   if (card.classList.contains("is-active")) {
-    const detailTitle = document.getElementById("clip-rail-detail-title");
+    const detailTitle = document.getElementById("clip-detail-modal-title");
     if (detailTitle) {
       detailTitle.textContent = safeTitle;
     }
@@ -3918,6 +4160,27 @@ const bindClipTitleAutofillTracking = () => {
       const currentValue = String(input.value || "").trim();
       input.dataset.autoTitleDirty = baseline && currentValue !== baseline ? "1" : "0";
     });
+  });
+};
+
+const bindClipTimeInputFocus = () => {
+  document.querySelectorAll(".clip-card-title-row .clip-time-input").forEach((input) => {
+    if (input.dataset.clipTimeFocusBound === "1") {
+      return;
+    }
+    input.dataset.clipTimeFocusBound = "1";
+    const syncFocus = () => {
+      const value = String(input.value || "").trim();
+      if (!value) {
+        return;
+      }
+      const seconds = parseTimeToSeconds(value);
+      if (Number.isFinite(seconds)) {
+        window.__trsClipSelectorController?.focusTime?.(seconds);
+      }
+    };
+    input.addEventListener("focus", syncFocus);
+    input.addEventListener("click", syncFocus);
   });
 };
 
@@ -4188,7 +4451,7 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
 const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
   stopClipJobPolling(planIndex, { clearStored: true });
   for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
-    const refreshed = await refreshClipList();
+    const refreshed = await refreshClipList(planIndex, "modal");
     if (refreshed && isCreatedClipRendered(planIndex)) {
       if (cached) {
         injectClipNotice(planIndex, "You've already generated this clip.");
@@ -4213,7 +4476,16 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
       href: window.location.href,
     });
   }
-  window.location.reload();
+  const card = getClipCardByPlanIndex(planIndex);
+  if (card) {
+    setClipFeedbackState(card, {
+      message: "Short generated. Refresh if the preview does not appear yet.",
+      tone: "text-warning",
+      busy: false,
+      showSpinner: false,
+      disableButton: false,
+    });
+  }
 };
 
 const handleClipJobFailure = (planIndex) => {
@@ -4525,6 +4797,10 @@ const initClipTitleRowAjax = () => {
           if (metaTime && payload.start_label && payload.end_label && payload.duration_label) {
             metaTime.textContent = `${payload.start_label} – ${payload.end_label} (${payload.duration_label})`;
           }
+          const railMeta = document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(String(card.dataset.planIndex || ""))}"] .clip-rail-meta`);
+          if (railMeta && payload.start_label && payload.end_label && payload.duration_label) {
+            railMeta.textContent = `${payload.start_label} – ${payload.end_label} · ${payload.duration_label}`;
+          }
           if (payload.start !== undefined) {
             card.dataset.start = payload.start;
           }
@@ -4532,8 +4808,8 @@ const initClipTitleRowAjax = () => {
             card.dataset.duration = payload.duration;
           }
           if (card.classList.contains("is-active")) {
-            const detailTitle = document.getElementById("clip-rail-detail-title");
-            const detailMeta = document.getElementById("clip-rail-detail-meta");
+            const detailTitle = document.getElementById("clip-detail-modal-title");
+            const detailMeta = document.getElementById("clip-detail-modal-meta");
             if (detailTitle) {
               detailTitle.textContent = card.querySelector(".clip-title-input")?.value?.trim() || "Clip details";
             }
@@ -5570,6 +5846,7 @@ const initLongVideoDeleteButtons = () => {
 document.addEventListener("DOMContentLoaded", () => {
   initGenerateClipForms();
   initClipTitleRowAjax();
+  bindClipTimeInputFocus();
   initClipCategoryAjax();
   initSendToYoutubeButtons();
   initCreateLongFromShortsButton();
@@ -6820,7 +7097,7 @@ window.addEventListener("unhandledrejection", (event) => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  initClipRail();
+  initClipDetailModal();
   initAddClipToggle();
 });
 </script>
