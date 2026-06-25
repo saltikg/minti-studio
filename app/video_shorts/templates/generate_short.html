@@ -1084,36 +1084,31 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    position: sticky;
-    top: var(--clip-side-sticky-top);
-    align-self: start;
-    max-height: calc(100vh - var(--clip-side-sticky-top) - 16px);
-    overflow: hidden;
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    max-height: none;
+    overflow: visible;
   }
   .clip-management-panel {
     position: relative;
     top: auto;
     overflow: visible;
     z-index: 3;
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: auto;
+    display: block;
   }
   .clip-source-player-card {
-    position: relative;
-    top: auto;
+    position: sticky;
+    top: var(--clip-side-sticky-top);
     z-index: 4;
-    flex: 0 0 auto;
   }
   .clip-pane {
     display: none;
   }
   .clip-pane.is-active {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    height: 100%;
+    display: block;
   }
   .clip-pane-header {
     display: flex;
@@ -1137,9 +1132,8 @@
     flex-direction: column;
     gap: 8px;
     max-height: none;
-    overflow: auto;
+    overflow: visible;
     padding-right: 2px;
-    min-height: 0;
   }
   .clip-rail-item {
     display: grid;
@@ -1382,6 +1376,7 @@
       top: auto;
       max-height: none;
       overflow: visible;
+      align-self: stretch;
     }
     .clip-management-panel {
       position: relative;
@@ -3713,7 +3708,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       6: {
         progress: "6/7",
-        title: "Add a video description",
+        title: "Add a social caption, then schedule or publish",
         tip: "",
       },
       7: {
@@ -3873,9 +3868,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
       if ((step === 6 || step === 7) && window.innerWidth > 991) {
-        const modalTarget = step === 6
-          ? document.getElementById("youtube-description-input")
-          : document.querySelector("#youtube-upload-form button[type='submit']");
+        const modalTarget = document.querySelector("#youtube-upload-form button[type='submit']");
         if (modalTarget) {
           const rect = modalTarget.getBoundingClientRect();
           coachmarkEl.style.position = "fixed";
@@ -6150,39 +6143,10 @@ const initSendToYoutubeButtons = () => {
     return;
   }
   const publishModalEl = document.getElementById("youtubeUploadModal");
-  let scheduleCoachmarkTimer = null;
-  const clearScheduleCoachmarkTimer = () => {
-    if (scheduleCoachmarkTimer) {
-      window.clearTimeout(scheduleCoachmarkTimer);
-      scheduleCoachmarkTimer = null;
-    }
-  };
-  ctx.descriptionInput?.addEventListener("focus", () => {
-    if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
-      return;
-    }
-    window.__trsClipSelectorController?.showScheduleCoachmark?.();
-    clearScheduleCoachmarkTimer();
-  });
-  ctx.descriptionInput?.addEventListener("input", () => {
-    if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
-      return;
-    }
-    window.__trsClipSelectorController?.showScheduleCoachmark?.();
-    clearScheduleCoachmarkTimer();
-  });
   publishModalEl?.addEventListener("shown.bs.modal", () => {
-    clearScheduleCoachmarkTimer();
-    window.__trsClipSelectorController?.showDescriptionCoachmark?.();
-    scheduleCoachmarkTimer = window.setTimeout(() => {
-      if (!document.getElementById("youtubeUploadModal")?.classList.contains("show")) {
-        return;
-      }
-      window.__trsClipSelectorController?.showScheduleCoachmark?.();
-    }, 2600);
+    window.__trsClipSelectorController?.showScheduleCoachmark?.();
   });
   publishModalEl?.addEventListener("hidden.bs.modal", () => {
-    clearScheduleCoachmarkTimer();
     window.__trsClipSelectorController?.restoreReadyCoachmark?.();
   });
   const parseLongTitles = (raw) => {
