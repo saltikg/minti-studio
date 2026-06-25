@@ -3874,9 +3874,16 @@ document.addEventListener("DOMContentLoaded", () => {
           document.querySelector("#youtube-upload-form button[type='submit']");
         if (modalTarget) {
           const rect = modalTarget.getBoundingClientRect();
+          const coachmarkWidth = Math.min(280, Math.max(220, window.innerWidth - 40));
+          const targetMidY = rect.top + (rect.height / 2);
+          const fitsLeft = rect.left >= (coachmarkWidth + 18);
           coachmarkEl.style.position = "fixed";
-          coachmarkEl.style.top = `${Math.max(88, rect.top - 122)}px`;
-          coachmarkEl.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - 304))}px`;
+          coachmarkEl.style.top = `${Math.max(88, targetMidY - 72)}px`;
+          if (fitsLeft) {
+            coachmarkEl.style.left = `${Math.max(16, rect.left - coachmarkWidth - 14)}px`;
+          } else {
+            coachmarkEl.style.left = `${Math.max(16, Math.min(rect.right + 14, window.innerWidth - coachmarkWidth - 16))}px`;
+          }
         }
       }
       coachmarkEl.classList.remove("is-hidden");
@@ -4545,7 +4552,11 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
   if (modalEl.dataset.clipModalBound !== "1") {
     modalEl.dataset.clipModalBound = "1";
     modalEl.addEventListener("shown.bs.modal", () => {
-      window.__trsClipSelectorController?.showScheduleCoachmark?.();
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          window.__trsClipSelectorController?.showScheduleCoachmark?.();
+        });
+      });
     });
     modalEl.addEventListener("hidden.bs.modal", () => {
       restoreMountedCard();
@@ -6153,7 +6164,11 @@ const initSendToYoutubeButtons = () => {
   }
   const publishModalEl = document.getElementById("youtubeUploadModal");
   publishModalEl?.addEventListener("shown.bs.modal", () => {
-    window.__trsClipSelectorController?.showScheduleCoachmark?.();
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.__trsClipSelectorController?.showScheduleCoachmark?.();
+      });
+    });
   });
   publishModalEl?.addEventListener("hidden.bs.modal", () => {
     if (!document.getElementById("clip-detail-modal")?.classList.contains("show")) {
