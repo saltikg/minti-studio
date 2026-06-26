@@ -1,7 +1,6 @@
 {% extends "vs_marketing_base.html" %}
-{% set vs_sources_owner = vs_current_user and (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com' %}
-{% set vs_library_href = url_for('video_shorts_bp.channels_page' if vs_sources_owner else 'video_shorts_bp.my_videos_page') %}
-{% set vs_library_label = 'Sources' if vs_sources_owner else 'My Videos' %}
+{% set vs_library_href = url_for('video_shorts_bp.my_videos_page') %}
+{% set vs_library_label = 'My Videos' %}
 
 {% block title %}MintiStudio{% endblock %}
 
@@ -234,7 +233,7 @@
             Create your first short
           </a>
           <a class="btn btn-outline-secondary" href="{{ vs_library_href }}">
-            {{ 'Connect a source' if vs_sources_owner else 'Open my videos' }}
+            Open my videos
           </a>
         </div>
       </div>
@@ -335,7 +334,7 @@
               <span class="material-symbols-outlined">subscriptions</span>
             </div>
             <div class="card-title-small">{{ vs_library_label }}</div>
-            <p class="card-copy">{{ 'Connect YouTube and bring in videos.' if vs_sources_owner else 'Upload videos and turn them into shorts.' }}</p>
+            <p class="card-copy">Upload videos and turn them into shorts.</p>
           </div>
         </a>
       </div>

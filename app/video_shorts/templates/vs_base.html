@@ -157,7 +157,6 @@
 </head>
 
 <body class="vs-shell vs-app" data-theme="dark">
-  {% set vs_sources_owner = vs_current_user and (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com' %}
 
   <!-- Top Navbar -->
   <nav class="navbar vs-topnav px-3">
@@ -254,11 +253,11 @@
             <span>Quick Short</span>
           </a>
 
-          <a href="{{ url_for('video_shorts_bp.channels_page' if vs_sources_owner else 'video_shorts_bp.my_videos_page') }}"
+          <a href="{{ url_for('video_shorts_bp.my_videos_page') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
                     {% if '/video_shorts/channels' in request.path or '/video_shorts/my-videos' in request.path %}active{% endif %}">
             <span class="material-symbols-outlined">subscriptions</span>
-            <span>{{ 'Sources' if vs_sources_owner else 'My Videos' }}</span>
+            <span>My Videos</span>
           </a>
 
           <div class="sidebar-section-label">DISTRIBUTE</div>
