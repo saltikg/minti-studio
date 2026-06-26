@@ -1,8 +1,8 @@
 import hashlib
-from datetime import timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from flask import flash, redirect, render_template, request, url_for, g
+from flask import flash, g, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
@@ -12,10 +12,12 @@ from app.video_shorts.services.db import (
     get_db_readonly,
     ensure_channel_owner_schema,
 )
+from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
+SOURCES_OWNER_EMAIL = "gokhansaltik@gmail.com"
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -46,9 +48,177 @@ def _format_channel_timestamp(value, tz_name: str) -> str:
     return local_dt.strftime("%Y-%m-%d %H:%M")
 
 
+def _is_sources_owner(current_user) -> bool:
+    email = str((current_user or {}).get("email") or "").strip().lower()
+    return email == SOURCES_OWNER_EMAIL
+
+
+def _format_duration_label(seconds) -> str:
+    try:
+        total = int(round(float(seconds or 0)))
+    except Exception:
+        total = 0
+    if total <= 0:
+        return "—"
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_video_timestamp(value, tz_name: str) -> str:
+    if not value:
+        return "Unknown date"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TIME_ZONE)
+    dt_value = value
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        try:
+            dt_value = datetime.fromisoformat(normalized)
+        except Exception:
+            return value[:16]
+    if getattr(dt_value, "tzinfo", None) is None:
+        dt_value = dt_value.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(tz).strftime("%b %-d, %Y")
+
+
+def _video_status_payload(download_status: str | None, transcript_status: str | None, short_count: int) -> dict:
+    download_value = str(download_status or "").strip().lower()
+    transcript_value = str(transcript_status or "").strip().lower()
+    transcript_ready = transcript_value in {"done", "ready", "completed", "ok"}
+    is_transcribing = transcript_value == "pending" or download_value == "pending"
+    if is_transcribing:
+        label = "Transcribing"
+        tone = "info"
+        filter_key = "transcribing"
+    elif short_count > 0:
+        label = "Has shorts"
+        tone = "success"
+        filter_key = "has_shorts"
+    elif transcript_ready:
+        label = "Ready"
+        tone = "ready"
+        filter_key = "ready"
+    else:
+        label = "No shorts"
+        tone = "muted"
+        filter_key = "no_shorts"
+    return {
+        "label": label,
+        "tone": tone,
+        "filter_key": filter_key,
+        "is_transcribing": is_transcribing,
+        "transcript_ready": transcript_ready,
+    }
+
+
+@video_shorts_bp.route("/my-videos", methods=["GET"])
+def my_videos_page():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if _is_sources_owner(current_user):
+        return redirect(url_for("video_shorts_bp.channels_page"))
+
+    brand_id = current_brand_id()
+    user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
+    search_query = (request.args.get("q") or "").strip()
+    status_filter = (request.args.get("status") or "all").strip().lower()
+    if status_filter not in {"all", "ready", "transcribing", "has_shorts", "no_shorts"}:
+        status_filter = "all"
+
+    schema_conn = get_db()
+    ensure_brand_schema(schema_conn)
+    ensure_channel_owner_schema(schema_conn)
+    _ensure_video_crop_schema(schema_conn)
+    ensure_generated_videos_schema(schema_conn)
+    schema_conn.close()
+
+    conn = get_db_readonly()
+    params = [current_user["id"]]
+    where_clauses = ["v.owner_user_id = ?"]
+    if brand_id:
+        where_clauses.append("v.brand_id = ?")
+        params.append(brand_id)
+    else:
+        where_clauses.append("v.brand_id IS NULL")
+    if search_query:
+        where_clauses.append("lower(coalesce(v.title, '')) LIKE ?")
+        params.append(f"%{search_query.lower()}%")
+    where_sql = " AND ".join(where_clauses)
+    rows = conn.execute(
+        f"""
+        SELECT
+            v.id,
+            v.video_id,
+            v.title,
+            v.thumbnail_url,
+            v.duration_seconds,
+            v.download_status,
+            v.transcript_status,
+            COALESCE(v.downloaded_at, v.published_at) AS added_at,
+            c.channel_name,
+            COALESCE(g.short_count, 0) AS short_count
+        FROM youtube_videos v
+        LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+        LEFT JOIN (
+            SELECT source_video_id, COUNT(*) AS short_count
+            FROM shorts_generated_videos
+            GROUP BY source_video_id
+        ) g ON CAST(g.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
+        WHERE {where_sql}
+        ORDER BY COALESCE(v.downloaded_at, v.published_at) DESC NULLS LAST, v.id DESC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+
+    videos = []
+    for row in rows:
+        item = {
+            "id": row[0],
+            "video_id": row[1],
+            "title": row[2] or "Untitled video",
+            "thumbnail_url": row[3] or "",
+            "duration_label": _format_duration_label(row[4]),
+            "download_status": row[5] or "",
+            "transcript_status": row[6] or "",
+            "added_at_label": _format_video_timestamp(row[7], user_tz),
+            "channel_name": row[8] or "",
+            "short_count": int(row[9] or 0),
+        }
+        status = _video_status_payload(item["download_status"], item["transcript_status"], item["short_count"])
+        item.update(status)
+        item["thumb_fallback"] = (item["title"][:1] or "V").upper()
+        if status_filter != "all":
+            if status_filter == "no_shorts":
+                if item["short_count"] != 0:
+                    continue
+            elif status_filter == "has_shorts":
+                if item["short_count"] <= 0:
+                    continue
+            elif item["filter_key"] != status_filter:
+                continue
+        videos.append(item)
+
+    return render_template(
+        "my_videos.html",
+        videos=videos,
+        video_count=len(videos),
+        search_query=search_query,
+        status_filter=status_filter,
+    )
+
+
 @video_shorts_bp.route("/channels", methods=["GET", "POST"])
 def channels_page():
     current_user = getattr(g, "vs_current_user", None)
+    if current_user and not _is_sources_owner(current_user):
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
     brand_id = current_brand_id()
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     schema_conn = get_db()
@@ -303,6 +473,8 @@ def channels_page():
 @video_shorts_bp.route("/channels/<int:channel_id>/set_active", methods=["POST"])
 def set_channel_active(channel_id):
     current_user = getattr(g, "vs_current_user", None)
+    if not _is_sources_owner(current_user):
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
     brand_id = current_brand_id()
 
     is_active_str = request.form.get("is_active", "0")
@@ -347,9 +519,11 @@ def set_channel_active(channel_id):
 
 @video_shorts_bp.route("/channels/delete/<int:channel_id>", methods=["POST"])
 def delete_channel(channel_id):
+    current_user = getattr(g, "vs_current_user", None)
+    if not _is_sources_owner(current_user):
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
     conn = get_db()
     ensure_channel_owner_schema(conn)
-    current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     owner_row = conn.execute(
         """

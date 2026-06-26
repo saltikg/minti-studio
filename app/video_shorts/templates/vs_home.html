@@ -1,4 +1,7 @@
 {% extends "vs_marketing_base.html" %}
+{% set vs_sources_owner = vs_current_user and (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com' %}
+{% set vs_library_href = url_for('video_shorts_bp.channels_page' if vs_sources_owner else 'video_shorts_bp.my_videos_page') %}
+{% set vs_library_label = 'Sources' if vs_sources_owner else 'My Videos' %}
 
 {% block title %}MintiStudio{% endblock %}
 
@@ -230,8 +233,8 @@
           <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.quick_short') }}">
             Create your first short
           </a>
-          <a class="btn btn-outline-secondary" href="{{ url_for('video_shorts_bp.channels_page') }}">
-            Connect a source
+          <a class="btn btn-outline-secondary" href="{{ vs_library_href }}">
+            {{ 'Connect a source' if vs_sources_owner else 'Open my videos' }}
           </a>
         </div>
       </div>
@@ -326,13 +329,13 @@
     <h2 class="section-title">Your pipeline, end-to-end</h2>
     <div class="row g-3">
       <div class="col-md-6 col-lg-3">
-        <a class="card h-100 text-decoration-none step-card" href="{{ url_for('video_shorts_bp.channels_page') }}">
+        <a class="card h-100 text-decoration-none step-card" href="{{ vs_library_href }}">
           <div class="card-body">
             <div class="step-icon">
               <span class="material-symbols-outlined">subscriptions</span>
             </div>
-            <div class="card-title-small">Sources</div>
-            <p class="card-copy">Connect YouTube and bring in videos.</p>
+            <div class="card-title-small">{{ vs_library_label }}</div>
+            <p class="card-copy">{{ 'Connect YouTube and bring in videos.' if vs_sources_owner else 'Upload videos and turn them into shorts.' }}</p>
           </div>
         </a>
       </div>
