@@ -76,6 +76,23 @@
     color: rgba(226, 232, 240, 0.76);
     font-size: 0.92rem;
   }
+  .mv-progress {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    display: none;
+  }
+  .mv-progress.is-visible {
+    display: block;
+  }
+  .mv-progress-bar {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2dd4bf, #67e8f9);
+    transition: width .18s ease;
+  }
   .mv-upload-feedback.is-error {
     color: #fca5a5;
   }
@@ -251,6 +268,9 @@
           <span class="mv-dropzone-meta">Direct-to-S3 · up to 500MB</span>
         </label>
         <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
+        <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
+          <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
+        </div>
       </div>
       <div class="d-flex flex-column gap-2">
         <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
@@ -337,6 +357,8 @@
   const uploadMeta = document.getElementById('mv-upload-meta');
   const uploadFeedback = document.getElementById('mv-upload-feedback');
   const uploadSubmit = document.getElementById('mv-upload-submit');
+  const uploadProgress = document.getElementById('mv-upload-progress');
+  const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
   let selectedFile = null;
 
   const setFeedback = (message, isError = false) => {
@@ -377,14 +399,51 @@
     };
   });
 
-  const uploadBlobForS3 = (file) => {
-    if (!file) return file;
-    try {
-      return file.slice(0, file.size, '');
-    } catch (error) {
-      return file;
-    }
+  const setProgress = (percent) => {
+    if (!uploadProgress || !uploadProgressBar) return;
+    const value = Math.max(0, Math.min(100, Number(percent) || 0));
+    uploadProgress.classList.add('is-visible');
+    uploadProgressBar.style.width = `${value}%`;
   };
+
+  const resetProgress = () => {
+    if (!uploadProgress || !uploadProgressBar) return;
+    uploadProgress.classList.remove('is-visible');
+    uploadProgressBar.style.width = '0%';
+  };
+
+  const uploadViaBackend = (file, durationSeconds) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '{{ url_for("video_shorts_bp.quick_short_upload_direct") }}', true);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.round((event.loaded / event.total) * 100);
+      setProgress(percent);
+      setFeedback(`Uploading… ${percent}%`);
+    };
+    xhr.onerror = () => reject(new Error('Upload failed before processing started.'));
+    xhr.onload = () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(xhr.responseText || '{}');
+      } catch (error) {
+        payload = {};
+      }
+      if (xhr.status < 200 || xhr.status >= 300 || !payload.ok) {
+        reject(new Error(payload.error || 'Upload failed before processing started.'));
+        return;
+      }
+      resolve(payload);
+    };
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_kind', 'video');
+    if (durationSeconds !== null && durationSeconds !== undefined) {
+      formData.append('duration_seconds', String(durationSeconds));
+    }
+    xhr.send(formData);
+  });
 
   const uploadFile = async () => {
     if (!selectedFile) {
@@ -394,44 +453,11 @@
     uploadSubmit.disabled = true;
     uploadSubmit.textContent = 'Uploading…';
     setFeedback('Preparing upload…');
+    resetProgress();
     try {
-      const presignResp = await fetch('{{ url_for("video_shorts_bp.quick_short_upload_presign") }}', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: selectedFile.name,
-          size_bytes: selectedFile.size,
-          content_type: selectedFile.type || 'video/mp4',
-          upload_kind: 'video',
-        }),
-      });
-      const presignData = await presignResp.json();
-      if (!presignResp.ok || !presignData.ok) {
-        throw new Error(presignData.error || 'Upload could not be prepared.');
-      }
-      setFeedback('Uploading to storage…');
-      const uploadResp = await fetch(presignData.upload_url, {
-        method: 'PUT',
-        headers: presignData.headers || {},
-        body: uploadBlobForS3(selectedFile),
-      });
-      if (!uploadResp.ok) {
-        throw new Error('Upload failed before processing started.');
-      }
-      setFeedback('Starting transcription…');
       const durationSeconds = await readDurationSeconds(selectedFile);
-      const completeResp = await fetch('{{ url_for("video_shorts_bp.quick_short_upload_complete") }}', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: presignData.session_id,
-          duration_seconds: durationSeconds,
-        }),
-      });
-      const completeData = await completeResp.json();
-      if (!completeResp.ok || !completeData.ok) {
-        throw new Error(completeData.error || 'Upload completed but processing could not start.');
-      }
+      const completeData = await uploadViaBackend(selectedFile, durationSeconds);
+      setProgress(100);
       setFeedback('Upload complete. Your video is now transcribing.');
       window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {
