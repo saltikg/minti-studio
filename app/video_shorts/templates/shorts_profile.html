@@ -1,90 +1,208 @@
 {% extends "vs_base.html" %}
 
-{% block title %}Profile{% endblock %}
+{% block title %}Profile & Brands{% endblock %}
 
 {% block content %}
-<div class="row g-4">
-  <div class="col-lg-6">
-    <div class="card shadow-sm h-100 vs-card">
-      <div class="card-body">
-        <h5 class="card-title vs-card-title">Account details</h5>
-        <form method="post" class="row g-3">
-          <input type="hidden" name="form_type" value="profile">
-          <div class="col-12">
-            <label class="form-label vs-card-title">Username</label>
-            <input type="text" class="form-control vs-input" value="{{ profile_user.username }}" disabled>
+<style>
+  .vs-profile-brands-page {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .vs-profile-header p {
+    max-width: 42rem;
+  }
+  .vs-brand-switch-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(10, 16, 30, 0.72);
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  }
+  .vs-brand-switch-card:hover {
+    border-color: rgba(83, 212, 141, 0.45);
+    background: rgba(16, 24, 42, 0.9);
+    transform: translateY(-1px);
+  }
+  .vs-brand-switch-btn {
+    color: #e8eefc;
+  }
+  .vs-brand-switch-btn:hover,
+  .vs-brand-switch-btn:focus {
+    color: #f8fbff;
+  }
+  .vs-brand-meta {
+    color: rgba(232, 238, 252, 0.62) !important;
+  }
+  .vs-inline-link {
+    color: #7df2cb;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .vs-inline-link:hover,
+  .vs-inline-link:focus {
+    color: #b6ffea;
+    text-decoration: underline;
+  }
+</style>
+
+<div class="vs-profile-brands-page">
+  <div class="vs-profile-header">
+    <h1 class="h3 mb-2">Profile &amp; brands</h1>
+    <p class="text-secondary mb-0">Your account details and the brands you switch between.</p>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-xl-7">
+      <div class="card shadow-sm h-100 vs-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+            <div>
+              <h5 class="card-title vs-card-title mb-1">Account details</h5>
+              <p class="text-secondary small mb-0">Update your profile, email, and local time zone.</p>
+            </div>
+            <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="vs-inline-link">View plan &amp; storage →</a>
           </div>
-          <div class="col-12">
-            <label class="form-label vs-card-title">Full name</label>
-            <input type="text" class="form-control vs-input" name="name" value="{{ profile_user.name }}" required>
-          </div>
-          <div class="col-12">
-            <label class="form-label vs-card-title">Email</label>
-            <input type="email" class="form-control vs-input" name="email" value="{{ profile_user.email or '' }}" placeholder="you@example.com">
-          </div>
-          <div class="col-12">
-            <label class="form-label vs-card-title">Zaman dilimi</label>
-            <select class="form-select vs-select" name="time_zone">
-              {% for tz_value, tz_label in timezones %}
-                <option value="{{ tz_value }}" {% if tz_value == selected_timezone %}selected{% endif %}>
-                  {{ tz_label }}
-                </option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 d-flex justify-content-between">
-            <a href="{{ url_for('video_shorts_bp.logout') }}" class="btn vs-btn vs-btn-secondary">Logout</a>
-            <button class="btn vs-btn vs-btn-primary" type="submit">Save profile</button>
-          </div>
-        </form>
+          <form method="post" class="row g-3" id="profile-form">
+            <input type="hidden" name="form_type" value="profile">
+            <input type="hidden" name="browser_time_zone" id="browser-time-zone" value="">
+            <div class="col-12">
+              <label class="form-label vs-card-title">Full name</label>
+              <input type="text" class="form-control vs-input" name="name" value="{{ profile_user.name }}" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label vs-card-title">Email</label>
+              <input type="email" class="form-control vs-input" name="email" value="{{ profile_user.email or '' }}" placeholder="you@example.com">
+            </div>
+            <div class="col-md-8">
+              <label class="form-label vs-card-title">Time zone</label>
+              <select class="form-select vs-select" name="time_zone" id="time-zone-select">
+                {% for tz_value, tz_label in timezones %}
+                  <option value="{{ tz_value }}" {% if tz_value == selected_timezone %}selected{% endif %}>
+                    {{ tz_label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end justify-content-md-end">
+              <a href="{{ url_for('video_shorts_bp.logout') }}" class="btn vs-btn vs-btn-secondary w-100 w-md-auto">Logout</a>
+            </div>
+            <div class="col-12 text-end">
+              <button class="btn vs-btn vs-btn-primary" type="submit">Save profile</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-5">
+      <div class="card shadow-sm h-100 vs-card">
+        <div class="card-body">
+          <h5 class="card-title vs-card-title mb-3">Change password</h5>
+          <form method="post" class="row g-3">
+            <input type="hidden" name="form_type" value="password">
+            <div class="col-12">
+              <label class="form-label vs-card-title">Current password</label>
+              <input type="password" name="current_password" class="form-control vs-input" placeholder="Current password">
+            </div>
+            <div class="col-12">
+              <label class="form-label vs-card-title">New password</label>
+              <input type="password" name="new_password" class="form-control vs-input" placeholder="New password" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label vs-card-title">Confirm new password</label>
+              <input type="password" name="confirm_password" class="form-control vs-input" placeholder="Repeat new password" required>
+            </div>
+            <div class="col-12 text-end">
+              <button class="btn vs-btn vs-btn-secondary" type="submit">Update password</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   </div>
-  <div class="col-lg-6">
-    <div class="card shadow-sm mb-4 vs-card">
-      <div class="card-body">
-        <h5 class="card-title vs-card-title">Change password</h5>
-        <form method="post" class="row g-3">
-          <input type="hidden" name="form_type" value="password">
-          <div class="col-12">
-            <label class="form-label vs-card-title">Current password</label>
-            <input type="password" name="current_password" class="form-control vs-input" placeholder="Current password">
+
+  <div class="row g-4">
+    <div class="col-xl-7">
+      <div class="card shadow-sm vs-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3 gap-3 flex-wrap">
+            <div>
+              <h5 class="card-title vs-card-title mb-1">Brands</h5>
+              <p class="mb-0 text-secondary small">Brands · click one to make it active &amp; default.</p>
+            </div>
+            <span class="badge text-bg-dark">{{ brands|length }} total</span>
           </div>
-          <div class="col-12">
-            <label class="form-label vs-card-title">New password</label>
-            <input type="password" name="new_password" class="form-control vs-input" placeholder="New password" required>
+
+          <div class="d-grid gap-2">
+            {% for brand in brands %}
+              <div class="card border-0 vs-brand-switch-card">
+                <div class="p-3 d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                  <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="flex-grow-1 m-0">
+                    <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                    <input type="hidden" name="brand_id" value="{{ brand.id }}">
+                    <button type="submit" class="btn text-start p-0 w-100 vs-brand-switch-btn">
+                      <div class="fw-semibold">{{ brand.name }}</div>
+                      <div class="small vs-brand-meta">{{ brand.slug or brand.id }}</div>
+                      <div class="small text-secondary mt-1">
+                        {% if current_brand and brand.id == current_brand.id %}
+                          Currently active and default workspace
+                        {% else %}
+                          Click to make this your active and default workspace
+                        {% endif %}
+                      </div>
+                    </button>
+                  </form>
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    {% if brand.is_default %}
+                      <span class="badge text-bg-secondary">Default</span>
+                    {% endif %}
+                    {% if current_brand and brand.id == current_brand.id %}
+                      <span class="badge text-bg-primary">Active</span>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            {% else %}
+              <div class="text-secondary small">No brands found yet.</div>
+            {% endfor %}
           </div>
-          <div class="col-12">
-            <label class="form-label vs-card-title">Confirm new password</label>
-            <input type="password" name="confirm_password" class="form-control vs-input" placeholder="Repeat new password" required>
-          </div>
-          <div class="col-12 text-end">
-            <button class="btn vs-btn vs-btn-secondary" type="submit">Update password</button>
-          </div>
-        </form>
+        </div>
       </div>
     </div>
 
-    <div class="card shadow-sm vs-card">
-      <div class="card-body">
-        <h5 class="card-title vs-card-title">Subscription</h5>
-        <p class="mb-1"><strong>Plan:</strong> {{ plan_label }}</p>
-        <p class="mb-3"><strong>Quota:</strong> {{ limit_label }}</p>
-        <div class="d-flex justify-content-between vs-text-small vs-text-muted">
-          <span>{{ used_label }} used</span>
-          <span>{{ usage_percent }}%</span>
-        </div>
-        <div class="progress" style="height:6px;">
-          <div class="progress-bar {% if usage_percent > 80 %}bg-danger{% elif usage_percent > 60 %}bg-warning{% else %}bg-success{% endif %}"
-               role="progressbar"
-               style="width: {{ usage_percent }}%;"
-               aria-valuenow="{{ usage_percent }}"
-               aria-valuemin="0"
-               aria-valuemax="100">
-          </div>
+    <div class="col-xl-5">
+      <div class="card shadow-sm vs-card">
+        <div class="card-body">
+          <h5 class="card-title vs-card-title mb-3">Add brand</h5>
+          <form method="post" action="{{ url_for('video_shorts_bp.create_brand') }}" class="d-grid gap-3">
+            <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+            <div>
+              <label class="form-label vs-card-title">Brand name</label>
+              <input type="text" name="name" class="form-control vs-input" placeholder="New brand name" maxlength="80" required>
+            </div>
+            <button type="submit" class="btn vs-btn vs-btn-primary">Add brand</button>
+          </form>
         </div>
       </div>
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      const browserTimeZoneField = document.getElementById('browser-time-zone');
+      const timeZoneSelect = document.getElementById('time-zone-select');
+      if (!browserTimeZoneField || !timeZoneSelect) return;
+      const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      browserTimeZoneField.value = browserTimeZone;
+      const hasExplicitTimezone = {{ 'true' if has_explicit_timezone else 'false' }};
+      if (!hasExplicitTimezone && browserTimeZone) {
+        const matchingOption = Array.from(timeZoneSelect.options).find((option) => option.value === browserTimeZone);
+        if (matchingOption) {
+          timeZoneSelect.value = browserTimeZone;
+        }
+      }
+    })();
+  </script>
 {% endblock %}

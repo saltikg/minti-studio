@@ -492,37 +492,25 @@ def profile():
 
     conn = get_db()
     ensure_storage_user_schema(conn)
-    plan_row = None
-    if user.get("plan_id"):
-        plan_row = conn.execute(
-            "SELECT label, quota_bytes FROM shorts_storage_plans WHERE plan_id = ?",
-            [user["plan_id"]],
-        ).fetchone()
-    limit_bytes = (
-        user.get("custom_limit_bytes")
-        or (plan_row[1] if plan_row else None)
-        or DEFAULT_USER_STORAGE_LIMIT
-    )
-    plan_label = plan_row[0] if plan_row else "No plan"
-    used_bytes = conn.execute(
-        """
-        SELECT COALESCE(SUM(size_bytes), 0)
-        FROM shorts_storage_assets
-        WHERE user_id = ? AND (status = 'active' OR status IS NULL)
-        """,
+    ensure_brand_schema(conn)
+    raw_timezone_row = conn.execute(
+        "SELECT time_zone FROM shorts_users WHERE id = ?",
         [user["id"]],
-    ).fetchone()[0]
-    usage_percent = int(min(100, (used_bytes / limit_bytes * 100))) if limit_bytes else 0
+    ).fetchone()
+    stored_time_zone = (raw_timezone_row[0] or "").strip() if raw_timezone_row and raw_timezone_row[0] else ""
+    brands = list_user_brands(conn, user["id"])
+    current_brand = getattr(g, "vs_current_brand", None)
 
     if request.method == "POST":
         form_type = request.form.get("form_type")
         if form_type == "profile":
             name = (request.form.get("name") or "").strip()
             email = (request.form.get("email") or "").strip()
-            time_zone = (request.form.get("time_zone") or DEFAULT_TIME_ZONE).strip()
+            time_zone = (request.form.get("time_zone") or "").strip()
+            browser_time_zone = (request.form.get("browser_time_zone") or "").strip()
             valid_timezones = {value for value, _ in TIMEZONE_OPTIONS}
             if time_zone not in valid_timezones:
-                time_zone = DEFAULT_TIME_ZONE
+                time_zone = browser_time_zone if browser_time_zone in valid_timezones else DEFAULT_TIME_ZONE
             if not name:
                 flash("Please enter your name.", "warning")
             else:
@@ -566,12 +554,11 @@ def profile():
     return render_template(
         "shorts_profile.html",
         profile_user=user,
-        plan_label=plan_label,
-        limit_label=_format_size_bytes(limit_bytes),
-        used_label=_format_size_bytes(used_bytes),
-        usage_percent=usage_percent,
+        brands=brands,
+        current_brand=current_brand,
         timezones=TIMEZONE_OPTIONS,
-        selected_timezone=user.get("time_zone") or DEFAULT_TIME_ZONE,
+        selected_timezone=stored_time_zone,
+        has_explicit_timezone=bool(stored_time_zone),
     )
 
 
@@ -817,10 +804,10 @@ def switch_brand():
     brand_id = (request.form.get("brand_id") or "").strip()
     brand = set_default_brand_for_user(current_user["id"], brand_id)
     if not brand:
-        flash("Brand bulunamadı.", "warning")
+        flash("Brand not found.", "warning")
     else:
         session["vs_brand_id"] = brand["id"]
-        flash(f"{brand['name']} aktif ve default brand yapildi.", "success")
+        flash(f"{brand['name']} is now active and default.", "success")
     nxt = _normalize_next_url(request.form.get("next")) or request.referrer or url_for("video_shorts_bp.channels_page")
     return redirect(nxt)
 
@@ -833,10 +820,10 @@ def set_default_brand():
     brand_id = (request.form.get("brand_id") or "").strip()
     brand = set_default_brand_for_user(current_user["id"], brand_id)
     if not brand:
-        flash("Brand bulunamadı.", "warning")
+        flash("Brand not found.", "warning")
     else:
         session["vs_brand_id"] = brand["id"]
-        flash(f"{brand['name']} default brand yapildi.", "success")
+        flash(f"{brand['name']} is now your default brand.", "success")
     nxt = _normalize_next_url(request.form.get("next")) or request.referrer or url_for("video_shorts_bp.channels_page")
     return redirect(nxt)
 
@@ -913,20 +900,7 @@ def dismiss_onboarding():
 
 @video_shorts_bp.route("/brands")
 def brands_page():
-    current_user = _current_user()
-    if not current_user:
-        return redirect(url_for("video_shorts_bp.login", next=request.url))
-    conn = get_db_readonly()
-    try:
-        ensure_brand_schema(conn)
-        brands = list_user_brands(conn, current_user["id"])
-    finally:
-        conn.close()
-    return render_template(
-        "shorts_brands.html",
-        brands=brands,
-        current_brand=getattr(g, "vs_current_brand", None),
-    )
+    return redirect(url_for("video_shorts_bp.profile"))
 
 
 @video_shorts_bp.route("/brands/create", methods=["POST"])
@@ -936,7 +910,7 @@ def create_brand():
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     name = (request.form.get("name") or "").strip()
     if not name:
-        flash("Brand adı gerekli.", "warning")
+        flash("Brand name is required.", "warning")
         return redirect(request.referrer or url_for("video_shorts_bp.channels_page"))
     conn = get_db()
     try:
@@ -957,11 +931,11 @@ def create_brand():
                 [existing[0], current_user["id"]],
             )
             conn.commit()
-            flash("Bu brand zaten var; aktif brand olarak seçildi.", "info")
+            flash("That brand already exists, so it was made active.", "info")
         else:
             brand = create_brand_record(conn, user_id=current_user["id"], name=name, make_default=False)
             session["vs_brand_id"] = brand["id"]
-            flash("Brand oluşturuldu.", "success")
+            flash("Brand created.", "success")
     finally:
         conn.close()
     return redirect(request.referrer or url_for("video_shorts_bp.channels_page"))
