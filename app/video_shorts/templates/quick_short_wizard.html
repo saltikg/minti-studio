@@ -134,27 +134,6 @@
   font-size: 1rem;
   font-weight: 700;
 }
-.qs-segmented {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.qs-segmented-btn {
-  border: 0;
-  border-radius: 999px;
-  padding: 8px 14px;
-  background: transparent;
-  color: var(--muted);
-  font-weight: 600;
-}
-.qs-segmented-btn.is-active {
-  background: var(--mint);
-  color: #07161d;
-}
 .qs-dropzone {
   border: 1px dashed rgba(45, 212, 191, 0.36);
   border-radius: 16px;
@@ -389,12 +368,6 @@
     <div class="qs-title">Create your first short</div>
     {{ flow_step_map(1, none, none, none, false, 'qs') }}
     <div id="qs-stage-input" class="qs-hero-divider">
-      <div class="d-flex flex-wrap align-items-center justify-content-start gap-3 mb-3">
-      <div class="qs-segmented" id="qs-source-toggle">
-        <button type="button" class="qs-segmented-btn is-active" data-source-mode="upload">Upload file</button>
-        <button type="button" class="qs-segmented-btn" data-source-mode="youtube">YouTube URL</button>
-      </div>
-      </div>
       <div class="qs-field">
         <div class="qs-add-stack">
           <div id="qs-upload-panel">
@@ -404,10 +377,6 @@
               <div class="qs-dropzone-meta">Direct-to-S3, ≤500MB</div>
             </label>
             <div id="qs-upload-meta" class="qs-micro mt-2"></div>
-          </div>
-          <div id="qs-youtube-panel" class="qs-hidden">
-            <input id="qs-youtube-url" type="url" class="form-control" placeholder="https://youtube.com/…" />
-            <div class="qs-micro mt-2">≤25 dk</div>
           </div>
           <div class="qs-actions">
             <button type="button" id="qs-continue-submit" class="btn btn-primary">Continue</button>
@@ -581,20 +550,15 @@
   const instagramScheduleWrap = document.getElementById("qs-publish-instagram-schedule-wrap");
   const youtubeScheduleInput = document.getElementById("qs-publish-youtube-at");
   const instagramScheduleInput = document.getElementById("qs-publish-instagram-at");
-  const sourceButtons = Array.from(document.querySelectorAll("[data-source-mode]"));
   const publishButtons = Array.from(document.querySelectorAll("[data-publish-target]"));
-  const uploadPanel = document.getElementById("qs-upload-panel");
-  const youtubePanel = document.getElementById("qs-youtube-panel");
   const uploadInput = document.getElementById("qs-upload-file");
   const uploadDropzone = document.getElementById("qs-upload-dropzone");
   const uploadMeta = document.getElementById("qs-upload-meta");
   const continueSubmit = document.getElementById("qs-continue-submit");
   const renderSubmit = document.getElementById("qs-render-submit");
-  const youtubeUrlInput = document.getElementById("qs-youtube-url");
 
   const state = {
     session: initialSession || null,
-    sourceMode: initialSession?.source_type === "youtube" ? "youtube" : "upload",
     pollTimer: null,
     pollDelayMs: 2000,
   };
@@ -667,12 +631,6 @@
       el.classList.toggle("qs-hidden", key !== stageName);
     });
     renderStepper();
-  };
-
-  const syncSourceModeUi = () => {
-    sourceButtons.forEach((btn) => btn.classList.toggle("is-active", btn.dataset.sourceMode === state.sourceMode));
-    uploadPanel?.classList.toggle("qs-hidden", state.sourceMode !== "upload");
-    youtubePanel?.classList.toggle("qs-hidden", state.sourceMode !== "youtube");
   };
 
   const renderTranscript = (segments) => {
@@ -933,13 +891,6 @@
     uploadDropzone?.classList.toggle("is-dragover", Boolean(isActive));
   };
 
-  sourceButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.sourceMode = button.dataset.sourceMode || "upload";
-      syncSourceModeUi();
-    });
-  });
-
   uploadInput?.addEventListener("change", () => {
     uploadMeta.textContent = formatUploadMeta(uploadInput.files?.[0]);
   });
@@ -964,20 +915,6 @@
 
   continueSubmit?.addEventListener("click", async () => {
     inputFeedback.textContent = "";
-    if (state.sourceMode === "youtube") {
-      const { response, payload } = await postJson("/video_shorts/shorts/quick/api/ingest-youtube", {
-        video_url: youtubeUrlInput.value,
-      });
-      if (!response.ok) {
-        inputFeedback.textContent = payload.message || "Couldn't start ingest.";
-        return;
-      }
-      state.session = payload.session;
-      renderView();
-      beginSessionPollingIfNeeded();
-      return;
-    }
-
     const file = uploadInput.files?.[0];
     if (!file) {
       inputFeedback.textContent = "Choose a file first.";
@@ -1084,7 +1021,6 @@
     }
   });
 
-  syncSourceModeUi();
   renderView();
   beginSessionPollingIfNeeded();
 })();
