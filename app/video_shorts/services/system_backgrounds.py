@@ -2,14 +2,14 @@ import hashlib
 from pathlib import Path
 from typing import List, Optional
 
-from app.video_shorts.config import MINTI_BACKGROUNDS_DIR
+from app.video_shorts.config import MINTI_BACKGROUNDS_DIR, STATIC_IMG_DIR
 
 
 SYSTEM_BACKGROUND_KEY_PREFIX = "systembg:"
 _ALLOWED_SYSTEM_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 _FALLBACK_DIR_CANDIDATES = (
+    STATIC_IMG_DIR,
     MINTI_BACKGROUNDS_DIR,
-    MINTI_BACKGROUNDS_DIR.parent / "img",
 )
 
 
@@ -31,6 +31,8 @@ def list_system_background_paths() -> List[Path]:
     for directory in _existing_background_dirs():
         for entry in directory.iterdir():
             if not entry.is_file() or entry.suffix.lower() not in _ALLOWED_SYSTEM_BACKGROUND_EXTS:
+                continue
+            if entry.name.lower().startswith("favicon"):
                 continue
             if entry.name in seen_names:
                 continue
