@@ -836,53 +836,27 @@ def account_page():
 
     account_items = [
         {
-            "title": "Connected Accounts",
-            "subtitle": "Manage YouTube, Instagram, Facebook and TikTok connections",
+            "title": "Profile & Brands",
+            "subtitle": "Update profile and account details",
+            "meta": "Your name, email, password, time zone — and the brands you switch between.",
+            "icon": "manage_accounts",
+            "href": url_for("video_shorts_bp.profile"),
+        },
+        {
+            "title": "Connections",
+            "subtitle": "Manage your publishing accounts",
+            "meta": "Connect and manage YouTube, Instagram, TikTok and Facebook for publishing.",
             "icon": "public",
             "href": url_for("video_shorts_bp.social_connect"),
         },
         {
-            "title": "My Storage",
-            "subtitle": "Review your storage usage and plan limits",
-            "icon": "cloud_download",
-            "href": url_for("video_shorts_bp.shorts_storage"),
-        },
-        {
-            "title": "Plan",
-            "subtitle": "Review quota, storage limits and plan usage",
+            "title": "Plan & Storage",
+            "subtitle": "Review your usage and upgrade anytime",
+            "meta": "Your plan, exports, transcription minutes and storage — upgrade anytime.",
             "icon": "workspace_premium",
             "href": url_for("video_shorts_bp.shorts_storage_plans"),
         },
-        {
-            "title": "User Profile",
-            "subtitle": "Update profile and account details",
-            "icon": "account_circle",
-            "href": url_for("video_shorts_bp.profile"),
-        },
-        {
-            "title": "Brand",
-            "subtitle": "Switch and manage your brands",
-            "icon": "storefront",
-            "href": url_for("video_shorts_bp.brands_page"),
-        },
     ]
-    if current_user.get("role") == "admin":
-        account_items.append(
-            {
-                "title": "Plan Admin",
-                "subtitle": "Manage user plans and storage overrides",
-                "icon": "admin_panel_settings",
-                "href": url_for("video_shorts_bp.admin_storage_plans"),
-            }
-        )
-        account_items.append(
-            {
-                "title": "Logs",
-                "subtitle": "Review social publishing and quota logs",
-                "icon": "list_alt",
-                "href": url_for("video_shorts_bp.shorts_social_logs"),
-            }
-        )
     return render_template("shorts_account.html", account_items=account_items)
 
 

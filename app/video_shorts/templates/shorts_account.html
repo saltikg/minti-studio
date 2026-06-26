@@ -14,7 +14,7 @@
     }
     .shorts-account-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 16px;
     }
     .shorts-account-card {
@@ -64,6 +64,12 @@
       line-height: 1.45;
       font-size: 0.92rem;
     }
+    .shorts-account-meta {
+      margin-top: 12px;
+      color: rgba(255,255,255,0.82);
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
     .shorts-account-arrow {
       margin-top: 18px;
       color: rgba(255,255,255,0.58);
@@ -77,7 +83,7 @@
   <div class="shorts-account-page">
     <div class="shorts-account-header">
       <h1 class="page-title mb-2">Account</h1>
-      <div class="shorts-account-subtitle">Open an account tool below to manage access, plans, profile and brands.</div>
+      <div class="shorts-account-subtitle">Manage your profile, connections, and plan.</div>
     </div>
 
     <div class="shorts-account-grid">
@@ -89,8 +95,11 @@
             </div>
             <div class="shorts-account-title">{{ item.title }}</div>
             <div class="shorts-account-text">{{ item.subtitle }}</div>
+            {% if item.meta %}
+              <div class="shorts-account-meta">{{ item.meta }}</div>
+            {% endif %}
           </div>
-          <div class="shorts-account-arrow">Open</div>
+          <div class="shorts-account-arrow">Open →</div>
         </a>
       {% endfor %}
     </div>
