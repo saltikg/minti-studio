@@ -545,9 +545,8 @@ def quick_short():
     if redirect_response:
         return redirect_response
     _ensure_quick_schema()
-    brand_id = current_brand_id()
     session_id = (request.args.get("session") or "").strip()
-    session = get_session(session_id, user_id=current_user["id"]) if session_id else get_latest_session(current_user["id"], brand_id=brand_id)
+    session = get_session(session_id, user_id=current_user["id"]) if session_id else None
     return render_template(
         "quick_short_wizard.html",
         initial_session=_build_session_payload(session),
@@ -561,9 +560,8 @@ def quick_short_session_api():
     if redirect_response:
         return jsonify({"error": "unauthorized"}), 401
     _ensure_quick_schema()
-    brand_id = current_brand_id()
     session_id = (request.args.get("session_id") or "").strip()
-    session = get_session(session_id, user_id=current_user["id"]) if session_id else get_latest_session(current_user["id"], brand_id=brand_id)
+    session = get_session(session_id, user_id=current_user["id"]) if session_id else None
     return jsonify({"ok": True, "session": _build_session_payload(session)})
 
 
