@@ -126,9 +126,6 @@ def my_videos_page():
     brand_id = current_brand_id()
     user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
     search_query = (request.args.get("q") or "").strip()
-    status_filter = (request.args.get("status") or "all").strip().lower()
-    if status_filter not in {"all", "ready", "transcribing", "has_shorts", "no_shorts"}:
-        status_filter = "all"
 
     schema_conn = get_db()
     ensure_brand_schema(schema_conn)
@@ -139,7 +136,11 @@ def my_videos_page():
 
     conn = get_db_readonly()
     params = [current_user["id"]]
-    where_clauses = ["v.owner_user_id = ?"]
+    where_clauses = [
+        "v.owner_user_id = ?",
+        "lower(coalesce(c.channel_url, '')) = 'local://uploads'",
+        "lower(coalesce(v.video_id, '')) LIKE 'local_%'",
+    ]
     if brand_id:
         where_clauses.append("v.brand_id = ?")
         params.append(brand_id)
@@ -190,18 +191,7 @@ def my_videos_page():
             "channel_name": row[8] or "",
             "short_count": int(row[9] or 0),
         }
-        status = _video_status_payload(item["download_status"], item["transcript_status"], item["short_count"])
-        item.update(status)
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
-        if status_filter != "all":
-            if status_filter == "no_shorts":
-                if item["short_count"] != 0:
-                    continue
-            elif status_filter == "has_shorts":
-                if item["short_count"] <= 0:
-                    continue
-            elif item["filter_key"] != status_filter:
-                continue
         videos.append(item)
 
     return render_template(
@@ -209,7 +199,6 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         search_query=search_query,
-        status_filter=status_filter,
     )
 
 
