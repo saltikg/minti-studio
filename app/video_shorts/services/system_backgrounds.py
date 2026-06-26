@@ -8,9 +8,11 @@ from app.video_shorts.config import MINTI_BACKGROUNDS_DIR, STATIC_IMG_DIR
 SYSTEM_BACKGROUND_KEY_PREFIX = "systembg:"
 _ALLOWED_SYSTEM_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 _FALLBACK_DIR_CANDIDATES = (
+    STATIC_IMG_DIR / "bg",
     STATIC_IMG_DIR,
     MINTI_BACKGROUNDS_DIR,
 )
+_STATIC_ROOT = STATIC_IMG_DIR.parent
 
 
 def _existing_background_dirs() -> List[Path]:
@@ -46,13 +48,10 @@ def system_background_static_filename(path_or_name: Path | str) -> str:
     for candidate in list_system_background_paths():
         if candidate.name != candidate_name:
             continue
-        for directory in _existing_background_dirs():
-            try:
-                relative = candidate.relative_to(directory)
-            except ValueError:
-                continue
-            static_root = directory.name
-            return str(Path(static_root) / relative)
+        try:
+            return str(candidate.relative_to(_STATIC_ROOT))
+        except ValueError:
+            pass
     # Fallback to the canonical folder name for older keys.
     return str(Path("mintibackgrounds") / candidate_name)
 
