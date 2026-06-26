@@ -121,8 +121,6 @@ def my_videos_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    if _is_sources_owner(current_user):
-        return redirect(url_for("video_shorts_bp.channels_page"))
 
     brand_id = current_brand_id()
     user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
