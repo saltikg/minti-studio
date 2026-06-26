@@ -3,33 +3,46 @@
 {% block title %}Profile & Brands{% endblock %}
 
 {% block content %}
+{% set current_name = profile_user.name or 'Not set' %}
+{% set current_email = profile_user.email or 'Not set' %}
+{% set current_timezone = selected_timezone or '' %}
+{% set timezone_ns = namespace(label='Not set') %}
+{% for tz_value, tz_label in timezones %}
+  {% if tz_value == current_timezone %}
+    {% set timezone_ns.label = tz_label %}
+  {% endif %}
+{% endfor %}
+
 <style>
-  .vs-profile-brands-page {
+  .vs-profile-shell {
     display: grid;
-    gap: 1.5rem;
+    gap: 1.25rem;
+    max-width: 900px;
   }
-  .vs-profile-header p {
-    max-width: 42rem;
-  }
-  .vs-brand-switch-card {
+  .vs-profile-section {
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(10, 16, 30, 0.72);
-    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+    border-radius: 20px;
+    background: rgba(9, 16, 28, 0.74);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
   }
-  .vs-brand-switch-card:hover {
-    border-color: rgba(83, 212, 141, 0.45);
-    background: rgba(16, 24, 42, 0.9);
-    transform: translateY(-1px);
+  .vs-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
   }
-  .vs-brand-switch-btn {
-    color: #e8eefc;
+  .vs-section-title {
+    margin: 0;
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: #f7fbff;
   }
-  .vs-brand-switch-btn:hover,
-  .vs-brand-switch-btn:focus {
-    color: #f8fbff;
-  }
-  .vs-brand-meta {
-    color: rgba(232, 238, 252, 0.62) !important;
+  .vs-section-subtitle {
+    margin: 0.25rem 0 0;
+    color: rgba(232, 238, 252, 0.62);
+    font-size: 0.92rem;
   }
   .vs-inline-link {
     color: #7df2cb;
@@ -41,149 +54,318 @@
     color: #b6ffea;
     text-decoration: underline;
   }
+  .vs-detail-list {
+    display: grid;
+    gap: 0.25rem;
+  }
+  .vs-detail-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 0.95rem 0;
+  }
+  .vs-detail-row:first-child {
+    border-top: 0;
+    padding-top: 0.25rem;
+  }
+  .vs-detail-view,
+  .vs-detail-edit {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .vs-detail-label {
+    color: rgba(232, 238, 252, 0.62);
+    font-size: 0.86rem;
+    margin-bottom: 0.2rem;
+  }
+  .vs-detail-value {
+    color: #f7fbff;
+    font-size: 0.98rem;
+    line-height: 1.4;
+  }
+  .vs-link-button {
+    border: 0;
+    background: transparent;
+    color: #7df2cb;
+    padding: 0;
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  .vs-link-button:hover,
+  .vs-link-button:focus {
+    color: #b6ffea;
+    text-decoration: underline;
+  }
+  .vs-detail-edit[hidden] {
+    display: none !important;
+  }
+  .vs-detail-view[hidden] {
+    display: none !important;
+  }
+  .vs-edit-fields {
+    flex: 1 1 360px;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .vs-edit-fields .form-control,
+  .vs-edit-fields .form-select {
+    min-width: 220px;
+    flex: 1 1 260px;
+  }
+  .vs-password-toggle {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 1rem;
+    margin-top: 0.5rem;
+  }
+  .vs-password-summary {
+    list-style: none;
+    cursor: pointer;
+    color: #7df2cb;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .vs-password-summary::-webkit-details-marker {
+    display: none;
+  }
+  .vs-password-summary::after {
+    content: "+";
+    font-size: 1rem;
+    line-height: 1;
+  }
+  .vs-password-toggle[open] .vs-password-summary::after {
+    content: "−";
+  }
+  .vs-password-form {
+    margin-top: 1rem;
+  }
+  .vs-brand-list {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .vs-brand-item {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    background: rgba(10, 16, 30, 0.62);
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  }
+  .vs-brand-item:hover {
+    border-color: rgba(83, 212, 141, 0.4);
+    background: rgba(14, 24, 42, 0.86);
+    transform: translateY(-1px);
+  }
+  .vs-brand-item.is-current {
+    border-color: rgba(83, 212, 141, 0.55);
+    background: rgba(15, 28, 48, 0.92);
+  }
+  .vs-brand-button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 0.95rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .vs-brand-name {
+    color: #f7fbff;
+    font-weight: 600;
+  }
+  .vs-brand-slug {
+    color: rgba(232, 238, 252, 0.58);
+    font-size: 0.86rem;
+    margin-top: 0.15rem;
+  }
+  .vs-brand-inline-form {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+  .vs-brand-inline-form .form-control {
+    flex: 1 1 260px;
+  }
+  @media (max-width: 767.98px) {
+    .vs-detail-view,
+    .vs-detail-edit,
+    .vs-brand-button,
+    .vs-edit-fields,
+    .vs-brand-inline-form {
+      align-items: flex-start;
+    }
+  }
 </style>
 
-<div class="vs-profile-brands-page">
-  <div class="vs-profile-header">
+<div class="vs-profile-shell">
+  <div>
     <h1 class="h3 mb-2">Profile &amp; brands</h1>
     <p class="text-secondary mb-0">Your account details and the brands you switch between.</p>
   </div>
 
-  <div class="row g-4">
-    <div class="col-xl-7">
-      <div class="card shadow-sm h-100 vs-card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+  <section class="vs-profile-section">
+    <div class="card-body p-4 p-lg-4">
+      <div class="vs-section-header">
+        <div>
+          <h2 class="vs-section-title">Account details</h2>
+        </div>
+        <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="vs-inline-link">View plan &amp; storage →</a>
+      </div>
+
+      <div class="vs-detail-list">
+        <div class="vs-detail-row" data-inline-edit-row>
+          <div class="vs-detail-view" data-inline-view>
             <div>
-              <h5 class="card-title vs-card-title mb-1">Account details</h5>
-              <p class="text-secondary small mb-0">Update your profile, email, and local time zone.</p>
+              <div class="vs-detail-label">Full name</div>
+              <div class="vs-detail-value">{{ current_name }}</div>
             </div>
-            <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="vs-inline-link">View plan &amp; storage →</a>
+            <button type="button" class="vs-link-button" data-inline-edit-open>Edit</button>
           </div>
-          <form method="post" class="row g-3" id="profile-form">
+          <form method="post" class="vs-detail-edit" data-inline-edit-form hidden>
             <input type="hidden" name="form_type" value="profile">
-            <input type="hidden" name="browser_time_zone" id="browser-time-zone" value="">
-            <div class="col-12">
-              <label class="form-label vs-card-title">Full name</label>
-              <input type="text" class="form-control vs-input" name="name" value="{{ profile_user.name }}" required>
+            <input type="hidden" name="email" value="{{ profile_user.email or '' }}">
+            <input type="hidden" name="time_zone" value="{{ current_timezone }}" data-shared-timezone>
+            <input type="hidden" name="browser_time_zone" value="" data-browser-time-zone>
+            <div class="vs-edit-fields">
+              <label class="form-label vs-detail-label mb-0">
+                <span class="visually-hidden">Full name</span>
+                <input type="text" class="form-control vs-input" name="name" value="{{ profile_user.name or '' }}" required>
+              </label>
             </div>
-            <div class="col-12">
-              <label class="form-label vs-card-title">Email</label>
-              <input type="email" class="form-control vs-input" name="email" value="{{ profile_user.email or '' }}" placeholder="you@example.com">
-            </div>
-            <div class="col-md-8">
-              <label class="form-label vs-card-title">Time zone</label>
-              <select class="form-select vs-select" name="time_zone" id="time-zone-select">
-                {% for tz_value, tz_label in timezones %}
-                  <option value="{{ tz_value }}" {% if tz_value == selected_timezone %}selected{% endif %}>
-                    {{ tz_label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-4 d-flex align-items-end justify-content-md-end">
-              <a href="{{ url_for('video_shorts_bp.logout') }}" class="btn vs-btn vs-btn-secondary w-100 w-md-auto">Logout</a>
-            </div>
-            <div class="col-12 text-end">
-              <button class="btn vs-btn vs-btn-primary" type="submit">Save profile</button>
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn vs-btn vs-btn-primary">Save</button>
+              <button type="button" class="btn vs-btn vs-btn-secondary" data-inline-edit-cancel>Cancel</button>
             </div>
           </form>
         </div>
-      </div>
-    </div>
 
-    <div class="col-xl-5">
-      <div class="card shadow-sm h-100 vs-card">
-        <div class="card-body">
-          <h5 class="card-title vs-card-title mb-3">Change password</h5>
-          <form method="post" class="row g-3">
-            <input type="hidden" name="form_type" value="password">
-            <div class="col-12">
-              <label class="form-label vs-card-title">Current password</label>
-              <input type="password" name="current_password" class="form-control vs-input" placeholder="Current password">
-            </div>
-            <div class="col-12">
-              <label class="form-label vs-card-title">New password</label>
-              <input type="password" name="new_password" class="form-control vs-input" placeholder="New password" required>
-            </div>
-            <div class="col-12">
-              <label class="form-label vs-card-title">Confirm new password</label>
-              <input type="password" name="confirm_password" class="form-control vs-input" placeholder="Repeat new password" required>
-            </div>
-            <div class="col-12 text-end">
-              <button class="btn vs-btn vs-btn-secondary" type="submit">Update password</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="row g-4">
-    <div class="col-xl-7">
-      <div class="card shadow-sm vs-card h-100">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-3 gap-3 flex-wrap">
+        <div class="vs-detail-row" data-inline-edit-row>
+          <div class="vs-detail-view" data-inline-view>
             <div>
-              <h5 class="card-title vs-card-title mb-1">Brands</h5>
-              <p class="mb-0 text-secondary small">Brands · click one to make it active &amp; default.</p>
+              <div class="vs-detail-label">Email</div>
+              <div class="vs-detail-value">{{ current_email }}</div>
             </div>
-            <span class="badge text-bg-dark">{{ brands|length }} total</span>
+            <button type="button" class="vs-link-button" data-inline-edit-open>Edit</button>
           </div>
+          <form method="post" class="vs-detail-edit" data-inline-edit-form hidden>
+            <input type="hidden" name="form_type" value="profile">
+            <input type="hidden" name="name" value="{{ profile_user.name or '' }}">
+            <input type="hidden" name="time_zone" value="{{ current_timezone }}" data-shared-timezone>
+            <input type="hidden" name="browser_time_zone" value="" data-browser-time-zone>
+            <div class="vs-edit-fields">
+              <label class="form-label vs-detail-label mb-0">
+                <span class="visually-hidden">Email</span>
+                <input type="email" class="form-control vs-input" name="email" value="{{ profile_user.email or '' }}" placeholder="you@example.com">
+              </label>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn vs-btn vs-btn-primary">Save</button>
+              <button type="button" class="btn vs-btn vs-btn-secondary" data-inline-edit-cancel>Cancel</button>
+            </div>
+          </form>
+        </div>
 
-          <div class="d-grid gap-2">
-            {% for brand in brands %}
-              <div class="card border-0 vs-brand-switch-card">
-                <div class="p-3 d-flex justify-content-between align-items-center gap-3 flex-wrap">
-                  <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="flex-grow-1 m-0">
-                    <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
-                    <input type="hidden" name="brand_id" value="{{ brand.id }}">
-                    <button type="submit" class="btn text-start p-0 w-100 vs-brand-switch-btn">
-                      <div class="fw-semibold">{{ brand.name }}</div>
-                      <div class="small vs-brand-meta">{{ brand.slug or brand.id }}</div>
-                      <div class="small text-secondary mt-1">
-                        {% if current_brand and brand.id == current_brand.id %}
-                          Currently active and default workspace
-                        {% else %}
-                          Click to make this your active and default workspace
-                        {% endif %}
-                      </div>
-                    </button>
-                  </form>
-                  <div class="d-flex align-items-center gap-2 flex-wrap">
-                    {% if brand.is_default %}
-                      <span class="badge text-bg-secondary">Default</span>
-                    {% endif %}
-                    {% if current_brand and brand.id == current_brand.id %}
-                      <span class="badge text-bg-primary">Active</span>
-                    {% endif %}
-                  </div>
+        <div class="vs-detail-row" data-inline-edit-row>
+          <div class="vs-detail-view" data-inline-view>
+            <div>
+              <div class="vs-detail-label">Time zone</div>
+              <div class="vs-detail-value" id="timezone-display">{{ timezone_ns.label }}</div>
+            </div>
+            <button type="button" class="vs-link-button" data-inline-edit-open>Edit</button>
+          </div>
+          <form method="post" class="vs-detail-edit" data-inline-edit-form hidden>
+            <input type="hidden" name="form_type" value="profile">
+            <input type="hidden" name="name" value="{{ profile_user.name or '' }}">
+            <input type="hidden" name="email" value="{{ profile_user.email or '' }}">
+            <input type="hidden" name="browser_time_zone" value="" data-browser-time-zone>
+            <div class="vs-edit-fields">
+              <label class="form-label vs-detail-label mb-0">
+                <span class="visually-hidden">Time zone</span>
+                <select class="form-select vs-select" name="time_zone" id="time-zone-select">
+                  {% for tz_value, tz_label in timezones %}
+                    <option value="{{ tz_value }}" {% if tz_value == current_timezone %}selected{% endif %}>{{ tz_label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn vs-btn vs-btn-primary">Save</button>
+              <button type="button" class="btn vs-btn vs-btn-secondary" data-inline-edit-cancel>Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <details class="vs-password-toggle">
+        <summary class="vs-password-summary">Change password</summary>
+        <form method="post" class="vs-password-form row g-3">
+          <input type="hidden" name="form_type" value="password">
+          <div class="col-12">
+            <label class="form-label vs-detail-label">Current password</label>
+            <input type="password" name="current_password" class="form-control vs-input" placeholder="Current password">
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-detail-label">New password</label>
+            <input type="password" name="new_password" class="form-control vs-input" placeholder="New password" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label vs-detail-label">Confirm new password</label>
+            <input type="password" name="confirm_password" class="form-control vs-input" placeholder="Repeat new password" required>
+          </div>
+          <div class="col-12 text-end">
+            <button class="btn vs-btn vs-btn-secondary" type="submit">Update password</button>
+          </div>
+        </form>
+      </details>
+    </div>
+  </section>
+
+  <section class="vs-profile-section">
+    <div class="card-body p-4 p-lg-4">
+      <div class="vs-section-header">
+        <div>
+          <h2 class="vs-section-title">Brands</h2>
+          <p class="vs-section-subtitle">Brands · click one to make it active &amp; default.</p>
+        </div>
+        <span class="badge text-bg-dark">{{ brands|length }} total</span>
+      </div>
+
+      <div class="vs-brand-list">
+        {% for brand in brands %}
+          <div class="vs-brand-item {% if current_brand and brand.id == current_brand.id %}is-current{% endif %}">
+            <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}">
+              <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+              <input type="hidden" name="brand_id" value="{{ brand.id }}">
+              <button type="submit" class="vs-brand-button">
+                <div>
+                  <div class="vs-brand-name">{{ brand.name }}</div>
+                  <div class="vs-brand-slug">{{ brand.slug or brand.id }}</div>
                 </div>
-              </div>
-            {% else %}
-              <div class="text-secondary small">No brands found yet.</div>
-            {% endfor %}
+                {% if brand.is_default %}
+                  <span class="badge text-bg-secondary">Default</span>
+                {% endif %}
+              </button>
+            </form>
           </div>
-        </div>
+        {% else %}
+          <div class="text-secondary small">No brands found yet.</div>
+        {% endfor %}
       </div>
-    </div>
 
-    <div class="col-xl-5">
-      <div class="card shadow-sm vs-card">
-        <div class="card-body">
-          <h5 class="card-title vs-card-title mb-3">Add brand</h5>
-          <form method="post" action="{{ url_for('video_shorts_bp.create_brand') }}" class="d-grid gap-3">
-            <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
-            <div>
-              <label class="form-label vs-card-title">Brand name</label>
-              <input type="text" name="name" class="form-control vs-input" placeholder="New brand name" maxlength="80" required>
-            </div>
-            <button type="submit" class="btn vs-btn vs-btn-primary">Add brand</button>
-          </form>
-        </div>
-      </div>
+      <form method="post" action="{{ url_for('video_shorts_bp.create_brand') }}" class="vs-brand-inline-form">
+        <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+        <input type="text" name="name" class="form-control vs-input" placeholder="New brand name" maxlength="80" required>
+        <button type="submit" class="btn vs-btn vs-btn-primary">Add</button>
+      </form>
     </div>
-  </div>
+  </section>
 </div>
 {% endblock %}
 
@@ -191,18 +373,59 @@
   {{ super() }}
   <script>
     (function () {
-      const browserTimeZoneField = document.getElementById('browser-time-zone');
-      const timeZoneSelect = document.getElementById('time-zone-select');
-      if (!browserTimeZoneField || !timeZoneSelect) return;
       const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-      browserTimeZoneField.value = browserTimeZone;
       const hasExplicitTimezone = {{ 'true' if has_explicit_timezone else 'false' }};
+      const browserFields = Array.from(document.querySelectorAll('[data-browser-time-zone]'));
+      const sharedTimezoneFields = Array.from(document.querySelectorAll('[data-shared-timezone]'));
+      const timeZoneSelect = document.getElementById('time-zone-select');
+      const timeZoneDisplay = document.getElementById('timezone-display');
+
+      browserFields.forEach((field) => {
+        field.value = browserTimeZone;
+      });
+
       if (!hasExplicitTimezone && browserTimeZone) {
-        const matchingOption = Array.from(timeZoneSelect.options).find((option) => option.value === browserTimeZone);
-        if (matchingOption) {
-          timeZoneSelect.value = browserTimeZone;
+        if (timeZoneSelect) {
+          const matchingOption = Array.from(timeZoneSelect.options).find((option) => option.value === browserTimeZone);
+          if (matchingOption) {
+            timeZoneSelect.value = browserTimeZone;
+            if (timeZoneDisplay) {
+              timeZoneDisplay.textContent = matchingOption.textContent;
+            }
+            sharedTimezoneFields.forEach((field) => {
+              field.value = browserTimeZone;
+            });
+          }
         }
       }
+
+      document.querySelectorAll('[data-inline-edit-row]').forEach((row) => {
+        const view = row.querySelector('[data-inline-view]');
+        const form = row.querySelector('[data-inline-edit-form]');
+        const openButton = row.querySelector('[data-inline-edit-open]');
+        const cancelButton = row.querySelector('[data-inline-edit-cancel]');
+        if (!view || !form || !openButton || !cancelButton) return;
+
+        openButton.addEventListener('click', () => {
+          document.querySelectorAll('[data-inline-edit-row]').forEach((otherRow) => {
+            const otherView = otherRow.querySelector('[data-inline-view]');
+            const otherForm = otherRow.querySelector('[data-inline-edit-form]');
+            if (otherView && otherForm) {
+              otherView.hidden = false;
+              otherForm.hidden = true;
+            }
+          });
+          view.hidden = true;
+          form.hidden = false;
+          const firstInput = form.querySelector('input:not([type="hidden"]), select');
+          if (firstInput) firstInput.focus();
+        });
+
+        cancelButton.addEventListener('click', () => {
+          view.hidden = false;
+          form.hidden = true;
+        });
+      });
     })();
   </script>
 {% endblock %}
