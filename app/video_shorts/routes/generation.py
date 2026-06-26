@@ -114,6 +114,7 @@ from app.video_shorts.services.system_backgrounds import (
     make_system_background_key,
     list_system_background_paths,
     resolve_system_background_path,
+    system_background_static_filename,
 )
 from app.video_shorts.services.storage import (
     StorageEntry,
@@ -3768,7 +3769,7 @@ def generate_short(video_pk):
         {
             "key": make_system_background_key(system_path.name),
             "label": system_path.stem.replace("_", " "),
-            "image_url": url_for("video_shorts_bp.static", filename=f"mintibackgrounds/{system_path.name}"),
+            "image_url": url_for("video_shorts_bp.static", filename=system_background_static_filename(system_path)),
             "description": "System background",
         }
         for system_path in list_system_background_paths()

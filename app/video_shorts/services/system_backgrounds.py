@@ -7,19 +7,52 @@ from app.video_shorts.config import MINTI_BACKGROUNDS_DIR
 
 SYSTEM_BACKGROUND_KEY_PREFIX = "systembg:"
 _ALLOWED_SYSTEM_BACKGROUND_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+_FALLBACK_DIR_CANDIDATES = (
+    MINTI_BACKGROUNDS_DIR,
+    MINTI_BACKGROUNDS_DIR.parent / "img",
+)
+
+
+def _existing_background_dirs() -> List[Path]:
+    seen = set()
+    directories: List[Path] = []
+    for candidate in _FALLBACK_DIR_CANDIDATES:
+        resolved = candidate.resolve()
+        if resolved in seen or not candidate.exists() or not candidate.is_dir():
+            continue
+        seen.add(resolved)
+        directories.append(candidate)
+    return directories
 
 
 def list_system_background_paths() -> List[Path]:
-    if not MINTI_BACKGROUNDS_DIR.exists():
-        return []
-    return sorted(
-        [
-            entry
-            for entry in MINTI_BACKGROUNDS_DIR.iterdir()
-            if entry.is_file() and entry.suffix.lower() in _ALLOWED_SYSTEM_BACKGROUND_EXTS
-        ],
-        key=lambda entry: entry.name.lower(),
-    )
+    backgrounds: List[Path] = []
+    seen_names = set()
+    for directory in _existing_background_dirs():
+        for entry in directory.iterdir():
+            if not entry.is_file() or entry.suffix.lower() not in _ALLOWED_SYSTEM_BACKGROUND_EXTS:
+                continue
+            if entry.name in seen_names:
+                continue
+            seen_names.add(entry.name)
+            backgrounds.append(entry)
+    return sorted(backgrounds, key=lambda entry: entry.name.lower())
+
+
+def system_background_static_filename(path_or_name: Path | str) -> str:
+    candidate_name = Path(path_or_name).name
+    for candidate in list_system_background_paths():
+        if candidate.name != candidate_name:
+            continue
+        for directory in _existing_background_dirs():
+            try:
+                relative = candidate.relative_to(directory)
+            except ValueError:
+                continue
+            static_root = directory.name
+            return str(Path(static_root) / relative)
+    # Fallback to the canonical folder name for older keys.
+    return str(Path("mintibackgrounds") / candidate_name)
 
 
 def make_system_background_key(filename: str) -> str:

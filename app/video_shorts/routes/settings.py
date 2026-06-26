@@ -28,6 +28,7 @@ from app.video_shorts.services.system_backgrounds import (
     list_system_background_paths,
     make_system_background_key,
     resolve_system_background_path,
+    system_background_static_filename,
 )
 
 
@@ -701,7 +702,7 @@ def static_images_page():
                 "background_key": make_system_background_key(system_path.name),
                 "label": system_path.stem.replace("_", " "),
                 "filename": system_path.name,
-                "image_url": url_for("video_shorts_bp.static", filename=f"mintibackgrounds/{system_path.name}"),
+                "image_url": url_for("video_shorts_bp.static", filename=system_background_static_filename(system_path)),
             }
         )
     categories = [{"id": str(row[0]), "name": row[1]} for row in category_rows]
