@@ -843,7 +843,7 @@ def account_page():
         },
         {
             "title": "My Storage",
-            "subtitle": "Browse uploaded files and storage assets",
+            "subtitle": "Review your storage usage and plan limits",
             "icon": "cloud_download",
             "href": url_for("video_shorts_bp.shorts_storage"),
         },
@@ -867,6 +867,14 @@ def account_page():
         },
     ]
     if current_user.get("role") == "admin":
+        account_items.append(
+            {
+                "title": "Plan Admin",
+                "subtitle": "Manage user plans and storage overrides",
+                "icon": "admin_panel_settings",
+                "href": url_for("video_shorts_bp.admin_storage_plans"),
+            }
+        )
         account_items.append(
             {
                 "title": "Logs",

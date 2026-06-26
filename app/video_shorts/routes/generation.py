@@ -5170,6 +5170,8 @@ def shorts_storage():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
+    if not is_admin:
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
     brand_id = current_brand_id()
     force_sync = (request.args.get("sync") or "").strip().lower() in {"1", "true", "yes"}
     conn = get_db()
@@ -5426,6 +5428,102 @@ def shorts_storage():
         unassigned_label=_format_size_bytes(max(0, unassigned_bytes)),
         plan_cards=plan_cards,
     )
+
+
+def _load_storage_plan_catalog(conn) -> List[Dict[str, Any]]:
+    plan_label_map = {
+        "plan_free": "Free",
+        "plan_2gb": "Starter",
+        "plan_10gb": "Creator",
+        "plan_100gb": "Studio",
+    }
+    plan_order = ["plan_free", "plan_2gb", "plan_10gb", "plan_100gb"]
+    plan_rows = conn.execute(
+        """
+        SELECT
+            plan_id,
+            label,
+            quota_bytes,
+            price_monthly,
+            monthly_export_limit,
+            monthly_transcription_minutes
+        FROM shorts_storage_plans
+        ORDER BY sort_order, label
+        """
+    ).fetchall()
+    plan_lookup = {
+        row[0]: {
+            "plan_id": row[0],
+            "label": plan_label_map.get(row[0], row[1]),
+            "quota_bytes": row[2],
+            "quota_label": _format_size_bytes(row[2]),
+            "price_monthly": row[3] or 0,
+            "monthly_export_limit": int(row[4] or 0),
+            "monthly_transcription_minutes": int(row[5] or 0),
+            "transcription_limit_label": f"{int((row[5] or 0) / 60)}h",
+        }
+        for row in plan_rows
+        if row[0] in plan_order
+    }
+    return [plan_lookup[plan_id] for plan_id in plan_order if plan_id in plan_lookup]
+
+
+def _load_storage_plan_admin_users(conn) -> List[Dict[str, Any]]:
+    plan_label_map = {
+        "plan_free": "Free",
+        "plan_2gb": "Starter",
+        "plan_10gb": "Creator",
+        "plan_100gb": "Studio",
+    }
+    usage_rows = {
+        row[0]: row[1]
+        for row in conn.execute(
+            """
+            SELECT CAST(user_id AS VARCHAR), SUM(size_bytes)
+            FROM shorts_storage_assets
+            WHERE user_id IS NOT NULL AND (status = 'active' OR status IS NULL)
+            GROUP BY user_id
+            """
+        ).fetchall()
+    }
+    user_rows = conn.execute(
+        """
+        SELECT
+          CAST(u.id AS VARCHAR),
+          u.name,
+          u.email,
+          u.plan_id,
+          u.custom_limit_bytes,
+          p.label,
+          p.quota_bytes,
+          u.username
+        FROM shorts_users u
+        LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
+        ORDER BY u.name
+        """
+    ).fetchall()
+    users: List[Dict[str, Any]] = []
+    for row in user_rows:
+        limit_bytes = row[4] or row[6] or DEFAULT_USER_STORAGE_LIMIT
+        used_bytes = usage_rows.get(row[0], 0)
+        percent = int(min(100, (used_bytes / limit_bytes * 100))) if limit_bytes else 0
+        users.append(
+            {
+                "id": row[0],
+                "name": row[1],
+                "email": row[2],
+                "plan_id": row[3],
+                "plan_label": plan_label_map.get(row[3], row[5]) or "No plan",
+                "limit_label": _format_size_bytes(limit_bytes),
+                "limit_bytes": limit_bytes,
+                "used_label": _format_size_bytes(used_bytes),
+                "used_bytes": used_bytes,
+                "percent": percent,
+                "custom_limit_gb": (row[4] / (1024 ** 3)) if row[4] else "",
+                "username": row[7],
+            }
+        )
+    return users
 
 
 @video_shorts_bp.route("/shorts/scripts")
@@ -5698,18 +5796,47 @@ def shorts_storage_plans():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
-    brand_id = current_brand_id()
-    plan_label_map = {
-        "plan_free": "Free",
-        "plan_2gb": "Starter",
-        "plan_10gb": "Creator",
-        "plan_100gb": "Studio",
-    }
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
-        requested_user_id = (request.form.get("user_id") or "").strip()
-        user_id = requested_user_id or current_user["id"]
+        plan_id = (request.form.get("plan_id") or "").strip() or None
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET plan_id = ?, custom_limit_bytes = NULL
+            WHERE id = ?
+            """,
+            [plan_id, current_user["id"]],
+        )
+        conn.commit()
+        flash("Subscription updated.", "success")
+        conn.close()
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+    plans = _load_storage_plan_catalog(conn)
+    conn.close()
+    current_plan = next((plan for plan in plans if plan["plan_id"] == current_user.get("plan_id")), None)
+
+    return render_template(
+        "shorts_storage_plans.html",
+        plans=plans,
+        is_admin=is_admin,
+        current_plan_label=(current_plan or {}).get("label") or "Free",
+        admin_controls_url=url_for("video_shorts_bp.admin_storage_plans") if is_admin else None,
+    )
+
+
+@video_shorts_bp.route("/admin/plans", methods=["GET", "POST"])
+def admin_storage_plans():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if current_user.get("role") != "admin":
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    conn = get_db()
+    ensure_storage_user_schema(conn)
+    if request.method == "POST":
+        user_id = (request.form.get("user_id") or "").strip()
         plan_id = (request.form.get("plan_id") or "").strip() or None
         custom_limit = request.form.get("custom_limit") or ""
         custom_limit_bytes = None
@@ -5731,170 +5858,17 @@ def shorts_storage_plans():
             flash("Subscription updated.", "success")
         else:
             flash("Select a user to update.", "danger")
-        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+        conn.close()
+        return redirect(url_for("video_shorts_bp.admin_storage_plans"))
 
-    plan_rows = conn.execute(
-        """
-        SELECT
-            plan_id,
-            label,
-            quota_bytes,
-            price_monthly,
-            monthly_export_limit,
-            monthly_transcription_minutes
-        FROM shorts_storage_plans
-        ORDER BY sort_order, label
-        """
-    ).fetchall()
-    plan_order = ["plan_free", "plan_2gb", "plan_10gb", "plan_100gb"]
-    plan_lookup = {
-        row[0]: {
-            "plan_id": row[0],
-            "label": plan_label_map.get(row[0], row[1]),
-            "quota_bytes": row[2],
-            "quota_label": _format_size_bytes(row[2]),
-            "price_monthly": row[3] or 0,
-            "monthly_export_limit": int(row[4] or 0),
-            "monthly_transcription_minutes": int(row[5] or 0),
-            "transcription_limit_label": f"{int((row[5] or 0) / 60)}h",
-        }
-        for row in plan_rows
-        if row[0] in plan_order
-    }
-    plans = [plan_lookup[plan_id] for plan_id in plan_order if plan_id in plan_lookup]
-    usage_rows = {
-        row[0]: row[1]
-        for row in conn.execute(
-            """
-            SELECT CAST(user_id AS VARCHAR), SUM(size_bytes)
-            FROM shorts_storage_assets
-            WHERE user_id IS NOT NULL AND (status = 'active' OR status IS NULL)
-            GROUP BY user_id
-            """
-        ).fetchall()
-    }
-    brand_usage_rows: Dict[str, int] = {}
-    if not is_admin:
-        video_sql = """
-            SELECT yv.id, yv.video_id, yv.title, yv.channel_id, ch.channel_name, yv.download_status
-            FROM youtube_videos yv
-            LEFT JOIN youtube_channels ch ON yv.channel_id = ch.channel_id
-            WHERE yv.owner_user_id = ?
-        """
-        video_params: List[Any] = [current_user["id"]]
-        if brand_id:
-            video_sql += " AND yv.brand_id = ?"
-            video_params.append(brand_id)
-        else:
-            video_sql += " AND yv.brand_id IS NULL"
-        video_sql += " ORDER BY yv.id DESC"
-        video_rows = conn.execute(video_sql, video_params).fetchall()
-        brand_video_meta: Dict[str, Dict[str, str]] = {}
-        for db_id, video_id, title, channel_id, channel_name, download_status in video_rows:
-            plan_stats = _load_short_plan_stats(video_id)
-            meta = {
-                "youtube_title": title or "",
-                "db_id": str(db_id),
-                "channel_name": channel_name or "",
-                "video_pk": str(db_id),
-                "status": download_status or "",
-                "video_id": video_id,
-                "plan_count": plan_stats["plan_count"],
-                "created_count": plan_stats["created_count"],
-                "desc_ready": plan_stats["desc_ready"],
-            }
-            variants = {
-                video_id,
-                f"{video_id}.mp4",
-                f"{video_id}.mov",
-                f"{video_id}.mkv",
-                f"{video_id}.mp3",
-                f"{video_id}.wav",
-                f"{video_id}.m4a",
-                f"{video_id}.aac",
-                f"{video_id}.ogg",
-                f"{video_id}.flac",
-                f"{video_id}.mp4M",
-                str(db_id),
-                f"{str(db_id)}.mp4",
-                f"{str(db_id)}.mov",
-                f"{str(db_id)}.mkv",
-                f"{str(db_id)}.mp3",
-                f"{str(db_id)}.wav",
-                f"{str(db_id)}.m4a",
-                f"{str(db_id)}.aac",
-                f"{str(db_id)}.ogg",
-                f"{str(db_id)}.flac",
-            }
-            for key in variants:
-                brand_video_meta[key] = meta
-        allowed_video_ids = {
-            str(meta.get("video_id") or "")
-            for meta in brand_video_meta.values()
-            if str(meta.get("video_id") or "")
-        }
-        assets_map = {}
-        for file_key, user_id_value, size_bytes in conn.execute(
-            "SELECT file_key, CAST(user_id AS VARCHAR), size_bytes FROM shorts_storage_assets"
-        ).fetchall():
-            assets_map[file_key] = {"user_id": user_id_value, "size_bytes": size_bytes}
-        brand_storage_entries, _, _, _, _ = _collect_combined_storage_entries(brand_video_meta, assets_map)
-        brand_storage_entries = [
-            entry for entry in brand_storage_entries
-            if entry.get("owner_user_id") == current_user["id"]
-            and str(entry.get("video_id") or "") in allowed_video_ids
-        ]
-        brand_usage_rows[current_user["id"]] = sum(int(entry.get("size_bytes") or 0) for entry in brand_storage_entries)
-    user_query = """
-        SELECT
-          CAST(u.id AS VARCHAR),
-          u.name,
-          u.email,
-          u.plan_id,
-          u.custom_limit_bytes,
-          p.label,
-          p.quota_bytes,
-          u.username
-        FROM shorts_users u
-        LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
-    """
-    params: List[Any] = []
-    if not is_admin:
-        user_query += " WHERE u.id = ?"
-        params.append(current_user["id"])
-    user_query += " ORDER BY u.name"
-    user_rows = conn.execute(user_query, params).fetchall()
+    plans = _load_storage_plan_catalog(conn)
+    users = _load_storage_plan_admin_users(conn)
     conn.close()
-
-    users = []
-    for row in user_rows:
-        limit_bytes = row[4] or row[6] or DEFAULT_USER_STORAGE_LIMIT
-        used_bytes = brand_usage_rows.get(row[0], usage_rows.get(row[0], 0))
-        percent = int(min(100, (used_bytes / limit_bytes * 100))) if limit_bytes else 0
-        users.append(
-            {
-                "id": row[0],
-                "name": row[1],
-                "email": row[2],
-                "plan_id": row[3],
-                "plan_label": plan_label_map.get(row[3], row[5]) or "Plan yok",
-                "limit_label": _format_size_bytes(limit_bytes),
-                "limit_bytes": limit_bytes,
-                "used_label": _format_size_bytes(used_bytes),
-                "used_bytes": used_bytes,
-                "percent": percent,
-                "custom_limit_gb": (row[4] / (1024 ** 3)) if row[4] else "",
-                "username": row[7],
-            }
-        )
-
     return render_template(
-        "shorts_storage_plans.html",
+        "shorts_storage_admin.html",
         plans=plans,
         users=users,
         default_limit_label=_format_size_bytes(DEFAULT_USER_STORAGE_LIMIT),
-        is_admin=is_admin,
-        current_user_id=current_user.get("id") if current_user else None,
     )
 
 

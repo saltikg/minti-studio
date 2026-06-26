@@ -1,0 +1,69 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Plan Admin{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .admin-plan-shell {
+    display: grid;
+    gap: 1rem;
+  }
+  .admin-plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-plan-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <h3 class="mb-1 vs-card-title">Plan admin</h3>
+      <div class="vs-text-muted">Manage user plans and storage overrides.</div>
+    </div>
+    <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="btn btn-sm vs-btn vs-btn-secondary">Back to plan &amp; storage</a>
+  </div>
+
+  <div class="admin-plan-grid">
+    {% for user in users %}
+      <div class="card shadow-sm usage-card vs-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <div class="vs-card-title">{{ user.name }}</div>
+              <div class="vs-text-muted vs-text-small">{{ user.email or user.username or user.id }}</div>
+              <div class="vs-text-muted vs-text-small mt-1">{{ user.used_label }} of {{ user.limit_label }} used</div>
+            </div>
+            <span class="vs-badge">{{ user.plan_label }}</span>
+          </div>
+          <form method="post" class="row g-2 align-items-end">
+            <input type="hidden" name="user_id" value="{{ user.id }}">
+            <div class="col-md-6">
+              <label class="form-label vs-card-title mb-1">Plan</label>
+              <select name="plan_id" class="form-select form-select-sm vs-select">
+                <option value="">Select plan</option>
+                {% for plan in plans %}
+                  <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
+                    {{ plan.label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
+              <input type="text" name="custom_limit" class="form-control form-control-sm vs-input" value="{{ user.custom_limit_gb }}">
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <div class="alert alert-info mb-0">No users yet. Create users before assigning plans.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

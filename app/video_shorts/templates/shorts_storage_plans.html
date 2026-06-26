@@ -137,19 +137,19 @@
 
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
   <div>
-    <h3 class="mb-1 vs-card-title">Plan &amp; Storage</h3>
+    <h3 class="mb-1 vs-card-title">Plan &amp; storage</h3>
+    <div class="vs-text-muted">Your plan usage this month.</div>
   </div>
+  {% if admin_controls_url %}
+    <a href="{{ admin_controls_url }}" class="btn btn-sm vs-btn vs-btn-secondary">Admin controls</a>
+  {% endif %}
 </div>
-
-{% if is_admin %}
-  <div class="alert alert-info mb-4">Admin controls are available below the usage panel.</div>
-{% endif %}
 
 <div class="card shadow-sm usage-panel mb-4">
   <div class="card-body p-4">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
       <div>
-        <div class="vs-card-title mb-1">Usage this month</div>
+        <div class="vs-card-title mb-1" id="usage-plan-copy">Current plan: {{ current_plan_label }}</div>
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
       <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
@@ -301,53 +301,6 @@
   </div>
 </div>
 
-{% if is_admin %}
-<div class="mb-3">
-  <div class="vs-card-title mb-2">Admin plan controls</div>
-  <div class="admin-usage-grid">
-    {% for user in users %}
-      <div class="card shadow-sm usage-card vs-card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-3">
-            <div>
-              <div class="vs-card-title">{{ user.name }}</div>
-              <div class="vs-text-muted vs-text-small">{{ user.email or user.username or user.id }}</div>
-            </div>
-            <span class="vs-badge">{{ user.plan_label }}</span>
-          </div>
-          <form method="post" class="row g-2 align-items-end">
-            <input type="hidden" name="user_id" value="{{ user.id }}">
-            <div class="col-md-6">
-              <label class="form-label vs-card-title mb-1">Plan</label>
-              <select name="plan_id" class="form-select form-select-sm vs-select">
-                <option value="">Select plan</option>
-                {% for plan in plans %}
-                  <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
-                    {{ plan.label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
-              <input type="text"
-                     name="custom_limit"
-                     class="form-control form-control-sm vs-input"
-                     value="{{ user.custom_limit_gb }}">
-            </div>
-            <div class="col-md-2">
-              <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    {% else %}
-      <div class="alert alert-info mb-0">No users yet. Create users via the CLI task before assigning subscriptions.</div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
 <div class="modal fade" id="storageLimitModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
@@ -427,6 +380,7 @@
     const usageContent = document.getElementById("usage-panel-content");
     const usageMeters = document.getElementById("usage-meters");
     const usageResetCopy = document.getElementById("usage-reset-copy");
+    const usagePlanCopy = document.getElementById("usage-plan-copy");
     const usageBanner = document.getElementById("usage-panel-banner");
     const usageUpgradeBtn = document.getElementById("usage-upgrade-btn");
 
@@ -572,6 +526,10 @@
 
       if (usageResetCopy) {
         usageResetCopy.textContent = formatResetCopy(payload?.period?.reset_at);
+      }
+      if (usagePlanCopy) {
+        const planName = payload?.plan?.name || "{{ current_plan_label }}";
+        usagePlanCopy.textContent = `Current plan: ${planName}`;
       }
 
       if (usageUpgradeBtn) {
