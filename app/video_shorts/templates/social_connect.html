@@ -11,14 +11,19 @@
   {% endif %}
 {%- endmacro %}
 
-{% macro platform_card(key, name, icon_class, description, connected, connect_url, disconnect_url, account, page, connected_at, details, notice=None, connect_label='Connect', reconnect_label='Reconnect', secondary_label='Page') -%}
+{% macro platform_card(key, name, icon_class, description, status, connect_url, disconnect_url, account, page, connected_at, details, notice=None, connect_label='Connect', reconnect_label='Reconnect needed', secondary_label='Page') -%}
+  {% set is_connected = status == 'connected' %}
+  {% set is_reconnect_needed = status == 'reconnect_needed' %}
+  {% set badge_class = 'vs-badge-success' if is_connected else 'text-bg-warning' if is_reconnect_needed else '' %}
+  {% set status_label = 'Connected' if is_connected else 'Reconnect needed' if is_reconnect_needed else 'Not connected' %}
+  {% set helper_text = 'Ready to publish.' if is_connected else 'Connection expired — reconnect to keep publishing.' if is_reconnect_needed else 'Not connected.' %}
   <div class="col">
     <div class="card platform-card h-100 shadow-sm position-relative vs-card">
       <div class="card-body d-flex flex-column gap-3">
         <div class="d-flex justify-content-between align-items-start">
           <div class="d-flex gap-3 align-items-start">
             {% if connect_url %}
-              <a href="{{ connect_url }}" class="platform-icon-link" aria-label="{{ name }} bağlan">
+              <a href="{{ connect_url }}" class="platform-icon-link" aria-label="{{ name }} connect">
                 <i class="{{ icon_class }}"></i>
               </a>
             {% else %}
@@ -31,8 +36,8 @@
               <p class="vs-text-muted vs-text-small mb-0">{{ description }}</p>
             </div>
           </div>
-          <span class="vs-badge {% if connected %}vs-badge-success{% endif %}">
-            {% if connected %}Connected{% else %}Not connected{% endif %}
+          <span class="vs-badge {{ badge_class }}">
+            {{ status_label }}
           </span>
         </div>
 
@@ -43,10 +48,10 @@
         {% endif %}
 
         <div class="flex-grow-1">
-          <p class="vs-text-small {% if connected %}text-success{% else %}vs-text-muted{% endif %} mb-2">
-            {% if connected %}Ready to publish.{% else %}Not connected.{% endif %}
+          <p class="vs-text-small {% if is_connected %}text-success{% elif is_reconnect_needed %}text-warning{% else %}vs-text-muted{% endif %} mb-2">
+            {{ helper_text }}
           </p>
-          {% if connected %}
+          {% if account or page or connected_at or details %}
             <ul class="list-unstyled vs-text-small mb-2">
               {{ info_item("Account", account) }}
               {{ info_item(secondary_label, page) }}
@@ -68,15 +73,20 @@
         </div>
       </div>
       <div class="card-footer bg-transparent border-0 pt-0">
-        {% if connected %}
+        {% if is_connected %}
           <div class="d-flex gap-2 flex-wrap">
-            {% if connect_url %}
-              <a class="btn btn-sm vs-btn vs-btn-secondary" href="{{ connect_url }}">{{ reconnect_label }}</a>
-            {% endif %}
             {% if disconnect_url %}
               <form method="post" action="{{ disconnect_url }}">
                 <button type="submit" class="btn btn-sm vs-btn vs-btn-danger">Disconnect</button>
               </form>
+            {% endif %}
+          </div>
+        {% elif is_reconnect_needed %}
+          <div class="d-flex gap-2 flex-wrap">
+            {% if connect_url %}
+              <a class="btn btn-sm vs-btn vs-btn-secondary" href="{{ connect_url }}">Reconnect</a>
+            {% else %}
+              <button class="btn btn-sm vs-btn vs-btn-secondary" disabled>Reconnect</button>
             {% endif %}
           </div>
         {% else %}
@@ -130,7 +140,7 @@
       </div>
     </div>
 
-    {% if youtube_warning or instagram_warning or tiktok_warning %}
+    {% if youtube_warning or instagram_warning or tiktok_warning or facebook_warning %}
       <div class="mb-3">
         {% if youtube_warning %}
           <div class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
@@ -168,7 +178,7 @@
         "YouTube",
         "bi bi-youtube",
         "Connect to upload short videos.",
-        youtube_connected,
+        youtube_status,
         youtube_configured and url_for('video_shorts_bp.youtube_authorize') or None,
         youtube_connected and url_for('video_shorts_bp.youtube_disconnect') or None,
         youtube_account,
@@ -183,7 +193,7 @@
         "Instagram",
         "bi bi-instagram text-danger",
         "Connect directly with Instagram to publish Reels.",
-        instagram_connected,
+        instagram_status,
         url_for('video_shorts_bp.instagram_authorize'),
         instagram_connected and url_for('video_shorts_bp.instagram_disconnect') or None,
         instagram_account,
@@ -193,10 +203,9 @@
           {"label": "App ID", "value": instagram_app_id},
           {"label": "Instagram ID", "value": instagram_business_id}
         ],
-        not instagram_connected and "Business or Creator accounts only. Personal accounts are not supported." or None,
-        "Connect Instagram",
-        "Reconnect Instagram",
-        "Account type"
+        instagram_warning if instagram_status == 'reconnect_needed' else (not instagram_connected and "Business or Creator accounts only. Personal accounts are not supported." or None),
+        connect_label="Connect Instagram",
+        secondary_label="Account type"
       ) }}
 
       {{ platform_card(
@@ -204,14 +213,17 @@
         "TikTok",
         "bi bi-music-note-beamed",
         "Connect to publish TikTok videos.",
-        tiktok_connected,
+        tiktok_status,
         tiktok_configured and url_for('video_shorts_bp.tiktok_authorize') or None,
         tiktok_connected and url_for('video_shorts_bp.tiktok_disconnect') or None,
+        tiktok_account,
         None,
-        None,
-        None,
-        None,
-        None if tiktok_configured else "TikTok OAuth ayarları eksik. Lütfen yapılandırmayı tamamlayın."
+        tiktok_connected_at,
+        [
+          {"label": "Open ID", "value": tiktok_info.open_id if tiktok_info else None},
+          {"label": "Username", "value": ('@' ~ tiktok_info.username) if tiktok_info and tiktok_info.username else None}
+        ],
+        None if tiktok_configured else "TikTok isn't configured yet. Please finish setup."
       ) }}
 
       {{ platform_card(
@@ -219,7 +231,7 @@
         "Facebook Page",
         "bi bi-facebook text-primary",
         "Connect to publish on a Facebook Page.",
-        facebook_connected,
+        facebook_status,
         url_for('video_shorts_bp.facebook_connect'),
         facebook_connected and url_for('video_shorts_bp.facebook_disconnect') or None,
         None,
@@ -230,10 +242,8 @@
           {"label": "Page ID", "value": facebook_info.page_id if facebook_info else None},
           {"label": "FB User ID", "value": facebook_info.fb_user_id if facebook_info else None}
         ],
-        None,
-        "Connect",
-        "Reconnect",
-        "Page"
+        facebook_warning if facebook_status == 'reconnect_needed' else None,
+        secondary_label="Page"
       ) }}
     </div>
   </div>
@@ -270,8 +280,8 @@
           <div>
             <h6 class="mb-1 vs-card-title">TikTok</h6>
             <ol class="vs-text-small ps-3 mb-0">
-              <li>Connect ile TikTok hesabınızı seçin.</li>
-              <li>İzinleri onayladıktan sonra bağlantı oluşturulacaktır.</li>
+              <li>Use Connect to choose your TikTok account.</li>
+              <li>After approving access, you will return here automatically.</li>
             </ol>
           </div>
         </div>

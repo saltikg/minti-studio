@@ -410,6 +410,15 @@
             </a>
           {% endif %}
 
+          {% if vs_current_user and vs_current_user.get('role') == 'admin' %}
+            <a href="{{ url_for('video_shorts_bp.admin_storage_plans') }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if '/video_shorts/admin/plans' in request.path %}active{% endif %}">
+              <span class="material-symbols-outlined">admin_panel_settings</span>
+              <span>Plan Admin</span>
+            </a>
+          {% endif %}
+
         </div>
       </aside>
 

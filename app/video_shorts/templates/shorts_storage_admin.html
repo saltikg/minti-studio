@@ -8,10 +8,71 @@
     display: grid;
     gap: 1rem;
   }
-  .admin-plan-grid {
+  .admin-plan-toolbar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
+    grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .admin-plan-filter-card,
+  .admin-plan-table-card {
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(10, 16, 30, 0.68);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+  }
+  .admin-plan-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 14px;
+    margin-top: 10px;
+  }
+  .admin-plan-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255,255,255,0.82);
+    font-size: 0.92rem;
+  }
+  .admin-plan-summary {
+    color: rgba(255,255,255,0.62);
+    font-size: 0.92rem;
+  }
+  .admin-plan-table {
+    margin-bottom: 0;
+  }
+  .admin-plan-table td,
+  .admin-plan-table th {
+    vertical-align: middle;
+  }
+  .admin-plan-user {
+    min-width: 220px;
+  }
+  .admin-plan-user-name {
+    color: #fff;
+    font-weight: 600;
+  }
+  .admin-plan-user-meta {
+    color: rgba(255,255,255,0.62);
+    font-size: 0.85rem;
+  }
+  .admin-plan-paging {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .admin-plan-paging-links {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 991.98px) {
+    .admin-plan-toolbar {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 {% endblock %}
@@ -23,47 +84,100 @@
       <h3 class="mb-1 vs-card-title">Plan admin</h3>
       <div class="vs-text-muted">Manage user plans and storage overrides.</div>
     </div>
-    <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" class="btn btn-sm vs-btn vs-btn-secondary">Back to plan &amp; storage</a>
   </div>
 
-  <div class="admin-plan-grid">
-    {% for user in users %}
-      <div class="card shadow-sm usage-card vs-card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-3">
-            <div>
-              <div class="vs-card-title">{{ user.name }}</div>
-              <div class="vs-text-muted vs-text-small">{{ user.email or user.username or user.id }}</div>
-              <div class="vs-text-muted vs-text-small mt-1">{{ user.used_label }} of {{ user.limit_label }} used</div>
-            </div>
-            <span class="vs-badge">{{ user.plan_label }}</span>
-          </div>
-          <form method="post" class="row g-2 align-items-end">
-            <input type="hidden" name="user_id" value="{{ user.id }}">
-            <div class="col-md-6">
-              <label class="form-label vs-card-title mb-1">Plan</label>
-              <select name="plan_id" class="form-select form-select-sm vs-select">
-                <option value="">Select plan</option>
-                {% for plan in plans %}
-                  <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>
-                    {{ plan.label }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
-              <input type="text" name="custom_limit" class="form-control form-control-sm vs-input" value="{{ user.custom_limit_gb }}">
-            </div>
-            <div class="col-md-2">
-              <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
-            </div>
-          </form>
+  <div class="card admin-plan-filter-card">
+    <div class="card-body">
+      <form method="get" class="admin-plan-toolbar">
+        <div>
+          <label class="form-label vs-card-title mb-1">Search users</label>
+          <input type="text" name="q" value="{{ search_text }}" class="form-control vs-input" placeholder="Search by name, email, username, or user ID">
         </div>
-      </div>
-    {% else %}
-      <div class="alert alert-info mb-0">No users yet. Create users before assigning plans.</div>
-    {% endfor %}
+        <div>
+          <label class="form-label vs-card-title mb-1 d-block">Plan filter</label>
+          <div class="admin-plan-checkboxes">
+            {% for plan in plans %}
+              <label class="admin-plan-checkbox">
+                <input type="checkbox" name="plan_id" value="{{ plan.plan_id }}" {% if plan.plan_id in selected_plan_ids %}checked{% endif %}>
+                <span>{{ plan.label }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn vs-btn vs-btn-primary">Apply</button>
+          <a href="{{ url_for('video_shorts_bp.admin_storage_plans') }}" class="btn vs-btn vs-btn-secondary">Reset</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="admin-plan-summary">
+    {{ total_users }} users · {{ per_page }} per page
+  </div>
+
+  <div class="card admin-plan-table-card">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle admin-plan-table vs-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Current plan</th>
+            <th>Usage</th>
+            <th style="min-width: 320px;">Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+            <tr>
+              <td class="admin-plan-user">
+                <div class="admin-plan-user-name">{{ user.name }}</div>
+                <div class="admin-plan-user-meta">{{ user.email or user.username or user.id }}</div>
+              </td>
+              <td>{{ user.plan_label }}</td>
+              <td>{{ user.used_label }} / {{ user.limit_label }}</td>
+              <td>
+                <form method="post" class="row g-2 align-items-end" action="{{ url_for('video_shorts_bp.admin_storage_plans', q=search_text, plan_id=selected_plan_ids, page=page) }}">
+                  <input type="hidden" name="user_id" value="{{ user.id }}">
+                  <div class="col-md-5">
+                    <label class="form-label vs-card-title mb-1">Plan</label>
+                    <select name="plan_id" class="form-select form-select-sm vs-select">
+                      <option value="">Select plan</option>
+                      {% for plan in plans %}
+                        <option value="{{ plan.plan_id }}" {% if user.plan_id == plan.plan_id %}selected{% endif %}>{{ plan.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label vs-card-title mb-1">Limit override (GB)</label>
+                    <input type="text" name="custom_limit" class="form-control form-control-sm vs-input" value="{{ user.custom_limit_gb }}">
+                  </div>
+                  <div class="col-md-3">
+                    <button class="btn btn-sm vs-btn vs-btn-primary w-100">Save</button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="text-center text-muted py-4">No users matched your filters.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="admin-plan-paging">
+    <div class="admin-plan-summary">Page {{ page }} of {{ total_pages }}</div>
+    <div class="admin-plan-paging-links">
+      {% if page > 1 %}
+        <a href="{{ url_for('video_shorts_bp.admin_storage_plans', q=search_text, plan_id=selected_plan_ids, page=page-1) }}" class="btn btn-sm vs-btn vs-btn-secondary">Previous</a>
+      {% endif %}
+      {% if page < total_pages %}
+        <a href="{{ url_for('video_shorts_bp.admin_storage_plans', q=search_text, plan_id=selected_plan_ids, page=page+1) }}" class="btn btn-sm vs-btn vs-btn-secondary">Next</a>
+      {% endif %}
+    </div>
   </div>
 </div>
 {% endblock %}

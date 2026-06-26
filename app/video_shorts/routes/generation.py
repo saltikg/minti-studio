@@ -5468,13 +5468,42 @@ def _load_storage_plan_catalog(conn) -> List[Dict[str, Any]]:
     return [plan_lookup[plan_id] for plan_id in plan_order if plan_id in plan_lookup]
 
 
-def _load_storage_plan_admin_users(conn) -> List[Dict[str, Any]]:
+def _load_storage_plan_admin_users(
+    conn,
+    search_text: str = "",
+    plan_ids: Optional[List[str]] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
     plan_label_map = {
         "plan_free": "Free",
         "plan_2gb": "Starter",
         "plan_10gb": "Creator",
         "plan_100gb": "Studio",
     }
+    normalized_search = (search_text or "").strip().lower()
+    normalized_plan_ids = [plan_id for plan_id in (plan_ids or []) if plan_id]
+    where_clauses: List[str] = []
+    params: List[Any] = []
+    if normalized_search:
+        where_clauses.append(
+            """
+            (
+                lower(coalesce(u.name, '')) LIKE ?
+                OR lower(coalesce(u.email, '')) LIKE ?
+                OR lower(coalesce(u.username, '')) LIKE ?
+                OR CAST(u.id AS VARCHAR) LIKE ?
+            )
+            """
+        )
+        search_value = f"%{normalized_search}%"
+        params.extend([search_value, search_value, search_value, search_value])
+    if normalized_plan_ids:
+        placeholders = ", ".join(["?"] * len(normalized_plan_ids))
+        where_clauses.append(f"u.plan_id IN ({placeholders})")
+        params.extend(normalized_plan_ids)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     usage_rows = {
         row[0]: row[1]
         for row in conn.execute(
@@ -5486,8 +5515,16 @@ def _load_storage_plan_admin_users(conn) -> List[Dict[str, Any]]:
             """
         ).fetchall()
     }
+    total_count = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM shorts_users u
+        {where_sql}
+        """,
+        params,
+    ).fetchone()[0]
     user_rows = conn.execute(
-        """
+        f"""
         SELECT
           CAST(u.id AS VARCHAR),
           u.name,
@@ -5499,8 +5536,11 @@ def _load_storage_plan_admin_users(conn) -> List[Dict[str, Any]]:
           u.username
         FROM shorts_users u
         LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
-        ORDER BY u.name
-        """
+        {where_sql}
+        ORDER BY lower(coalesce(u.name, '')), lower(coalesce(u.email, '')), CAST(u.id AS VARCHAR)
+        LIMIT ? OFFSET ?
+        """,
+        params + [limit, offset],
     ).fetchall()
     users: List[Dict[str, Any]] = []
     for row in user_rows:
@@ -5523,7 +5563,7 @@ def _load_storage_plan_admin_users(conn) -> List[Dict[str, Any]]:
                 "username": row[7],
             }
         )
-    return users
+    return users, int(total_count or 0)
 
 
 @video_shorts_bp.route("/shorts/scripts")
@@ -5821,7 +5861,6 @@ def shorts_storage_plans():
         plans=plans,
         is_admin=is_admin,
         current_plan_label=(current_plan or {}).get("label") or "Free",
-        admin_controls_url=url_for("video_shorts_bp.admin_storage_plans") if is_admin else None,
     )
 
 
@@ -5859,16 +5898,45 @@ def admin_storage_plans():
         else:
             flash("Select a user to update.", "danger")
         conn.close()
-        return redirect(url_for("video_shorts_bp.admin_storage_plans"))
+        redirect_args = request.args.to_dict(flat=False)
+        return redirect(url_for("video_shorts_bp.admin_storage_plans", **redirect_args))
 
     plans = _load_storage_plan_catalog(conn)
-    users = _load_storage_plan_admin_users(conn)
+    search_text = (request.args.get("q") or "").strip()
+    selected_plan_ids = [plan_id for plan_id in request.args.getlist("plan_id") if plan_id]
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 50
+    total_users = _load_storage_plan_admin_users(
+        conn,
+        search_text=search_text,
+        plan_ids=selected_plan_ids,
+        limit=1,
+        offset=0,
+    )[1]
+    total_pages = max(1, (total_users + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    users, total_users = _load_storage_plan_admin_users(
+        conn,
+        search_text=search_text,
+        plan_ids=selected_plan_ids,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
     conn.close()
     return render_template(
         "shorts_storage_admin.html",
         plans=plans,
         users=users,
-        default_limit_label=_format_size_bytes(DEFAULT_USER_STORAGE_LIMIT),
+        search_text=search_text,
+        selected_plan_ids=selected_plan_ids,
+        page=page,
+        per_page=per_page,
+        total_users=total_users,
+        total_pages=total_pages,
     )
 
 
@@ -6687,6 +6755,7 @@ def social_connect():
     channel_info = None
     youtube_connected = False
     youtube_warning = None
+    youtube_status = "not_connected"
     quota_active = False
     try:
         quota_conn = get_db_readonly()
@@ -6707,33 +6776,39 @@ def social_connect():
             channel_info, youtube_error_code = get_connected_channel_info((current_user or {}).get("id"), brand_id=brand_id)
             youtube_connected = bool(channel_info)
             if youtube_error_code == "invalid_grant":
-                youtube_warning = "YouTube bağlantısı geçersiz veya iptal edilmiş; lütfen yeniden bağlayın."
+                youtube_warning = "Connection expired — reconnect to keep publishing."
             elif youtube_error_code:
-                youtube_warning = "YouTube kanal bilgisi alınamadı. Tekrar bağlanmayı deneyin."
+                youtube_warning = "Connection expired — reconnect to keep publishing."
             if not youtube_connected and not youtube_warning:
                 youtube_connected = has_refresh_token((current_user or {}).get("id"), brand_id=brand_id)
     else:
         youtube_connected = has_refresh_token((current_user or {}).get("id"), brand_id=brand_id)
+    if youtube_connected:
+        youtube_status = "connected"
+    elif youtube_warning:
+        youtube_status = "reconnect_needed"
 
     instagram_info = None
     instagram_profile = None
     instagram_connected = False
     instagram_warning = None
+    instagram_status = "not_connected"
     facebook_info = None
     facebook_connected = False
     facebook_warning = None
+    facebook_status = "not_connected"
     if current_user:
         try:
             instagram_info = get_instagram_data(current_user["id"])
         except InstagramTokenStoreError as exc:
             current_app.logger.warning("Instagram token store unavailable: %s", exc)
-            instagram_warning = "Instagram token bilgisine şu anda erişilemiyor; lütfen sayfayı yenileyin."
+            instagram_warning = "Connection expired — reconnect to keep publishing."
         if instagram_info:
             try:
                 instagram_info = refresh_instagram_token_if_needed(user_id=current_user["id"], current=instagram_info) or instagram_info
             except Exception as exc:
                 current_app.logger.warning("Instagram token refresh failed: %s", exc)
-                instagram_warning = "Instagram token refresh failed. Please reconnect your Instagram account."
+                instagram_warning = "Connection expired — reconnect to keep publishing."
             instagram_connected = _validate_instagram_connection(instagram_info)
             if instagram_connected:
                 instagram_profile = _fetch_instagram_profile(
@@ -6764,13 +6839,21 @@ def social_connect():
                         current_app.logger.warning("Failed to persist Instagram username: %s", exc)
             elif instagram_info.get("page_access_token") and instagram_info.get("instagram_business_account_id"):
                 instagram_warning = _instagram_account_upgrade_message()
+        if instagram_connected:
+            instagram_status = "connected"
+        elif instagram_warning:
+            instagram_status = "reconnect_needed"
         try:
             facebook_info = get_facebook_page_data(current_user["id"])
         except FacebookTokenStoreError as exc:
             current_app.logger.warning("Facebook token store unavailable: %s", exc)
-            facebook_warning = "Facebook Page token bilgisine şu anda erişilemiyor; lütfen sayfayı yenileyin."
+            facebook_warning = "Connection expired — reconnect to keep publishing."
         if facebook_info:
             facebook_connected = _validate_facebook_page_connection(facebook_info)
+        if facebook_connected:
+            facebook_status = "connected"
+        elif facebook_warning:
+            facebook_status = "reconnect_needed"
     instagram_business_id = (
         instagram_info.get("instagram_business_account_id") if instagram_info else None
     )
@@ -6779,15 +6862,16 @@ def social_connect():
     tiktok_connected = False
     tiktok_warning = None
     tiktok_connected_at = None
+    tiktok_status = "not_connected"
     if current_user:
         try:
             tiktok_info = get_tiktok_data(current_user["id"])
         except TikTokTokenStoreError as exc:
             current_app.logger.warning("TikTok token store unavailable: %s", exc)
-            tiktok_warning = "TikTok token bilgisine şu anda erişilemiyor; lütfen sayfayı yenileyin."
+            tiktok_warning = "Connection expired — reconnect to keep publishing."
     if tiktok_info and tiktok_info.get("access_token"):
         if _is_token_expired(tiktok_info.get("expires_at")):
-            tiktok_warning = "TikTok connection has expired; please reconnect."
+            tiktok_warning = "Connection expired — reconnect to keep publishing."
         else:
             tiktok_connected = True
             tiktok_connected_at = _format_simple_datetime(tiktok_info.get("updated_at"))
@@ -6815,12 +6899,18 @@ def social_connect():
                         )
                     except TikTokTokenStoreError as exc:
                         current_app.logger.warning("Failed to persist TikTok profile: %s", exc)
+    if tiktok_connected:
+        tiktok_status = "connected"
+    elif tiktok_warning:
+        tiktok_status = "reconnect_needed"
     return render_template(
         "social_connect.html",
         youtube_configured=youtube_configured,
         youtube_connected=youtube_connected,
+        youtube_status=youtube_status,
         channel=channel_info,
         instagram_connected=instagram_connected,
+        instagram_status=instagram_status,
         instagram_info=instagram_info,
         instagram_business_id=instagram_business_id,
         instagram_profile=instagram_profile,
@@ -6828,12 +6918,14 @@ def social_connect():
         youtube_warning=youtube_warning,
         instagram_warning=instagram_warning,
         facebook_connected=facebook_connected,
+        facebook_status=facebook_status,
         facebook_info=facebook_info,
         facebook_warning=facebook_warning,
         instagram_app_id=IG_APP_ID,
         facebook_app_id=FB_APP_ID,
         tiktok_configured=tiktok_configured,
         tiktok_connected=tiktok_connected,
+        tiktok_status=tiktok_status,
         tiktok_info=tiktok_info,
         tiktok_warning=tiktok_warning,
         tiktok_connected_at=tiktok_connected_at,
@@ -6868,10 +6960,10 @@ def _safe_oauth_next(value: Optional[str], fallback: str) -> str:
 def facebook_connect():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("Facebook Page bağlantısı için giriş yapın.", "danger")
+        flash("Sign in to connect a Facebook Page.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     if not (FB_APP_ID and FB_APP_SECRET and FB_REDIRECT_URI):
-        flash("Facebook OAuth ayarları eksik; .env'de FB_APP_ID/SECRET/REDIRECT tanımlayın.", "danger")
+        flash("Facebook isn't configured yet. Please finish setup.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     state_token = secrets.token_urlsafe(16)
     session["fb_oauth_state"] = {
@@ -6880,7 +6972,7 @@ def facebook_connect():
     }
     auth_url = _facebook_oauth_url(state_token)
     if not auth_url:
-        flash("Facebook OAuth URL'i oluşturulamadı.", "danger")
+        flash("Could not build the Facebook OAuth URL.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     return redirect(auth_url)
 
@@ -6901,7 +6993,7 @@ def facebook_oauth_callback():
             error_reason,
             error_desc,
         )
-        message = f"Facebook OAuth hatası: {error}"
+        message = f"Facebook OAuth error: {error}"
         if error_desc:
             message = f"{message} ({error_desc})"
         flash(message, "danger")
@@ -6916,17 +7008,17 @@ def facebook_oauth_callback():
             state,
             expected_state,
         )
-        flash("Facebook OAuth doğrulaması başarısız oldu.", "danger")
+        flash("Facebook OAuth verification failed.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
     if not user_id:
         current_app.logger.warning("Facebook OAuth missing user_id in state payload.")
-        flash("Facebook OAuth kodu alınamadı.", "danger")
+        flash("Could not read the Facebook OAuth code.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     code = request.args.get("code")
     if not code:
-        flash("Facebook OAuth kodu alınamadı.", "danger")
+        flash("Could not read the Facebook OAuth code.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     token_url = f"{FB_API_BASE.rstrip('/')}/oauth/access_token"
@@ -6943,12 +7035,12 @@ def facebook_oauth_callback():
         short_data = short_resp.json()
     except Exception as exc:
         current_app.logger.exception("Facebook token exchange failed: %s", exc)
-        flash("Facebook token alınamadı.", "danger")
+        flash("Could not get a Facebook token.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     short_token = short_data.get("access_token")
     if not short_token:
-        flash("Facebook kısa token yanıtı beklenmeyen formatta.", "danger")
+        flash("Facebook returned an unexpected short-lived token response.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     long_params = {
@@ -6975,7 +7067,7 @@ def facebook_oauth_callback():
             payload,
             exc,
         )
-        flash("Facebook uzun token alınamadı.", "danger")
+        flash("Could not get a long-lived Facebook token.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     long_token = long_data.get("access_token")
@@ -6989,7 +7081,7 @@ def facebook_oauth_callback():
             expires_at = None
 
     if not long_token:
-        flash("Facebook OAuth kodu doğrulanamadı.", "danger")
+        flash("Could not validate the Facebook OAuth code.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     debug_payload = _log_facebook_debug_token(long_token)
@@ -7053,7 +7145,7 @@ def facebook_oauth_callback():
             error_obj.get("error_subcode") if isinstance(error_obj, dict) else None,
             error_payload,
         )
-        flash("Facebook Pages listesi alınamadı. Lütfen tekrar deneyin.", "danger")
+        flash("Could not load your Facebook Pages. Please try again.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     current_app.logger.info(
@@ -7093,7 +7185,7 @@ def facebook_oauth_callback():
             )
 
     if not pages_data:
-        flash("Facebook Pages listesi boş döndü. Sayfa yetkilerini kontrol edin.", "warning")
+        flash("No Facebook Pages were returned. Check the Page permissions and try again.", "warning")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     target_page = None
@@ -7103,17 +7195,17 @@ def facebook_oauth_callback():
                 target_page = page
                 break
         if not target_page:
-            flash("Hedef Facebook sayfası bulunamadı. Yetki ve sayfa seçimini kontrol edin.", "warning")
+            flash("The target Facebook Page could not be found. Check the selected Page and permissions.", "warning")
             return redirect(url_for("video_shorts_bp.social_connect"))
     elif len(pages_data) == 1:
         target_page = pages_data[0]
     else:
-        flash("Birden fazla Facebook sayfası bulundu; hedef sayfa belirleyin.", "warning")
+        flash("Multiple Facebook Pages were found. Set a target Page first.", "warning")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     page_access_token = target_page.get("access_token")
     if not page_access_token:
-        flash("Facebook sayfa access token alınamadı.", "danger")
+        flash("Could not get the Facebook Page access token.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     store_facebook_page_token(
@@ -7134,7 +7226,7 @@ def facebook_oauth_callback():
         _token_tail((saved or {}).get("page_access_token")),
         (saved or {}).get("updated_at"),
     )
-    flash("Facebook Page bağlantısı kaydedildi.", "success")
+    flash("Facebook Page connected.", "success")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7142,10 +7234,10 @@ def facebook_oauth_callback():
 def facebook_disconnect():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("Facebook bağlantısını kaldırmak için giriş yapın.", "danger")
+        flash("Sign in to disconnect Facebook.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     clear_facebook_page_token(current_user.get("id"))
-    flash("Facebook Page bağlantısı kaldırıldı.", "info")
+    flash("Facebook Page disconnected.", "info")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7413,11 +7505,11 @@ def _fetch_tiktok_profile(access_token: str) -> Optional[Dict[str, Any]]:
 def instagram_authorize():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("Instagram bağlamak için giriş yapın.", "danger")
+        flash("Sign in to connect Instagram.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     if not (IG_APP_ID and IG_APP_SECRET and IG_REDIRECT_URI):
         flash(
-            "Instagram OAuth ayarları eksik; .env'de app-id/secret/redirect tanımlayın.",
+            "Instagram isn't configured yet. Please finish setup.",
             "danger",
         )
         return redirect(url_for("video_shorts_bp.social_connect"))
@@ -7431,7 +7523,7 @@ def instagram_authorize():
     }
     auth_url = _instagram_oauth_url(state_token)
     if not auth_url:
-        flash("Instagram OAuth URL'i oluşturulamadı.", "danger")
+        flash("Could not build the Instagram OAuth URL.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     _log_instagram_auth_redirect(auth_url)
@@ -7452,7 +7544,7 @@ def instagram_oauth_callback():
             request.args.get("error_reason"),
             request.args.get("error_description"),
         )
-        flash(f"Instagram OAuth hatası: {error}", "danger")
+        flash(f"Instagram OAuth error: {error}", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     state = request.args.get("state")
@@ -7461,16 +7553,16 @@ def instagram_oauth_callback():
     expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
     if not expected_state or state != expected_state:
         current_app.logger.warning("Instagram OAuth state mismatch: %s vs %s", state, expected_state)
-        flash("Instagram OAuth doğrulaması başarısız oldu.", "danger")
+        flash("Instagram OAuth verification failed.", "danger")
         return redirect(next_url)
     user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
     if not user_id:
-        flash("Instagram OAuth kodu alınamadı.", "danger")
+        flash("Could not read the Instagram OAuth code.", "danger")
         return redirect(next_url)
 
     code = request.args.get("code")
     if not code:
-        flash("Instagram OAuth kodu alınamadı.", "danger")
+        flash("Could not read the Instagram OAuth code.", "danger")
         return redirect(next_url)
 
     short_resp = None
@@ -7508,13 +7600,13 @@ def instagram_oauth_callback():
             body_text,
             exc,
         )
-        flash("Instagram token alınamadı.", "danger")
+        flash("Could not get an Instagram token.", "danger")
         return redirect(next_url)
 
     short_token = short_data.get("access_token")
     instagram_user_id = str(short_data.get("user_id") or "").strip()
     if not short_token:
-        flash("Instagram kısa token yanıtı beklenmeyen formatta.", "danger")
+        flash("Instagram returned an unexpected short-lived token response.", "danger")
         return redirect(next_url)
 
     long_resp = None
@@ -7549,7 +7641,7 @@ def instagram_oauth_callback():
             body_text,
             exc,
         )
-        flash("Instagram uzun token alınamadı.", "danger")
+        flash("Could not get a long-lived Instagram token.", "danger")
         return redirect(next_url)
 
     long_token = long_data.get("access_token")
@@ -7561,7 +7653,7 @@ def instagram_oauth_callback():
         except Exception:
             expires_at = None
     if not long_token:
-        flash("Instagram OAuth kodu doğrulanamadı.", "danger")
+        flash("Could not validate the Instagram OAuth code.", "danger")
         return redirect(next_url)
 
     debug_payload = _log_instagram_debug_token(long_token)
@@ -7575,14 +7667,14 @@ def instagram_oauth_callback():
         me_payload = _fetch_instagram_me(long_token)
     except Exception as exc:
         current_app.logger.warning("Instagram /me validation failed: %s", exc)
-        flash("Instagram hesabı doğrulanamadı. Lütfen tekrar bağlanın.", "danger")
+        flash("Instagram account validation failed. Please reconnect.", "danger")
         return redirect(next_url)
 
     graph_ig_id = str(me_payload.get("id") or instagram_user_id or "").strip()
     instagram_user_id_value = str(me_payload.get("user_id") or "").strip()
     instagram_profile = _fetch_instagram_profile(long_token, graph_ig_id)
     if not instagram_profile:
-        flash("Instagram profil bilgisi alınamadı. Lütfen tekrar bağlanın.", "danger")
+        flash("Could not load the Instagram profile. Please reconnect.", "danger")
         return redirect(next_url)
 
     account_type = str(instagram_profile.get("account_type") or "").upper()
@@ -7615,13 +7707,13 @@ def instagram_oauth_callback():
         (saved or {}).get("expires_at"),
     )
     _log_instagram_connect_validation("callback", None, graph_ig_id, long_token)
-    flash("Instagram bağlantısı kaydedildi.", "success")
+    flash("Instagram connected.", "success")
     return redirect(next_url)
 
 
 @video_shorts_bp.route("/instagram/select_page", methods=["GET", "POST"])
 def instagram_select_page():
-    flash("Instagram artık doğrudan hesapla bağlanıyor; sayfa seçimi gerekmiyor.", "info")
+    flash("Instagram now connects directly with the account. No Facebook Page is required.", "info")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7629,10 +7721,10 @@ def instagram_select_page():
 def instagram_disconnect():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("Instagram bağlantısını kaldırmak için giriş yapın.", "danger")
+        flash("Sign in to disconnect Instagram.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     clear_instagram_token(current_user["id"])
-    flash("Instagram bağlantısı kaldırıldı.", "info")
+    flash("Instagram disconnected.", "info")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7640,11 +7732,11 @@ def instagram_disconnect():
 def tiktok_authorize():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("TikTok bağlamak için giriş yapın.", "danger")
+        flash("Sign in to connect TikTok.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     if not (TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and TIKTOK_REDIRECT_URI):
         flash(
-            "TikTok OAuth ayarları eksik; .env'de client key/secret/redirect tanımlayın.",
+            "TikTok isn't configured yet. Please finish setup.",
             "danger",
         )
         return redirect(url_for("video_shorts_bp.social_connect"))
@@ -7656,7 +7748,7 @@ def tiktok_authorize():
     }
     auth_url = _tiktok_oauth_url(state_token)
     if not auth_url:
-        flash("TikTok OAuth URL'i oluşturulamadı.", "danger")
+        flash("Could not build the TikTok OAuth URL.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     current_app.logger.info("TikTok OAuth scopes = %s", ",".join(_build_tiktok_scopes()))
     return redirect(auth_url)
@@ -7676,7 +7768,7 @@ def tiktok_oauth_callback():
             error,
             error_desc,
         )
-        message = f"TikTok OAuth hatası: {error}"
+        message = f"TikTok OAuth error: {error}"
         if error_desc:
             message = f"{message} ({error_desc})"
         flash(message, "danger")
@@ -7691,17 +7783,17 @@ def tiktok_oauth_callback():
             state,
             expected_state,
         )
-        flash("TikTok OAuth doğrulaması başarısız oldu.", "danger")
+        flash("TikTok OAuth verification failed.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
     user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
     if not user_id:
         current_app.logger.warning("TikTok OAuth missing user_id in state payload.")
-        flash("TikTok OAuth kodu alınamadı.", "danger")
+        flash("Could not read the TikTok OAuth code.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     code = request.args.get("code")
     if not code:
-        flash("TikTok OAuth kodu alınamadı.", "danger")
+        flash("Could not read the TikTok OAuth code.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     token_url = f"{TIKTOK_API_BASE.rstrip('/')}/oauth/token/"
@@ -7733,7 +7825,7 @@ def tiktok_oauth_callback():
             payload,
             exc,
         )
-        flash("TikTok token alınamadı.", "danger")
+        flash("Could not get a TikTok token.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     token_data = token_payload.get("data") if isinstance(token_payload, dict) else None
@@ -7746,7 +7838,7 @@ def tiktok_oauth_callback():
         error_code = token_payload.get("error_code") if isinstance(token_payload, dict) else None
         detail = error_desc or error_code or "unknown_error"
         current_app.logger.warning("TikTok OAuth missing access token: %s", detail)
-        flash("TikTok token alınamadı.", "danger")
+        flash("Could not get a TikTok token.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
 
     refresh_token = token_data.get("refresh_token")
@@ -7784,7 +7876,7 @@ def tiktok_oauth_callback():
         expires_at=expires_at,
         refresh_expires_at=refresh_expires_at,
     )
-    flash("TikTok bağlantısı kaydedildi.", "success")
+    flash("TikTok connected.", "success")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7792,10 +7884,10 @@ def tiktok_oauth_callback():
 def tiktok_disconnect():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("TikTok bağlantısını kaldırmak için giriş yapın.", "danger")
+        flash("Sign in to disconnect TikTok.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     clear_tiktok_token(current_user["id"])
-    flash("TikTok bağlantısı kaldırıldı.", "info")
+    flash("TikTok disconnected.", "info")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
 
@@ -7803,7 +7895,7 @@ def tiktok_disconnect():
 def youtube_authorize():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("YouTube bağlantısı için giriş yapın.", "danger")
+        flash("Sign in to connect YouTube.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     next_url = _safe_oauth_next(request.args.get("next"), url_for("video_shorts_bp.social_connect"))
     flow = build_oauth_flow()
@@ -7825,13 +7917,13 @@ def youtube_authorize():
 def youtube_oauth_callback():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("YouTube bağlantısı için giriş yapın.", "danger")
+        flash("Sign in to reconnect YouTube.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     error = request.args.get("error")
     saved_state = session.pop("yt_oauth_state", None)
     next_url = _safe_oauth_next((saved_state or {}).get("next"), url_for("video_shorts_bp.social_connect"))
     if error:
-        flash(f"YouTube OAuth hatası: {error}", "danger")
+        flash(f"YouTube OAuth error: {error}", "danger")
         return redirect(next_url)
 
     state = request.args.get("state")
@@ -7843,13 +7935,13 @@ def youtube_oauth_callback():
         flow.fetch_token(authorization_response=request.url)
     except Exception as exc:
         current_app.logger.exception("Failed to fetch YouTube OAuth token: %s", exc)
-        flash("YouTube OAuth sonucu alınamadı.", "danger")
+        flash("Could not get the YouTube OAuth result.", "danger")
         return redirect(next_url)
 
     credentials = flow.credentials
     refresh_token = credentials.refresh_token
     if not refresh_token:
-        flash("YouTube OAuth işleminden refresh token elde edilemedi.", "warning")
+        flash("No refresh token was returned from YouTube OAuth.", "warning")
         return redirect(next_url)
 
     store_refresh_token(refresh_token, user_id=current_user["id"])
@@ -7861,10 +7953,10 @@ def youtube_oauth_callback():
 def youtube_disconnect():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
-        flash("YouTube bağlantısını kaldırmak için giriş yapın.", "danger")
+        flash("Sign in to disconnect YouTube.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     clear_refresh_token(current_user["id"])
-    flash("YouTube bağlantısı kaldırıldı.", "info")
+    flash("YouTube disconnected.", "info")
     return redirect(url_for("video_shorts_bp.youtube_connect"))
 
 
