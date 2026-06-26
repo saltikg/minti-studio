@@ -920,6 +920,15 @@
     return `${file.name} · ${mb} MB · ${file.type || "binary"}`;
   };
 
+  const uploadBlobForS3 = (file) => {
+    if (!file) return file;
+    try {
+      return file.slice(0, file.size, "");
+    } catch (error) {
+      return file;
+    }
+  };
+
   const setDragState = (isActive) => {
     uploadDropzone?.classList.toggle("is-dragover", Boolean(isActive));
   };
@@ -984,11 +993,17 @@
       inputFeedback.textContent = payload.message || "Couldn't prepare the upload.";
       return;
     }
-    const putResponse = await fetch(payload.upload_url, {
-      method: "PUT",
-      headers: payload.headers || { "Content-Type": file.type || "application/octet-stream" },
-      body: file,
-    });
+    let putResponse;
+    try {
+      putResponse = await fetch(payload.upload_url, {
+        method: "PUT",
+        headers: payload.headers || {},
+        body: uploadBlobForS3(file),
+      });
+    } catch (error) {
+      inputFeedback.textContent = "Upload failed.";
+      return;
+    }
     if (!putResponse.ok) {
       inputFeedback.textContent = "Upload failed.";
       return;

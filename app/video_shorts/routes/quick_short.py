@@ -667,7 +667,7 @@ def quick_short_upload_presign():
         return _json_error("Direct upload is only available when S3 storage is enabled.", 500)
     presigned_url = storage.client.generate_presigned_url(
         "put_object",
-        Params={"Bucket": storage.bucket_name, "Key": source_key, "ContentType": content_type},
+        Params={"Bucket": storage.bucket_name, "Key": source_key},
         ExpiresIn=3600,
         HttpMethod="PUT",
     )
@@ -694,7 +694,7 @@ def quick_short_upload_presign():
             "video_id": video_id,
             "upload_url": presigned_url,
             "source_key": source_key,
-            "headers": {"Content-Type": content_type},
+            "headers": {},
         }
     )
 

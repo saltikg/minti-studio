@@ -377,6 +377,15 @@
     };
   });
 
+  const uploadBlobForS3 = (file) => {
+    if (!file) return file;
+    try {
+      return file.slice(0, file.size, '');
+    } catch (error) {
+      return file;
+    }
+  };
+
   const uploadFile = async () => {
     if (!selectedFile) {
       setFeedback('Choose a video first.', true);
@@ -403,8 +412,8 @@
       setFeedback('Uploading to storage…');
       const uploadResp = await fetch(presignData.upload_url, {
         method: 'PUT',
-        headers: presignData.headers || { 'Content-Type': selectedFile.type || 'video/mp4' },
-        body: selectedFile,
+        headers: presignData.headers || {},
+        body: uploadBlobForS3(selectedFile),
       });
       if (!uploadResp.ok) {
         throw new Error('Upload failed before processing started.');
