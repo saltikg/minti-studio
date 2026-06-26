@@ -139,8 +139,9 @@ def my_videos_page():
     where_clauses = [
         "v.owner_user_id = ?",
         "lower(coalesce(c.channel_url, '')) = 'local://uploads'",
-        "lower(coalesce(v.video_id, '')) LIKE 'local_%'",
+        "lower(coalesce(v.video_id, '')) LIKE ?",
     ]
+    params.append("local_%")
     if brand_id:
         where_clauses.append("v.brand_id = ?")
         params.append(brand_id)
