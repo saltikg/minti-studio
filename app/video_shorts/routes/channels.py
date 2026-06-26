@@ -90,12 +90,9 @@ def _video_status_payload(download_status: str | None, transcript_status: str | 
     download_value = str(download_status or "").strip().lower()
     transcript_value = str(transcript_status or "").strip().lower()
     transcript_ready = transcript_value in {"done", "ready", "completed", "ok"}
-    is_transcribing = transcript_value == "pending" or download_value == "pending"
-    if is_transcribing:
-        label = "Transcribing"
-        tone = "info"
-        filter_key = "transcribing"
-    elif short_count > 0:
+    transcript_pending = transcript_value == "pending"
+    download_pending_without_transcript = download_value == "pending" and not transcript_ready and not transcript_value
+    if short_count > 0:
         label = "Has shorts"
         tone = "success"
         filter_key = "has_shorts"
@@ -103,6 +100,10 @@ def _video_status_payload(download_status: str | None, transcript_status: str | 
         label = "Ready"
         tone = "ready"
         filter_key = "ready"
+    elif transcript_pending or download_pending_without_transcript:
+        label = "Transcribing"
+        tone = "info"
+        filter_key = "transcribing"
     else:
         label = "No shorts"
         tone = "muted"
@@ -111,7 +112,7 @@ def _video_status_payload(download_status: str | None, transcript_status: str | 
         "label": label,
         "tone": tone,
         "filter_key": filter_key,
-        "is_transcribing": is_transcribing,
+        "is_transcribing": transcript_pending or download_pending_without_transcript,
         "transcript_ready": transcript_ready,
     }
 
