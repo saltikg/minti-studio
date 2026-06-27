@@ -455,6 +455,66 @@ def ensure_storage_user_schema(conn):
                 plan.get("sort_order", index),
             ],
         )
+
+
+def ensure_auth_user_schema(conn) -> None:
+    user_columns = table_columns(conn, "shorts_users")
+    if not user_columns:
+        return
+    column_defs = [
+        ("username", "VARCHAR"),
+        ("password_hash", "VARCHAR"),
+        ("role", "VARCHAR DEFAULT 'member'"),
+        ("email", "VARCHAR"),
+        ("google_sub", "VARCHAR"),
+        ("time_zone", "VARCHAR DEFAULT 'America/Los_Angeles'"),
+        ("email_verified", "BOOLEAN DEFAULT FALSE"),
+        ("email_verified_at", "TIMESTAMP"),
+        ("email_verification_token_hash", "VARCHAR"),
+        ("email_verification_expires_at", "TIMESTAMP"),
+        ("email_verification_sent_at", "TIMESTAMP"),
+        ("onboarding_dismissed", "BOOLEAN DEFAULT FALSE"),
+    ]
+    changed = False
+    for col_name, definition in column_defs:
+        if col_name in user_columns:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE shorts_users ADD COLUMN {col_name} {definition}")
+            user_columns.add(col_name)
+            changed = True
+        except Exception:
+            pass
+    if changed and "email_verified" in user_columns:
+        try:
+            conn.execute(
+                """
+                UPDATE shorts_users
+                SET email_verified = TRUE,
+                    email_verified_at = COALESCE(email_verified_at, now())
+                WHERE email_verified IS NULL OR email_verified = FALSE
+                """
+            )
+        except Exception:
+            pass
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_username ON shorts_users(lower(username))")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_email ON shorts_users(lower(email))")
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_google_sub ON shorts_users(google_sub) WHERE google_sub IS NOT NULL"
+        )
+    except Exception:
+        pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
     conn.commit()
 
 

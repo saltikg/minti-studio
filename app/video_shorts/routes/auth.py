@@ -23,7 +23,13 @@ from app.video_shorts.config import (
     SHORTS_OVERVIEW_STATS_MAX_VIDEOS,
     SHORTS_OVERVIEW_QUOTA_COOLDOWN_HOURS,
 )
-from app.video_shorts.services.db import ensure_storage_user_schema, get_db, get_db_readonly, table_columns
+from app.video_shorts.services.db import (
+    ensure_auth_user_schema,
+    ensure_storage_user_schema,
+    get_db,
+    get_db_readonly,
+    table_columns,
+)
 from app.video_shorts.services.brands import (
     current_brand_id,
     create_brand as create_brand_record,
@@ -119,21 +125,20 @@ def _current_user():
         row = conn.execute(select_sql, [user_id]).fetchone()
     except Exception as exc:
         conn.close()
-        # If schema is missing, initialize via a writable connection once.
-        if "shorts_users" in str(exc).lower():
+        try:
+            conn = get_db()
             try:
-                conn = get_db()
-                try:
-                    ensure_storage_user_schema(conn)
-                    row = conn.execute(select_sql, [user_id]).fetchone()
-                finally:
-                    conn.close()
-            except Exception as inner_exc:
-                logger.warning("Video shorts auth fallback DB unavailable while loading session user: %s", inner_exc)
-                g.vs_current_user = None
-                return None
-        else:
-            logger.warning("Video shorts auth lookup failed while loading session user: %s", exc)
+                ensure_storage_user_schema(conn)
+                ensure_auth_user_schema(conn)
+                row = conn.execute(select_sql, [user_id]).fetchone()
+            finally:
+                conn.close()
+        except Exception as inner_exc:
+            logger.warning(
+                "Video shorts auth lookup failed while loading session user: %s (fallback: %s)",
+                exc,
+                inner_exc,
+            )
             g.vs_current_user = None
             return None
     else:
@@ -173,6 +178,7 @@ def _lookup_user_by_email(email: str):
     conn = get_db()
     try:
         ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
         row = conn.execute(
             """
             SELECT
@@ -216,6 +222,7 @@ def _resend_verification_for_user(user_row, *, force: bool = False) -> tuple[boo
     conn = get_db()
     try:
         ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
         conn.execute(
             """
             UPDATE shorts_users
@@ -469,6 +476,7 @@ def login():
         else:
             conn = get_db()
             ensure_storage_user_schema(conn)
+            ensure_auth_user_schema(conn)
             row = conn.execute(
                 """
                 SELECT CAST(id AS VARCHAR), username, password_hash, name, COALESCE(email_verified, FALSE)
@@ -493,6 +501,7 @@ def login():
                 brand_conn = get_db()
                 try:
                     ensure_storage_user_schema(brand_conn)
+                    ensure_auth_user_schema(brand_conn)
                     ensure_brand_schema(brand_conn)
                     brand = ensure_brand_for_user(
                         brand_conn,
@@ -533,6 +542,7 @@ def register():
         else:
             conn = get_db()
             ensure_storage_user_schema(conn)
+            ensure_auth_user_schema(conn)
             existing = conn.execute(
                 "SELECT 1 FROM shorts_users WHERE lower(email) = ? OR lower(username) = ?",
                 [email, email],
@@ -622,6 +632,7 @@ def verify_email():
     conn = get_db()
     try:
         ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
         row = conn.execute(
             """
             SELECT
@@ -728,6 +739,7 @@ def profile():
 
     conn = get_db()
     ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
     ensure_brand_schema(conn)
     raw_timezone_row = conn.execute(
         "SELECT time_zone FROM shorts_users WHERE id = ?",
@@ -986,6 +998,7 @@ def google_oauth_callback():
 
     conn = get_db()
     ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
     row = conn.execute(
         """
         SELECT CAST(id AS VARCHAR)
@@ -1115,6 +1128,7 @@ def dismiss_onboarding():
     conn = get_db()
     try:
         ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
         _ensure_onboarding_flag_column(conn)
         conn.execute(
             "UPDATE shorts_users SET onboarding_dismissed = TRUE, updated_at = now() WHERE id = ?",
