@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from flask import current_app, g, redirect, render_template, request, session, url_for, flash
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -35,6 +36,13 @@ from app.video_shorts.services.brands import (
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.usage_metering import get_usage_snapshot
+from app.video_shorts.services.email_verification import (
+    can_resend_verification,
+    generate_email_verification_token,
+    hash_email_verification_token,
+    send_verification_email,
+    verification_token_expiry,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -79,7 +87,8 @@ def _current_user():
           plan_id,
           custom_limit_bytes,
           role,
-          time_zone
+          time_zone,
+          COALESCE(email_verified, FALSE)
         FROM shorts_users
         WHERE id = ?
         """
@@ -102,6 +111,7 @@ def _current_user():
                   custom_limit_bytes,
                   role,
                   time_zone,
+                  COALESCE(email_verified, FALSE),
                   COALESCE(onboarding_dismissed, FALSE)
                 FROM shorts_users
                 WHERE id = ?
@@ -141,9 +151,87 @@ def _current_user():
         "custom_limit_bytes": row[5],
         "role": row[6] or "member",
         "time_zone": row[7] or DEFAULT_TIME_ZONE,
-        "onboarding_dismissed": bool(row[8]) if len(row) > 8 else False,
+        "email_verified": bool(row[8]) if len(row) > 8 else False,
+        "onboarding_dismissed": bool(row[9]) if len(row) > 9 else False,
     }
     return g.vs_current_user
+
+
+def _mask_email_address(email: str) -> str:
+    value = (email or "").strip()
+    if "@" not in value:
+        return value
+    local, domain = value.split("@", 1)
+    if len(local) <= 2:
+        local_masked = local[:1] + "•"
+    else:
+        local_masked = local[:2] + ("•" * max(1, len(local) - 2))
+    return f"{local_masked}@{domain}"
+
+
+def _lookup_user_by_email(email: str):
+    conn = get_db()
+    try:
+        ensure_storage_user_schema(conn)
+        row = conn.execute(
+            """
+            SELECT
+                CAST(id AS VARCHAR),
+                username,
+                name,
+                email,
+                password_hash,
+                COALESCE(email_verified, FALSE),
+                email_verification_token_hash,
+                email_verification_expires_at,
+                email_verification_sent_at,
+                google_sub
+            FROM shorts_users
+            WHERE lower(email) = lower(?)
+               OR lower(username) = lower(?)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            [email, email],
+        ).fetchone()
+        return row
+    finally:
+        conn.close()
+
+
+def _resend_verification_for_user(user_row, *, force: bool = False) -> tuple[bool, str, int]:
+    user_id = user_row[0]
+    email = (user_row[3] or user_row[1] or "").strip().lower()
+    display_name = (user_row[2] or user_row[1] or "").strip()
+    sent_at = user_row[8]
+    if sent_at and getattr(sent_at, "tzinfo", None) is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    if not force:
+        allowed, retry_after = can_resend_verification(sent_at)
+        if not allowed:
+            return False, f"Please wait {retry_after} seconds before requesting another email.", retry_after
+    verify_token = generate_email_verification_token()
+    token_hash = hash_email_verification_token(verify_token)
+    expires_at = verification_token_expiry()
+    conn = get_db()
+    try:
+        ensure_storage_user_schema(conn)
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET email_verification_token_hash = ?,
+                email_verification_expires_at = ?,
+                email_verification_sent_at = now(),
+                updated_at = now()
+            WHERE id = ?
+            """,
+            [token_hash, expires_at, user_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    send_verification_email(to_email=email, verify_token=verify_token, recipient_name=display_name)
+    return True, "Verification email sent.", 0
 
 
 def _current_brand():
@@ -338,6 +426,9 @@ def _guard_video_shorts():
     allowed = {
         "video_shorts_bp.login",
         "video_shorts_bp.register",
+        "video_shorts_bp.register_check_email",
+        "video_shorts_bp.verify_email",
+        "video_shorts_bp.resend_verification_email",
         "video_shorts_bp.google_login",
         "video_shorts_bp.google_oauth_callback",
         "video_shorts_bp.logout",
@@ -367,27 +458,34 @@ def login():
         nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.channels_page")
         return redirect(nxt)
     error = None
+    prefill_email = (request.args.get("email") or "").strip().lower()
+    resend_email = ""
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
+        username = (request.form.get("username") or "").strip().lower()
         password = request.form.get("password") or ""
+        prefill_email = username
         if not username or not password:
-            error = "Username and password are required."
+            error = "Email and password are required."
         else:
             conn = get_db()
             ensure_storage_user_schema(conn)
             row = conn.execute(
                 """
-                SELECT CAST(id AS VARCHAR), username, password_hash, name
+                SELECT CAST(id AS VARCHAR), username, password_hash, name, COALESCE(email_verified, FALSE)
                 FROM shorts_users
                 WHERE lower(username) = lower(?)
+                   OR lower(email) = lower(?)
                 """,
-                [username],
+                [username, username],
             ).fetchone()
             conn.close()
             if not row:
-                error = "User not found."
+                error = "Account not found."
             elif not row[2]:
                 error = "This account uses Google sign-in. Please use the Google option."
+            elif not bool(row[4]):
+                error = "Please verify your email first."
+                resend_email = username
             elif not check_password_hash(row[2], password):
                 error = "Incorrect password."
             else:
@@ -410,7 +508,7 @@ def login():
                 return redirect(nxt)
     if error:
         flash(error, "danger")
-    return render_template("vs_login.html")
+    return render_template("vs_login.html", resend_email=resend_email, prefill_email=prefill_email)
 
 
 @video_shorts_bp.route("/register", methods=["GET", "POST"])
@@ -418,12 +516,14 @@ def register():
     if _is_authenticated():
         return redirect(url_for("video_shorts_bp.channels_page"))
     error = None
+    pending_email = ""
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
         password = request.form.get("password") or ""
         password_confirm = request.form.get("password_confirm") or ""
+        pending_email = email
         if not email:
-            error = "E-posta gereklidir."
+            error = "Email is required."
         elif "@" not in email:
             error = "Please enter a valid email."
         elif len(password) < 8:
@@ -438,16 +538,22 @@ def register():
                 [email, email],
             ).fetchone()
             if existing:
-                error = "Bu e-posta ile zaten hesap var."
+                error = "An account with this email already exists."
                 conn.close()
             else:
                 username = email
                 name = email.split("@")[0].replace(".", " ").title()
                 user_id = str(uuid4())
+                verify_token = generate_email_verification_token()
+                verify_token_hash = hash_email_verification_token(verify_token)
+                verify_expires_at = verification_token_expiry()
                 conn.execute(
                     """
-                    INSERT INTO shorts_users (id, username, password_hash, name, email, role, plan_id)
-                    VALUES (?, ?, ?, ?, ?, 'member', ?)
+                    INSERT INTO shorts_users (
+                        id, username, password_hash, name, email, role, plan_id,
+                        email_verified, email_verification_token_hash, email_verification_expires_at, email_verification_sent_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now())
                     """,
                     [
                         user_id,
@@ -456,6 +562,8 @@ def register():
                         name,
                         email,
                         DEFAULT_USER_PLAN_ID,
+                        verify_token_hash,
+                        verify_expires_at,
                     ],
                 )
                 ensure_brand_schema(conn)
@@ -467,13 +575,141 @@ def register():
                 )
                 conn.commit()
                 conn.close()
-                session["vs_user_id"] = user_id
-                session["vs_brand_id"] = brand["id"]
-                flash("Account created.", "success")
-                return redirect(url_for("video_shorts_bp.channels_page"))
+                try:
+                    send_verification_email(to_email=email, verify_token=verify_token, recipient_name=name)
+                except Exception:
+                    logger.exception("Failed to send verification email for user=%s", user_id)
+                    flash("Your account was created, but we couldn't send the verification email. Please try again.", "danger")
+                    return redirect(url_for("video_shorts_bp.register_check_email", email=email))
+                flash("Check your inbox to verify your email.", "success")
+                return redirect(url_for("video_shorts_bp.register_check_email", email=email))
     if error:
         flash(error, "danger")
-    return render_template("vs_register.html")
+    return render_template("vs_register.html", pending_email=pending_email)
+
+
+@video_shorts_bp.route("/register/check-email", methods=["GET"])
+def register_check_email():
+    email = (request.args.get("email") or "").strip().lower()
+    if not email:
+        return redirect(url_for("video_shorts_bp.register"))
+    return render_template(
+        "vs_check_email.html",
+        email=email,
+        masked_email=_mask_email_address(email),
+        verification_invalid=False,
+        verification_expired=False,
+        resend_email=email,
+        resend_context="check_email",
+    )
+
+
+@video_shorts_bp.route("/verify-email", methods=["GET"])
+def verify_email():
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        flash("That verification link is invalid.", "danger")
+        return render_template(
+            "vs_check_email.html",
+            email="",
+            masked_email="",
+            verification_invalid=True,
+            verification_expired=False,
+            resend_email="",
+            resend_context="verify_invalid",
+        )
+    token_hash = hash_email_verification_token(token)
+    conn = get_db()
+    try:
+        ensure_storage_user_schema(conn)
+        row = conn.execute(
+            """
+            SELECT
+                CAST(id AS VARCHAR),
+                email,
+                username,
+                COALESCE(email_verified, FALSE),
+                email_verification_expires_at
+            FROM shorts_users
+            WHERE email_verification_token_hash = ?
+            LIMIT 1
+            """,
+            [token_hash],
+        ).fetchone()
+        if not row:
+            flash("That verification link is invalid.", "danger")
+            return render_template(
+                "vs_check_email.html",
+                email="",
+                masked_email="",
+                verification_invalid=True,
+                verification_expired=False,
+                resend_email="",
+                resend_context="verify_invalid",
+            )
+        expires_at = row[4]
+        now_utc = datetime.now(timezone.utc)
+        if expires_at and getattr(expires_at, "tzinfo", None) is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if bool(row[3]):
+            flash("Email already verified. You can sign in.", "success")
+            return redirect(url_for("video_shorts_bp.login", email=(row[1] or row[2] or "").strip().lower()))
+        if not expires_at or expires_at < now_utc:
+            flash("That verification link has expired.", "warning")
+            return render_template(
+                "vs_check_email.html",
+                email=(row[1] or row[2] or "").strip().lower(),
+                masked_email=_mask_email_address((row[1] or row[2] or "").strip().lower()),
+                verification_invalid=False,
+                verification_expired=True,
+                resend_email=(row[1] or row[2] or "").strip().lower(),
+                resend_context="verify_expired",
+            )
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET email_verified = TRUE,
+                email_verified_at = now(),
+                email_verification_token_hash = NULL,
+                email_verification_expires_at = NULL,
+                updated_at = now()
+            WHERE id = ?
+            """,
+            [row[0]],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    flash("Email verified. You can sign in.", "success")
+    return redirect(url_for("video_shorts_bp.login", email=(row[1] or row[2] or "").strip().lower()))
+
+
+@video_shorts_bp.route("/verification/resend", methods=["POST"])
+def resend_verification_email():
+    email = (request.form.get("email") or request.args.get("email") or "").strip().lower()
+    context = (request.form.get("context") or request.args.get("context") or "login").strip()
+    if not email:
+        flash("Enter your email address first.", "warning")
+        return redirect(url_for("video_shorts_bp.login"))
+    user_row = _lookup_user_by_email(email)
+    if not user_row:
+        flash("We couldn't find an account with that email.", "warning")
+        return redirect(url_for("video_shorts_bp.register"))
+    if bool(user_row[5]):
+        flash("This email is already verified. You can sign in.", "success")
+        return redirect(url_for("video_shorts_bp.login", email=email))
+    try:
+        ok, message, _retry_after = _resend_verification_for_user(user_row)
+    except Exception:
+        logger.exception("Failed to resend verification email for %s", email)
+        flash("We couldn't send the verification email right now. Please try again.", "danger")
+        if context != "login":
+            return redirect(url_for("video_shorts_bp.register_check_email", email=email))
+        return redirect(url_for("video_shorts_bp.login", email=email))
+    flash(message, "success" if ok else "warning")
+    if context != "login":
+        return redirect(url_for("video_shorts_bp.register_check_email", email=email))
+    return redirect(url_for("video_shorts_bp.login", email=email))
 
 
 @video_shorts_bp.route("/logout")
@@ -764,7 +1000,16 @@ def google_oauth_callback():
     if row:
         user_id = row[0]
         conn.execute(
-            "UPDATE shorts_users SET google_sub = ?, updated_at = now() WHERE id = ?",
+            """
+            UPDATE shorts_users
+            SET google_sub = ?,
+                email_verified = TRUE,
+                email_verified_at = COALESCE(email_verified_at, now()),
+                email_verification_token_hash = NULL,
+                email_verification_expires_at = NULL,
+                updated_at = now()
+            WHERE id = ?
+            """,
             [google_sub, user_id],
         )
         conn.commit()
@@ -772,8 +1017,10 @@ def google_oauth_callback():
         user_id = str(uuid4())
         conn.execute(
             """
-            INSERT INTO shorts_users (id, username, name, email, google_sub, role, plan_id)
-            VALUES (?, ?, ?, ?, ?, 'member', ?)
+            INSERT INTO shorts_users (
+                id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now())
             """,
             [
                 user_id,

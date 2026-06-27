@@ -16,7 +16,7 @@
       <form method="post">
         <div class="mb-3">
           <label class="form-label">Email (username)</label>
-          <input type="email" class="form-control" name="email" placeholder="you@example.com" required autofocus>
+          <input type="email" class="form-control" name="email" placeholder="you@example.com" value="{{ pending_email or '' }}" required autofocus>
         </div>
         <div class="mb-3">
           <label class="form-label">Password</label>

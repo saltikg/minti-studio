@@ -1,0 +1,49 @@
+{% extends "vs_auth_base.html" %}
+
+{% block title %}Check your inbox{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width:500px;">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex justify-content-center mb-3">
+        <div class="d-inline-flex align-items-center gap-2 vs-app-brand">
+          <span class="vs-app-logo-dot" aria-hidden="true">●</span>
+          <span class="fw-semibold">MintiStudio</span>
+        </div>
+      </div>
+      {% if verification_invalid %}
+        <h5 class="card-title text-center mb-3">Verification link invalid</h5>
+        <p class="text-center text-muted mb-4">That link is no longer valid. Request a fresh verification email to continue.</p>
+      {% elif verification_expired %}
+        <h5 class="card-title text-center mb-3">Verification link expired</h5>
+        <p class="text-center text-muted mb-4">That link has expired. Request a fresh verification email to continue.</p>
+      {% else %}
+        <h5 class="card-title text-center mb-3">Check your inbox</h5>
+        <p class="text-center text-muted mb-4">We sent a verification link to <strong>{{ masked_email }}</strong>.</p>
+      {% endif %}
+
+      {% if resend_email %}
+        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}">
+          <input type="hidden" name="email" value="{{ resend_email }}">
+          <input type="hidden" name="context" value="{{ resend_context or 'check_email' }}">
+          <button class="btn btn-primary w-100" type="submit">Resend email</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}">
+          <input type="hidden" name="context" value="{{ resend_context or 'verify_invalid' }}">
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" name="email" placeholder="you@example.com" required autofocus>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Resend email</button>
+        </form>
+      {% endif %}
+
+      <p class="text-center mt-3 small mb-0">
+        Already verified? <a href="{{ url_for('video_shorts_bp.login', email=email or resend_email or '') }}">Sign in</a>
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

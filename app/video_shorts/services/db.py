@@ -390,10 +390,27 @@ def ensure_storage_user_schema(conn):
         ("email", "VARCHAR"),
         ("google_sub", "VARCHAR"),
         ("time_zone", "VARCHAR DEFAULT 'America/Los_Angeles'"),
+        ("email_verified", "BOOLEAN DEFAULT FALSE"),
+        ("email_verified_at", "TIMESTAMP"),
+        ("email_verification_token_hash", "VARCHAR"),
+        ("email_verification_expires_at", "TIMESTAMP"),
+        ("email_verification_sent_at", "TIMESTAMP"),
     ]
     for col_name, definition in column_defs:
         if col_name not in user_columns:
             conn.execute(f"ALTER TABLE shorts_users ADD COLUMN {col_name} {definition}")
+    if "email_verified" not in user_columns:
+        try:
+            conn.execute(
+                """
+                UPDATE shorts_users
+                SET email_verified = TRUE,
+                    email_verified_at = COALESCE(email_verified_at, now())
+                WHERE email_verified IS NULL OR email_verified = FALSE
+                """
+            )
+        except Exception:
+            pass
 
     try:
         asset_columns = table_columns(conn, "shorts_storage_assets")
