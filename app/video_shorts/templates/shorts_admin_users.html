@@ -1,0 +1,220 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Users{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .admin-users-shell {
+    display: grid;
+    gap: 1rem;
+  }
+  .admin-users-toolbar {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.4fr) minmax(240px, 0.9fr) minmax(240px, 0.9fr) auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .admin-users-filter-card,
+  .admin-users-table-card {
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(10, 16, 30, 0.68);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+  }
+  .admin-users-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 14px;
+    margin-top: 10px;
+  }
+  .admin-users-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255,255,255,0.82);
+    font-size: 0.92rem;
+  }
+  .admin-users-summary {
+    color: rgba(255,255,255,0.62);
+    font-size: 0.92rem;
+  }
+  .admin-users-table {
+    margin-bottom: 0;
+  }
+  .admin-users-table td,
+  .admin-users-table th {
+    vertical-align: middle;
+  }
+  .admin-users-meta {
+    color: rgba(255,255,255,0.62);
+    font-size: 0.85rem;
+  }
+  .admin-users-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .admin-users-status.is-verified {
+    background: rgba(66, 214, 151, 0.16);
+    color: #9ff0cb;
+  }
+  .admin-users-status.is-unverified {
+    background: rgba(255, 193, 7, 0.14);
+    color: #ffd76a;
+  }
+  .admin-users-provider {
+    color: rgba(255,255,255,0.86);
+    font-weight: 600;
+  }
+  .admin-users-actions {
+    min-width: 180px;
+  }
+  .admin-users-paging {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .admin-users-paging-links {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 991.98px) {
+    .admin-users-toolbar {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-users-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <h3 class="mb-1 vs-card-title">Users</h3>
+      <div class="vs-text-muted">Search users, review verification status, and resend verification emails.</div>
+    </div>
+  </div>
+
+  <div class="card admin-users-filter-card">
+    <div class="card-body">
+      <form method="get" class="admin-users-toolbar">
+        <div>
+          <label class="form-label vs-card-title mb-1">Search users</label>
+          <input type="text" name="q" value="{{ search_text }}" class="form-control vs-input" placeholder="Search by name, email, username, or user ID">
+        </div>
+        <div>
+          <label class="form-label vs-card-title mb-1 d-block">Verification</label>
+          <div class="admin-users-checkboxes">
+            <label class="admin-users-checkbox">
+              <input type="checkbox" name="verification" value="verified" {% if 'verified' in selected_verification %}checked{% endif %}>
+              <span>Verified</span>
+            </label>
+            <label class="admin-users-checkbox">
+              <input type="checkbox" name="verification" value="unverified" {% if 'unverified' in selected_verification %}checked{% endif %}>
+              <span>Unverified</span>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label class="form-label vs-card-title mb-1 d-block">Provider</label>
+          <div class="admin-users-checkboxes">
+            <label class="admin-users-checkbox">
+              <input type="checkbox" name="provider" value="email" {% if 'email' in selected_providers %}checked{% endif %}>
+              <span>Email</span>
+            </label>
+            <label class="admin-users-checkbox">
+              <input type="checkbox" name="provider" value="google" {% if 'google' in selected_providers %}checked{% endif %}>
+              <span>Google</span>
+            </label>
+            <label class="admin-users-checkbox">
+              <input type="checkbox" name="provider" value="both" {% if 'both' in selected_providers %}checked{% endif %}>
+              <span>Both</span>
+            </label>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn vs-btn vs-btn-primary">Apply</button>
+          <a href="{{ url_for('video_shorts_bp.admin_users') }}" class="btn vs-btn vs-btn-secondary">Reset</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="admin-users-summary">
+    {{ total_users }} users · {{ per_page }} per page
+  </div>
+
+  <div class="card admin-users-table-card">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle admin-users-table vs-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Verified</th>
+            <th>Provider</th>
+            <th>Created</th>
+            <th class="admin-users-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+            <tr>
+              <td>
+                <div class="fw-semibold text-white">{{ user.name }}</div>
+                <div class="admin-users-meta">{{ user.email or user.username or user.id }}</div>
+              </td>
+              <td>
+                <span class="admin-users-status {% if user.email_verified %}is-verified{% else %}is-unverified{% endif %}">
+                  {{ 'Verified' if user.email_verified else 'Unverified' }}
+                </span>
+                {% if user.email_verified_at %}
+                  <div class="admin-users-meta mt-1">{{ user.email_verified_at.strftime('%b %-d, %Y · %H:%M') if user.email_verified_at.strftime else user.email_verified_at }}</div>
+                {% elif user.email_verification_sent_at %}
+                  <div class="admin-users-meta mt-1">Sent {{ user.email_verification_sent_at.strftime('%b %-d, %Y · %H:%M') if user.email_verification_sent_at.strftime else user.email_verification_sent_at }}</div>
+                {% endif %}
+              </td>
+              <td><span class="admin-users-provider">{{ user.provider }}</span></td>
+              <td class="admin-users-meta">{{ user.created_at.strftime('%b %-d, %Y') if user.created_at and user.created_at.strftime else (user.created_at or '—') }}</td>
+              <td>
+                {% if user.can_resend_verification %}
+                  <form method="post" action="{{ url_for('video_shorts_bp.admin_users', q=search_text, verification=selected_verification, provider=selected_providers, page=page) }}">
+                    <input type="hidden" name="action" value="resend_verification">
+                    <input type="hidden" name="user_id" value="{{ user.id }}">
+                    <button type="submit" class="btn btn-sm vs-btn vs-btn-secondary">Resend verification</button>
+                  </form>
+                {% else %}
+                  <span class="admin-users-meta">No action needed</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted py-4">No users matched your filters.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="admin-users-paging">
+    <div class="admin-users-summary">Page {{ page }} of {{ total_pages }}</div>
+    <div class="admin-users-paging-links">
+      {% if page > 1 %}
+        <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, verification=selected_verification, provider=selected_providers, page=page-1) }}" class="btn btn-sm vs-btn vs-btn-secondary">Previous</a>
+      {% endif %}
+      {% if page < total_pages %}
+        <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, verification=selected_verification, provider=selected_providers, page=page+1) }}" class="btn btn-sm vs-btn vs-btn-secondary">Next</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

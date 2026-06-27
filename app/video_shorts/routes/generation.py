@@ -88,6 +88,7 @@ from app.video_shorts.services.compositor import _build_static_visual_clip, _com
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
+    ensure_auth_user_schema,
     ensure_categories_schema,
     ensure_postgres_youtube_transcripts_id_default,
     ensure_static_images_schema,
@@ -5567,6 +5568,112 @@ def _load_storage_plan_admin_users(
     return users, int(total_count or 0)
 
 
+def _load_admin_auth_users(
+    conn,
+    search_text: str = "",
+    verification_filters: Optional[List[str]] = None,
+    provider_filters: Optional[List[str]] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    normalized_search = (search_text or "").strip().lower()
+    normalized_verification = {value for value in (verification_filters or []) if value in {"verified", "unverified"}}
+    normalized_providers = {value for value in (provider_filters or []) if value in {"email", "google", "both"}}
+    where_clauses: List[str] = []
+    params: List[Any] = []
+
+    if normalized_search:
+        where_clauses.append(
+            """
+            (
+                lower(coalesce(u.name, '')) LIKE ?
+                OR lower(coalesce(u.email, '')) LIKE ?
+                OR lower(coalesce(u.username, '')) LIKE ?
+                OR CAST(u.id AS VARCHAR) LIKE ?
+            )
+            """
+        )
+        search_value = f"%{normalized_search}%"
+        params.extend([search_value, search_value, search_value, search_value])
+
+    verification_conditions: List[str] = []
+    if "verified" in normalized_verification:
+        verification_conditions.append("COALESCE(u.email_verified, FALSE) = TRUE")
+    if "unverified" in normalized_verification:
+        verification_conditions.append("COALESCE(u.email_verified, FALSE) = FALSE")
+    if verification_conditions:
+        where_clauses.append("(" + " OR ".join(verification_conditions) + ")")
+
+    provider_conditions: List[str] = []
+    if "email" in normalized_providers:
+        provider_conditions.append("(coalesce(u.password_hash, '') <> '' AND coalesce(u.google_sub, '') = '')")
+    if "google" in normalized_providers:
+        provider_conditions.append("(coalesce(u.google_sub, '') <> '' AND coalesce(u.password_hash, '') = '')")
+    if "both" in normalized_providers:
+        provider_conditions.append("(coalesce(u.google_sub, '') <> '' AND coalesce(u.password_hash, '') <> '')")
+    if provider_conditions:
+        where_clauses.append("(" + " OR ".join(provider_conditions) + ")")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    total_count = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM shorts_users u
+        {where_sql}
+        """,
+        params,
+    ).fetchone()[0]
+    rows = conn.execute(
+        f"""
+        SELECT
+          CAST(u.id AS VARCHAR),
+          u.name,
+          u.email,
+          u.username,
+          COALESCE(u.email_verified, FALSE),
+          u.email_verified_at,
+          u.email_verification_sent_at,
+          u.google_sub,
+          u.password_hash,
+          u.created_at
+        FROM shorts_users u
+        {where_sql}
+        ORDER BY coalesce(u.created_at, u.updated_at) DESC, CAST(u.id AS VARCHAR) DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [limit, offset],
+    ).fetchall()
+    users: List[Dict[str, Any]] = []
+    for row in rows:
+        has_google = bool((row[7] or "").strip())
+        has_password = bool((row[8] or "").strip())
+        if has_google and has_password:
+            provider = "Both"
+            provider_key = "both"
+        elif has_google:
+            provider = "Google"
+            provider_key = "google"
+        else:
+            provider = "Email"
+            provider_key = "email"
+        users.append(
+            {
+                "id": row[0],
+                "name": row[1] or row[3] or "Unnamed user",
+                "email": row[2] or "",
+                "username": row[3] or "",
+                "email_verified": bool(row[4]),
+                "email_verified_at": row[5],
+                "email_verification_sent_at": row[6],
+                "provider": provider,
+                "provider_key": provider_key,
+                "can_resend_verification": has_password and not bool(row[4]) and bool(row[2]),
+                "created_at": row[9],
+            }
+        )
+    return users, int(total_count or 0)
+
+
 @video_shorts_bp.route("/shorts/scripts")
 def shorts_scripts():
     current_user = getattr(g, "vs_current_user", None)
@@ -5934,6 +6041,101 @@ def admin_storage_plans():
         users=users,
         search_text=search_text,
         selected_plan_ids=selected_plan_ids,
+        page=page,
+        per_page=per_page,
+        total_users=total_users,
+        total_pages=total_pages,
+    )
+
+
+@video_shorts_bp.route("/admin/users", methods=["GET", "POST"])
+def admin_users():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if current_user.get("role") != "admin":
+        return redirect(url_for("video_shorts_bp.account_page"))
+
+    conn = get_db()
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        user_id = (request.form.get("user_id") or "").strip()
+        redirect_args = request.args.to_dict(flat=False)
+        if action == "resend_verification" and user_id:
+            row = conn.execute(
+                """
+                SELECT
+                    CAST(id AS VARCHAR),
+                    username,
+                    name,
+                    email,
+                    password_hash,
+                    COALESCE(email_verified, FALSE),
+                    email_verification_token_hash,
+                    email_verification_expires_at,
+                    email_verification_sent_at,
+                    password_reset_sent_at,
+                    google_sub
+                FROM shorts_users
+                WHERE CAST(id AS VARCHAR) = ?
+                LIMIT 1
+                """,
+                [user_id],
+            ).fetchone()
+            conn.close()
+            if not row:
+                flash("User not found.", "danger")
+            else:
+                from app.video_shorts.routes.auth import _resend_verification_for_user
+
+                try:
+                    ok, message, _retry_after = _resend_verification_for_user(row, force=True)
+                    flash(message, "success" if ok else "danger")
+                except Exception as exc:
+                    current_app.logger.exception("Admin resend verification failed for user %s: %s", user_id, exc)
+                    flash("Couldn't resend the verification email.", "danger")
+            return redirect(url_for("video_shorts_bp.admin_users", **redirect_args))
+        conn.close()
+        flash("Unsupported action.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_users", **redirect_args))
+
+    search_text = (request.args.get("q") or "").strip()
+    selected_verification = [value for value in request.args.getlist("verification") if value in {"verified", "unverified"}]
+    selected_providers = [value for value in request.args.getlist("provider") if value in {"email", "google", "both"}]
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 50
+    total_users = _load_admin_auth_users(
+        conn,
+        search_text=search_text,
+        verification_filters=selected_verification,
+        provider_filters=selected_providers,
+        limit=1,
+        offset=0,
+    )[1]
+    total_pages = max(1, (total_users + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    users, total_users = _load_admin_auth_users(
+        conn,
+        search_text=search_text,
+        verification_filters=selected_verification,
+        provider_filters=selected_providers,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
+    conn.close()
+    return render_template(
+        "shorts_admin_users.html",
+        users=users,
+        search_text=search_text,
+        selected_verification=selected_verification,
+        selected_providers=selected_providers,
         page=page,
         per_page=per_page,
         total_users=total_users,
