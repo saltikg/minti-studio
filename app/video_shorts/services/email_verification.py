@@ -83,6 +83,8 @@ def _resend_headers(api_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "MintiStudio/1.0",
     }
 
 
