@@ -45,9 +45,12 @@ from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_
 from app.video_shorts.services.usage_metering import get_usage_snapshot
 from app.video_shorts.services.email_verification import (
     can_resend_verification,
+    can_send_password_reset,
     generate_email_verification_token,
     hash_email_verification_token,
+    password_reset_token_expiry,
     send_verification_email,
+    send_password_reset_email,
     verification_token_expiry,
 )
 from app.video_shorts.services.youtube_oauth import (
@@ -269,6 +272,7 @@ def _lookup_user_by_email(email: str):
                 email_verification_token_hash,
                 email_verification_expires_at,
                 email_verification_sent_at,
+                password_reset_sent_at,
                 google_sub
             FROM shorts_users
             WHERE lower(email) = lower(?)
@@ -317,6 +321,42 @@ def _resend_verification_for_user(user_row, *, force: bool = False) -> tuple[boo
         conn.close()
     send_verification_email(to_email=email, verify_token=verify_token, recipient_name=display_name)
     return True, "Verification email sent.", 0
+
+
+def _issue_password_reset_for_user(user_row) -> tuple[bool, int]:
+    user_id = user_row[0]
+    email = _normalize_auth_email(user_row[3] or user_row[1] or "")
+    display_name = (user_row[2] or user_row[1] or "").strip()
+    sent_at = user_row[9] if len(user_row) > 9 else None
+    if sent_at and getattr(sent_at, "tzinfo", None) is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    allowed, retry_after = can_send_password_reset(sent_at)
+    if not allowed:
+        return False, retry_after
+
+    reset_token = generate_email_verification_token()
+    token_hash = hash_email_verification_token(reset_token)
+    expires_at = password_reset_token_expiry()
+    conn = get_db()
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET password_reset_token_hash = ?,
+                password_reset_expires_at = ?,
+                password_reset_sent_at = now(),
+                updated_at = now()
+            WHERE id = ?
+            """,
+            [token_hash, expires_at, user_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    send_password_reset_email(to_email=email, reset_token=reset_token, recipient_name=display_name)
+    return True, 0
 
 
 def _current_brand():
@@ -514,6 +554,8 @@ def _guard_video_shorts():
         "video_shorts_bp.register_check_email",
         "video_shorts_bp.verify_email",
         "video_shorts_bp.resend_verification_email",
+        "video_shorts_bp.forgot_password",
+        "video_shorts_bp.reset_password",
         "video_shorts_bp.google_login",
         "video_shorts_bp.google_oauth_callback",
         "video_shorts_bp.logout",
@@ -822,6 +864,95 @@ def resend_verification_email():
     if context != "login":
         return redirect(url_for("video_shorts_bp.register_check_email", email=email))
     return redirect(url_for("video_shorts_bp.login", email=email))
+
+
+@video_shorts_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    prefill_email = _normalize_auth_email(request.args.get("email") or "")
+    sent = False
+    if request.method == "POST":
+        email = _normalize_auth_email(request.form.get("email") or "")
+        prefill_email = email
+        neutral_message = "If an account exists for that email, we've sent a password reset link."
+        if email:
+            user_row = _lookup_user_by_email(email)
+            try:
+                if user_row and user_row[4] and not user_row[10]:
+                    _issued, _retry_after = _issue_password_reset_for_user(user_row)
+            except Exception:
+                logger.exception("Failed to issue password reset email for %s", email)
+        flash(neutral_message, "success")
+        sent = True
+    return render_template("vs_forgot_password.html", prefill_email=prefill_email, sent=sent)
+
+
+@video_shorts_bp.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    token = (request.values.get("token") or "").strip()
+    if not token:
+        return render_template("vs_reset_password.html", token="", token_invalid=True, token_expired=False)
+    token_hash = hash_email_verification_token(token)
+    conn = get_db()
+    row = None
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        row = conn.execute(
+            """
+            SELECT
+                CAST(id AS VARCHAR),
+                email,
+                username,
+                password_reset_expires_at
+            FROM shorts_users
+            WHERE password_reset_token_hash = ?
+            LIMIT 1
+            """,
+            [token_hash],
+        ).fetchone()
+        if not row:
+            return render_template("vs_reset_password.html", token=token, token_invalid=True, token_expired=False)
+        expires_at = row[3]
+        now_utc = datetime.now(timezone.utc)
+        if expires_at and getattr(expires_at, "tzinfo", None) is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if not expires_at or expires_at < now_utc:
+            return render_template(
+                "vs_reset_password.html",
+                token=token,
+                token_invalid=False,
+                token_expired=True,
+                email=_normalize_auth_email(row[1] or row[2] or ""),
+            )
+        if request.method == "POST":
+            password = request.form.get("password") or ""
+            password_confirm = request.form.get("password_confirm") or ""
+            email = _normalize_auth_email(row[1] or row[2] or "")
+            password_error = _validate_registration_password(email, password)
+            if password_error:
+                flash(password_error, "danger")
+                return render_template("vs_reset_password.html", token=token, token_invalid=False, token_expired=False)
+            if password != password_confirm:
+                flash("Passwords do not match.", "danger")
+                return render_template("vs_reset_password.html", token=token, token_invalid=False, token_expired=False)
+            conn.execute(
+                """
+                UPDATE shorts_users
+                SET password_hash = ?,
+                    password_reset_token_hash = NULL,
+                    password_reset_expires_at = NULL,
+                    password_reset_sent_at = NULL,
+                    updated_at = now()
+                WHERE id = ?
+                """,
+                [generate_password_hash(password), row[0]],
+            )
+            conn.commit()
+            flash("Your password has been reset. You can sign in.", "success")
+            return redirect(url_for("video_shorts_bp.login", email=email))
+    finally:
+        conn.close()
+    return render_template("vs_reset_password.html", token=token, token_invalid=False, token_expired=False)
 
 
 @video_shorts_bp.route("/logout")

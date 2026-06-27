@@ -21,6 +21,9 @@
           <label class="form-label">Password</label>
           <input type="password" name="password" class="form-control" placeholder="Password" required>
         </div>
+        <div class="text-end mb-3">
+          <a class="small text-decoration-underline" href="{{ url_for('video_shorts_bp.forgot_password') }}">Forgot password?</a>
+        </div>
         <button class="btn btn-primary w-100" type="submit">Sign in</button>
       </form>
       {% if vs_google_oauth_available %}

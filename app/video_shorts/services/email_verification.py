@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN_TTL_HOURS = 24
 VERIFY_RESEND_COOLDOWN_SECONDS = 60
+PASSWORD_RESET_TOKEN_TTL_HOURS = 1
+PASSWORD_RESET_COOLDOWN_SECONDS = 60
 RESEND_API_URL = "https://api.resend.com/emails"
 
 
@@ -48,6 +50,10 @@ def verification_token_expiry() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=VERIFY_TOKEN_TTL_HOURS)
 
 
+def password_reset_token_expiry() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_TTL_HOURS)
+
+
 def verification_resend_allowed_at(sent_at: Optional[datetime]) -> Optional[datetime]:
     if not sent_at:
         return None
@@ -56,8 +62,26 @@ def verification_resend_allowed_at(sent_at: Optional[datetime]) -> Optional[date
     return sent_at + timedelta(seconds=VERIFY_RESEND_COOLDOWN_SECONDS)
 
 
+def password_reset_allowed_at(sent_at: Optional[datetime]) -> Optional[datetime]:
+    if not sent_at:
+        return None
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    return sent_at + timedelta(seconds=PASSWORD_RESET_COOLDOWN_SECONDS)
+
+
 def can_resend_verification(sent_at: Optional[datetime]) -> tuple[bool, int]:
     allowed_at = verification_resend_allowed_at(sent_at)
+    if not allowed_at:
+        return True, 0
+    remaining = int((allowed_at - datetime.now(timezone.utc)).total_seconds())
+    if remaining <= 0:
+        return True, 0
+    return False, remaining
+
+
+def can_send_password_reset(sent_at: Optional[datetime]) -> tuple[bool, int]:
+    allowed_at = password_reset_allowed_at(sent_at)
     if not allowed_at:
         return True, 0
     remaining = int((allowed_at - datetime.now(timezone.utc)).total_seconds())
@@ -156,5 +180,46 @@ def send_verification_email(*, to_email: str, verify_token: str, recipient_name:
         f"Verify email: {verify_url}\n\n"
         "This link expires in 24 hours.\n\n"
         "If you did not create this account, you can ignore this email."
+    )
+    send_resend_email(to_email=to_email, subject=subject, html=html, text=text)
+
+
+def build_password_reset_url(token: str) -> str:
+    base_url = ""
+    if has_request_context():
+        base_url = request.url_root.rstrip("/")
+    if not base_url:
+        base_url = (current_app.config.get("BASE_URL") or "").rstrip("/")
+    if base_url:
+        if base_url.startswith("http://"):
+            base_url = "https://" + base_url[len("http://") :]
+        return f"{base_url}{url_for('video_shorts_bp.reset_password')}?token={token}"
+    return url_for("video_shorts_bp.reset_password", token=token, _external=True, _scheme="https")
+
+
+def send_password_reset_email(*, to_email: str, reset_token: str, recipient_name: str = "") -> None:
+    reset_url = build_password_reset_url(reset_token)
+    greeting = recipient_name.strip() or "there"
+    subject = "Reset your MintiStudio password"
+    html = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+        <p style="margin:0 0 12px;">Hi {greeting},</p>
+        <p style="margin:0 0 16px;">We received a request to reset your password.</p>
+        <p style="margin:0 0 20px;">
+          <a href="{reset_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Reset password</a>
+        </p>
+        <p style="margin:0 0 12px;">This link expires in 1 hour.</p>
+        <p style="margin:0;color:#475569;font-size:14px;">If you did not request a password reset, you can ignore this email.</p>
+      </div>
+    </div>
+    """.strip()
+    text = (
+        f"Hi {greeting},\n\n"
+        "We received a request to reset your MintiStudio password.\n\n"
+        f"Reset password: {reset_url}\n\n"
+        "This link expires in 1 hour.\n\n"
+        "If you did not request a password reset, you can ignore this email."
     )
     send_resend_email(to_email=to_email, subject=subject, html=html, text=text)

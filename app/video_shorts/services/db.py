@@ -473,6 +473,9 @@ def ensure_auth_user_schema(conn) -> None:
         ("email_verification_token_hash", "VARCHAR"),
         ("email_verification_expires_at", "TIMESTAMP"),
         ("email_verification_sent_at", "TIMESTAMP"),
+        ("password_reset_token_hash", "VARCHAR"),
+        ("password_reset_expires_at", "TIMESTAMP"),
+        ("password_reset_sent_at", "TIMESTAMP"),
         ("onboarding_dismissed", "BOOLEAN DEFAULT FALSE"),
     ]
     changed = False
