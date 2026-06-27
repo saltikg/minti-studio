@@ -21,6 +21,21 @@ VERIFY_RESEND_COOLDOWN_SECONDS = 60
 RESEND_API_URL = "https://api.resend.com/emails"
 
 
+def _resolve_mail_settings() -> tuple[str, str, str]:
+    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    mail_from = (os.getenv("MAIL_FROM") or "").strip()
+    reply_to = (os.getenv("MAIL_REPLY_TO") or "").strip()
+    if not api_key:
+        logger.error("Resend email send aborted: RESEND_API_KEY is not set")
+        raise RuntimeError("RESEND_API_KEY is not configured")
+    if not mail_from:
+        logger.error("Resend email send aborted: MAIL_FROM is not set")
+        raise RuntimeError("MAIL_FROM is not configured")
+    if not reply_to:
+        logger.warning("Resend email send proceeding without MAIL_REPLY_TO")
+    return api_key, mail_from, reply_to
+
+
 def generate_email_verification_token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -72,10 +87,7 @@ def _resend_headers(api_key: str) -> dict[str, str]:
 
 
 def _resend_payload(*, to_email: str, subject: str, html: str, text: str) -> dict[str, object]:
-    mail_from = (os.getenv("MAIL_FROM") or "").strip()
-    reply_to = (os.getenv("MAIL_REPLY_TO") or "").strip()
-    if not mail_from:
-        raise RuntimeError("MAIL_FROM is not configured")
+    _api_key, mail_from, reply_to = _resolve_mail_settings()
     payload: dict[str, object] = {
         "from": formataddr(("MintiStudio", mail_from)),
         "to": [to_email],
@@ -89,10 +101,14 @@ def _resend_payload(*, to_email: str, subject: str, html: str, text: str) -> dic
 
 
 def send_resend_email(*, to_email: str, subject: str, html: str, text: str) -> None:
-    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
-    if not api_key:
-        raise RuntimeError("RESEND_API_KEY is not configured")
+    api_key, mail_from, reply_to = _resolve_mail_settings()
     payload = _resend_payload(to_email=to_email, subject=subject, html=html, text=text)
+    logger.info(
+        "Resend email request prepared: from=%s reply_to=%s to=%s",
+        formataddr(("MintiStudio", mail_from)),
+        reply_to or "(empty)",
+        to_email,
+    )
     body = json.dumps(payload).encode("utf-8")
     req = urllib_request.Request(
         RESEND_API_URL,
