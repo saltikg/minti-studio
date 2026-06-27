@@ -1,0 +1,10 @@
+{% if vs_turnstile_enabled and vs_turnstile_site_key %}
+  <div class="mb-3">
+    <div
+      class="cf-turnstile"
+      data-sitekey="{{ vs_turnstile_site_key }}"
+      data-theme="dark"
+      data-size="flexible">
+    </div>
+  </div>
+{% endif %}

@@ -26,6 +26,7 @@
           <label class="form-label">Confirm password</label>
           <input type="password" class="form-control" name="password_confirm" minlength="8" required>
         </div>
+        {% include "_turnstile_widget.html" %}
         <button class="btn btn-primary w-100" type="submit">Create account</button>
       </form>
       {% if vs_google_oauth_available %}
@@ -47,4 +48,11 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if vs_turnstile_enabled and vs_turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
 {% endblock %}

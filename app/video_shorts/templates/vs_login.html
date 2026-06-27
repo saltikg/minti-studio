@@ -21,6 +21,7 @@
           <label class="form-label">Password</label>
           <input type="password" name="password" class="form-control" placeholder="Password" required>
         </div>
+        {% include "_turnstile_widget.html" %}
         <div class="text-end mb-3">
           <a class="small text-decoration-underline" href="{{ url_for('video_shorts_bp.forgot_password') }}">Forgot password?</a>
         </div>
@@ -52,4 +53,11 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if vs_turnstile_enabled and vs_turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
 {% endblock %}

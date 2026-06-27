@@ -53,6 +53,13 @@ from app.video_shorts.services.email_verification import (
     send_password_reset_email,
     verification_token_expiry,
 )
+from app.video_shorts.services.auth_protection import (
+    RateLimitRule,
+    check_rate_limits,
+    turnstile_enabled,
+    turnstile_site_key,
+    verify_turnstile_token,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -101,6 +108,12 @@ COMMON_WEAK_PASSWORDS = {
     "asdfghjk",
     "abcdefgh",
 }
+
+LOGIN_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
+REGISTER_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
+FORGOT_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
+RESEND_VERIFICATION_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
+RESET_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=3600)]
 
 
 def _format_size_bytes(num: int) -> str:
@@ -287,6 +300,36 @@ def _lookup_user_by_email(email: str):
         conn.close()
 
 
+def _client_ip() -> str:
+    forwarded_ip = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if forwarded_ip:
+        return forwarded_ip
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",", 1)[0].strip()
+    return (request.remote_addr or "").strip()
+
+
+def _turnstile_token() -> str:
+    return (request.form.get("cf-turnstile-response") or "").strip()
+
+
+def _verify_turnstile_or_fail() -> bool:
+    if not turnstile_enabled():
+        logger.error("Turnstile verification skipped: TURNSTILE_SITE_KEY is not set")
+        return False
+    return verify_turnstile_token(token=_turnstile_token(), remote_ip=_client_ip())
+
+
+def _rate_limit_key(*parts: str) -> list[str]:
+    items = [_client_ip()]
+    for part in parts:
+        normalized = (part or "").strip().lower()
+        if normalized:
+            items.append(normalized)
+    return items
+
+
 def _resend_verification_for_user(user_row, *, force: bool = False) -> tuple[bool, str, int]:
     user_id = user_row[0]
     email = _normalize_auth_email(user_row[3] or user_row[1] or "")
@@ -357,6 +400,48 @@ def _issue_password_reset_for_user(user_row) -> tuple[bool, int]:
         conn.close()
     send_password_reset_email(to_email=email, reset_token=reset_token, recipient_name=display_name)
     return True, 0
+
+
+def _render_login_page(*, resend_email: str = "", prefill_email: str = "", status_code: int = 200):
+    return (
+        render_template("vs_login.html", resend_email=resend_email, prefill_email=prefill_email),
+        status_code,
+    )
+
+
+def _render_register_page(*, pending_email: str = "", status_code: int = 200):
+    return render_template("vs_register.html", pending_email=pending_email), status_code
+
+
+def _render_forgot_password_page(*, prefill_email: str = "", sent: bool = False, status_code: int = 200):
+    return (
+        render_template("vs_forgot_password.html", prefill_email=prefill_email, sent=sent),
+        status_code,
+    )
+
+
+def _render_check_email_page(
+    *,
+    email: str,
+    verification_invalid: bool = False,
+    verification_expired: bool = False,
+    delivery_failed: bool = False,
+    resend_context: str = "check_email",
+    status_code: int = 200,
+):
+    return (
+        render_template(
+            "vs_check_email.html",
+            email=email,
+            masked_email=_mask_email_address(email),
+            verification_invalid=verification_invalid,
+            verification_expired=verification_expired,
+            delivery_failed=delivery_failed,
+            resend_email=email,
+            resend_context=resend_context,
+        ),
+        status_code,
+    )
 
 
 def _current_brand():
@@ -591,6 +676,13 @@ def login():
         username = _normalize_auth_email(request.form.get("username") or "")
         password = request.form.get("password") or ""
         prefill_email = username
+        allowed, _retry_after = check_rate_limits("auth-login", _rate_limit_key(username), LOGIN_RATE_LIMITS)
+        if not allowed:
+            flash("Too many attempts. Please try again later.", "danger")
+            return _render_login_page(resend_email=resend_email, prefill_email=prefill_email, status_code=429)
+        if not _verify_turnstile_or_fail():
+            flash("Verification failed. Please try again.", "danger")
+            return _render_login_page(resend_email=resend_email, prefill_email=prefill_email, status_code=400)
         if not username or not password:
             error = "Email and password are required."
         else:
@@ -651,6 +743,13 @@ def register():
         password = request.form.get("password") or ""
         password_confirm = request.form.get("password_confirm") or ""
         pending_email = email
+        allowed, _retry_after = check_rate_limits("auth-register", _rate_limit_key(email), REGISTER_RATE_LIMITS)
+        if not allowed:
+            flash("Too many attempts. Please try again later.", "danger")
+            return _render_register_page(pending_email=pending_email, status_code=429)
+        if not _verify_turnstile_or_fail():
+            flash("Verification failed. Please try again.", "danger")
+            return _render_register_page(pending_email=pending_email, status_code=400)
         if not email:
             error = "Email is required."
         elif "@" not in email:
@@ -841,6 +940,12 @@ def verify_email():
 def resend_verification_email():
     email = _normalize_auth_email(request.form.get("email") or request.args.get("email") or "")
     context = (request.form.get("context") or request.args.get("context") or "login").strip()
+    allowed, _retry_after = check_rate_limits("auth-resend-verification", _rate_limit_key(email), RESEND_VERIFICATION_RATE_LIMITS)
+    if not allowed:
+        flash("Too many attempts. Please try again later.", "danger")
+        if context != "login":
+            return _render_check_email_page(email=email, resend_context=context or "check_email", status_code=429)
+        return _render_login_page(resend_email=email, prefill_email=email, status_code=429)
     if not email:
         flash("Enter your email address first.", "warning")
         return redirect(url_for("video_shorts_bp.login"))
@@ -873,6 +978,13 @@ def forgot_password():
     if request.method == "POST":
         email = _normalize_auth_email(request.form.get("email") or "")
         prefill_email = email
+        allowed, _retry_after = check_rate_limits("auth-forgot-password", _rate_limit_key(email), FORGOT_PASSWORD_RATE_LIMITS)
+        if not allowed:
+            flash("Too many attempts. Please try again later.", "danger")
+            return _render_forgot_password_page(prefill_email=prefill_email, sent=False, status_code=429)
+        if not _verify_turnstile_or_fail():
+            flash("Verification failed. Please try again.", "danger")
+            return _render_forgot_password_page(prefill_email=prefill_email, sent=False, status_code=400)
         neutral_message = "If an account exists for that email, we've sent a password reset link."
         if email:
             user_row = _lookup_user_by_email(email)
@@ -891,6 +1003,11 @@ def reset_password():
     token = (request.values.get("token") or "").strip()
     if not token:
         return render_template("vs_reset_password.html", token="", token_invalid=True, token_expired=False)
+    if request.method == "POST":
+        allowed, _retry_after = check_rate_limits("auth-reset-password", _rate_limit_key(token), RESET_PASSWORD_RATE_LIMITS)
+        if not allowed:
+            flash("Too many attempts. Please try again later.", "danger")
+            return render_template("vs_reset_password.html", token=token, token_invalid=False, token_expired=False), 429
     token_hash = hash_email_verification_token(token)
     conn = get_db()
     row = None
@@ -1049,6 +1166,8 @@ def inject_current_user():
         "vs_current_brand": _current_brand(),
         "vs_brands": getattr(g, "vs_brands", []),
         "vs_google_oauth_available": _google_oauth_enabled(),
+        "vs_turnstile_enabled": turnstile_enabled(),
+        "vs_turnstile_site_key": turnstile_site_key(),
         "vs_youtube_reauth_required": _youtube_reauth_required(),
         "vs_overview_quota": _load_overview_quota_context(),
         "vs_onboarding": _build_onboarding_context(),
