@@ -12,7 +12,10 @@
           <span class="fw-semibold">MintiStudio</span>
         </div>
       </div>
-      {% if verification_invalid %}
+      {% if delivery_failed %}
+        <h5 class="card-title text-center mb-3">Email not sent</h5>
+        <p class="text-center text-muted mb-4">We couldn't send a verification email to <strong>{{ masked_email }}</strong> yet. Try again below.</p>
+      {% elif verification_invalid %}
         <h5 class="card-title text-center mb-3">Verification link invalid</h5>
         <p class="text-center text-muted mb-4">That link is no longer valid. Request a fresh verification email to continue.</p>
       {% elif verification_expired %}

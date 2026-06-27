@@ -590,7 +590,7 @@ def register():
                 except Exception:
                     logger.exception("Failed to send verification email for user=%s", user_id)
                     flash("Your account was created, but we couldn't send the verification email. Please try again.", "danger")
-                    return redirect(url_for("video_shorts_bp.register_check_email", email=email))
+                    return redirect(url_for("video_shorts_bp.register_check_email", email=email, delivery_failed=1))
                 flash("Check your inbox to verify your email.", "success")
                 return redirect(url_for("video_shorts_bp.register_check_email", email=email))
     if error:
@@ -603,12 +603,14 @@ def register_check_email():
     email = (request.args.get("email") or "").strip().lower()
     if not email:
         return redirect(url_for("video_shorts_bp.register"))
+    delivery_failed = str(request.args.get("delivery_failed") or "").strip().lower() in {"1", "true", "yes"}
     return render_template(
         "vs_check_email.html",
         email=email,
         masked_email=_mask_email_address(email),
         verification_invalid=False,
         verification_expired=False,
+        delivery_failed=delivery_failed,
         resend_email=email,
         resend_context="check_email",
     )
