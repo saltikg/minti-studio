@@ -174,7 +174,12 @@ def _mask_email_address(email: str) -> str:
     return f"{local_masked}@{domain}"
 
 
+def _normalize_auth_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
 def _lookup_user_by_email(email: str):
+    email = _normalize_auth_email(email)
     conn = get_db()
     try:
         ensure_storage_user_schema(conn)
@@ -207,7 +212,7 @@ def _lookup_user_by_email(email: str):
 
 def _resend_verification_for_user(user_row, *, force: bool = False) -> tuple[bool, str, int]:
     user_id = user_row[0]
-    email = (user_row[3] or user_row[1] or "").strip().lower()
+    email = _normalize_auth_email(user_row[3] or user_row[1] or "")
     display_name = (user_row[2] or user_row[1] or "").strip()
     sent_at = user_row[8]
     if sent_at and getattr(sent_at, "tzinfo", None) is None:
@@ -468,7 +473,7 @@ def login():
     prefill_email = (request.args.get("email") or "").strip().lower()
     resend_email = ""
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip().lower()
+        username = _normalize_auth_email(request.form.get("username") or "")
         password = request.form.get("password") or ""
         prefill_email = username
         if not username or not password:
@@ -527,7 +532,7 @@ def register():
     error = None
     pending_email = ""
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        email = _normalize_auth_email(request.form.get("email") or "")
         password = request.form.get("password") or ""
         password_confirm = request.form.get("password_confirm") or ""
         pending_email = email
@@ -577,13 +582,30 @@ def register():
                     ],
                 )
                 ensure_brand_schema(conn)
-                brand = create_brand_record(
+                create_brand_record(
                     conn,
                     user_id=user_id,
                     name=f"{name} Workspace",
                     make_default=True,
                 )
                 conn.commit()
+                persisted = conn.execute(
+                    """
+                    SELECT CAST(id AS VARCHAR), email, COALESCE(email_verified, FALSE), email_verification_token_hash
+                    FROM shorts_users
+                    WHERE lower(email) = lower(?)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    [email],
+                ).fetchone()
+                logger.info(
+                    "Register persistence check: email=%s committed=%s token_present=%s user_id=%s",
+                    email,
+                    bool(persisted),
+                    bool(persisted and persisted[3]),
+                    persisted[0] if persisted else None,
+                )
                 conn.close()
                 try:
                     send_verification_email(to_email=email, verify_token=verify_token, recipient_name=name)
@@ -600,7 +622,7 @@ def register():
 
 @video_shorts_bp.route("/register/check-email", methods=["GET"])
 def register_check_email():
-    email = (request.args.get("email") or "").strip().lower()
+    email = _normalize_auth_email(request.args.get("email") or "")
     if not email:
         return redirect(url_for("video_shorts_bp.register"))
     delivery_failed = str(request.args.get("delivery_failed") or "").strip().lower() in {"1", "true", "yes"}
@@ -649,6 +671,7 @@ def verify_email():
             """,
             [token_hash],
         ).fetchone()
+        logger.info("Verify email lookup: token_found=%s", bool(row))
         if not row:
             flash("That verification link is invalid.", "danger")
             return render_template(
@@ -666,16 +689,16 @@ def verify_email():
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if bool(row[3]):
             flash("Email already verified. You can sign in.", "success")
-            return redirect(url_for("video_shorts_bp.login", email=(row[1] or row[2] or "").strip().lower()))
+            return redirect(url_for("video_shorts_bp.login", email=_normalize_auth_email(row[1] or row[2] or "")))
         if not expires_at or expires_at < now_utc:
             flash("That verification link has expired.", "warning")
             return render_template(
                 "vs_check_email.html",
-                email=(row[1] or row[2] or "").strip().lower(),
-                masked_email=_mask_email_address((row[1] or row[2] or "").strip().lower()),
+                email=_normalize_auth_email(row[1] or row[2] or ""),
+                masked_email=_mask_email_address(_normalize_auth_email(row[1] or row[2] or "")),
                 verification_invalid=False,
                 verification_expired=True,
-                resend_email=(row[1] or row[2] or "").strip().lower(),
+                resend_email=_normalize_auth_email(row[1] or row[2] or ""),
                 resend_context="verify_expired",
             )
         conn.execute(
@@ -694,17 +717,18 @@ def verify_email():
     finally:
         conn.close()
     flash("Email verified. You can sign in.", "success")
-    return redirect(url_for("video_shorts_bp.login", email=(row[1] or row[2] or "").strip().lower()))
+    return redirect(url_for("video_shorts_bp.login", email=_normalize_auth_email(row[1] or row[2] or "")))
 
 
 @video_shorts_bp.route("/verification/resend", methods=["POST"])
 def resend_verification_email():
-    email = (request.form.get("email") or request.args.get("email") or "").strip().lower()
+    email = _normalize_auth_email(request.form.get("email") or request.args.get("email") or "")
     context = (request.form.get("context") or request.args.get("context") or "login").strip()
     if not email:
         flash("Enter your email address first.", "warning")
         return redirect(url_for("video_shorts_bp.login"))
     user_row = _lookup_user_by_email(email)
+    logger.info("Resend verification lookup: email=%s found=%s", email, bool(user_row))
     if not user_row:
         flash("We couldn't find an account with that email.", "warning")
         return redirect(url_for("video_shorts_bp.register"))

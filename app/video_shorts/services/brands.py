@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from flask import g, has_request_context, session
 
-from app.video_shorts.services.db import get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.video_metrics import ANALYTICS_ARCHIVE_TABLE, SNAPSHOT_TABLE
 
 BRAND_TABLE = "shorts_brands"
@@ -44,30 +44,21 @@ def ensure_brand_schema(conn) -> None:
         )
         """
     )
-    try:
-        user_cols = {row[1] for row in conn.execute("PRAGMA table_info('shorts_users')").fetchall()}
-    except Exception:
-        user_cols = set()
+    user_cols = table_columns(conn, "shorts_users")
     if "last_brand_id" not in user_cols:
         try:
             conn.execute("ALTER TABLE shorts_users ADD COLUMN last_brand_id VARCHAR")
         except Exception:
             pass
     for table_name, _owner_col in BRAND_AWARE_TABLES:
-        try:
-            cols = {row[1] for row in conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()}
-        except Exception:
-            cols = set()
-        if "brand_id" not in cols:
+        cols = table_columns(conn, table_name)
+        if cols and "brand_id" not in cols:
             try:
                 conn.execute(f"ALTER TABLE {table_name} ADD COLUMN brand_id VARCHAR")
             except Exception:
                 pass
     for table_name in (SNAPSHOT_TABLE, "shorts_channel_subscriber_daily", ANALYTICS_ARCHIVE_TABLE):
-        try:
-            cols = {row[1] for row in conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()}
-        except Exception:
-            cols = set()
+        cols = table_columns(conn, table_name)
         if cols and "brand_id" not in cols:
             try:
                 conn.execute(f"ALTER TABLE {table_name} ADD COLUMN brand_id VARCHAR")
