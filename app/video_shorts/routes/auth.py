@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 from flask import current_app, g, redirect, render_template, request, session, url_for, flash
@@ -67,6 +68,36 @@ TIMEZONE_OPTIONS = [
     ("UTC", "UTC"),
     ("Europe/Istanbul", "Turkey (TRT)"),
 ]
+
+COMMON_WEAK_PASSWORDS = {
+    "12345678",
+    "123456789",
+    "1234567890",
+    "00000000",
+    "11111111",
+    "22222222",
+    "33333333",
+    "44444444",
+    "55555555",
+    "66666666",
+    "77777777",
+    "88888888",
+    "99999999",
+    "password",
+    "password1",
+    "passw0rd",
+    "qwerty",
+    "qwertyui",
+    "qwerty123",
+    "letmein",
+    "letmein1",
+    "welcome1",
+    "admin123",
+    "iloveyou",
+    "abc12345",
+    "asdfghjk",
+    "abcdefgh",
+}
 
 
 def _format_size_bytes(num: int) -> str:
@@ -176,6 +207,48 @@ def _mask_email_address(email: str) -> str:
 
 def _normalize_auth_email(value: str) -> str:
     return (value or "").strip().lower()
+
+
+def _is_sequential_digits(value: str) -> bool:
+    if not value.isdigit() or len(value) < 8:
+        return False
+    ascending = "01234567890"
+    descending = "09876543210"
+    return value in ascending or value in descending
+
+
+def _is_repeated_single_char(value: str) -> bool:
+    return bool(value) and len(set(value)) == 1
+
+
+def _normalize_password_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").strip().lower())
+
+
+def _validate_registration_password(email: str, password: str) -> Optional[str]:
+    if len(password or "") < 8:
+        return "Password must be at least 8 characters."
+
+    lowered = (password or "").strip().lower()
+    compact = _normalize_password_token(password)
+    if lowered in COMMON_WEAK_PASSWORDS or compact in COMMON_WEAK_PASSWORDS:
+        return "This password is too common. Please choose something harder to guess."
+    if _is_repeated_single_char(compact):
+        return "This password is too common. Please choose something harder to guess."
+    if _is_sequential_digits(compact):
+        return "This password is too common. Please choose something harder to guess."
+
+    normalized_email = _normalize_auth_email(email)
+    email_local = normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+    normalized_local = _normalize_password_token(email_local)
+    if normalized_local:
+        if compact == normalized_local:
+            return "This password is too easy to guess from your email. Please choose a different one."
+        if compact.startswith(normalized_local) and len(compact) - len(normalized_local) <= 3:
+            remainder = compact[len(normalized_local):]
+            if not remainder or remainder.isdigit():
+                return "This password is too easy to guess from your email. Please choose a different one."
+    return None
 
 
 def _lookup_user_by_email(email: str):
@@ -540,11 +613,13 @@ def register():
             error = "Email is required."
         elif "@" not in email:
             error = "Please enter a valid email."
-        elif len(password) < 8:
-            error = "Password must be at least 8 characters."
-        elif password != password_confirm:
-            error = "Passwords do not match."
         else:
+            password_error = _validate_registration_password(email, password)
+            if password_error:
+                error = password_error
+        if not error and password != password_confirm:
+            error = "Passwords do not match."
+        if not error:
             conn = get_db()
             ensure_storage_user_schema(conn)
             ensure_auth_user_schema(conn)
