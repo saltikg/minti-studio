@@ -1,0 +1,109 @@
+{% extends "vs_auth_base.html" %}
+
+{% block title %}Terms of Service{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width:720px;">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h3 class="mb-2 text-white">Terms of Service</h3>
+      <p class="text-white small mb-4">Effective date: {{ effective_date or "2026-06-27" }}</p>
+
+      <div class="mb-4">
+        <h5 class="text-white">1. Overview</h5>
+        <p class="text-white mb-0">
+          MintiStudio helps you upload, transcribe, edit, generate, and publish short-form videos.
+          By using the service, you agree to these Terms of Service and our
+          <a href="/video_shorts/privacy">Privacy Policy</a>.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">2. Eligibility and Accounts</h5>
+        <p class="text-white mb-0">
+          You must provide accurate account information and keep your login credentials secure.
+          You are responsible for activity that happens under your account.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">3. Your Content</h5>
+        <p class="text-white mb-0">
+          You retain ownership of the videos, transcripts, clips, titles, and related materials you upload,
+          import, or generate through MintiStudio. You give us permission to host, process, transcribe,
+          transform, and publish that content only as needed to operate the service for you.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">4. Connected Platforms</h5>
+        <p class="text-white mb-0">
+          If you connect YouTube, Instagram, TikTok, Facebook, or other third-party platforms, you authorize
+          MintiStudio to act on your instructions using those connections. You are responsible for complying
+          with each platform's terms, policies, and publishing rules.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">5. Acceptable Use</h5>
+        <p class="text-white mb-0">
+          You may not use MintiStudio to violate the law, infringe intellectual property or privacy rights,
+          distribute harmful or abusive material, interfere with the service, or attempt unauthorized access
+          to other accounts, systems, or data.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">6. Plans, Limits, and Availability</h5>
+        <p class="text-white mb-0">
+          Features, quotas, export limits, transcription minutes, and storage limits may depend on your plan.
+          We may update pricing, features, and reasonable usage limits from time to time. Service availability
+          may also depend on third-party providers and platform APIs.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">7. Suspension and Termination</h5>
+        <p class="text-white mb-0">
+          We may suspend or terminate access if you violate these terms, create security or legal risk,
+          abuse the service, or if continued operation is not practical. You may stop using the service at any time.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">8. Disclaimers</h5>
+        <p class="text-white mb-0">
+          MintiStudio is provided on an “as is” and “as available” basis. We do not guarantee uninterrupted service,
+          perfect transcription accuracy, or that generated output will always meet your expectations or the requirements
+          of third-party platforms.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">9. Limitation of Liability</h5>
+        <p class="text-white mb-0">
+          To the maximum extent permitted by law, MintiStudio and its operators will not be liable for indirect,
+          incidental, special, consequential, or punitive damages, or for lost profits, revenue, data, or goodwill,
+          arising from your use of the service.
+        </p>
+      </div>
+
+      <div class="mb-4">
+        <h5 class="text-white">10. Changes to These Terms</h5>
+        <p class="text-white mb-0">
+          We may update these terms from time to time. When we do, we will post the updated version here and revise
+          the effective date above. Continued use of the service after changes means you accept the updated terms.
+        </p>
+      </div>
+
+      <div>
+        <h5 class="text-white">11. Contact</h5>
+        <p class="text-white mb-0">
+          For questions about these terms, contact
+          <a href="mailto:info@mintistudio.com">info@mintistudio.com</a>.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

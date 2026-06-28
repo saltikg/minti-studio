@@ -1543,3 +1543,8 @@ def privacy_page():
 @video_shorts_bp.route("/data-deletion")
 def data_deletion_page():
     return render_template("vs_data_deletion.html")
+
+
+@video_shorts_bp.route("/terms")
+def terms_page():
+    return render_template("vs_terms.html")
