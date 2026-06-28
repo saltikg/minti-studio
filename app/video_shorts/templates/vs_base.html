@@ -174,21 +174,6 @@
         <a href="{{ url_for('video_shorts_bp.account_page') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Account usage summary">
           Usage
         </a>
-        {% if vs_onboarding and not vs_onboarding.core_completed %}
-          <button
-            type="button"
-            id="vs-topnav-onboarding-trigger"
-            class="btn btn-sm vs-btn-outline d-inline-flex align-items-center vs-onboarding-header-trigger"
-            aria-label="Open setup checklist">
-            <span class="vs-onboarding-header-copy">
-              <span class="vs-onboarding-header-label">Setup progress</span>
-              <span class="vs-onboarding-header-meta">{{ vs_onboarding.completed_core_steps }} of {{ vs_onboarding.core_total_steps }}</span>
-            </span>
-            <span class="vs-onboarding-header-bar" aria-hidden="true">
-              <span class="vs-onboarding-header-bar-fill" style="width: {{ vs_onboarding.progress_percent }}%;"></span>
-            </span>
-          </button>
-        {% endif %}
         {% if vs_current_brand %}
           <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="d-flex align-items-center gap-2">
             <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">

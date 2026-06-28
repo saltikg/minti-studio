@@ -155,11 +155,11 @@ def categories_page():
         name = (request.form.get("name") or "").strip()
         if not name:
             conn.close()
-            flash("Kategori adı gerekli.", "warning")
+            flash("Category name is required.", "warning")
             return redirect(url_for("video_shorts_bp.categories_page"))
         if len(name) > 60:
             conn.close()
-            flash("Kategori adı çok uzun (max 60).", "warning")
+            flash("Category name is too long (max 60).", "warning")
             return redirect(url_for("video_shorts_bp.categories_page"))
         existing = conn.execute(
             "SELECT id FROM shorts_categories WHERE user_id = ? AND brand_id = ? AND lower(name) = lower(?)",
@@ -167,7 +167,7 @@ def categories_page():
         ).fetchone()
         if existing:
             conn.close()
-            flash("Bu kategori zaten var.", "warning")
+            flash("This category already exists.", "warning")
             return redirect(url_for("video_shorts_bp.categories_page"))
         conn.execute(
             "INSERT INTO shorts_categories (user_id, brand_id, name) VALUES (?, ?, ?)",
@@ -175,7 +175,7 @@ def categories_page():
         )
         conn.commit()
         conn.close()
-        flash("Kategori eklendi.", "success")
+        flash("Category added.", "success")
         return redirect(url_for("video_shorts_bp.categories_page"))
 
     rows = conn.execute(
@@ -198,10 +198,10 @@ def update_category(category_id):
 
     name = (request.form.get("name") or "").strip()
     if not name:
-        flash("Kategori adı gerekli.", "warning")
+        flash("Category name is required.", "warning")
         return redirect(url_for("video_shorts_bp.categories_page"))
     if len(name) > 60:
-        flash("Kategori adı çok uzun (max 60).", "warning")
+        flash("Category name is too long (max 60).", "warning")
         return redirect(url_for("video_shorts_bp.categories_page"))
 
     conn = get_db()
@@ -213,7 +213,7 @@ def update_category(category_id):
     ).fetchone()
     if not row:
         conn.close()
-        flash("Kategori bulunamadı.", "warning")
+        flash("Category not found.", "warning")
         return redirect(url_for("video_shorts_bp.categories_page"))
     old_name = row[0]
     existing = conn.execute(
@@ -222,7 +222,7 @@ def update_category(category_id):
     ).fetchone()
     if existing:
         conn.close()
-        flash("Bu kategori zaten var.", "warning")
+        flash("This category already exists.", "warning")
         return redirect(url_for("video_shorts_bp.categories_page"))
     conn.execute(
         "UPDATE shorts_categories SET name = ?, updated_at = now() WHERE id = ? AND user_id = ? AND brand_id = ?",
@@ -234,7 +234,7 @@ def update_category(category_id):
     if name != old_name:
         _update_plan_category_label(old_name, name, current_user.get("id"))
 
-    flash("Kategori güncellendi.", "success")
+    flash("Category updated.", "success")
     return redirect(url_for("video_shorts_bp.categories_page"))
 
 
@@ -254,7 +254,7 @@ def delete_category(category_id):
     ).fetchone()
     if not row:
         conn.close()
-        flash("Kategori bulunamadı.", "warning")
+        flash("Category not found.", "warning")
         return redirect(url_for("video_shorts_bp.categories_page"))
     name = row[0]
     conn.execute(
@@ -266,7 +266,7 @@ def delete_category(category_id):
 
     _update_plan_category_label(name, None, current_user.get("id"))
 
-    flash("Kategori silindi.", "success")
+    flash("Category deleted.", "success")
     return redirect(url_for("video_shorts_bp.categories_page"))
 
 
@@ -360,14 +360,14 @@ def static_images_page():
             name = (request.form.get("name") or "").strip()
             if not name:
                 conn.close()
-                message = "Kategori adi gerekli."
+                message = "Category name is required."
                 if wants_json:
                     return jsonify(success=False, message=message), 400
                 flash(message, "warning")
                 return redirect(url_for("video_shorts_bp.static_images_page"))
             if len(name) > 60:
                 conn.close()
-                message = "Kategori adi cok uzun (max 60)."
+                message = "Category name is too long (max 60)."
                 if wants_json:
                     return jsonify(success=False, message=message), 400
                 flash(message, "warning")
@@ -383,7 +383,7 @@ def static_images_page():
             ).fetchone()
             if existing:
                 conn.close()
-                message = "Bu kategori zaten var."
+                message = "This category already exists."
                 if wants_json:
                     return jsonify(
                         success=True,
@@ -406,7 +406,7 @@ def static_images_page():
             conn.close()
             if wants_json:
                 return jsonify(success=True, category={"id": str(row[0]), "name": row[1]}), 200
-            flash("Kategori eklendi.", "success")
+            flash("Category added.", "success")
             return redirect(url_for("video_shorts_bp.static_images_page"))
 
         upload = request.files.get("image")
@@ -430,7 +430,7 @@ def static_images_page():
                 current_user.get("id"),
             )
             conn.close()
-            message = "Lutfen kategori secin."
+            message = "Please choose a category."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -451,7 +451,7 @@ def static_images_page():
                 category_id,
             )
             conn.close()
-            message = "Secilen kategori bulunamadi."
+            message = "The selected category could not be found."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -462,7 +462,7 @@ def static_images_page():
                 current_user.get("id"),
             )
             conn.close()
-            message = "Bir gorsel secin."
+            message = "Please choose an image."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -479,7 +479,7 @@ def static_images_page():
                 ext,
             )
             conn.close()
-            message = "Sadece PNG, JPG veya WEBP yukleyin."
+            message = "Please upload only PNG, JPG, or WEBP files."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -500,7 +500,7 @@ def static_images_page():
                 STATIC_IMAGE_MAX_BYTES,
             )
             conn.close()
-            message = "Dosya boyutu 5MB ustunde olamaz."
+            message = "File size must be 5MB or less."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -550,7 +550,7 @@ def static_images_page():
                 getattr(storage, "backend_name", "unknown"),
             )
             conn.close()
-            message = "Gorsel kaydedilemedi."
+            message = "The image could not be saved."
             if wants_json:
                 return jsonify(success=False, message=message), 500
             flash(message, "danger")
@@ -600,7 +600,7 @@ def static_images_page():
                 key,
             )
             conn.close()
-            message = "Yukleme başarısız."
+            message = "Upload failed."
             if wants_json:
                 return jsonify(success=False, message=message), 500
             flash(message, "danger")
@@ -608,7 +608,7 @@ def static_images_page():
         conn.close()
         if wants_json:
             return jsonify(success=True), 200
-        flash("Gorsel eklendi.", "success")
+        flash("Image added.", "success")
         return redirect(url_for("video_shorts_bp.static_images_page"))
 
     rows = conn.execute(
@@ -701,12 +701,12 @@ def update_static_image_category(image_id):
     ).fetchone()
     if not image_row:
         conn.close()
-        return jsonify(success=False, message="Gorsel bulunamadi."), 404
+        return jsonify(success=False, message="Image not found."), 404
 
     category_id = (request.form.get("category_id") or "").strip()
     if not category_id:
         conn.close()
-        return jsonify(success=False, message="Lutfen kategori secin."), 400
+        return jsonify(success=False, message="Please choose a category."), 400
 
     category_row = conn.execute(
         """
@@ -718,7 +718,7 @@ def update_static_image_category(image_id):
     ).fetchone()
     if not category_row:
         conn.close()
-        return jsonify(success=False, message="Kategori bulunamadi."), 400
+        return jsonify(success=False, message="Category not found."), 400
 
     conn.execute(
         """
@@ -757,7 +757,7 @@ def update_static_image_background(image_id):
     ).fetchone()
     if not image_row:
         conn.close()
-        return jsonify(success=False, message="Gorsel bulunamadi."), 404
+        return jsonify(success=False, message="Image not found."), 404
 
     use_as_background = (request.form.get("use_as_background") or "").strip().lower() in {
         "1",
@@ -789,7 +789,7 @@ def update_selected_background():
     if requested_key:
         resolved_key = _resolve_selected_background_key(current_user.get("id"), brand_id, requested_key)
         if not resolved_key:
-            return jsonify(success=False, message="Background bulunamadi."), 404
+            return jsonify(success=False, message="Background not found."), 404
         save_background_preference(current_user.get("id"), brand_id, resolved_key)
         return jsonify(success=True, background_key=resolved_key), 200
 
@@ -804,7 +804,7 @@ def delete_static_image(image_id):
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     if is_system_background_key(image_id):
-        flash("Sistem gorseli silinemez.", "warning")
+        flash("System images cannot be deleted.", "warning")
         return redirect(url_for("video_shorts_bp.static_images_page"))
 
     conn = get_db()
@@ -819,7 +819,7 @@ def delete_static_image(image_id):
     ).fetchone()
     if not row:
         conn.close()
-        flash("Gorsel bulunamadi.", "warning")
+        flash("Image not found.", "warning")
         return redirect(url_for("video_shorts_bp.static_images_page"))
     conn.execute(
         """
@@ -838,5 +838,5 @@ def delete_static_image(image_id):
         _delete_user_image_asset(current_user.get("id"), str(row[0] or ""))
     except Exception:
         pass
-    flash("Gorsel kaldirildi.", "success")
+    flash("Image removed.", "success")
     return redirect(url_for("video_shorts_bp.static_images_page"))

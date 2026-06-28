@@ -203,26 +203,26 @@
         <div class="row static-upload-layout align-items-start">
           <div class="col-12 col-lg-4">
             <div class="static-field">
-              <label class="form-label vs-card-title">Gorsel yukleme</label>
+              <label class="form-label vs-card-title">Upload image</label>
               <input type="file" name="image" id="static-image-file-input" class="static-hidden-file" accept=".png,.jpg,.jpeg,.webp" required>
-              <div id="static-dropzone" class="static-dropzone" role="button" tabindex="0" aria-label="Gorsel sec">
+              <div id="static-dropzone" class="static-dropzone" role="button" tabindex="0" aria-label="Choose image">
                 <div class="static-dropzone-copy">
                   <span class="material-symbols-outlined" aria-hidden="true">image</span>
-                  <div class="static-dropzone-title">Surukle birak veya dosya sec</div>
+                  <div class="static-dropzone-title">Drag and drop or choose a file</div>
                   <div class="static-dropzone-hint">PNG, JPG, WEBP</div>
-                  <button type="button" id="static-pick-file-btn" class="btn btn-outline-light btn-sm">Dosya Sec</button>
+                  <button type="button" id="static-pick-file-btn" class="btn btn-outline-light btn-sm">Choose file</button>
                 </div>
               </div>
               <div id="static-file-preview" class="static-file-preview d-none">
-                <img id="static-file-thumb" class="static-file-thumb" alt="Secilen gorsel">
+                <img id="static-file-thumb" class="static-file-thumb" alt="Selected image">
                 <div id="static-file-meta" class="static-file-meta"></div>
               </div>
-              <div class="form-text">Maksimum 5MB (PNG, JPG, WEBP).</div>
+              <div class="form-text">Maximum 5MB (PNG, JPG, WEBP).</div>
             </div>
           </div>
           <div class="col-12 col-lg-3">
             <div class="static-field">
-              <label class="form-label vs-card-title">Kategori</label>
+              <label class="form-label vs-card-title">Category</label>
               <div class="static-category-wrap">
                 <div class="static-category-row">
                   <select name="category_id" id="static-category-select" class="form-select vs-input static-input" required>
@@ -230,15 +230,15 @@
                       <option value="{{ category.id }}">{{ category.name }}</option>
                     {% endfor %}
                   </select>
-                  <button type="button" class="btn btn-outline-light d-inline-flex align-items-center gap-1" id="static-category-add-toggle" title="Yeni kategori">
+                  <button type="button" class="btn btn-outline-light d-inline-flex align-items-center gap-1" id="static-category-add-toggle" title="New category">
                     <span class="material-symbols-outlined" aria-hidden="true" style="font-size:16px;">add</span>
-                    <span>Yeni</span>
+                    <span>New</span>
                   </button>
                 </div>
                 <div class="static-category-add-popover d-none" id="static-category-add-group">
                   <div class="input-group">
-                    <input type="text" class="form-control vs-input static-input" id="static-category-new-name" maxlength="60" placeholder="Yeni kategori adi">
-                    <button type="button" class="btn btn-outline-light" id="static-category-add-btn">Ekle</button>
+                    <input type="text" class="form-control vs-input static-input" id="static-category-new-name" maxlength="60" placeholder="New category name">
+                    <button type="button" class="btn btn-outline-light" id="static-category-add-btn">Add</button>
                   </div>
                 </div>
               </div>
@@ -247,14 +247,14 @@
           <div class="col-12 col-lg-3">
             <div class="static-field">
               <label class="form-label vs-card-title">Label</label>
-              <input type="text" name="label" class="form-control vs-input static-input" maxlength="60" placeholder="Orn: my-background">
+              <input type="text" name="label" class="form-control vs-input static-input" maxlength="60" placeholder="Example: my-background">
             </div>
             <div class="static-field">
               <label class="form-label vs-card-title">Generate background</label>
               <div class="static-flag-box">
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" role="switch" id="static-use-as-background" name="use_as_background" value="1">
-                  <label class="form-check-label" for="static-use-as-background">Generate ekraninda background secenegine ekle (suggested image size: 720x1280)</label>
+                  <label class="form-check-label" for="static-use-as-background">Add to the background picker in Generate (suggested image size: 720x1280)</label>
                 </div>
               </div>
             </div>
@@ -262,7 +262,7 @@
           <div class="col-12 col-lg-2">
             <button type="submit" id="static-upload-submit" class="btn vs-btn vs-btn-primary d-flex align-items-center justify-content-center gap-2 w-100 static-upload-submit" disabled>
               <span class="material-symbols-outlined" aria-hidden="true">upload</span>
-              <span>Yukle</span>
+              <span>Upload</span>
             </button>
           </div>
           <div class="col-12">
@@ -286,7 +286,7 @@
           <div class="static-group-header">
             <div>
               <div class="static-group-title">System backgrounds</div>
-              <div class="static-group-note">Sistem gorselleri · secilebilir, silinemez</div>
+              <div class="static-group-note">System images · selectable, not deletable</div>
             </div>
           </div>
           {% if system_images %}
@@ -311,15 +311,15 @@
                           data-background-select
                           data-background-key="{{ image.background_key }}"
                         >
-                          {% if is_selected %}Secili{% else %}Background olarak sec{% endif %}
+                          {% if is_selected %}Selected{% else %}Set as background{% endif %}
                         </button>
                         <button
                           type="button"
                           class="btn btn-sm btn-outline-light w-100"
                           disabled
-                          title="Sistem gorseli, silinemez"
+                          title="System image, cannot be deleted"
                         >
-                          Sistem gorseli
+                          System image
                         </button>
                       </div>
                     </div>
@@ -328,7 +328,7 @@
               {% endfor %}
             </div>
           {% else %}
-            <div class="text-center text-white-50 py-3">Sistem background bulunamadi.</div>
+            <div class="text-center text-white-50 py-3">No system backgrounds were found.</div>
           {% endif %}
         </div>
 
@@ -336,7 +336,7 @@
           <div class="static-group-header">
             <div>
               <div class="static-group-title">Your images</div>
-              <div class="static-group-note">Senin gorsellerin · secilebilir ve silinebilir</div>
+              <div class="static-group-note">Your images · selectable and deletable</div>
             </div>
           </div>
           {% if user_images %}
@@ -358,14 +358,14 @@
                       <div class="static-badge">Background</div>
                     {% endif %}
                     <div>
-                      <label class="form-label small text-white-50 mb-1">Kategori</label>
+                      <label class="form-label small text-white-50 mb-1">Category</label>
                       <select
                         class="form-select form-select-sm vs-input"
                         data-image-category-select
                         data-image-id="{{ image.id }}"
                         data-update-url="{{ url_for('video_shorts_bp.update_static_image_category', image_id=image.id) }}"
                       >
-                        <option value="" {% if not image.category_id %}selected{% endif %}>Seciniz</option>
+                        <option value="" {% if not image.category_id %}selected{% endif %}>Select</option>
                         {% for category in categories %}
                           <option value="{{ category.id }}" {% if category.id == image.category_id %}selected{% endif %}>{{ category.name }}</option>
                         {% endfor %}
@@ -391,12 +391,12 @@
                         data-background-select
                         data-background-key="{{ image.background_key }}"
                       >
-                        {% if is_selected %}Secili{% else %}Background olarak sec{% endif %}
+                        {% if is_selected %}Selected{% else %}Set as background{% endif %}
                       </button>
                       <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="m-0">
-                        <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Gorseli kaldirmak istediginize emin misiniz?">
+                        <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Are you sure you want to remove this image?">
                           <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
-                          <span>Kaldir</span>
+                          <span>Remove</span>
                         </button>
                       </form>
                     </div>
@@ -406,7 +406,7 @@
             {% endfor %}
           </div>
         {% else %}
-            <div class="text-center text-white-50 py-4">Henuz gorsel yok.</div>
+            <div class="text-center text-white-50 py-4">No images yet.</div>
         {% endif %}
         </div>
       </div>
@@ -447,7 +447,7 @@
     const dimsEl = img.closest(".card")?.querySelector("[data-static-image-dimensions]");
     if (!dimsEl) return;
     if (!img.naturalWidth || !img.naturalHeight) {
-      dimsEl.textContent = " (bilinmiyor)";
+      dimsEl.textContent = " (unknown)";
       return;
     }
     dimsEl.textContent = ` (${img.naturalWidth}x${img.naturalHeight} px)`;
@@ -463,7 +463,7 @@
       "error",
       () => {
         const dimsEl = img.closest(".card")?.querySelector("[data-static-image-dimensions]");
-        if (dimsEl) dimsEl.textContent = " (okunamadi)";
+        if (dimsEl) dimsEl.textContent = " (unavailable)";
       },
       { once: true }
     );
@@ -576,7 +576,7 @@
   const addCategory = async () => {
     const name = (categoryNewName?.value || "").trim();
     if (!name) {
-      showError("Kategori adi gerekli.");
+      showError("Category name is required.");
       return;
     }
     hideError();
@@ -592,7 +592,7 @@
       });
       const payload = await response.json();
       if (!response.ok || !payload?.success || !payload?.category) {
-        showError(payload?.message || "Kategori eklenemedi.");
+        showError(payload?.message || "Category could not be added.");
         return;
       }
       const existingOption = categorySelect?.querySelector(`option[value="${payload.category.id}"]`);
@@ -615,7 +615,7 @@
       if (categoryNewName) categoryNewName.value = "";
       categoryAddGroup?.classList.add("d-none");
     } catch (err) {
-      showError("Kategori eklenirken baglanti hatasi oldu.");
+      showError("Connection error while adding the category.");
     }
   };
 
@@ -647,13 +647,13 @@
         });
         const payload = await response.json();
         if (!response.ok || !payload?.success) {
-          showError(payload?.message || "Kategori kaydedilemedi.");
+          showError(payload?.message || "Category could not be saved.");
           selectEl.value = selectEl.dataset.prevValue || "";
           return;
         }
         selectEl.dataset.prevValue = categoryId;
       } catch (err) {
-        showError("Kategori kaydinda baglanti hatasi oldu.");
+        showError("Connection error while saving the category.");
         selectEl.value = selectEl.dataset.prevValue || "";
       } finally {
         selectEl.disabled = false;
@@ -680,14 +680,14 @@
         });
         const payload = await response.json();
         if (!response.ok || !payload?.success) {
-          showError(payload?.message || "Background ayari kaydedilemedi.");
+          showError(payload?.message || "Background setting could not be saved.");
           toggleEl.checked = toggleEl.dataset.prevChecked === "1";
           return;
         }
         toggleEl.dataset.prevChecked = toggleEl.checked ? "1" : "0";
         window.location.reload();
       } catch (err) {
-        showError("Background ayarinda baglanti hatasi oldu.");
+        showError("Connection error while saving the background setting.");
         toggleEl.checked = toggleEl.dataset.prevChecked === "1";
       } finally {
         toggleEl.disabled = false;
@@ -713,12 +713,12 @@
         });
         const payload = await response.json();
         if (!response.ok || !payload?.success) {
-          showError(payload?.message || "Background secimi kaydedilemedi.");
+          showError(payload?.message || "Background selection could not be saved.");
           return;
         }
         window.location.reload();
       } catch (err) {
-        showError("Background seciminde baglanti hatasi oldu.");
+        showError("Connection error while saving the background selection.");
       } finally {
         backgroundSelectButtons.forEach((btn) => {
           btn.disabled = false;
@@ -731,7 +731,7 @@
     e.preventDefault();
     hideError();
     if (!fileInput?.files?.length) {
-      showError("Lutfen bir gorsel secin.");
+      showError("Please choose an image.");
       syncUploadSubmitState();
       return;
     }
@@ -759,7 +759,7 @@
         window.location.reload();
         return;
       }
-      let message = "Yukleme basarisiz.";
+      let message = "Upload failed.";
       try {
         const payload = JSON.parse(xhr.responseText);
         if (payload && payload.message) message = payload.message;
@@ -772,7 +772,7 @@
     };
 
     xhr.onerror = () => {
-      errorBox.textContent = "Yukleme sirasinda baglanti hatasi oldu.";
+      errorBox.textContent = "Connection error during upload.";
       errorBox.classList.remove("d-none");
       uploadSubmitBtn.disabled = false;
     };
