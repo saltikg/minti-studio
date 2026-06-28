@@ -157,7 +157,11 @@
 </head>
 
 <body class="vs-shell vs-app" data-theme="dark">
-  {% set vs_sources_owner = vs_current_user and (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com' %}
+  {% set vs_sources_owner = vs_current_user and (
+    (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com'
+    or 'cevheriden' in ((vs_current_user.get('email') or '')|lower)
+    or 'cevheriden' in ((vs_current_user.get('username') or '')|lower)
+  ) %}
 
   <!-- Top Navbar -->
   <nav class="navbar vs-topnav px-3">

@@ -17,7 +17,12 @@ from app.video_shorts.services.generated_video_lifecycle import ensure_generated
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
-SOURCES_OWNER_EMAIL = "gokhansaltik@gmail.com"
+SOURCES_OWNER_EMAILS = {
+    "gokhansaltik@gmail.com",
+}
+SOURCES_OWNER_IDENTIFIERS = {
+    "cevheriden",
+}
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -50,7 +55,13 @@ def _format_channel_timestamp(value, tz_name: str) -> str:
 
 def _is_sources_owner(current_user) -> bool:
     email = str((current_user or {}).get("email") or "").strip().lower()
-    return email == SOURCES_OWNER_EMAIL
+    username = str((current_user or {}).get("username") or "").strip().lower()
+    if email in SOURCES_OWNER_EMAILS:
+        return True
+    for token in SOURCES_OWNER_IDENTIFIERS:
+        if token and (token in email or token in username):
+            return True
+    return False
 
 
 def _format_duration_label(seconds) -> str:
