@@ -3841,7 +3841,7 @@ def generate_short(video_pk):
             preferred_bg_key = None
     video_background_visual_key = preferred_bg_key or video.get("background_visual_key")
     if not video_background_visual_key:
-        auto_bg_path = choose_deterministic_system_background(vid)
+        auto_bg_path = choose_deterministic_system_background(str(video.get("video_id") or ""))
         if auto_bg_path:
             candidate_key = make_system_background_key(auto_bg_path.name)
             if candidate_key in bg_visual_map:
