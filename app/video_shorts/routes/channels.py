@@ -2,7 +2,7 @@ import hashlib
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from flask import flash, g, redirect, render_template, request, url_for
+from flask import flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
@@ -13,10 +13,12 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
+from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
+HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY = "hide_my_videos_coachmark"
 SOURCES_OWNER_EMAILS = {
     "gokhansaltik@gmail.com",
 }
@@ -211,7 +213,22 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         search_query=search_query,
+        hide_my_videos_coachmark=load_user_bool_preference(
+            current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
+        ),
     )
+
+
+@video_shorts_bp.route("/my-videos/preferences/coachmark", methods=["POST"])
+def update_my_videos_coachmark_preference():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"ok": False, "error": "Authentication required."}), 401
+
+    payload = request.get_json(silent=True) or {}
+    hide = bool(payload.get("hide"))
+    save_user_bool_preference(current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, hide)
+    return jsonify({"ok": True, "hide": hide})
 
 
 @video_shorts_bp.route("/channels", methods=["GET", "POST"])

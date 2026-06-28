@@ -6,6 +6,7 @@
   .mv-shell {
     display: grid;
     gap: 20px;
+    position: relative;
   }
   .mv-hero,
   .mv-toolbar,
@@ -17,6 +18,7 @@
   }
   .mv-hero {
     padding: 28px;
+    position: relative;
   }
   .mv-title {
     font-size: 1.8rem;
@@ -126,6 +128,111 @@
   }
   .mv-list {
     overflow: hidden;
+    position: relative;
+  }
+  .mv-coachmark-anchor {
+    position: relative;
+  }
+  .mv-coachmark-anchor.is-highlighted::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 18px;
+    border: 1px solid rgba(94, 234, 212, 0.6);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.18);
+    pointer-events: none;
+  }
+  .mv-coachmark-anchor--button.is-highlighted::after {
+    inset: -6px;
+    border-radius: 14px;
+  }
+  .mv-coachmark {
+    position: absolute;
+    z-index: 30;
+    width: min(340px, calc(100vw - 40px));
+    padding: 16px 18px 14px;
+    border-radius: 18px;
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 18px 38px rgba(2, 6, 23, 0.42);
+  }
+  .mv-coachmark::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    background: #ffffff;
+    border-left: 1px solid rgba(15, 23, 42, 0.08);
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+    transform: rotate(45deg);
+  }
+  .mv-coachmark[data-placement="bottom"]::after {
+    top: -8px;
+    left: 26px;
+  }
+  .mv-coachmark[data-placement="top"]::after {
+    bottom: -8px;
+    left: 26px;
+    transform: rotate(225deg);
+  }
+  .mv-coachmark-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .mv-coachmark-step {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #0f766e;
+  }
+  .mv-coachmark-close {
+    border: 0;
+    background: transparent;
+    color: #475569;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0;
+  }
+  .mv-coachmark-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .mv-coachmark-copy {
+    margin-top: 4px;
+    color: #475569;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+  .mv-coachmark-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .mv-coachmark-secondary {
+    border: 0;
+    background: transparent;
+    color: #0f766e;
+    font-size: 0.88rem;
+    font-weight: 600;
+    text-decoration: underline;
+    padding: 0;
+  }
+  .mv-coachmark-next {
+    border: 0;
+    border-radius: 999px;
+    background: rgba(15, 118, 110, 0.12);
+    color: #115e59;
+    font-size: 0.88rem;
+    font-weight: 700;
+    padding: 7px 12px;
   }
   .mv-list-head,
   .mv-row {
@@ -145,6 +252,9 @@
   .mv-row {
     padding: 18px 20px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  }
+  .mv-row.is-coachmark-focus {
+    background: rgba(45, 212, 191, 0.08);
   }
   .mv-row:last-child {
     border-bottom: 0;
@@ -223,17 +333,20 @@
       grid-column: 2;
       justify-self: start;
     }
+    .mv-coachmark {
+      width: min(320px, calc(100vw - 28px));
+    }
   }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="mv-shell">
+<div class="mv-shell" id="mv-shell" data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}">
   <section class="mv-hero">
     <div class="mv-title">My videos</div>
     <div class="mv-subtitle">Upload a video, then turn it into shorts.</div>
     <div class="mv-upload-grid">
-      <div>
+      <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
         <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
         <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
           <span class="mv-dropzone-copy">Choose a file or drag it here</span>
@@ -270,7 +383,10 @@
     </div>
     {% if videos %}
       {% for item in videos %}
-        <div class="mv-row">
+        <div
+          class="mv-row mv-coachmark-anchor"
+          {% if loop.first %}id="mv-first-video-row" data-first-video-row="true"{% endif %}
+        >
           <div class="mv-thumb">
             {% if item.thumbnail_url %}
               <img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
@@ -285,8 +401,8 @@
             {% endif %}
           </div>
           <div class="mv-meta">{{ item.duration_label }} · {{ item.added_at_label }} · {{ item.short_count }} short{% if item.short_count != 1 %}s{% endif %}</div>
-          <div class="mv-row-actions">
-            <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm">Create clip</a>
+          <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
+            <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
           </div>
         </div>
       {% endfor %}
@@ -300,6 +416,7 @@
 {% block scripts %}
 <script>
 (() => {
+  const coachmarkShell = document.getElementById('mv-shell');
   const uploadInput = document.getElementById('mv-upload-file');
   const dropzone = document.getElementById('mv-upload-dropzone');
   const uploadMeta = document.getElementById('mv-upload-meta');
@@ -307,7 +424,182 @@
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
+  const firstVideoRow = document.getElementById('mv-first-video-row');
+  const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
+  const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
+  const coachmarkDismissedSessionKey = 'mvCoachmarkDismissed';
+  const coachmarkStateKey = 'mvCoachmarkStage';
   let selectedFile = null;
+  let coachmarkEl = null;
+  let currentCoachmarkStep = null;
+
+  const coachmarkSteps = {
+    1: {
+      stepLabel: '1/4',
+      title: 'Upload your video',
+      copy: 'Start here. Add a long video to your library so you can turn it into shorts.',
+      target: () => document.getElementById('mv-coachmark-upload-anchor'),
+      placement: 'bottom',
+      nextLabel: null,
+    },
+    2: {
+      stepLabel: '2/4',
+      title: 'We’re uploading it now',
+      copy: 'Stay on this page or leave and come back later. We’ll keep preparing your video in the background.',
+      target: () => document.getElementById('mv-coachmark-upload-anchor'),
+      placement: 'bottom',
+      nextLabel: null,
+    },
+    3: {
+      stepLabel: '3/4',
+      title: 'Your video is ready here',
+      copy: 'The newest upload appears at the top of your library so you can pick it up right away.',
+      target: () => firstVideoRow,
+      placement: 'top',
+      nextLabel: 'Next',
+      nextStep: 4,
+    },
+    4: {
+      stepLabel: '4/4',
+      title: 'Open it to create shorts',
+      copy: 'Use Create clip to open the power editor and start turning this video into short-form content.',
+      target: () => document.getElementById('mv-first-video-action') || firstVideoAction,
+      placement: 'top',
+      nextLabel: null,
+    },
+  };
+
+  const setCoachmarkState = (value) => {
+    if (!value) {
+      sessionStorage.removeItem(coachmarkStateKey);
+      return;
+    }
+    sessionStorage.setItem(coachmarkStateKey, value);
+  };
+
+  const getCoachmarkState = () => sessionStorage.getItem(coachmarkStateKey) || '';
+
+  const dismissCoachmarkForSession = () => {
+    sessionStorage.setItem(coachmarkDismissedSessionKey, 'true');
+    destroyCoachmark();
+    currentCoachmarkStep = null;
+  };
+
+  const destroyCoachmark = () => {
+    document.querySelectorAll('.mv-coachmark-anchor.is-highlighted').forEach((node) => {
+      node.classList.remove('is-highlighted');
+    });
+    firstVideoRow?.classList.remove('is-coachmark-focus');
+    if (coachmarkEl) {
+      coachmarkEl.remove();
+      coachmarkEl = null;
+    }
+  };
+
+  const saveCoachmarkPreference = async () => {
+    try {
+      await fetch('{{ url_for("video_shorts_bp.update_my_videos_coachmark_preference") }}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ hide: true }),
+      });
+    } catch (error) {
+      console.warn('Could not save coachmark preference.', error);
+    }
+  };
+
+  const renderCoachmark = (stepNumber) => {
+    if (!coachmarkShell || persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true') {
+      destroyCoachmark();
+      currentCoachmarkStep = null;
+      return;
+    }
+    const step = coachmarkSteps[stepNumber];
+    if (!step) {
+      destroyCoachmark();
+      return;
+    }
+    const target = step.target?.();
+    if (!target) {
+      destroyCoachmark();
+      return;
+    }
+    destroyCoachmark();
+    currentCoachmarkStep = stepNumber;
+    target.classList.add('is-highlighted');
+    if (target === firstVideoRow) {
+      firstVideoRow.classList.add('is-coachmark-focus');
+    }
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+
+    const targetRect = target.getBoundingClientRect();
+    const shellRect = coachmarkShell.getBoundingClientRect();
+    coachmarkEl = document.createElement('div');
+    coachmarkEl.className = 'mv-coachmark';
+    coachmarkEl.dataset.placement = step.placement;
+    coachmarkEl.innerHTML = `
+      <div class="mv-coachmark-header">
+        <div class="mv-coachmark-step">${step.stepLabel}</div>
+        <button type="button" class="mv-coachmark-close" aria-label="Close">×</button>
+      </div>
+      <div class="mv-coachmark-title">${step.title}</div>
+      <div class="mv-coachmark-copy">${step.copy}</div>
+      <div class="mv-coachmark-actions">
+        <button type="button" class="mv-coachmark-secondary">Don't show again</button>
+        ${step.nextLabel ? `<button type="button" class="mv-coachmark-next">${step.nextLabel}</button>` : '<span></span>'}
+      </div>
+    `;
+    coachmarkShell.appendChild(coachmarkEl);
+
+    const coachmarkRect = coachmarkEl.getBoundingClientRect();
+    const top = step.placement === 'top'
+      ? (targetRect.top - shellRect.top - coachmarkRect.height - 18)
+      : (targetRect.bottom - shellRect.top + 18);
+    const left = Math.min(
+      Math.max(targetRect.left - shellRect.left, 12),
+      shellRect.width - coachmarkRect.width - 12,
+    );
+
+    coachmarkEl.style.top = `${Math.max(8, top)}px`;
+    coachmarkEl.style.left = `${left}px`;
+
+    coachmarkEl.querySelector('.mv-coachmark-close')?.addEventListener('click', dismissCoachmarkForSession);
+    coachmarkEl.querySelector('.mv-coachmark-secondary')?.addEventListener('click', async () => {
+      await saveCoachmarkPreference();
+      dismissCoachmarkForSession();
+    });
+    coachmarkEl.querySelector('.mv-coachmark-next')?.addEventListener('click', () => {
+      if (step.nextStep) {
+        setCoachmarkState('ready_to_open');
+        renderCoachmark(step.nextStep);
+      }
+    });
+  };
+
+  const syncCoachmark = () => {
+    if (persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true') {
+      destroyCoachmark();
+      currentCoachmarkStep = null;
+      return;
+    }
+    const state = getCoachmarkState();
+    if (state === 'uploading') {
+      renderCoachmark(2);
+      return;
+    }
+    if (state === 'uploaded' && firstVideoRow) {
+      renderCoachmark(3);
+      return;
+    }
+    if (state === 'ready_to_open' && firstVideoAction) {
+      renderCoachmark(4);
+      return;
+    }
+    renderCoachmark(1);
+  };
 
   const setFeedback = (message, isError = false) => {
     if (!uploadFeedback) return;
@@ -398,17 +690,22 @@
       setFeedback('Choose a video first.', true);
       return;
     }
+    setCoachmarkState('uploading');
+    renderCoachmark(2);
     uploadSubmit.disabled = true;
     uploadSubmit.textContent = 'Uploading…';
     setFeedback('Preparing upload…');
     resetProgress();
     try {
       const durationSeconds = await readDurationSeconds(selectedFile);
-      const completeData = await uploadViaBackend(selectedFile, durationSeconds);
+      await uploadViaBackend(selectedFile, durationSeconds);
       setProgress(100);
       setFeedback('Upload complete. Your video is now transcribing.');
+      setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {
+      setCoachmarkState('');
+      syncCoachmark();
       setFeedback(error.message || 'Upload failed.', true);
     } finally {
       uploadSubmit.disabled = false;
@@ -450,6 +747,16 @@
   });
 
   uploadSubmit?.addEventListener('click', uploadFile);
+  firstVideoAction?.addEventListener('click', () => {
+    dismissCoachmarkForSession();
+    setCoachmarkState('');
+  });
+  window.addEventListener('resize', () => {
+    if (currentCoachmarkStep) {
+      renderCoachmark(currentCoachmarkStep);
+    }
+  });
+  syncCoachmark();
 })();
 </script>
 {% endblock %}

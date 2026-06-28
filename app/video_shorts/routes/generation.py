@@ -2821,6 +2821,63 @@ def _request_short_title_suggestion(
     return suggestion[:80].strip()
 
 
+def _schedule_async_clip_title_suggestion(
+    *,
+    video_id: str,
+    plan_index: int,
+    excerpt: str,
+    placeholder_title: str,
+    user_id: Any = None,
+    app_obj=None,
+) -> None:
+    if not app_obj or not _openai_client:
+        return
+    safe_video_id = str(video_id or "").strip()
+    safe_excerpt = str(excerpt or "").strip()
+    safe_placeholder = str(placeholder_title or "").strip()
+    if not safe_video_id or not safe_excerpt:
+        return
+
+    def _worker() -> None:
+        with app_obj.app_context():
+            try:
+                new_title = _request_short_title_suggestion(
+                    safe_excerpt,
+                    user_id=user_id,
+                    current_video_id=safe_video_id,
+                )
+                if not new_title:
+                    return
+                entries = _load_plan_entries(safe_video_id)
+                plan_entry = _find_plan_entry(entries, plan_index)
+                if not plan_entry:
+                    return
+                existing_title = str(plan_entry.get("title") or "").strip()
+                if existing_title and existing_title != safe_placeholder:
+                    return
+                plan_entry["title"] = new_title
+                _write_plan_entries(safe_video_id, entries)
+            except Exception:
+                current_app.logger.exception(
+                    "Async clip title suggestion failed for %s plan %s",
+                    safe_video_id,
+                    plan_index,
+                )
+
+    try:
+        threading.Thread(
+            target=_worker,
+            name=f"clip-title-{safe_video_id}-{plan_index}",
+            daemon=True,
+        ).start()
+    except Exception:
+        current_app.logger.exception(
+            "Failed to start async clip title suggestion for %s plan %s",
+            safe_video_id,
+            plan_index,
+        )
+
+
 def _extract_youtube_video_id(video_url: str, fallback_video_id: str = "") -> str:
     raw_url = str(video_url or "").strip()
     if not raw_url:
@@ -6519,6 +6576,7 @@ def adjust_clip_timing(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/add_clip_section", methods=["POST"])
 def add_clip_section(video_pk):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    current_user = getattr(g, "vs_current_user", None)
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -6628,6 +6686,15 @@ def add_clip_section(video_pk):
     except Exception as exc:
         current_app.logger.warning("Failed to add manual plan entry for %s: %s", video_id, exc)
         return _respond("The new clip section could not be saved.", status=500, category="danger")
+
+    _schedule_async_clip_title_suggestion(
+        video_id=video_id,
+        plan_index=next_plan_index,
+        excerpt=transcript_full,
+        placeholder_title=clip_title,
+        user_id=current_user.get("id") if current_user else None,
+        app_obj=current_app._get_current_object(),
+    )
 
     return _respond(
         f"Clip section added (#{next_plan_index}).",

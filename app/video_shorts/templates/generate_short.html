@@ -2166,7 +2166,7 @@
               Start Video Analysis
             </button>
             <div id="transcribe-shell-helper" class="editor-empty-shell-helper d-none">
-              This can take a few minutes depending on video length.
+              Analysis time depends on video length.
             </div>
             <div id="transcribe-live-status"
                  class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
@@ -2993,27 +2993,27 @@ document.addEventListener("DOMContentLoaded", () => {
       starting: "Starting video analysis.",
       downloading: "Preparing the source video.",
       uploaded: "Upload complete. Preparing your video.",
-      prepare_audio: "Preparing audio for transcription.",
+      prepare_audio: "Preparing the audio for analysis.",
       prepare_audio_done: "Audio is ready.",
       prepare_chunks: "Preparing the audio in smaller parts.",
       prepare_chunks_done: "Audio preparation is complete.",
       language_probe: "Checking the audio.",
-      language_mode: "Choosing the best transcription mode.",
-      whisper_start: "Creating the transcript.",
-      whisper_chunk_start: "Creating the transcript.",
-      whisper_chunk_done: "Still creating the transcript.",
-      transcribing: "Creating the transcript.",
-      language_passthrough: "Finalizing the transcript.",
-      tagging: "Finalizing the transcript.",
-      db_write: "Saving the transcript.",
+      language_mode: "Choosing the best analysis mode.",
+      whisper_start: "Analyzing the audio.",
+      whisper_chunk_start: "Analyzing the audio.",
+      whisper_chunk_done: "Still analyzing the audio.",
+      transcribing: "Analyzing the audio.",
+      language_passthrough: "Finalizing the analysis.",
+      tagging: "Finalizing the analysis.",
+      db_write: "Saving the analysis.",
       cleanup: "Wrapping things up.",
-      done: "Transcript ready.",
-      completed: "Transcript ready.",
-      ready: "Transcript ready.",
-      failed: "We couldn't finish the transcript.",
+      done: "Analysis ready.",
+      completed: "Analysis ready.",
+      ready: "Analysis ready.",
+      failed: "We couldn't finish the analysis.",
     };
 
-    const text = stageMessages[stage] || rawMessage || (running ? "Processing your video." : "Transcript ready.");
+    const text = stageMessages[stage] || rawMessage || (running ? "Analyzing your video." : "Analysis ready.");
     return {
       text,
       spinning: running && !["done", "completed", "ready", "failed"].includes(stage),
@@ -3059,7 +3059,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (payload.status === "completed") {
         stopPolling();
-        showSuccess("Transcript ready.");
+        showSuccess("Analysis ready.");
         window.setTimeout(() => window.location.reload(), 900);
         return;
       }
@@ -3163,17 +3163,6 @@ document.addEventListener("DOMContentLoaded", () => {
               if (!triggerGenerateForClipCard(createdCard)) {
                 throw new Error("Clip was created, but automatic rendering could not be started.");
               }
-              window.setTimeout(() => {
-                requestSuggestedClipTitle({
-                  card: createdCard,
-                  planIndex: createdPlanIndex,
-                  excerpt: payload.excerpt || payload.transcript_full || "",
-                  currentTitle: placeholderTitle,
-                  expectedCurrentTitle: placeholderTitle,
-                  applyMode: "if-pristine",
-                  successMessage: "",
-                });
-              }, 180);
             }
             return;
           }

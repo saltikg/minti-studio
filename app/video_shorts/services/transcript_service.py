@@ -1090,8 +1090,8 @@ def _transcribe_with_whisper(
                 "timestamp_granularities": ["segment", "word"],  # ensure segment + word timings
                 "prompt": "Transcribe exactly as spoken in the original audio language. Do not translate.",
             }
-            if transcription_mode == "en":
-                request_payload["language"] = "en"
+            if transcription_mode in {"en", "tr"}:
+                request_payload["language"] = transcription_mode
             resp = _openai_client.audio.transcriptions.create(
                 **request_payload,
             )
@@ -1168,8 +1168,9 @@ def _transcribe_with_whisper(
             }
         )
 
-    # Keep English transcripts exactly as Whisper produced them.
-    # Turkish-specific tagging logic below can rewrite/reshape text.
+    # Keep Whisper transcripts exactly as produced for every language.
+    # Downstream subtitle and clip flows expect normalized segments, but they do
+    # not require the slower language-classification or Arabic refinement passes.
     en_chunks = sum(1 for lang in chunk_languages if lang == "en")
     looks_english = _looks_english_text(full_text)
     english_mode = (
@@ -1179,131 +1180,29 @@ def _transcribe_with_whisper(
             and ((en_chunks and en_chunks >= max(1, len(chunk_languages) // 2)) or looks_english)
         )
     )
-    if english_mode:
-        _emit("language_passthrough", "Detected English audio; preserving Whisper output.")
-        english_segments: List[Dict[str, Any]] = []
-        for seg in normalized:
-            seg_text = (seg.get("text") or "").strip()
-            english_segments.append(
-                {
-                    "start": seg.get("start", 0.0),
-                    "end": seg.get("end"),
-                    "duration": seg.get("duration"),
-                    "lang": "en",
-                    "label": "speech",
-                    "tr_text": seg_text,
-                    "ar_text": None,
-                    "text": seg_text,
-                    "words": seg.get("words"),
-                    "word_tags": None,
-                }
-            )
+    detected_lang = "en" if english_mode else (transcription_mode if transcription_mode in {"en", "tr"} else "")
+    if not detected_lang:
+        inferred_lang = infer_lang_from_text(full_text or "")
+        detected_lang = "en" if inferred_lang == "en" else "tr"
 
-        _emit("cleanup", "Cleaning temporary files.")
-        if cleanup_paths:
-            for path in cleanup_paths:
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
-            for tmp_dir in cleanup_dirs:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        _emit("done", "Transcription finished.", segment_count=len(english_segments))
-        return str(full_text), english_segments
-
-    _emit("tagging", "Tagging transcript segments.")
-    # Try word-level classification first if word data exists
-    logical_segments: List[Dict[str, Any]] = []
-    for seg in normalized:
-        if seg.get("words"):
-            logical_segments.extend(_split_segment_by_word_tags(seg))
-        else:
-            logical_segments.append(seg)
-
-    tagged_segments = tag_segments_with_language(logical_segments)
-
-    # 2nd pass sanity check with segment-level LLM: if it says Turkish, downgrade aggressive AR tags
-    try:
-        seg_labels = classify_segments_with_llm(tagged_segments)
-    except Exception:
-        seg_labels = []
-    for i, seg in enumerate(tagged_segments):
-        if i < len(seg_labels) and seg_labels[i] == "turkish_speech":
-            seg["label"] = "turkish_speech"
-            seg["lang"] = "tr"
-            # drop any Arabic script text to avoid overriding Turkish in views
-            seg.pop("ar_text", None)
-            if not seg.get("tr_text") and seg.get("text"):
-                seg["tr_text"] = seg.get("text")
-            wt = seg.get("word_tags")
-            if isinstance(wt, list):
-                seg["word_tags"] = [
-                    "turkish_speech" if t in {"arabic_prayer_or_quran", "mixed"} else t
-                    for t in wt
-                ]
-
-    # Merge word_tags back to higher-level segments where overlapping
-    for dst in tagged_segments:
-        if dst.get("word_tags"):
-            continue
-        dst_bounds = _seg_bounds(dst)
-        merged_word_tags = []
-        for src in logical_segments:
-            if not src.get("word_tags"):
-                continue
-            if _overlap(dst_bounds, _seg_bounds(src)):
-                merged_word_tags.extend(src["word_tags"])
-        if merged_word_tags:
-            dst["word_tags"] = merged_word_tags
-            if not dst.get("words"):
-                dst["words"] = merged_word_tags
-    try:
-        missing = sum(1 for s in tagged_segments if not s.get("word_tags"))
-        current_app.logger.info("[WORD_TAG] after merge: missing_word_tags=%s", missing)
-    except Exception:
-        pass
-
-    # If any segments are still missing label, use segment-level classifier as fallback
+    _emit("language_passthrough", "Preserving Whisper output.")
     segments: List[Dict[str, Any]] = []
-    unlabeled_indices = [i for i, s in enumerate(tagged_segments) if not s.get("label")]
-    labels_fallback: List[str] = []
-    if unlabeled_indices:
-        try:
-            labels_fallback = classify_segments_with_llm([tagged_segments[i] for i in unlabeled_indices])
-        except Exception:
-            labels_fallback = ["turkish_speech"] * len(unlabeled_indices)
-
-    fallback_iter = iter(labels_fallback)
-    for seg in tagged_segments:
-        tr_txt = seg.get("tr_text") or seg.get("text") or ""
-        label = seg.get("label")
-        if not label:
-            try:
-                label = next(fallback_iter)
-            except StopIteration:
-                label = "turkish_speech"
-        lang_val = seg.get("lang") or "tr"
-        if label == "arabic_prayer_or_quran":
-            lang_val = "ar"
+    for seg in normalized:
+        seg_text = (seg.get("text") or "").strip()
         segments.append(
             {
                 "start": seg.get("start", 0.0),
                 "end": seg.get("end"),
                 "duration": seg.get("duration"),
-                "lang": lang_val,
-                "label": label,
-                "tr_text": tr_txt,
-                "ar_text": seg.get("ar_text"),
-                "text": tr_txt,
+                "lang": detected_lang,
+                "label": "speech",
+                "tr_text": seg_text,
+                "ar_text": None,
+                "text": seg_text,
                 "words": seg.get("words"),
-                "word_tags": seg.get("word_tags"),
+                "word_tags": None,
             }
         )
-
-    _emit("arabic_refine", "Running Arabic refinement pass.")
-    # Refine Arabic segments with a focused Whisper call to get Arabic script
-    segments = _refine_arabic_segments_with_whisper(segments, audio_ref_path or video_path)
 
     _emit("cleanup", "Cleaning temporary files.")
     # Cleanup temp audio if created
