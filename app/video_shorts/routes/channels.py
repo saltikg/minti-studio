@@ -213,6 +213,7 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         search_query=search_query,
+        coachmark_user_scope=f"user-{current_user['id']}",
         hide_my_videos_coachmark=load_user_bool_preference(
             current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
         ),

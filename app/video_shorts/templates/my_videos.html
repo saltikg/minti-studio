@@ -341,7 +341,12 @@
 {% endblock %}
 
 {% block content %}
-<div class="mv-shell" id="mv-shell" data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}">
+<div
+  class="mv-shell"
+  id="mv-shell"
+  data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}"
+  data-coachmark-scope="{{ coachmark_user_scope }}"
+>
   <section class="mv-hero">
     <div class="mv-title">My videos</div>
     <div class="mv-subtitle">Upload a video, then turn it into shorts.</div>
@@ -427,8 +432,9 @@
   const firstVideoRow = document.getElementById('mv-first-video-row');
   const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
   const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
-  const coachmarkDismissedSessionKey = 'mvCoachmarkDismissed';
-  const coachmarkStateKey = 'mvCoachmarkStage';
+  const coachmarkScope = String(coachmarkShell?.dataset.coachmarkScope || 'default');
+  const coachmarkDismissedSessionKey = `mvCoachmarkDismissed:${coachmarkScope}`;
+  const coachmarkStateKey = `mvCoachmarkStage:${coachmarkScope}`;
   let selectedFile = null;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
