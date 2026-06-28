@@ -1496,9 +1496,9 @@
      class="alert alert-danger py-2 px-3 d-none"
      style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;"></div>
 
-{% if (video.download_status or '')|lower == 'pending' %}
+{% if (video.download_status or '')|lower == 'pending' and not ((video.video_id or '')|lower).startswith('local_') %}
   <div class="alert alert-info">
-    Downloading. The local downloader runs hourly, so there may be a short delay.
+    We are preparing the source video. This can take a little while.
   </div>
 {% endif %}
 
@@ -2163,10 +2163,10 @@
                     form="step1-form"
                     id="step1-btn"
                     class="editor-empty-shell-primary">
-              Transcribe video
+              Start Video Analysis
             </button>
             <div id="transcribe-shell-helper" class="editor-empty-shell-helper d-none">
-              Processing time depends on video length. The transcript will appear here when it's ready.
+              This can take a few minutes depending on video length.
             </div>
             <div id="transcribe-live-status"
                  class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
@@ -2981,6 +2981,45 @@ document.addEventListener("DOMContentLoaded", () => {
     statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
   };
 
+  const formatTranscriptionStatus = (payload) => {
+    const stage = String(payload.stage || "").trim().toLowerCase();
+    const rawMessage = String(payload.message || "").trim();
+    const running = payload.status === "running" || payload.running === true;
+
+    const stageMessages = {
+      idle: "Waiting to start.",
+      queued: "Your video is in line.",
+      start: "Starting video analysis.",
+      starting: "Starting video analysis.",
+      downloading: "Preparing the source video.",
+      uploaded: "Upload complete. Preparing your video.",
+      prepare_audio: "Preparing audio for transcription.",
+      prepare_audio_done: "Audio is ready.",
+      prepare_chunks: "Preparing the audio in smaller parts.",
+      prepare_chunks_done: "Audio preparation is complete.",
+      language_probe: "Checking the audio.",
+      language_mode: "Choosing the best transcription mode.",
+      whisper_start: "Creating the transcript.",
+      whisper_chunk_start: "Creating the transcript.",
+      whisper_chunk_done: "Still creating the transcript.",
+      transcribing: "Creating the transcript.",
+      language_passthrough: "Finalizing the transcript.",
+      tagging: "Finalizing the transcript.",
+      db_write: "Saving the transcript.",
+      cleanup: "Wrapping things up.",
+      done: "Transcript ready.",
+      completed: "Transcript ready.",
+      ready: "Transcript ready.",
+      failed: "We couldn't finish the transcript.",
+    };
+
+    const text = stageMessages[stage] || rawMessage || (running ? "Processing your video." : "Transcript ready.");
+    return {
+      text,
+      spinning: running && !["done", "completed", "ready", "failed"].includes(stage),
+    };
+  };
+
   const stopPolling = () => {
     if (pollingTimer) {
       window.clearInterval(pollingTimer);
@@ -3015,21 +3054,18 @@ document.addEventListener("DOMContentLoaded", () => {
         // Multi-worker polling can briefly return stale idle; ignore while active.
         return;
       }
-      const stage = payload.stage || "unknown";
-      const message = payload.message || "";
-      const elapsed = Number(payload.elapsed_seconds || 0);
-      const stillRunning = payload.status === "running" || payload.running === true;
-      showStatus(`Stage: ${stage} | ${message} | ${elapsed.toFixed(1)}s`, false, stillRunning);
+      const formatted = formatTranscriptionStatus(payload);
+      showStatus(formatted.text, false, formatted.spinning);
 
       if (payload.status === "completed") {
         stopPolling();
-        showSuccess(`Done: ${payload.message || "Transcript completed."}`);
+        showSuccess("Transcript ready.");
         window.setTimeout(() => window.location.reload(), 900);
         return;
       }
       if (payload.status === "failed") {
         stopPolling();
-        showStatus(`Failed at stage "${stage}": ${payload.error || payload.message || "Unknown error"}`, true);
+        showStatus(payload.error || payload.message || "We couldn't analyze this video. Please try again.", true);
       }
     } catch (err) {
       consecutivePollFailures += 1;
@@ -3038,7 +3074,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showStatus(`Status polling failed after retries: ${err.message || err}`, true);
         return;
       }
-      const reconnecting = `Connection issue (${consecutivePollFailures}/${MAX_CONSECUTIVE_POLL_FAILURES}). Retrying...`;
+      const reconnecting = "Still working. Reconnecting…";
       showStatus(reconnecting, false, true);
     }
   };
@@ -3050,7 +3086,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     running = true;
     step1Btn.setAttribute("disabled", "disabled");
-    showStatus("Starting transcription...", false, true);
+    showStatus("Starting video analysis.", false, true);
 
     try {
       const response = await fetch(startUrl, {
@@ -3068,14 +3104,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!response.ok || !payload.ok) {
         throw new Error(payload.message || "Could not start transcription.");
       }
-      showStatus(payload.message || "Transcription started.", false, true);
+      showStatus("Video analysis started.", false, true);
       await pollStatus();
       if (running) {
         pollingTimer = window.setInterval(pollStatus, 1500);
       }
     } catch (err) {
       stopPolling();
-      showStatus(`Start failed: ${err.message || err}`, true);
+      showStatus(err.message || "We couldn't start the analysis. Please try again.", true);
     }
   });
 });
