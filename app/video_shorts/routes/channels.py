@@ -1,5 +1,6 @@
 import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from flask import flash, g, jsonify, redirect, render_template, request, url_for
@@ -13,6 +14,7 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
+from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
@@ -25,6 +27,7 @@ SOURCES_OWNER_EMAILS = {
 SOURCES_OWNER_IDENTIFIERS = {
     "cevheriden",
 }
+VIDEOS_DIR = Path("app/video_shorts/static/videos")
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -97,6 +100,28 @@ def _format_video_timestamp(value, tz_name: str) -> str:
     if getattr(dt_value, "tzinfo", None) is None:
         dt_value = dt_value.replace(tzinfo=timezone.utc)
     return dt_value.astimezone(tz).strftime("%b %-d, %Y")
+
+
+def _resolve_source_video_public_url(video_id: str) -> str:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return ""
+    candidates = [
+        VIDEOS_DIR / f"{clean_video_id}.mp4",
+        VIDEOS_DIR / f"{clean_video_id}.mov",
+        VIDEOS_DIR / f"{clean_video_id}.mkv",
+        VIDEOS_DIR / f"{clean_video_id}.webm",
+    ]
+    storage = get_media_storage()
+    for candidate in candidates:
+        key = f"videos/{candidate.name}"
+        try:
+            resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
+        except Exception:
+            continue
+        if resolved.exists and resolved.public_url:
+            return resolved.public_url
+    return ""
 
 
 def _video_status_payload(download_status: str | None, transcript_status: str | None, short_count: int) -> dict:
@@ -198,6 +223,7 @@ def my_videos_page():
             "video_id": row[1],
             "title": row[2] or "Untitled video",
             "thumbnail_url": row[3] or "",
+            "source_preview_url": _resolve_source_video_public_url(row[1]),
             "duration_label": _format_duration_label(row[4]),
             "download_status": row[5] or "",
             "transcript_status": row[6] or "",
@@ -558,15 +584,34 @@ def delete_channel(channel_id):
         conn.close()
         flash("You do not have permission to delete this channel.", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
-    conn.execute(
-        """
-        DELETE FROM youtube_channels
-        WHERE channel_id = ?
-          AND owner_user_id = ?
-          AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
-        """,
-        [channel_id, current_user["id"], brand_id, brand_id],
-    )
+    try:
+        conn.execute(
+            """
+            DELETE FROM youtube_videos
+            WHERE channel_id = ?
+              AND owner_user_id = ?
+              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
+            """,
+            [channel_id, current_user["id"], brand_id, brand_id],
+        )
+        conn.execute(
+            """
+            DELETE FROM youtube_channels
+            WHERE channel_id = ?
+              AND owner_user_id = ?
+              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
+            """,
+            [channel_id, current_user["id"], brand_id, brand_id],
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        flash("Channel could not be deleted.", "danger")
+        return redirect(url_for("video_shorts_bp.channels_page"))
     conn.close()
 
     flash("Channel deleted.", "warning")

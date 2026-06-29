@@ -278,6 +278,13 @@
     object-fit: cover;
     display: block;
   }
+  .mv-thumb video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: #020617;
+  }
   .mv-title-cell {
     min-width: 0;
   }
@@ -395,6 +402,13 @@
           <div class="mv-thumb">
             {% if item.thumbnail_url %}
               <img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
+            {% elif item.source_preview_url %}
+              <video
+                src="{{ item.source_preview_url }}"
+                muted
+                preload="metadata"
+                playsinline
+                aria-label="{{ item.title }}"></video>
             {% else %}
               <span>{{ item.thumb_fallback }}</span>
             {% endif %}
