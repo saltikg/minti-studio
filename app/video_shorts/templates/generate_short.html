@@ -4619,6 +4619,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
+const escapeHtml = window.escapeHtml || ((value) => String(value || "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;"));
+
 const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null) => {
   const panel = document.getElementById("clip-management-panel");
   const listPane = document.getElementById("clip-pane-list");
