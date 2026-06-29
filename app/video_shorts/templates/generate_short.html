@@ -899,8 +899,8 @@
   }
   .trs-row {
     display: grid;
-    grid-template-columns: 136px minmax(0, 1fr) auto;
-    gap: 8px;
+    grid-template-columns: 156px minmax(0, 1fr) auto;
+    gap: 14px;
     align-items: start;
     padding: 4px 4px 4px 2px;
     border-radius: 8px;
@@ -936,7 +936,7 @@
   }
   .trs-row-time {
     width: 100%;
-    padding: 4px 6px;
+    padding: 4px 10px 4px 6px;
     border-radius: 8px;
     border: 0;
     background: transparent;
@@ -955,6 +955,8 @@
   }
   .trs-row-time span:last-child {
     white-space: nowrap;
+    display: inline-block;
+    min-width: 0;
   }
   .trs-row-time:hover,
   .trs-row-time:focus-visible {
@@ -1389,8 +1391,8 @@
       padding: 6px 8px 88px;
     }
     .trs-row {
-      grid-template-columns: 120px minmax(0, 1fr) auto;
-      gap: 8px;
+      grid-template-columns: 144px minmax(0, 1fr) auto;
+      gap: 12px;
     }
     .trs-row-content-inline {
       flex-wrap: wrap;
@@ -3165,6 +3167,20 @@ document.addEventListener("DOMContentLoaded", () => {
                 syncClipCardTitleUi(createdCard, placeholderTitle);
                 markClipTitleAutofillBaseline(createdCard, placeholderTitle);
               }
+              setClipFeedbackState(createdCard, {
+                message: "Preparing title…",
+                tone: "text-white-50",
+                busy: true,
+              });
+              await requestSuggestedClipTitle({
+                card: createdCard,
+                planIndex: createdPlanIndex,
+                excerpt: String(payload.excerpt || payload.transcript_full || "").trim(),
+                currentTitle: placeholderTitle,
+                expectedCurrentTitle: placeholderTitle,
+                applyMode: "always",
+                successMessage: "",
+              });
               renderClipJobProgressState(createdCard, "processing", 0);
               window.__trsClipSelectorController?.showPublishCoachmark?.(createdPlanIndex);
               if (!triggerGenerateForClipCard(createdCard)) {
@@ -4985,7 +5001,18 @@ const requestSuggestedClipTitle = async ({
       throw new Error(payload.message || "Title suggestion could not be created.");
     }
     if (payload.skipped) {
-      return { success: true, skipped: true, title: payload.title || "" };
+      const skippedTitle = String(payload.title || "").trim();
+      if (skippedTitle) {
+        const currentValue = String(titleInput?.value || "").trim();
+        const isDirty = String(titleInput?.dataset.autoTitleDirty || "") === "1";
+        const baseline = String(titleInput?.dataset.autoTitleBaseline || "").trim();
+        const shouldApply = applyMode === "always" || (!isDirty && currentValue === (expectedCurrentTitle || baseline || currentValue));
+        if (shouldApply) {
+          syncClipCardTitleUi(card, skippedTitle);
+          markClipTitleAutofillBaseline(card, skippedTitle);
+        }
+      }
+      return { success: true, skipped: true, title: skippedTitle };
     }
     const suggestedTitle = String(payload.title || "").trim();
     if (!suggestedTitle) {
