@@ -1954,16 +1954,6 @@
                           <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
                         </button>
                       </form>
-                      <form method="post" action="{{ url_for('video_shorts_bp.update_clip_category', video_pk=video.id) }}" class="clip-category-form" data-save-url="{{ url_for('video_shorts_bp.update_clip_category', video_pk=video.id) }}">
-                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                        <select name="category" class="form-select form-select-sm clip-category-select" aria-label="Category">
-                          <option value="">{% if row.category %}Category{% else %}Select category{% endif %}</option>
-                          {% for category in category_options %}
-                            <option value="{{ category }}" {% if row.category == category %}selected{% endif %}>{{ category }}</option>
-                          {% endfor %}
-                        </select>
-                        <span class="clip-category-feedback text-muted d-none"></span>
-                      </form>
                     </div>
                   {% else %}
                     <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
@@ -2365,7 +2355,7 @@
                   <div id="facebookTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
                 </div>
               </div>
-              <div class="card bg-dark text-white border border-secondary-subtle" id="tiktokSettingsCard">
+              <div class="card bg-dark text-white border border-secondary-subtle d-none" id="tiktokSettingsCard">
                 <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
                   <div class="d-flex align-items-center gap-2">
                     <h5 class="mb-0 text-white">TikTok</h5>
