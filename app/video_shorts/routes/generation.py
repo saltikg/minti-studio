@@ -4383,6 +4383,8 @@ def generate_short(video_pk):
             if (r.get("status") == "created" and r.get("any_platform_published"))
         ]
     )
+    current_plan_id = str((current_user or {}).get("plan_id") or "").strip().lower()
+    llm_description_enabled = current_plan_id not in {"", "free"}
     suggested_long_video_title = _build_long_highlights_title(video.get("title") or "")
     long_compilation_videos = _list_generated_long_compilations(video.get("video_id") or "", limit=12)
     brand_subscribe_overlay_path = _resolve_brand_subscribe_overlay_path(brand_id)
@@ -4611,6 +4613,7 @@ def generate_short(video_pk):
         suggested_long_video_title=suggested_long_video_title,
         long_compilation_videos=long_compilation_videos,
         brand_subscribe_overlay_available=brand_subscribe_overlay_available,
+        llm_description_enabled=llm_description_enabled,
     )
 
 
@@ -11363,14 +11366,23 @@ def prepare_description(video_pk):
         return redirect(target)
 
     current_user = getattr(g, "vs_current_user", None) or {}
+    current_plan_id = str(current_user.get("plan_id") or "").strip().lower()
+    llm_description_enabled = current_plan_id not in {"", "free"}
     brand_id = current_brand_id()
     if not has_refresh_token(current_user.get("id"), brand_id=brand_id):
         return _respond(
             False,
-            "YouTube bağlantısı yok; önce bağlantı kurun.",
+            "Connect YouTube first.",
             category="warning",
             status=403,
             redirect_to=url_for("video_shorts_bp.youtube_connect"),
+        )
+    if not llm_description_enabled:
+        return _respond(
+            False,
+            "Upgrade your plan to use AI descriptions.",
+            category="warning",
+            status=403,
         )
 
     filename = (request.form.get("filename") or "").strip()

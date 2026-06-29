@@ -1250,13 +1250,6 @@
     font-size: 0.84rem;
     font-variant-numeric: tabular-nums;
   }
-  .clip-detail-modal-platforms {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: 10px;
-    vertical-align: middle;
-  }
   .clip-detail-modal-mount .clip-card {
     display: block;
   }
@@ -2129,7 +2122,6 @@
             <div class="modal-header">
               <div>
                 <div class="clip-detail-modal-title" id="clip-detail-modal-title">Clip details</div>
-                <div class="clip-detail-modal-platforms" id="clip-detail-modal-platforms"></div>
               </div>
               <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -2211,12 +2203,19 @@
                     <label class="form-label fw-semibold mb-0" for="youtube-description-input">Description</label>
                     <button
                       type="button"
-                      class="btn btn-sm btn-outline-light youtube-description-btn d-inline-flex align-items-center gap-2"
-                      id="youtube-description-generate-btn">
+                      class="btn btn-sm btn-outline-light youtube-description-btn d-inline-flex align-items-center gap-2{% if not llm_description_enabled %} is-locked{% endif %}"
+                      id="youtube-description-generate-btn"
+                      {% if not llm_description_enabled %}disabled title="Paid plans only"{% endif %}>
                       <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                      {% if not llm_description_enabled %}
+                        <i class="bi bi-lock-fill" aria-hidden="true"></i>
+                      {% endif %}
                       <span class="btn-label">Create Description</span>
                       <span class="youtube-desc-llm">LLM</span>
                     </button>
+                    {% if not llm_description_enabled %}
+                      <span class="small text-white-50">Paid plans only</span>
+                    {% endif %}
                   </div>
                   <textarea
                     id="youtube-description-input"
@@ -5686,6 +5685,7 @@ const youtubeModalContext = (() => {
   const descriptionStatus = document.getElementById("youtube-description-status");
   const descriptionCounter = document.getElementById("youtube-description-counter");
   const createDescriptionBtn = document.getElementById("youtube-description-generate-btn");
+  const llmDescriptionAllowed = {{ llm_description_enabled | tojson }};
   const descriptionSpinner = createDescriptionBtn?.querySelector(".spinner-border");
   const descriptionBtnLabel = createDescriptionBtn?.querySelector(".btn-label");
   const descriptionEndpoint = "{{ url_for('video_shorts_bp.prepare_description', video_pk=video.id) }}";
@@ -5886,9 +5886,12 @@ const youtubeModalContext = (() => {
       updateDescriptionStatus("Server error", "error");
     } finally {
       createDescriptionBtn.disabled = false;
+      if (!llmDescriptionAllowed) {
+        createDescriptionBtn.disabled = true;
+      }
       descriptionSpinner?.classList.add("d-none");
       if (descriptionBtnLabel) {
-        descriptionBtnLabel.textContent = "Create YouTube Description";
+        descriptionBtnLabel.textContent = "Create Description";
       }
     }
   });
@@ -5932,9 +5935,10 @@ const youtubeModalContext = (() => {
     if (!createDescriptionBtn) {
       return;
     }
-    createDescriptionBtn.classList.toggle("d-none", !enabled);
-    createDescriptionBtn.disabled = !enabled;
-    if (!enabled) {
+    const visible = Boolean(enabled);
+    createDescriptionBtn.classList.toggle("d-none", !visible);
+    createDescriptionBtn.disabled = !visible || !llmDescriptionAllowed;
+    if (!visible) {
       resetDescriptionStatus();
     }
   };
