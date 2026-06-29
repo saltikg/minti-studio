@@ -305,6 +305,75 @@ def update_my_videos_coachmark_preference():
     return jsonify({"ok": True, "hide": hide})
 
 
+@video_shorts_bp.route("/my-videos/<int:video_pk>/title", methods=["POST"])
+def update_my_video_title(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"success": False, "message": "Authentication required."}), 401
+
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return jsonify({"success": False, "message": "Title cannot be empty."}), 400
+    title = title[:255]
+    brand_id = current_brand_id()
+
+    conn = get_db()
+    try:
+        if brand_id:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM youtube_videos
+                WHERE id = ?
+                  AND owner_user_id = ?
+                  AND brand_id = ?
+                LIMIT 1
+                """,
+                [video_pk, current_user["id"], brand_id],
+            ).fetchone()
+            if not row:
+                return jsonify({"success": False, "message": "Video not found."}), 404
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET title = ?
+                WHERE id = ?
+                  AND owner_user_id = ?
+                  AND brand_id = ?
+                """,
+                [title, video_pk, current_user["id"], brand_id],
+            )
+        else:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM youtube_videos
+                WHERE id = ?
+                  AND owner_user_id = ?
+                  AND brand_id IS NULL
+                LIMIT 1
+                """,
+                [video_pk, current_user["id"]],
+            ).fetchone()
+            if not row:
+                return jsonify({"success": False, "message": "Video not found."}), 404
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET title = ?
+                WHERE id = ?
+                  AND owner_user_id = ?
+                  AND brand_id IS NULL
+                """,
+                [title, video_pk, current_user["id"]],
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"success": True, "title": title})
+
+
 @video_shorts_bp.route("/channels", methods=["GET", "POST"])
 def channels_page():
     current_user = getattr(g, "vs_current_user", None)

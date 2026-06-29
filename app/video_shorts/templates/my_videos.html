@@ -295,6 +295,66 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .mv-title-edit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mv-title-edit-btn {
+    border: 0;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.48);
+    padding: 0;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity .18s ease, color .18s ease;
+  }
+  .mv-row:hover .mv-title-edit-btn,
+  .mv-title-edit.is-editing .mv-title-edit-btn {
+    opacity: 1;
+  }
+  .mv-title-edit-btn:hover {
+    color: #f8fafc;
+  }
+  .mv-title-edit-input {
+    width: 100%;
+    min-width: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(15, 23, 42, 0.82);
+    color: #f8fafc;
+    padding: 6px 10px;
+    font-size: 0.95rem;
+  }
+  .mv-title-edit-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .mv-title-edit-save,
+  .mv-title-edit-cancel {
+    border: 0;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.72);
+    padding: 0;
+    line-height: 1;
+  }
+  .mv-title-edit-save:hover {
+    color: #5eead4;
+  }
+  .mv-title-edit-cancel:hover {
+    color: #fca5a5;
+  }
+  .mv-title-edit-status {
+    margin-top: 6px;
+    color: rgba(226, 232, 240, 0.62);
+    font-size: 0.82rem;
+  }
+  .mv-title-edit-status.is-error {
+    color: #fca5a5;
+  }
   .mv-channel-name {
     margin-top: 4px;
     color: rgba(226, 232, 240, 0.6);
@@ -414,7 +474,13 @@
             {% endif %}
           </div>
           <div class="mv-title-cell">
-            <div class="mv-video-title">{{ item.title }}</div>
+            <div class="mv-title-edit" data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ url_for('video_shorts_bp.update_my_video_title', video_pk=item.id) }}">
+              <div class="mv-video-title" data-title-text>{{ item.title }}</div>
+              <button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title">
+                <i class="bi bi-pencil-square" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>
             {% if item.channel_name %}
               <div class="mv-channel-name">{{ item.channel_name }}</div>
             {% endif %}
@@ -770,6 +836,130 @@
   firstVideoAction?.addEventListener('click', () => {
     dismissCoachmarkForSession();
     setCoachmarkState('');
+  });
+  const titleEditors = Array.from(document.querySelectorAll('[data-title-edit]'));
+  const closeOtherEditors = (activeEditor) => {
+    titleEditors.forEach((editor) => {
+      if (editor !== activeEditor && editor.classList.contains('is-editing')) {
+        editor.querySelector('[data-title-edit-cancel]')?.click();
+      }
+    });
+  };
+  titleEditors.forEach((editor) => {
+    const titleText = editor.querySelector('[data-title-text]');
+    const editBtn = editor.querySelector('[data-title-edit-start]');
+    const statusEl = editor.parentElement?.querySelector('[data-title-status]');
+    const updateUrl = editor.dataset.updateUrl || '';
+    let originalTitle = titleText?.textContent?.trim() || '';
+
+    const setStatus = (message, isError = false) => {
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.classList.toggle('d-none', !message);
+      statusEl.classList.toggle('is-error', Boolean(message && isError));
+    };
+
+    const exitEditMode = () => {
+      editor.classList.remove('is-editing');
+      editor.querySelector('.mv-title-edit-input')?.remove();
+      editor.querySelector('.mv-title-edit-actions')?.remove();
+      if (titleText) {
+        titleText.classList.remove('d-none');
+      }
+      if (editBtn) {
+        editBtn.classList.remove('d-none');
+      }
+    };
+
+    const enterEditMode = () => {
+      closeOtherEditors(editor);
+      if (editor.classList.contains('is-editing')) return;
+      editor.classList.add('is-editing');
+      setStatus('');
+      if (titleText) {
+        titleText.classList.add('d-none');
+      }
+      if (editBtn) {
+        editBtn.classList.add('d-none');
+      }
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = originalTitle;
+      input.className = 'mv-title-edit-input';
+      input.setAttribute('maxlength', '255');
+
+      const actions = document.createElement('div');
+      actions.className = 'mv-title-edit-actions';
+      actions.innerHTML = `
+        <button type="button" class="mv-title-edit-save" data-title-edit-save aria-label="Save title">
+          <i class="bi bi-check-lg" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="mv-title-edit-cancel" data-title-edit-cancel aria-label="Cancel edit">
+          <i class="bi bi-x-lg" aria-hidden="true"></i>
+        </button>
+      `;
+      editor.appendChild(input);
+      editor.appendChild(actions);
+      input.focus();
+      input.select();
+
+      const cancel = () => {
+        setStatus('');
+        exitEditMode();
+      };
+
+      const save = async () => {
+        const nextTitle = input.value.trim();
+        if (!nextTitle) {
+          setStatus('Title cannot be empty.', true);
+          input.focus();
+          return;
+        }
+        input.disabled = true;
+        actions.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+        setStatus('Saving…');
+        try {
+          const response = await fetch(updateUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({ title: nextTitle }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || 'Title could not be updated.');
+          }
+          originalTitle = payload.title || nextTitle;
+          if (titleText) {
+            titleText.textContent = originalTitle;
+          }
+          exitEditMode();
+          setStatus('Saved.');
+          window.setTimeout(() => setStatus(''), 1200);
+        } catch (error) {
+          input.disabled = false;
+          actions.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+          setStatus(error.message || 'Title could not be updated.', true);
+          input.focus();
+        }
+      };
+
+      actions.querySelector('[data-title-edit-cancel]')?.addEventListener('click', cancel);
+      actions.querySelector('[data-title-edit-save]')?.addEventListener('click', save);
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          save();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          cancel();
+        }
+      });
+    };
+
+    editBtn?.addEventListener('click', enterEditMode);
   });
   window.addEventListener('resize', () => {
     if (currentCoachmarkStep) {
