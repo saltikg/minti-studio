@@ -2113,6 +2113,13 @@
                                 <i class="bi bi-youtube"></i>
                                 Schedule
                               </button>
+                              {% if not youtube_connected %}
+                                <div class="small text-warning mt-2">
+                                  Connect YouTube in
+                                  <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Connections</a>
+                                  to enable scheduling.
+                                </div>
+                              {% endif %}
                             </div>
                           {% endif %}
                         </div>
