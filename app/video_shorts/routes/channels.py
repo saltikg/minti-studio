@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from flask import flash, g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
@@ -28,6 +28,8 @@ SOURCES_OWNER_IDENTIFIERS = {
     "cevheriden",
 }
 VIDEOS_DIR = Path("app/video_shorts/static/videos")
+SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
+SHORTS_DIR = Path("app/video_shorts/static/shorts")
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -122,6 +124,51 @@ def _resolve_source_video_public_url(video_id: str) -> str:
         if resolved.exists and resolved.public_url:
             return resolved.public_url
     return ""
+
+
+def _delete_source_video_media(video_id: str) -> None:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return
+    storage = get_media_storage()
+    local_storage = get_media_storage("local")
+    for suffix in SOURCE_VIDEO_SUFFIXES:
+        key = f"videos/{clean_video_id}{suffix}"
+        if getattr(storage, "backend_name", "local") == "s3":
+            try:
+                if storage.exists(key):
+                    storage.delete(key)
+            except Exception:
+                current_app.logger.warning("Failed to delete source video from storage key=%s", key)
+        try:
+            local_storage.delete(key)
+        except Exception:
+            current_app.logger.warning("Failed to delete local source video key=%s", key)
+
+
+def _delete_short_media(filename: str) -> None:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return
+    key = f"shorts/{safe_name}"
+    storage = get_media_storage()
+    local_storage = get_media_storage("local")
+    if getattr(storage, "backend_name", "local") == "s3":
+        try:
+            if storage.exists(key):
+                storage.delete(key)
+        except Exception:
+            current_app.logger.warning("Failed to delete short from storage key=%s", key)
+    try:
+        local_storage.delete(key)
+    except Exception:
+        current_app.logger.warning("Failed to delete local short key=%s", key)
+    local_path = SHORTS_DIR / safe_name
+    if local_path.exists() and local_path.is_file():
+        try:
+            local_path.unlink()
+        except Exception:
+            current_app.logger.warning("Failed to unlink local short path=%s", local_path)
 
 
 def _video_status_payload(download_status: str | None, transcript_status: str | None, short_count: int) -> dict:
@@ -569,46 +616,198 @@ def delete_channel(channel_id):
     conn = get_db()
     ensure_channel_owner_schema(conn)
     brand_id = current_brand_id()
-    owner_row = conn.execute(
-        """
-        SELECT owner_user_id
-        FROM youtube_channels
-        WHERE channel_id = ?
-          AND owner_user_id = ?
-          AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
-        """,
-        [channel_id, current_user["id"] if current_user else None, brand_id, brand_id],
-    ).fetchone()
+    if brand_id:
+        owner_row = conn.execute(
+            """
+            SELECT owner_user_id
+            FROM youtube_channels
+            WHERE channel_id = ?
+              AND owner_user_id = ?
+              AND brand_id = ?
+            """,
+            [channel_id, current_user["id"] if current_user else None, brand_id],
+        ).fetchone()
+    else:
+        owner_row = conn.execute(
+            """
+            SELECT owner_user_id
+            FROM youtube_channels
+            WHERE channel_id = ?
+              AND owner_user_id = ?
+              AND brand_id IS NULL
+            """,
+            [channel_id, current_user["id"] if current_user else None],
+        ).fetchone()
     owner_id = owner_row[0] if owner_row else None
     if not current_user or owner_id != current_user["id"]:
         conn.close()
         flash("You do not have permission to delete this channel.", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
     try:
-        conn.execute(
-            """
-            DELETE FROM youtube_videos
-            WHERE channel_id = ?
-              AND owner_user_id = ?
-              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
-            """,
-            [channel_id, current_user["id"], brand_id, brand_id],
-        )
-        conn.execute(
-            """
-            DELETE FROM youtube_channels
-            WHERE channel_id = ?
-              AND owner_user_id = ?
-              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
-            """,
-            [channel_id, current_user["id"], brand_id, brand_id],
-        )
+        if brand_id:
+            video_rows = conn.execute(
+                """
+                SELECT video_id
+                FROM youtube_videos
+                WHERE channel_id = ?
+                  AND owner_user_id = ?
+                  AND brand_id = ?
+                """,
+                [channel_id, current_user["id"], brand_id],
+            ).fetchall()
+        else:
+            video_rows = conn.execute(
+                """
+                SELECT video_id
+                FROM youtube_videos
+                WHERE channel_id = ?
+                  AND owner_user_id = ?
+                  AND brand_id IS NULL
+                """,
+                [channel_id, current_user["id"]],
+            ).fetchall()
+        video_ids = [str(row[0] or "").strip() for row in video_rows if str(row[0] or "").strip()]
+
+        clip_filenames: set[str] = set()
+        if video_ids:
+            placeholders = ", ".join("?" for _ in video_ids)
+            if brand_id:
+                generated_rows = conn.execute(
+                    f"""
+                    SELECT clip_filename, output_filename
+                    FROM shorts_generated_videos
+                    WHERE source_video_id IN ({placeholders})
+                      AND brand_id = ?
+                    """,
+                    [*video_ids, brand_id],
+                ).fetchall()
+            else:
+                generated_rows = conn.execute(
+                    f"""
+                    SELECT clip_filename, output_filename
+                    FROM shorts_generated_videos
+                    WHERE source_video_id IN ({placeholders})
+                      AND brand_id IS NULL
+                    """,
+                    video_ids,
+                ).fetchall()
+            for row in generated_rows:
+                for value in row:
+                    safe_name = Path(str(value or "")).name
+                    if safe_name:
+                        clip_filenames.add(safe_name)
+
+        for clip_filename in clip_filenames:
+            _delete_short_media(clip_filename)
+
+        for video_id in video_ids:
+            _delete_source_video_media(video_id)
+
+        if clip_filenames:
+            clip_placeholders = ", ".join("?" for _ in clip_filenames)
+            conn.execute(
+                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({clip_placeholders})",
+                [*(f"short:{name}" for name in clip_filenames)],
+            )
+        source_asset_keys = []
+        for video_id in video_ids:
+            for suffix in SOURCE_VIDEO_SUFFIXES:
+                source_asset_keys.append(f"downloaded:{video_id}{suffix}")
+        if source_asset_keys:
+            source_asset_placeholders = ", ".join("?" for _ in source_asset_keys)
+            conn.execute(
+                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({source_asset_placeholders})",
+                source_asset_keys,
+            )
+
+        if video_ids:
+            transcript_placeholders = ", ".join("?" for _ in video_ids)
+            conn.execute(
+                f"DELETE FROM youtube_transcripts WHERE video_id IN ({transcript_placeholders})",
+                video_ids,
+            )
+            if brand_id:
+                conn.execute(
+                    f"""
+                    DELETE FROM shorts_generated_videos
+                    WHERE source_video_id IN ({transcript_placeholders})
+                      AND brand_id = ?
+                    """,
+                    [*video_ids, brand_id],
+                )
+                conn.execute(
+                    """
+                    DELETE FROM youtube_videos
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id = ?
+                    """,
+                    [channel_id, current_user["id"], brand_id],
+                )
+                conn.execute(
+                    """
+                    DELETE FROM youtube_channels
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id = ?
+                    """,
+                    [channel_id, current_user["id"], brand_id],
+                )
+            else:
+                conn.execute(
+                    f"""
+                    DELETE FROM shorts_generated_videos
+                    WHERE source_video_id IN ({transcript_placeholders})
+                      AND brand_id IS NULL
+                    """,
+                    video_ids,
+                )
+                conn.execute(
+                    """
+                    DELETE FROM youtube_videos
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id IS NULL
+                    """,
+                    [channel_id, current_user["id"]],
+                )
+                conn.execute(
+                    """
+                    DELETE FROM youtube_channels
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id IS NULL
+                    """,
+                    [channel_id, current_user["id"]],
+                )
+        else:
+            if brand_id:
+                conn.execute(
+                    """
+                    DELETE FROM youtube_channels
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id = ?
+                    """,
+                    [channel_id, current_user["id"], brand_id],
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM youtube_channels
+                    WHERE channel_id = ?
+                      AND owner_user_id = ?
+                      AND brand_id IS NULL
+                    """,
+                    [channel_id, current_user["id"]],
+                )
         conn.commit()
     except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
+        current_app.logger.exception("Failed to delete channel %s for user=%s brand=%s", channel_id, current_user["id"], brand_id)
         conn.close()
         flash("Channel could not be deleted.", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
