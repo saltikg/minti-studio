@@ -8202,8 +8202,11 @@ def youtube_oauth_callback():
     state = request.args.get("state")
     flow = build_oauth_flow(state=state)
     expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
+    saved_code_verifier = saved_state.get("code_verifier") if isinstance(saved_state, dict) else None
     if expected_state and state != expected_state:
         current_app.logger.warning("YouTube OAuth state mismatch: %s vs %s", state, expected_state)
+    if saved_code_verifier:
+        flow.code_verifier = saved_code_verifier
     try:
         flow.fetch_token(authorization_response=request.url)
     except Exception as exc:
