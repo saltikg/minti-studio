@@ -1254,9 +1254,7 @@ def google_login():
         flash("Google sign-in is not configured.", "warning")
         return redirect(url_for("video_shorts_bp.login"))
     flow = _build_google_flow()
-    authorization_url, state = flow.authorization_url(
-        prompt="consent", include_granted_scopes="true"
-    )
+    authorization_url, state = flow.authorization_url(prompt="consent")
     session["google_oauth_state"] = state
     session["google_oauth_code_verifier"] = flow.code_verifier
     session["google_login_next"] = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.channels_page")
