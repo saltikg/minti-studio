@@ -518,19 +518,28 @@ def _build_onboarding_context() -> dict:
     conn = None
     try:
         conn = get_db_readonly()
-        source_rows = conn.execute(
-            """
-            SELECT channel_id, channel_url
-            FROM youtube_channels
-            WHERE owner_user_id = ?
-              AND (
-                (? IS NULL AND brand_id IS NULL)
-                OR brand_id = ?
-              )
-            ORDER BY added_at ASC, channel_id ASC
-            """,
-            [user["id"], brand_id, brand_id],
-        ).fetchall()
+        if brand_id:
+            source_rows = conn.execute(
+                """
+                SELECT channel_id, channel_url
+                FROM youtube_channels
+                WHERE owner_user_id = ?
+                  AND brand_id = ?
+                ORDER BY added_at ASC, channel_id ASC
+                """,
+                [user["id"], brand_id],
+            ).fetchall()
+        else:
+            source_rows = conn.execute(
+                """
+                SELECT channel_id, channel_url
+                FROM youtube_channels
+                WHERE owner_user_id = ?
+                  AND brand_id IS NULL
+                ORDER BY added_at ASC, channel_id ASC
+                """,
+                [user["id"]],
+            ).fetchall()
         real_sources = [
             row for row in source_rows
             if not str(row[1] or "").startswith("local://")
@@ -539,20 +548,30 @@ def _build_onboarding_context() -> dict:
         if real_sources:
             first_source_channel_id = real_sources[0][0]
 
-        video_rows = conn.execute(
-            """
-            SELECT v.id, v.channel_id, COALESCE(lower(v.download_status), '')
-            FROM youtube_videos v
-            LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
-            WHERE v.owner_user_id = ?
-              AND (
-                (? IS NULL AND c.brand_id IS NULL)
-                OR c.brand_id = ?
-              )
-            ORDER BY v.published_at DESC NULLS LAST, v.id DESC
-            """,
-            [user["id"], brand_id, brand_id],
-        ).fetchall()
+        if brand_id:
+            video_rows = conn.execute(
+                """
+                SELECT v.id, v.channel_id, COALESCE(lower(v.download_status), '')
+                FROM youtube_videos v
+                LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+                WHERE v.owner_user_id = ?
+                  AND c.brand_id = ?
+                ORDER BY v.published_at DESC NULLS LAST, v.id DESC
+                """,
+                [user["id"], brand_id],
+            ).fetchall()
+        else:
+            video_rows = conn.execute(
+                """
+                SELECT v.id, v.channel_id, COALESCE(lower(v.download_status), '')
+                FROM youtube_videos v
+                LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+                WHERE v.owner_user_id = ?
+                  AND c.brand_id IS NULL
+                ORDER BY v.published_at DESC NULLS LAST, v.id DESC
+                """,
+                [user["id"]],
+            ).fetchall()
         if video_rows:
             first_video_channel_id = video_rows[0][1]
         for row in video_rows:
@@ -560,21 +579,31 @@ def _build_onboarding_context() -> dict:
                 first_downloadable_video_pk = row[0]
                 break
 
-        published_short_count = int(
-            conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM shorts_generated_videos
-                WHERE publish_status = 'published'
-                  AND (
-                    (? IS NULL AND brand_id IS NULL)
-                    OR brand_id = ?
-                  )
-                """,
-                [brand_id, brand_id],
-            ).fetchone()[0]
-            or 0
-        )
+        if brand_id:
+            published_short_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM shorts_generated_videos
+                    WHERE publish_status = 'published'
+                      AND brand_id = ?
+                    """,
+                    [brand_id],
+                ).fetchone()[0]
+                or 0
+            )
+        else:
+            published_short_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM shorts_generated_videos
+                    WHERE publish_status = 'published'
+                      AND brand_id IS NULL
+                    """
+                ).fetchone()[0]
+                or 0
+            )
     except Exception:
         source_count = 0
     finally:
