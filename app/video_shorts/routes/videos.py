@@ -3436,24 +3436,14 @@ def shorts_comments_page():
             max_videos=12,
             latest_by_video=latest_by_video,
         )
-    if current_user.get("role") == "admin":
-        comments = fetch_comment_records_for_video_ids(
-            sorted(allowed_video_ids),
-            limit=2000,
-            status=status_filter,
-            platform=platform_filter,
-            sort_key=sort_key,
-            sort_dir=sort_dir,
-        )
-    else:
-        comments = fetch_comment_records(
-            current_user["id"],
-            limit=2000,
-            status=status_filter,
-            platform=platform_filter,
-            sort_key=sort_key,
-            sort_dir=sort_dir,
-        )
+    comments = fetch_comment_records_for_video_ids(
+        sorted(allowed_video_ids),
+        limit=2000,
+        status=status_filter,
+        platform=platform_filter,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
+    )
     brand_title_map = _build_short_title_map()
     comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
     if platform_filter in {"all", "youtube"}:
