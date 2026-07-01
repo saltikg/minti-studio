@@ -32,6 +32,7 @@ from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import (
     upsert_comment_records,
     fetch_comment_records,
+    fetch_comment_records_for_video_ids,
     fetch_latest_comment_timestamps,
     fetch_comments_missing_moderation,
     fetch_comment_records_for_video,
@@ -3391,7 +3392,6 @@ def shorts_comments_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    brand_id = current_brand_id()
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filter = (request.args.get("status") or "all").strip().lower()
     platform_filter = (request.args.get("platform") or "all").strip().lower()
@@ -3399,6 +3399,7 @@ def shorts_comments_page():
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     sort_dir = "asc" if sort_dir == "asc" else "desc"
     should_sync = (request.args.get("sync") or "").strip().lower() in {"1", "true", "yes"}
+    allowed_video_ids = _build_allowed_comment_video_ids()
     missing = fetch_comments_missing_moderation(current_user["id"], limit=200)
     if missing:
         moderation_entries = [
@@ -3435,16 +3436,25 @@ def shorts_comments_page():
             max_videos=12,
             latest_by_video=latest_by_video,
         )
-    comments = fetch_comment_records(
-        current_user["id"],
-        limit=2000,
-        status=status_filter,
-        platform=platform_filter,
-        sort_key=sort_key,
-        sort_dir=sort_dir,
-    )
+    if current_user.get("role") == "admin":
+        comments = fetch_comment_records_for_video_ids(
+            sorted(allowed_video_ids),
+            limit=2000,
+            status=status_filter,
+            platform=platform_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
+        )
+    else:
+        comments = fetch_comment_records(
+            current_user["id"],
+            limit=2000,
+            status=status_filter,
+            platform=platform_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
+        )
     brand_title_map = _build_short_title_map()
-    allowed_video_ids = _build_allowed_comment_video_ids()
     comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
     if platform_filter in {"all", "youtube"}:
         _apply_short_title_fallback(comments, brand_title_map)

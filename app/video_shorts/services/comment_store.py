@@ -204,6 +204,78 @@ def fetch_comment_records(
         conn.close()
 
 
+def fetch_comment_records_for_video_ids(
+    video_ids: List[str],
+    *,
+    limit: int = 200,
+    status: Optional[str] = None,
+    platform: Optional[str] = None,
+    sort_key: Optional[str] = None,
+    sort_dir: str = "desc",
+) -> List[Dict[str, object]]:
+    normalized_video_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
+    if not normalized_video_ids:
+        return []
+    conn = get_db_readonly()
+    try:
+        ensure_comment_cache_schema(conn)
+        placeholders = ", ".join(["?"] * len(normalized_video_ids))
+        where = [f"video_id IN ({placeholders})"]
+        params: List[object] = list(normalized_video_ids)
+        if status and status != "all":
+            if status.lower() == "pending":
+                where.append("LOWER(status) IN ('heldforreview', 'likelyspam', 'pending')")
+            else:
+                where.append("LOWER(status) = ?")
+                params.append(status.lower())
+        if platform and platform != "all":
+            where.append("platform = ?")
+            params.append(platform)
+        where_clause = " AND ".join(where)
+        sort_dir_clean = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
+        if (sort_key or "").lower() == "date":
+            order_clause = f"published_at {sort_dir_clean} NULLS LAST, updated_at {sort_dir_clean}"
+        else:
+            order_clause = f"updated_at {sort_dir_clean}"
+        query = f"""
+            SELECT
+                platform,
+                comment_id,
+                parent_id,
+                thread_id,
+                video_id,
+                instagram_media_id,
+                queue_id,
+                owner_user_id,
+                video_title,
+                author,
+                text,
+                status,
+                comment_url,
+                published_at,
+                like_count,
+                moderation_flagged,
+                moderation_reason,
+                moderation_checked_at,
+                updated_at
+            FROM social_comment_cache
+            WHERE {where_clause}
+            ORDER BY {order_clause}
+            LIMIT ?
+        """
+        params.append(limit)
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except Exception as exc:
+            if "social_comment_cache" in str(exc).lower():
+                return []
+            raise
+        cols = [d[0] for d in conn.description]
+        return [dict(zip(cols, row)) for row in rows]
+    finally:
+        conn.close()
+
+
 def fetch_comment_records_for_video(
     owner_user_id: str,
     *,
