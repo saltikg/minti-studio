@@ -147,6 +147,27 @@
   .usage-history-table tbody tr:hover td {
     background: rgba(255,255,255,0.05) !important;
   }
+  .transcription-details-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .transcription-details-trigger:hover {
+    color: var(--mint);
+  }
+  .transcription-details-icon {
+    font-size: 0.95rem;
+    line-height: 1;
+    color: var(--text-2);
+  }
   .usage-history-empty {
     padding: 18px 16px;
     color: var(--text-2);
@@ -726,7 +747,12 @@
           tr.innerHTML = `
             <td>${formatMonthLabel(row.period_start)}</td>
             <td>${Number(row.exports_used || 0)}</td>
-            <td style="text-decoration: underline; text-underline-offset: 2px;">${formatMinutes(row.transcription_used_minutes || 0)}</td>
+            <td>
+              <button type="button" class="transcription-details-trigger" data-month-start="${String(row.period_start || "")}" aria-label="View transcription details for ${formatMonthLabel(row.period_start)}">
+                <span>${formatMinutes(row.transcription_used_minutes || 0)}</span>
+                <i class="bi bi-info-circle transcription-details-icon" aria-hidden="true"></i>
+              </button>
+            </td>
           `;
           usageHistoryBody.appendChild(tr);
         });
@@ -770,9 +796,9 @@
 
     if (usageHistoryBody) {
       usageHistoryBody.addEventListener("click", (event) => {
-        const row = event.target && event.target.closest ? event.target.closest("tr[data-month-start]") : null;
-        if (!row || !row.dataset.monthStart) return;
-        openTranscriptionMonthModal(row.dataset.monthStart);
+        const trigger = event.target && event.target.closest ? event.target.closest("[data-month-start]") : null;
+        if (!trigger || !trigger.dataset.monthStart) return;
+        openTranscriptionMonthModal(trigger.dataset.monthStart);
       });
     }
 
