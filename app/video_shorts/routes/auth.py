@@ -499,6 +499,7 @@ def _build_onboarding_context() -> dict:
     first_video_channel_id = None
     first_downloadable_video_pk = None
     exports_used = 0
+    published_short_count = 0
 
     try:
         youtube_connected = has_refresh_token(user.get("id"), brand_id=brand_id)
@@ -558,6 +559,22 @@ def _build_onboarding_context() -> dict:
             if row[2] in {"downloaded", "downloaded_deleted"}:
                 first_downloadable_video_pk = row[0]
                 break
+
+        published_short_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM shorts_generated_videos
+                WHERE publish_status = 'published'
+                  AND (
+                    (? IS NULL AND brand_id IS NULL)
+                    OR brand_id = ?
+                  )
+                """,
+                [brand_id, brand_id],
+            ).fetchone()[0]
+            or 0
+        )
     except Exception:
         source_count = 0
     finally:
@@ -568,7 +585,7 @@ def _build_onboarding_context() -> dict:
         {
             "key": "short",
             "label": "Create your first short",
-            "done": exports_used >= 1,
+            "done": published_short_count >= 1,
             "cta_label": "Start",
             "href": url_for("video_shorts_bp.quick_short"),
         },
