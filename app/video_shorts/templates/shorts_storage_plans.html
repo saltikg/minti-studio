@@ -110,32 +110,33 @@
     outline: 2px solid rgba(45, 212, 191, 0.48);
     outline-offset: 2px;
   }
-  .usage-history-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-  }
-  .usage-history-card {
+  .usage-history-table-wrap {
     border-radius: 16px;
-    padding: 16px;
     border: 1px solid rgba(255,255,255,0.08);
     background: rgba(255,255,255,0.03);
+    overflow: hidden;
   }
-  .usage-history-label {
-    color: var(--text-2);
-    font-size: 0.82rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+  .usage-history-table {
+    margin-bottom: 0;
   }
-  .usage-history-value {
+  .usage-history-table th,
+  .usage-history-table td {
+    padding: 14px 16px;
+    border-color: rgba(255,255,255,0.08);
     color: var(--text-1);
-    font-size: 1.35rem;
-    font-weight: 700;
-    line-height: 1.15;
+    vertical-align: middle;
   }
-  .usage-history-meta {
+  .usage-history-table thead th {
     color: var(--text-2);
-    font-size: 0.88rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.02);
+  }
+  .usage-history-empty {
+    padding: 18px 16px;
+    color: var(--text-2);
+    font-size: 0.92rem;
   }
   .admin-usage-grid {
     display: grid;
@@ -193,14 +194,25 @@
   <div class="card-body p-4">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
       <div>
-        <div class="vs-card-title mb-1">Last month</div>
-        <div class="usage-reset" id="usage-history-copy">Loading previous month usage…</div>
+        <div class="vs-card-title mb-1">Previous months</div>
+        <div class="usage-reset" id="usage-history-copy">Loading previous months usage…</div>
       </div>
     </div>
-    <div id="usage-history-loading" class="usage-loading usage-panel-numbers">Loading previous month usage…</div>
-    <div id="usage-history-error" class="usage-error usage-panel-numbers d-none">Previous month usage could not be loaded right now.</div>
+    <div id="usage-history-loading" class="usage-loading usage-panel-numbers">Loading previous months usage…</div>
+    <div id="usage-history-error" class="usage-error usage-panel-numbers d-none">Previous months usage could not be loaded right now.</div>
     <div id="usage-history-content" class="d-none">
-      <div class="usage-history-grid usage-panel-numbers" id="usage-history-grid"></div>
+      <div class="usage-history-table-wrap usage-panel-numbers">
+        <table class="table usage-history-table" id="usage-history-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Exports</th>
+              <th>Transcription minutes</th>
+            </tr>
+          </thead>
+          <tbody id="usage-history-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>
@@ -426,7 +438,7 @@
     const usageHistoryLoading = document.getElementById("usage-history-loading");
     const usageHistoryError = document.getElementById("usage-history-error");
     const usageHistoryContent = document.getElementById("usage-history-content");
-    const usageHistoryGrid = document.getElementById("usage-history-grid");
+    const usageHistoryBody = document.getElementById("usage-history-body");
     const usageHistoryCopy = document.getElementById("usage-history-copy");
 
     const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
@@ -455,7 +467,9 @@
       if (!isoDate) return "";
       const dt = new Date(`${isoDate}T00:00:00Z`);
       if (Number.isNaN(dt.getTime())) return "";
-      return dt.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const month = `${dt.getUTCMonth() + 1}`.padStart(2, "0");
+      const year = `${dt.getUTCFullYear()}`;
+      return `${month}-${year}`;
     };
 
     const percentOf = (used, limit) => {
@@ -508,17 +522,6 @@
         </div>
       `;
       return meter;
-    };
-
-    const createHistoryCard = ({ label, value, meta }) => {
-      const card = document.createElement("div");
-      card.className = "usage-history-card";
-      card.innerHTML = `
-        <div class="usage-history-label mb-2">${label}</div>
-        <div class="usage-history-value mb-1">${value}</div>
-        <div class="usage-history-meta">${meta}</div>
-      `;
-      return card;
     };
 
     const renderUsagePanel = (payload) => {
@@ -607,31 +610,28 @@
     };
 
     const renderUsageHistory = (payload) => {
-      if (!usageHistoryGrid) return;
-      const previousMonth = payload?.previous_month || {};
-      const previousPeriod = payload?.previous_period?.start || "";
-      const storage = payload?.storage || {};
-      usageHistoryGrid.innerHTML = "";
-      usageHistoryGrid.appendChild(createHistoryCard({
-        label: "Exports",
-        value: `${Number(previousMonth.exports_used || 0)}`,
-        meta: "Videos exported last month",
-      }));
-      usageHistoryGrid.appendChild(createHistoryCard({
-        label: "Transcription",
-        value: formatMinutes(previousMonth.transcription_used_minutes || 0),
-        meta: "Minutes transcribed last month",
-      }));
-      usageHistoryGrid.appendChild(createHistoryCard({
-        label: "Current Storage",
-        value: `${formatBytes(storage.used_bytes || 0)} / ${formatBytes(storage.quota_bytes || 0)}`,
-        meta: "Historical monthly storage snapshot is not tracked yet",
-      }));
+      if (!usageHistoryBody) return;
+      const previousMonths = Array.isArray(payload?.previous_months) ? payload.previous_months : [];
+      usageHistoryBody.innerHTML = "";
+      if (!previousMonths.length) {
+        usageHistoryBody.innerHTML = `
+          <tr>
+            <td colspan="3" class="usage-history-empty">No previous month usage found yet.</td>
+          </tr>
+        `;
+      } else {
+        previousMonths.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${formatMonthLabel(row.period_start)}</td>
+            <td>${Number(row.exports_used || 0)}</td>
+            <td>${formatMinutes(row.transcription_used_minutes || 0)}</td>
+          `;
+          usageHistoryBody.appendChild(tr);
+        });
+      }
       if (usageHistoryCopy) {
-        const label = formatMonthLabel(previousPeriod);
-        usageHistoryCopy.textContent = label
-          ? `${label} usage for exports and transcription.`
-          : "Previous month usage.";
+        usageHistoryCopy.textContent = "Exports and transcription history by month.";
       }
     };
 

@@ -31,12 +31,6 @@ def _next_month_start(day: date) -> date:
     return date(day.year, day.month + 1, 1)
 
 
-def _previous_month_start(day: date) -> date:
-    if day.month == 1:
-        return date(day.year - 1, 12, 1)
-    return date(day.year, day.month - 1, 1)
-
-
 def _to_decimal(value: Any) -> Decimal:
     if isinstance(value, Decimal):
         return value
@@ -272,6 +266,31 @@ def _storage_snapshot(conn, user_id: str) -> Dict[str, int]:
     }
 
 
+def _fetch_usage_history(conn, user_id: str, current_period_start: date, limit: int = 6) -> list[Dict[str, Any]]:
+    rows = conn.execute(
+        f"""
+        SELECT period_start, exports_used, transcription_minutes_used
+        FROM {USAGE_TABLE}
+        WHERE user_id = ?
+          AND period_start < ?
+        ORDER BY period_start DESC
+        LIMIT ?
+        """,
+        [user_id, current_period_start, max(1, int(limit))],
+    ).fetchall()
+    history: list[Dict[str, Any]] = []
+    for row in rows:
+        period_start = row[0]
+        history.append(
+            {
+                "period_start": period_start.isoformat() if hasattr(period_start, "isoformat") else str(period_start),
+                "exports_used": int(row[1] or 0),
+                "transcription_used_minutes": _decimal_to_number(row[2] or 0),
+            }
+        )
+    return history
+
+
 def get_current_period(user_id: str) -> Dict[str, Any]:
     conn = get_db()
     period_start = _month_start()
@@ -421,12 +440,11 @@ def finalize_export(user_id: str) -> Dict[str, Any]:
 def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
     conn = get_db()
     period_start = _month_start()
-    previous_period_start = _previous_month_start(period_start)
     try:
         ensure_usage_metering_schema(conn)
         _ensure_usage_row(conn, user_id, period_start)
         usage = _fetch_plan_and_usage(conn, user_id, period_start)
-        previous_usage = _fetch_plan_and_usage(conn, user_id, previous_period_start)
+        usage_history = _fetch_usage_history(conn, user_id, period_start)
         storage = _storage_snapshot(conn, user_id)
         conn.commit()
     finally:
@@ -443,9 +461,6 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
             "start": period_start.isoformat(),
             "reset_at": reset_at.isoformat(),
         },
-        "previous_period": {
-            "start": previous_period_start.isoformat(),
-        },
         "storage": {
             "used_bytes": storage["used_bytes"],
             "quota_bytes": storage["quota_bytes"],
@@ -458,8 +473,5 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
             "used_minutes": _decimal_to_number(usage["transcription_minutes_used"]),
             "limit_minutes": usage["monthly_transcription_minutes"],
         },
-        "previous_month": {
-            "exports_used": previous_usage["exports_used"],
-            "transcription_used_minutes": _decimal_to_number(previous_usage["transcription_minutes_used"]),
-        },
+        "previous_months": usage_history,
     }
