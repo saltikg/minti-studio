@@ -2360,8 +2360,8 @@ def videos_page(channel_id):
                         """
                         INSERT INTO youtube_videos
                             (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id, download_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             channel_id,
@@ -2377,6 +2377,7 @@ def videos_page(channel_id):
                             f"https://www.youtube.com/watch?v={video_id}",
                             channel.get("owner_user_id"),
                             channel.get("brand_id"),
+                            "pending",
                         ],
                     )
                     imported += 1
@@ -2396,7 +2397,12 @@ def videos_page(channel_id):
                                 view_count = COALESCE(view_count, ?),
                                 like_count = COALESCE(like_count, ?),
                                 comment_count = COALESCE(comment_count, ?),
-                                video_url = COALESCE(video_url, ?)
+                                video_url = COALESCE(video_url, ?),
+                                download_status = CASE
+                                    WHEN lower(coalesce(download_status, '')) IN ('downloaded', 'downloaded_deleted', 'short', 'irrelevant')
+                                        THEN download_status
+                                    ELSE 'pending'
+                                END
                             WHERE video_id = ?
                             """,
                             [
@@ -2595,18 +2601,21 @@ def videos_page(channel_id):
                 plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
             except Exception:
                 plan_entries = []
-        for entry in plan_entries:
-            status = (entry.get("status") or "").lower()
-            filename = entry.get("clip_filename") or entry.get("output_filename")
-            output_path = (short_dir / filename) if filename else None
-            clip_created = status == "created" or (output_path and output_path.exists())
-            if clip_created:
-                created += 1
-            if (entry.get("yt_status") or "").lower() == "ready":
-                desc_ready += 1
         video_status = None
-        if plan_count:
-            video_status = "completed" if created >= plan_count else "processing"
+        if row_download_status in {"downloaded", "downloaded_deleted"}:
+            for entry in plan_entries:
+                status = (entry.get("status") or "").lower()
+                filename = entry.get("clip_filename") or entry.get("output_filename")
+                output_path = (short_dir / filename) if filename else None
+                clip_created = status == "created" or (output_path and output_path.exists())
+                if clip_created:
+                    created += 1
+                if (entry.get("yt_status") or "").lower() == "ready":
+                    desc_ready += 1
+            if plan_count:
+                video_status = "completed" if created >= plan_count else "processing"
+        else:
+            plan_count = 0
         short_plan_stats[row[0]] = {
             "plan_count": plan_count,
             "created_count": created,
