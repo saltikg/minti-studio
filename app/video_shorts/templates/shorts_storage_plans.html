@@ -743,18 +743,23 @@
         previousMonths.forEach((row) => {
           usageMonthDetails.set(String(row.period_start || ""), row);
           const tr = document.createElement("tr");
-          tr.dataset.monthStart = String(row.period_start || "");
           tr.innerHTML = `
             <td>${formatMonthLabel(row.period_start)}</td>
             <td>${Number(row.exports_used || 0)}</td>
             <td>
-              <button type="button" class="transcription-details-trigger" data-month-start="${String(row.period_start || "")}" aria-label="View transcription details for ${formatMonthLabel(row.period_start)}">
+              <button type="button" class="transcription-details-trigger" aria-label="View transcription details for ${formatMonthLabel(row.period_start)}">
                 <span>${formatMinutes(row.transcription_used_minutes || 0)}</span>
                 <i class="bi bi-info-circle transcription-details-icon" aria-hidden="true"></i>
               </button>
             </td>
           `;
           usageHistoryBody.appendChild(tr);
+          const trigger = tr.querySelector(".transcription-details-trigger");
+          if (trigger) {
+            trigger.addEventListener("click", () => {
+              openTranscriptionMonthModal(String(row.period_start || ""));
+            });
+          }
         });
       }
       if (usageHistoryCopy) {
@@ -793,14 +798,6 @@
         }
       }
     };
-
-    if (usageHistoryBody) {
-      usageHistoryBody.addEventListener("click", (event) => {
-        const trigger = event.target && event.target.closest ? event.target.closest("[data-month-start]") : null;
-        if (!trigger || !trigger.dataset.monthStart) return;
-        openTranscriptionMonthModal(trigger.dataset.monthStart);
-      });
-    }
 
     function setBillingCycle(isYearly) {
       priceBlocks.forEach((block) => {
