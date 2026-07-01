@@ -510,11 +510,12 @@
     const transcriptionMonthModalBody = document.getElementById("transcriptionMonthModalBody");
     const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
-    const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
-    const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
-    const transcriptionMonthModal = transcriptionMonthModalEl && window.bootstrap ? new bootstrap.Modal(transcriptionMonthModalEl) : null;
-    const planCompareModal = planCompareModalEl && window.bootstrap ? new bootstrap.Modal(planCompareModalEl) : null;
     const usageMonthDetails = new Map();
+
+    function getModal(el) {
+      if (!el || !window.bootstrap) return null;
+      return bootstrap.Modal.getOrCreateInstance(el);
+    }
 
     const formatBytes = (bytes) => {
       const value = Number(bytes || 0);
@@ -616,7 +617,8 @@
     };
 
     const openTranscriptionMonthModal = (monthStart) => {
-      if (!transcriptionMonthModal || !transcriptionMonthModalTitle || !transcriptionMonthModalBody || !transcriptionMonthModalEmpty) {
+      const modal = getModal(transcriptionMonthModalEl);
+      if (!modal || !transcriptionMonthModalTitle || !transcriptionMonthModalBody || !transcriptionMonthModalEmpty) {
         return;
       }
       const row = usageMonthDetails.get(monthStart);
@@ -640,7 +642,7 @@
           transcriptionMonthModalBody.appendChild(tr);
         });
       }
-      transcriptionMonthModal.show();
+      modal.show();
     };
 
     const renderUsagePanel = (payload) => {
@@ -723,8 +725,9 @@
         usageUpgradeBtn.classList.add(emphasizeUpgrade ? "vs-btn-primary" : "vs-btn-secondary");
       }
 
-      if (storageLimitModal && storagePercent >= 95) {
-        storageLimitModal.show();
+      if (storagePercent >= 95) {
+        const modal = getModal(storageLimitModalEl);
+        modal?.show();
       }
     };
 
@@ -872,14 +875,13 @@
         if (planCompareModalEl && planCompareModalEl.classList.contains("show")) {
           const openConfirm = () => {
             planCompareModalEl.removeEventListener("hidden.bs.modal", openConfirm);
-            if (planModal) {
-              planModal.show();
-            }
+            const modal = getModal(planModalEl);
+            modal?.show();
           };
           planCompareModalEl.addEventListener("hidden.bs.modal", openConfirm);
-          planCompareModal.hide();
-        } else if (planModal) {
-          planModal.show();
+          getModal(planCompareModalEl)?.hide();
+        } else {
+          getModal(planModalEl)?.show();
         }
       });
     });
