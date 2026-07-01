@@ -171,8 +171,8 @@
     </a>
     <div class="d-flex flex-wrap align-items-center gap-2 vs-topnav-actions">
       {% if vs_current_user %}
-        <a href="{{ url_for('video_shorts_bp.account_page') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Account usage summary">
-          Usage
+        <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Plan and exports summary">
+          Exports
         </a>
         {% if vs_current_brand %}
           <form method="post" action="{{ url_for('video_shorts_bp.switch_brand') }}" class="d-flex align-items-center gap-2">

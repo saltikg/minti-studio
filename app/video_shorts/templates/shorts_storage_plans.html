@@ -110,6 +110,33 @@
     outline: 2px solid rgba(45, 212, 191, 0.48);
     outline-offset: 2px;
   }
+  .usage-history-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .usage-history-card {
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+  }
+  .usage-history-label {
+    color: var(--text-2);
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .usage-history-value {
+    color: var(--text-1);
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .usage-history-meta {
+    color: var(--text-2);
+    font-size: 0.88rem;
+  }
   .admin-usage-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -158,6 +185,22 @@
     <div id="usage-panel-error" class="usage-error usage-panel-numbers d-none">Usage could not be loaded right now.</div>
     <div id="usage-panel-content" class="d-none">
       <div class="usage-meters usage-panel-numbers" id="usage-meters"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm usage-panel mb-4">
+  <div class="card-body p-4">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <div class="vs-card-title mb-1">Last month</div>
+        <div class="usage-reset" id="usage-history-copy">Loading previous month usage…</div>
+      </div>
+    </div>
+    <div id="usage-history-loading" class="usage-loading usage-panel-numbers">Loading previous month usage…</div>
+    <div id="usage-history-error" class="usage-error usage-panel-numbers d-none">Previous month usage could not be loaded right now.</div>
+    <div id="usage-history-content" class="d-none">
+      <div class="usage-history-grid usage-panel-numbers" id="usage-history-grid"></div>
     </div>
   </div>
 </div>
@@ -380,6 +423,11 @@
     const usagePlanCopy = document.getElementById("usage-plan-copy");
     const usageBanner = document.getElementById("usage-panel-banner");
     const usageUpgradeBtn = document.getElementById("usage-upgrade-btn");
+    const usageHistoryLoading = document.getElementById("usage-history-loading");
+    const usageHistoryError = document.getElementById("usage-history-error");
+    const usageHistoryContent = document.getElementById("usage-history-content");
+    const usageHistoryGrid = document.getElementById("usage-history-grid");
+    const usageHistoryCopy = document.getElementById("usage-history-copy");
 
     const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
     const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
@@ -401,6 +449,13 @@
         return `${hours}h ${mins}m`;
       }
       return `${mins}m`;
+    };
+
+    const formatMonthLabel = (isoDate) => {
+      if (!isoDate) return "";
+      const dt = new Date(`${isoDate}T00:00:00Z`);
+      if (Number.isNaN(dt.getTime())) return "";
+      return dt.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
     };
 
     const percentOf = (used, limit) => {
@@ -453,6 +508,17 @@
         </div>
       `;
       return meter;
+    };
+
+    const createHistoryCard = ({ label, value, meta }) => {
+      const card = document.createElement("div");
+      card.className = "usage-history-card";
+      card.innerHTML = `
+        <div class="usage-history-label mb-2">${label}</div>
+        <div class="usage-history-value mb-1">${value}</div>
+        <div class="usage-history-meta">${meta}</div>
+      `;
+      return card;
     };
 
     const renderUsagePanel = (payload) => {
@@ -540,6 +606,35 @@
       }
     };
 
+    const renderUsageHistory = (payload) => {
+      if (!usageHistoryGrid) return;
+      const previousMonth = payload?.previous_month || {};
+      const previousPeriod = payload?.previous_period?.start || "";
+      const storage = payload?.storage || {};
+      usageHistoryGrid.innerHTML = "";
+      usageHistoryGrid.appendChild(createHistoryCard({
+        label: "Exports",
+        value: `${Number(previousMonth.exports_used || 0)}`,
+        meta: "Videos exported last month",
+      }));
+      usageHistoryGrid.appendChild(createHistoryCard({
+        label: "Transcription",
+        value: formatMinutes(previousMonth.transcription_used_minutes || 0),
+        meta: "Minutes transcribed last month",
+      }));
+      usageHistoryGrid.appendChild(createHistoryCard({
+        label: "Current Storage",
+        value: `${formatBytes(storage.used_bytes || 0)} / ${formatBytes(storage.quota_bytes || 0)}`,
+        meta: "Historical monthly storage snapshot is not tracked yet",
+      }));
+      if (usageHistoryCopy) {
+        const label = formatMonthLabel(previousPeriod);
+        usageHistoryCopy.textContent = label
+          ? `${label} usage for exports and transcription.`
+          : "Previous month usage.";
+      }
+    };
+
     const loadUsagePanel = async () => {
       if (!usageLoading || !usageError || !usageContent) return;
       usageLoading.classList.remove("d-none");
@@ -555,11 +650,17 @@
         }
         const payload = await response.json();
         renderUsagePanel(payload);
+        renderUsageHistory(payload);
         usageLoading.classList.add("d-none");
         usageContent.classList.remove("d-none");
+        usageHistoryLoading?.classList.add("d-none");
+        usageHistoryError?.classList.add("d-none");
+        usageHistoryContent?.classList.remove("d-none");
       } catch (error) {
         usageLoading.classList.add("d-none");
         usageError.classList.remove("d-none");
+        usageHistoryLoading?.classList.add("d-none");
+        usageHistoryError?.classList.remove("d-none");
         if (usageResetCopy) {
           usageResetCopy.textContent = "Usage could not be loaded right now.";
         }

@@ -31,6 +31,12 @@ def _next_month_start(day: date) -> date:
     return date(day.year, day.month + 1, 1)
 
 
+def _previous_month_start(day: date) -> date:
+    if day.month == 1:
+        return date(day.year - 1, 12, 1)
+    return date(day.year, day.month - 1, 1)
+
+
 def _to_decimal(value: Any) -> Decimal:
     if isinstance(value, Decimal):
         return value
@@ -415,10 +421,12 @@ def finalize_export(user_id: str) -> Dict[str, Any]:
 def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
     conn = get_db()
     period_start = _month_start()
+    previous_period_start = _previous_month_start(period_start)
     try:
         ensure_usage_metering_schema(conn)
         _ensure_usage_row(conn, user_id, period_start)
         usage = _fetch_plan_and_usage(conn, user_id, period_start)
+        previous_usage = _fetch_plan_and_usage(conn, user_id, previous_period_start)
         storage = _storage_snapshot(conn, user_id)
         conn.commit()
     finally:
@@ -435,6 +443,9 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
             "start": period_start.isoformat(),
             "reset_at": reset_at.isoformat(),
         },
+        "previous_period": {
+            "start": previous_period_start.isoformat(),
+        },
         "storage": {
             "used_bytes": storage["used_bytes"],
             "quota_bytes": storage["quota_bytes"],
@@ -446,5 +457,9 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
         "transcription": {
             "used_minutes": _decimal_to_number(usage["transcription_minutes_used"]),
             "limit_minutes": usage["monthly_transcription_minutes"],
+        },
+        "previous_month": {
+            "exports_used": previous_usage["exports_used"],
+            "transcription_used_minutes": _decimal_to_number(previous_usage["transcription_minutes_used"]),
         },
     }
