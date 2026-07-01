@@ -251,7 +251,26 @@ def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], own
     if owner_user_id:
         minutes = _duration_minutes(duration_seconds)
         if minutes > 0:
-            add_transcription_minutes(str(owner_user_id), minutes)
+            video_title = None
+            try:
+                conn = get_db()
+                try:
+                    row = conn.execute(
+                        "SELECT title FROM youtube_videos WHERE video_id = ?",
+                        [video_id],
+                    ).fetchone()
+                    if row:
+                        video_title = row[0]
+                finally:
+                    conn.close()
+            except Exception:
+                video_title = None
+            add_transcription_minutes(
+                str(owner_user_id),
+                minutes,
+                video_id=video_id,
+                video_title=video_title,
+            )
 
 
 def _suggest_clip(segments: list[dict], duration_seconds: Any) -> Tuple[float, float, str, str]:

@@ -8849,14 +8849,19 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
             owner_user_id = None
             try:
                 owner_row = conn.execute(
-                    "SELECT owner_user_id, duration_seconds FROM youtube_videos WHERE id = ?",
+                    "SELECT owner_user_id, duration_seconds, title FROM youtube_videos WHERE id = ?",
                     [video_pk],
                 ).fetchone()
                 if owner_row:
                     owner_user_id = owner_row[0]
                     audio_minutes = _duration_minutes(owner_row[1])
                     if owner_user_id and audio_minutes > 0:
-                        add_transcription_minutes(str(owner_user_id), audio_minutes)
+                        add_transcription_minutes(
+                            str(owner_user_id),
+                            audio_minutes,
+                            video_id=video_id,
+                            video_title=owner_row[2],
+                        )
             except Exception:
                 app_obj.logger.exception("Failed to meter transcription usage for video_pk=%s", video_pk)
             elapsed = round(time.monotonic() - start_ts, 1)
@@ -9048,13 +9053,14 @@ def transcribe_video_status(video_pk):
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()
     conn = get_db_readonly()
-    row = _fetch_scoped_video_row(conn, video_pk, "video_id")
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title")
     conn.close()
     if not row:
         flash("Video not found", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
 
     vid = row[0]
+    video_title = row[1]
     source_path, source_path_is_temp = _resolve_source_video(vid)
     if not source_path or not source_path.exists():
         conn.close()
@@ -9103,7 +9109,12 @@ def transcribe_video(video_pk):
         current_user = getattr(g, "vs_current_user", None) or {}
         if current_user.get("id") and audio_minutes > 0:
             try:
-                add_transcription_minutes(str(current_user["id"]), audio_minutes)
+                add_transcription_minutes(
+                    str(current_user["id"]),
+                    audio_minutes,
+                    video_id=vid,
+                    video_title=video_title,
+                )
             except Exception:
                 current_app.logger.exception(
                     "Failed to meter synchronous transcription usage for video_pk=%s",

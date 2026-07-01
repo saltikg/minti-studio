@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from uuid import uuid4
 from typing import Any, Dict, Optional
 
 from app.video_shorts.config import (
@@ -14,6 +15,7 @@ from app.video_shorts.services.db import ensure_storage_user_schema, get_db, tab
 
 USAGE_TABLE = "shorts_user_usage"
 PLANS_TABLE = "shorts_storage_plans"
+TRANSCRIPTION_EVENTS_TABLE = "shorts_transcription_usage_events"
 
 
 def _utc_today() -> date:
@@ -108,6 +110,20 @@ def ensure_usage_metering_schema(conn) -> None:
         """
     )
 
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {TRANSCRIPTION_EVENTS_TABLE} (
+            id VARCHAR PRIMARY KEY,
+            user_id VARCHAR NOT NULL,
+            video_id VARCHAR NOT NULL,
+            video_title VARCHAR,
+            minutes NUMERIC DEFAULT 0,
+            period_start DATE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     usage_columns = table_columns(conn, USAGE_TABLE)
     extra_usage_columns = [
         ("exports_used", "INTEGER DEFAULT 0"),
@@ -117,6 +133,19 @@ def ensure_usage_metering_schema(conn) -> None:
     for column_name, definition in extra_usage_columns:
         if column_name not in usage_columns:
             conn.execute(f"ALTER TABLE {USAGE_TABLE} ADD COLUMN {column_name} {definition}")
+
+    event_columns = table_columns(conn, TRANSCRIPTION_EVENTS_TABLE)
+    extra_event_columns = [
+        ("user_id", "VARCHAR"),
+        ("video_id", "VARCHAR"),
+        ("video_title", "VARCHAR"),
+        ("minutes", "NUMERIC DEFAULT 0"),
+        ("period_start", "DATE"),
+        ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ]
+    for column_name, definition in extra_event_columns:
+        if column_name not in event_columns:
+            conn.execute(f"ALTER TABLE {TRANSCRIPTION_EVENTS_TABLE} ADD COLUMN {column_name} {definition}")
 
     for plan in DEFAULT_STORAGE_PLANS:
         conn.execute(
@@ -291,6 +320,91 @@ def _fetch_usage_history(conn, user_id: str, current_period_start: date, limit: 
     return history
 
 
+def _fetch_transcription_events(conn, user_id: str, period_start: date, limit: int = 100) -> list[Dict[str, Any]]:
+    rows = conn.execute(
+        f"""
+        SELECT video_id, video_title, minutes, created_at
+        FROM {TRANSCRIPTION_EVENTS_TABLE}
+        WHERE user_id = ?
+          AND period_start = ?
+        ORDER BY created_at ASC, video_title ASC, video_id ASC
+        LIMIT ?
+        """,
+        [user_id, period_start, max(1, int(limit))],
+    ).fetchall()
+    events: list[Dict[str, Any]] = []
+    for row in rows:
+        created_at = row[3]
+        events.append(
+            {
+                "video_id": row[0],
+                "video_title": row[1] or row[0] or "Untitled video",
+                "minutes": _decimal_to_number(row[2] or 0),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+            }
+        )
+    return events
+
+
+def _parse_event_anchor_date(value: Any) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date"):
+        try:
+            return value.date()
+        except Exception:
+            pass
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.date()
+    except Exception:
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+
+def _backfill_transcription_events(conn, user_id: str, period_start: date, limit: int = 100) -> list[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT video_id, title, duration_seconds, published_at, downloaded_at, last_checked_at
+        FROM youtube_videos
+        WHERE owner_user_id = ?
+          AND COALESCE(duration_seconds, 0) > 0
+          AND lower(COALESCE(transcript_status, '')) = 'done'
+        ORDER BY COALESCE(published_at, downloaded_at, last_checked_at) ASC, title ASC, video_id ASC
+        """,
+        [user_id],
+    ).fetchall()
+    events: list[Dict[str, Any]] = []
+    for row in rows:
+        anchor_date = _parse_event_anchor_date(row[3] or row[4] or row[5])
+        if not anchor_date or _month_start(anchor_date) != period_start:
+            continue
+        duration_seconds = row[2]
+        try:
+            seconds = float(duration_seconds or 0)
+        except Exception:
+            seconds = 0.0
+        minutes = round(seconds / 60.0, 2) if seconds > 0 else 0.0
+        events.append(
+            {
+                "video_id": row[0],
+                "video_title": row[1] or row[0] or "Untitled video",
+                "minutes": _decimal_to_number(minutes),
+                "created_at": (row[3] or row[4] or row[5]).isoformat() if hasattr((row[3] or row[4] or row[5]), "isoformat") else str((row[3] or row[4] or row[5]) or ""),
+            }
+        )
+        if len(events) >= max(1, int(limit)):
+            break
+    return events
+
+
 def get_current_period(user_id: str) -> Dict[str, Any]:
     conn = get_db()
     period_start = _month_start()
@@ -327,7 +441,14 @@ def increment_exports(user_id: str, n: int = 1) -> Dict[str, Any]:
         conn.close()
 
 
-def add_transcription_minutes(user_id: str, minutes: float | int | Decimal) -> Dict[str, Any]:
+def add_transcription_minutes(
+    user_id: str,
+    minutes: float | int | Decimal,
+    *,
+    video_id: Optional[str] = None,
+    video_title: Optional[str] = None,
+    event_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
     amount = _to_decimal(minutes)
     if amount <= 0:
         return get_current_period(user_id)
@@ -336,6 +457,32 @@ def add_transcription_minutes(user_id: str, minutes: float | int | Decimal) -> D
     try:
         ensure_usage_metering_schema(conn)
         _ensure_usage_row(conn, user_id, period_start)
+        if video_id:
+            occurred_at = event_at or datetime.now(timezone.utc)
+            event_period = _month_start(occurred_at.date())
+            conn.execute(
+                f"""
+                INSERT INTO {TRANSCRIPTION_EVENTS_TABLE} (
+                    id,
+                    user_id,
+                    video_id,
+                    video_title,
+                    minutes,
+                    period_start,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    str(uuid4()),
+                    user_id,
+                    video_id,
+                    video_title or video_id,
+                    amount,
+                    event_period,
+                    occurred_at,
+                ],
+            )
         conn.execute(
             f"""
             UPDATE {USAGE_TABLE}
@@ -445,6 +592,18 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
         _ensure_usage_row(conn, user_id, period_start)
         usage = _fetch_plan_and_usage(conn, user_id, period_start)
         usage_history = _fetch_usage_history(conn, user_id, period_start)
+        for item in usage_history:
+            try:
+                item_period_start = date.fromisoformat(str(item["period_start"]))
+            except Exception:
+                item_period_start = period_start
+            item_events = _fetch_transcription_events(conn, user_id, item_period_start)
+            if not item_events:
+                item_events = _backfill_transcription_events(conn, user_id, item_period_start)
+            item["transcription_events"] = item_events
+        current_events = _fetch_transcription_events(conn, user_id, period_start)
+        if not current_events:
+            current_events = _backfill_transcription_events(conn, user_id, period_start)
         storage = _storage_snapshot(conn, user_id)
         conn.commit()
     finally:
@@ -473,5 +632,6 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
             "used_minutes": _decimal_to_number(usage["transcription_minutes_used"]),
             "limit_minutes": usage["monthly_transcription_minutes"],
         },
+        "transcription_events": current_events,
         "previous_months": usage_history,
     }

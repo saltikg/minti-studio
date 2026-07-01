@@ -127,7 +127,7 @@ def caption_result():
     ensure_postgres_youtube_transcripts_id_default(conn)
     try:
         row = conn.execute(
-            "SELECT video_id, owner_user_id, duration_seconds FROM youtube_videos WHERE id = ?",
+            "SELECT video_id, owner_user_id, duration_seconds, title FROM youtube_videos WHERE id = ?",
             [video_db_id],
         ).fetchone()
         if not row:
@@ -136,6 +136,7 @@ def caption_result():
         video_id = row[0]
         owner_user_id = row[1]
         duration_seconds = row[2]
+        video_title = row[3]
 
         conn.execute(
             """
@@ -161,7 +162,12 @@ def caption_result():
             minutes = _duration_minutes(duration_seconds)
             if minutes > 0:
                 try:
-                    add_transcription_minutes(str(owner_user_id), minutes)
+                    add_transcription_minutes(
+                        str(owner_user_id),
+                        minutes,
+                        video_id=video_id,
+                        video_title=video_title,
+                    )
                 except Exception:
                     current_app.logger.exception(
                         "Failed to meter caption worker transcription usage for video_db_id=%s",

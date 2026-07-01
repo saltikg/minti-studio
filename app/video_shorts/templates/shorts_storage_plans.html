@@ -113,11 +113,18 @@
   .usage-history-table-wrap {
     border-radius: 16px;
     border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.03);
+    background: rgba(10, 15, 25, 0.94);
     overflow: hidden;
   }
   .usage-history-table {
     margin-bottom: 0;
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--text-1);
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
+    --bs-table-hover-bg: rgba(255, 255, 255, 0.05);
+    --bs-table-border-color: rgba(255,255,255,0.08);
+    background: transparent;
+    color: var(--text-1);
   }
   .usage-history-table th,
   .usage-history-table td {
@@ -125,13 +132,20 @@
     border-color: rgba(255,255,255,0.08);
     color: var(--text-1);
     vertical-align: middle;
+    background-color: transparent !important;
   }
   .usage-history-table thead th {
     color: var(--text-2);
     font-size: 0.8rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    background: rgba(255,255,255,0.02);
+    background: rgba(255,255,255,0.03) !important;
+  }
+  .usage-history-table tbody tr {
+    cursor: pointer;
+  }
+  .usage-history-table tbody tr:hover td {
+    background: rgba(255,255,255,0.05) !important;
   }
   .usage-history-empty {
     padding: 18px 16px;
@@ -371,6 +385,35 @@
   </div>
 </div>
 
+<div class="modal fade" id="transcriptionMonthModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <div>
+          <h5 class="modal-title vs-modal-title" id="transcriptionMonthModalTitle">Transcription minutes</h5>
+          <div class="plan-compare-copy" id="transcriptionMonthModalSummary"></div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <div class="table-responsive">
+          <table class="table usage-history-table mb-0">
+            <thead>
+              <tr>
+                <th>Video</th>
+                <th>Minutes</th>
+                <th>Recorded</th>
+              </tr>
+            </thead>
+            <tbody id="transcriptionMonthModalBody"></tbody>
+          </table>
+        </div>
+        <div class="usage-history-empty d-none" id="transcriptionMonthModalEmpty">No transcription events were recorded for this month.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="planConfirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
@@ -418,6 +461,7 @@
     const planButtons = document.querySelectorAll(".plan-select-btn");
     const planModalEl = document.getElementById("planConfirmModal");
     const storageLimitModalEl = document.getElementById("storageLimitModal");
+    const transcriptionMonthModalEl = document.getElementById("transcriptionMonthModal");
     const planCompareModalEl = document.getElementById("planCompareModal");
     const planTitleEl = document.getElementById("planConfirmTitle");
     const planPriceEl = document.getElementById("planConfirmPrice");
@@ -440,10 +484,16 @@
     const usageHistoryContent = document.getElementById("usage-history-content");
     const usageHistoryBody = document.getElementById("usage-history-body");
     const usageHistoryCopy = document.getElementById("usage-history-copy");
+    const transcriptionMonthModalTitle = document.getElementById("transcriptionMonthModalTitle");
+    const transcriptionMonthModalSummary = document.getElementById("transcriptionMonthModalSummary");
+    const transcriptionMonthModalBody = document.getElementById("transcriptionMonthModalBody");
+    const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
     const planModal = planModalEl && window.bootstrap ? new bootstrap.Modal(planModalEl) : null;
     const storageLimitModal = storageLimitModalEl && window.bootstrap ? new bootstrap.Modal(storageLimitModalEl) : null;
+    const transcriptionMonthModal = transcriptionMonthModalEl && window.bootstrap ? new bootstrap.Modal(transcriptionMonthModalEl) : null;
     const planCompareModal = planCompareModalEl && window.bootstrap ? new bootstrap.Modal(planCompareModalEl) : null;
+    const usageMonthDetails = new Map();
 
     const formatBytes = (bytes) => {
       const value = Number(bytes || 0);
@@ -470,6 +520,26 @@
       const month = `${dt.getUTCMonth() + 1}`.padStart(2, "0");
       const year = `${dt.getUTCFullYear()}`;
       return `${month}-${year}`;
+    };
+
+    const formatPrettyMonthLabel = (isoDate) => {
+      if (!isoDate) return "";
+      const dt = new Date(`${isoDate}T00:00:00Z`);
+      if (Number.isNaN(dt.getTime())) return "";
+      return dt.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    };
+
+    const formatEventDateTime = (isoDateTime) => {
+      if (!isoDateTime) return "";
+      const dt = new Date(isoDateTime);
+      if (Number.isNaN(dt.getTime())) return "";
+      return dt.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      });
     };
 
     const percentOf = (used, limit) => {
@@ -522,6 +592,34 @@
         </div>
       `;
       return meter;
+    };
+
+    const openTranscriptionMonthModal = (monthStart) => {
+      if (!transcriptionMonthModal || !transcriptionMonthModalTitle || !transcriptionMonthModalBody || !transcriptionMonthModalEmpty) {
+        return;
+      }
+      const row = usageMonthDetails.get(monthStart);
+      if (!row) return;
+      const monthLabel = formatPrettyMonthLabel(row.period_start) || formatMonthLabel(row.period_start);
+      const events = Array.isArray(row.transcription_events) ? row.transcription_events : [];
+      transcriptionMonthModalTitle.textContent = `${monthLabel} transcription minutes`;
+      transcriptionMonthModalSummary.textContent = `${formatMinutes(row.transcription_used_minutes || 0)} total from ${events.length} video${events.length === 1 ? "" : "s"}.`;
+      transcriptionMonthModalBody.innerHTML = "";
+      if (!events.length) {
+        transcriptionMonthModalEmpty.classList.remove("d-none");
+      } else {
+        transcriptionMonthModalEmpty.classList.add("d-none");
+        events.forEach((event) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${event.video_title || event.video_id || "Untitled video"}</td>
+            <td>${formatMinutes(event.minutes || 0)}</td>
+            <td>${formatEventDateTime(event.created_at)}</td>
+          `;
+          transcriptionMonthModalBody.appendChild(tr);
+        });
+      }
+      transcriptionMonthModal.show();
     };
 
     const renderUsagePanel = (payload) => {
@@ -612,6 +710,7 @@
     const renderUsageHistory = (payload) => {
       if (!usageHistoryBody) return;
       const previousMonths = Array.isArray(payload?.previous_months) ? payload.previous_months : [];
+      usageMonthDetails.clear();
       usageHistoryBody.innerHTML = "";
       if (!previousMonths.length) {
         usageHistoryBody.innerHTML = `
@@ -621,11 +720,13 @@
         `;
       } else {
         previousMonths.forEach((row) => {
+          usageMonthDetails.set(String(row.period_start || ""), row);
           const tr = document.createElement("tr");
+          tr.dataset.monthStart = String(row.period_start || "");
           tr.innerHTML = `
             <td>${formatMonthLabel(row.period_start)}</td>
             <td>${Number(row.exports_used || 0)}</td>
-            <td>${formatMinutes(row.transcription_used_minutes || 0)}</td>
+            <td style="text-decoration: underline; text-underline-offset: 2px;">${formatMinutes(row.transcription_used_minutes || 0)}</td>
           `;
           usageHistoryBody.appendChild(tr);
         });
@@ -666,6 +767,14 @@
         }
       }
     };
+
+    if (usageHistoryBody) {
+      usageHistoryBody.addEventListener("click", (event) => {
+        const row = event.target && event.target.closest ? event.target.closest("tr[data-month-start]") : null;
+        if (!row || !row.dataset.monthStart) return;
+        openTranscriptionMonthModal(row.dataset.monthStart);
+      });
+    }
 
     function setBillingCycle(isYearly) {
       priceBlocks.forEach((block) => {
