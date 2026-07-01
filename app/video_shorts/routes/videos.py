@@ -3437,7 +3437,7 @@ def shorts_comments_page():
         )
     comments = fetch_comment_records(
         current_user["id"],
-        limit=250,
+        limit=2000,
         status=status_filter,
         platform=platform_filter,
         sort_key=sort_key,
