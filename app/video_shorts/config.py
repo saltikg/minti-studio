@@ -146,6 +146,7 @@ SHORTS_OVERVIEW_QUOTA_COOLDOWN_HOURS = int(os.getenv("SHORTS_OVERVIEW_QUOTA_COOL
 SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS = int(
     os.getenv("SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS", "5")
 )
+COMMENT_FETCH_MAX_PAGES = max(1, int(os.getenv("COMMENT_FETCH_MAX_PAGES", "10") or "10"))
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")
 YOUTUBE_REDIRECT_URI = os.getenv("YOUTUBE_REDIRECT_URI")
@@ -160,11 +161,13 @@ IG_GRAPH_API_BASE = os.getenv("IG_GRAPH_API_BASE", "https://graph.instagram.com"
 IG_AUTH_BASE = os.getenv("IG_AUTH_BASE", "https://www.instagram.com/oauth/authorize")
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
+META_APP_SECRET = os.getenv("META_APP_SECRET") or IG_APP_SECRET or os.getenv("FB_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
 IG_OAUTH_SCOPES = os.getenv(
     "IG_OAUTH_SCOPES",
     "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments",
 )
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN")
 IG_TOKEN_REFRESH_BUFFER_DAYS = int(os.getenv("IG_TOKEN_REFRESH_BUFFER_DAYS", "14"))
 FB_APP_ID = os.getenv("FB_APP_ID")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET")

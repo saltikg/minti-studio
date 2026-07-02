@@ -74,8 +74,10 @@ def create_app():
     # 1) Video Shorts only
     from app.video_shorts import video_shorts_bp
     app.register_blueprint(video_shorts_bp)
+    from app.video_shorts.routes.webhooks import register_instagram_webhook_routes
     from app.video_shorts.routes.auth import _current_user
     from app.video_shorts.routes.api import render_job_status_api, usage_api
+    register_instagram_webhook_routes(app)
 
     @app.get("/api/usage")
     def video_shorts_usage_api_alias():

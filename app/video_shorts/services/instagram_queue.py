@@ -797,6 +797,52 @@ def get_instagram_queue_entry(queue_id: str) -> Optional[Dict[str, Optional[str]
         conn.close()
 
 
+def get_instagram_queue_entry_by_media_id(media_id: str) -> Optional[Dict[str, Optional[str]]]:
+    if not media_id:
+        return None
+    conn = get_db_readonly()
+    try:
+        ensure_instagram_queue_schema(conn)
+        cols = table_columns(conn, "shorts_instagram_queue")
+        last_seen_expr = "last_seen_comment_count" if "last_seen_comment_count" in cols else "0"
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                video_id,
+                instagram_media_id,
+                instagram_business_account_id,
+                instagram_username,
+                plan_title,
+                media_type,
+                permalink,
+                like_count,
+                comment_count,
+                {last_seen_expr} AS last_seen_comment_count,
+                impressions,
+                reach,
+                saved,
+                shares,
+                publish_at,
+                published_at,
+                status,
+                status_detail
+            FROM shorts_instagram_queue
+            WHERE instagram_media_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """.format(last_seen_expr=last_seen_expr),
+            [media_id],
+        ).fetchone()
+        if not row:
+            return None
+        cols = [d[0] for d in conn.description]
+        return dict(zip(cols, row))
+    finally:
+        conn.close()
+
+
 def update_instagram_metrics(
     queue_id: str,
     *,

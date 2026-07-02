@@ -28,6 +28,7 @@ from app.video_shorts.services.quick_short_flow import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
@@ -40,6 +41,7 @@ from app.video_shorts.services.render_jobs import (
     requeue_timed_out_jobs,
     update_job_result,
 )
+from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.storage import get_media_storage, build_storage_reference
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
@@ -543,6 +545,10 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     raise PermanentRenderJobError("Unsupported publish target.")
 
 
+def _execute_instagram_comment_webhook_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    return process_instagram_comment_webhook_job(job.get("payload") or {})
+
+
 def process_next_job(app, worker_id: str) -> bool:
     job = claim_next_job(worker_id)
     if not job:
@@ -556,6 +562,8 @@ def process_next_job(app, worker_id: str) -> bool:
             result = _execute_transcribe_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_PUBLISH_SHORT:
             result = _execute_publish_job(app, job)
+        elif job.get("type") == JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK:
+            result = _execute_instagram_comment_webhook_job(app, job)
         else:
             result = _execute_render_job(app, job)
         mark_job_done(job["id"], result)
