@@ -115,28 +115,19 @@ def _build_instagram_comment_records(
         comment_id = comment.get("id")
         if comment_id:
             records.append(
-                {
-                    "platform": "instagram",
-                    "comment_id": str(comment_id),
-                    "parent_id": None,
-                    "thread_id": str(comment_id),
-                    "video_id": entry.get("video_id"),
-                    "instagram_media_id": media_id,
-                    "queue_id": entry.get("id"),
-                    "owner_user_id": entry.get("user_id"),
-                    "video_title": entry.get("plan_title"),
-                    "author": comment.get("username"),
-                    "text": comment.get("text"),
-                    "status": "published",
-                    "comment_url": entry.get("permalink"),
-                    "published_at": comment.get("timestamp"),
-                    "like_count": comment.get("like_count"),
-                    "moderation_flagged": moderation.get("flagged")
-                    if moderation
-                    else None,
-                    "moderation_reason": moderation.get("reason") if moderation else None,
-                    "moderation_checked_at": now if moderation else None,
-                }
+                _instagram_comment_record(
+                    entry=entry,
+                    media_id=media_id,
+                    comment_id=str(comment_id),
+                    parent_id=None,
+                    thread_id=str(comment_id),
+                    author=comment.get("username"),
+                    text=comment.get("text"),
+                    published_at=comment.get("timestamp"),
+                    like_count=comment.get("like_count"),
+                    moderation=moderation,
+                    now=now,
+                )
             )
         for reply in _extract_instagram_replies(comment):
             reply_moderation = reply.get("moderation") or {}
@@ -144,32 +135,57 @@ def _build_instagram_comment_records(
             if not reply_id:
                 continue
             records.append(
-                {
-                    "platform": "instagram",
-                    "comment_id": str(reply_id),
-                    "parent_id": str(comment_id) if comment_id else None,
-                    "thread_id": str(comment_id) if comment_id else None,
-                    "video_id": entry.get("video_id"),
-                    "instagram_media_id": media_id,
-                    "queue_id": entry.get("id"),
-                    "owner_user_id": entry.get("user_id"),
-                    "video_title": entry.get("plan_title"),
-                    "author": reply.get("username"),
-                    "text": reply.get("text"),
-                    "status": "published",
-                    "comment_url": entry.get("permalink"),
-                    "published_at": reply.get("timestamp"),
-                    "like_count": reply.get("like_count"),
-                    "moderation_flagged": reply_moderation.get("flagged")
-                    if reply_moderation
-                    else None,
-                    "moderation_reason": reply_moderation.get("reason")
-                    if reply_moderation
-                    else None,
-                    "moderation_checked_at": now if reply_moderation else None,
-                }
+                _instagram_comment_record(
+                    entry=entry,
+                    media_id=media_id,
+                    comment_id=str(reply_id),
+                    parent_id=str(comment_id) if comment_id else None,
+                    thread_id=str(comment_id) if comment_id else None,
+                    author=reply.get("username"),
+                    text=reply.get("text"),
+                    published_at=reply.get("timestamp"),
+                    like_count=reply.get("like_count"),
+                    moderation=reply_moderation,
+                    now=now,
+                )
             )
     return records
+
+
+def _instagram_comment_record(
+    *,
+    entry: Dict[str, object],
+    media_id: str,
+    comment_id: str,
+    parent_id: Optional[str],
+    thread_id: Optional[str],
+    author: Optional[str],
+    text: Optional[str],
+    published_at: Optional[str],
+    like_count: Optional[object],
+    moderation: Dict[str, object],
+    now: datetime,
+) -> Dict[str, object]:
+    return {
+        "platform": "instagram",
+        "comment_id": str(comment_id),
+        "parent_id": parent_id,
+        "thread_id": thread_id or str(comment_id),
+        "video_id": entry.get("video_id"),
+        "instagram_media_id": media_id,
+        "queue_id": entry.get("id"),
+        "owner_user_id": entry.get("user_id"),
+        "video_title": entry.get("plan_title"),
+        "author": author,
+        "text": text,
+        "status": "published",
+        "comment_url": entry.get("permalink"),
+        "published_at": published_at,
+        "like_count": like_count,
+        "moderation_flagged": moderation.get("flagged") if moderation else None,
+        "moderation_reason": moderation.get("reason") if moderation else None,
+        "moderation_checked_at": now if moderation else None,
+    }
 
 
 def _extract_insight_value(payload: Dict[str, object], metric: str) -> Optional[int]:

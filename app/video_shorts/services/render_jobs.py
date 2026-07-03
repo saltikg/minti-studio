@@ -424,6 +424,79 @@ def enqueue_job(
         conn.close()
 
 
+def enqueue_worker_job(
+    *,
+    user_id: str,
+    job_type: str,
+    payload: Dict[str, Any],
+    input_hash: str,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    priority: int = 0,
+) -> Dict[str, Any]:
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
+        if existing_done:
+            existing_done["cached"] = True
+            existing_done["queue_position"] = None
+            conn.commit()
+            return {"kind": "cached", "job": existing_done}
+        existing_active = _find_job_by_hash(
+            conn,
+            user_id=user_id,
+            input_hash=input_hash,
+            statuses=ACTIVE_JOB_STATUSES,
+        )
+        if existing_active:
+            existing_active["queue_position"] = _queue_position(conn, existing_active["id"])
+            conn.commit()
+            return {"kind": "existing", "job": existing_active}
+
+        job_id = str(uuid4())
+        payload_json = _serialize_json(payload) or "{}"
+        # Non-render ingestion jobs should still use the existing worker/jobs
+        # table, but must not depend on render-plan quota lookups.
+        conn.execute(
+            f"""
+            INSERT INTO {JOBS_TABLE} (
+                id,
+                user_id,
+                type,
+                status,
+                priority,
+                payload_json,
+                input_hash,
+                attempts,
+                max_attempts,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, {_json_value_sql(conn)}, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            [
+                job_id,
+                user_id,
+                job_type,
+                JOB_STATUS_QUEUED,
+                int(priority or 0),
+                payload_json,
+                input_hash,
+                max(1, int(max_attempts or DEFAULT_MAX_ATTEMPTS)),
+            ],
+        )
+        row = conn.execute(
+            f"{_job_select_sql()} WHERE id = ?",
+            [job_id],
+        ).fetchone()
+        job = _row_to_job(row) if row else {"id": job_id}
+        job["queue_position"] = _queue_position(conn, job_id)
+        conn.commit()
+        return {"kind": "queued", "job": job}
+    finally:
+        conn.close()
+
+
 def enqueue_render_job(
     *,
     user_id: str,

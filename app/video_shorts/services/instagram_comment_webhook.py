@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.video_shorts.services.instagram_api import _instagram_comment_record
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.instagram_queue import (
@@ -14,7 +15,7 @@ from app.video_shorts.services.instagram_queue import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
-    enqueue_job,
+    enqueue_worker_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ def enqueue_instagram_comment_events(payload: Dict[str, Any]) -> Dict[str, int]:
                 event.get("comment_id"),
             )
             continue
-        result = enqueue_job(
+        result = enqueue_worker_job(
             user_id=str(queue_entry["user_id"]),
             job_type=JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
             payload={
@@ -144,26 +145,19 @@ def process_instagram_comment_webhook_job(payload: Dict[str, Any]) -> Dict[str, 
 
     upsert_comment_records(
         [
-            {
-                "platform": "instagram",
-                "comment_id": comment_id,
-                "parent_id": parent_id,
-                "thread_id": thread_id,
-                "video_id": entry.get("video_id"),
-                "instagram_media_id": media_id,
-                "queue_id": entry.get("id"),
-                "owner_user_id": entry.get("user_id"),
-                "video_title": entry.get("plan_title"),
-                "author": _as_text(event.get("author_username")) or None,
-                "text": text or None,
-                "status": "published",
-                "comment_url": entry.get("permalink"),
-                "published_at": _as_text(event.get("timestamp")) or None,
-                "like_count": event.get("like_count"),
-                "moderation_flagged": moderation.get("flagged") if moderation else None,
-                "moderation_reason": moderation.get("reason") if moderation else None,
-                "moderation_checked_at": now if moderation else None,
-            }
+            _instagram_comment_record(
+                entry=entry,
+                media_id=media_id,
+                comment_id=comment_id,
+                parent_id=parent_id,
+                thread_id=thread_id,
+                author=_as_text(event.get("author_username")) or None,
+                text=text or None,
+                published_at=_as_text(event.get("timestamp")) or None,
+                like_count=event.get("like_count"),
+                moderation=moderation,
+                now=now,
+            )
         ]
     )
     return {
