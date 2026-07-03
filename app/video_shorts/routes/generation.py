@@ -141,6 +141,10 @@ from app.video_shorts.services.non_speech_overrides import (
 )
 from app.video_shorts.services.clip_plan_focus_prompts import get_plan_focus_label, normalize_plan_focus
 from app.video_shorts.services.planner_rules_v4 import load_planner_rules_v4
+from app.video_shorts.services.instagram_api import (
+    InstagramActionError,
+    subscribe_instagram_comment_webhooks,
+)
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip, load_instagram_queue_map
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip, load_facebook_queue_map
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip, load_tiktok_queue_map
@@ -7969,6 +7973,19 @@ def instagram_oauth_callback():
         expires_at=expires_at,
         scopes=scopes,
     )
+    try:
+        subscribe_payload = subscribe_instagram_comment_webhooks(graph_ig_id, long_token)
+        current_app.logger.info(
+            "Instagram webhook subscription ensured ig_user_id=%s success=%s",
+            graph_ig_id,
+            subscribe_payload.get("success"),
+        )
+    except InstagramActionError as exc:
+        current_app.logger.warning(
+            "Instagram webhook subscription failed ig_user_id=%s: %s",
+            graph_ig_id,
+            exc,
+        )
     saved = get_instagram_data(user_id)
     current_app.logger.info(
         "Instagram OAuth saved db_record_id=%s ig_id=%s username=%s account_type=%s token_tail=%s expires_at=%s",

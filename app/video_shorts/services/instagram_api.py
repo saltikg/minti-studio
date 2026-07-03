@@ -403,3 +403,19 @@ def fetch_instagram_follower_count(business_account_id: str, token: str) -> Dict
         "followers_count": followers_count,
         "username": data.get("username"),
     }
+
+
+def subscribe_instagram_comment_webhooks(
+    instagram_user_id: str,
+    token: str,
+) -> Dict[str, object]:
+    if not instagram_user_id:
+        raise InstagramActionError("Instagram user id eksik.")
+    if not token:
+        raise InstagramActionError("Instagram access token eksik.")
+    return _graph_request(
+        "POST",
+        f"{instagram_user_id}/subscribed_apps",
+        token,
+        params={"subscribed_fields": "comments"},
+    )
