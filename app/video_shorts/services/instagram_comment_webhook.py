@@ -32,6 +32,7 @@ def _extract_comment_events(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     for entry in payload.get("entry") or []:
         if not isinstance(entry, dict):
             continue
+        entry_timestamp = _as_text(entry.get("time") or entry.get("timestamp"))
         for change in entry.get("changes") or []:
             if not isinstance(change, dict):
                 continue
@@ -59,7 +60,11 @@ def _extract_comment_events(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "parent_id": _as_text(value.get("parent_id")),
                     "thread_id": _as_text(value.get("parent_id") or value.get("thread_id") or comment_id),
                     "text": _as_text(value.get("text") or value.get("message")),
-                    "timestamp": _as_text(value.get("timestamp") or value.get("created_time")),
+                    "timestamp": _as_text(
+                        value.get("timestamp")
+                        or value.get("created_time")
+                        or entry_timestamp
+                    ),
                     "author_id": _as_text(source.get("id") or value.get("from_id")),
                     "author_username": _as_text(
                         source.get("username")
@@ -142,6 +147,7 @@ def process_instagram_comment_webhook_job(payload: Dict[str, Any]) -> Dict[str, 
     now = datetime.now(timezone.utc)
     parent_id = _as_text(event.get("parent_id")) or None
     thread_id = _as_text(event.get("thread_id")) or comment_id
+    published_at = _as_text(event.get("timestamp")) or now.isoformat()
 
     upsert_comment_records(
         [
@@ -153,7 +159,7 @@ def process_instagram_comment_webhook_job(payload: Dict[str, Any]) -> Dict[str, 
                 thread_id=thread_id,
                 author=_as_text(event.get("author_username")) or None,
                 text=text or None,
-                published_at=_as_text(event.get("timestamp")) or None,
+                published_at=published_at,
                 like_count=event.get("like_count"),
                 moderation=moderation,
                 now=now,
