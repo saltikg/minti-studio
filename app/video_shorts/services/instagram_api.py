@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 import json
+import logging
 import requests
 from typing import Dict, List, Optional
 
-from app.video_shorts.config import IG_GRAPH_API_BASE
+from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES, IG_GRAPH_API_BASE
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.instagram_queue import (
@@ -13,6 +14,8 @@ from app.video_shorts.services.instagram_queue import (
     upsert_instagram_comment_cache,
 )
 from src.trends.instagram_tokens import get_instagram_credentials
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramActionError(RuntimeError):
@@ -214,6 +217,67 @@ def _graph_request(method: str, path: str, token: str, *, params=None, data=None
     return resp.json() if resp.text else {}
 
 
+def _graph_request_absolute(url: str) -> Dict[str, object]:
+    resp = requests.get(url, timeout=20)
+    if resp.status_code >= 400:
+        raise InstagramActionError(_extract_graph_error_message(resp))
+    return resp.json() if resp.text else {}
+
+
+def _fetch_instagram_comments(
+    media_id: str,
+    token: str,
+    *,
+    comments_limit: int,
+) -> List[Dict[str, object]]:
+    comments: List[Dict[str, object]] = []
+    next_url: Optional[str] = None
+    next_after: Optional[str] = None
+    page_count = 0
+    fields = "id,text,username,like_count,timestamp,replies{id,text,username,like_count,timestamp}"
+
+    while len(comments) < comments_limit and page_count < COMMENT_FETCH_MAX_PAGES:
+        remaining = comments_limit - len(comments)
+        if next_url:
+            payload = _graph_request_absolute(next_url)
+        else:
+            params = {
+                "fields": fields,
+                "limit": remaining,
+            }
+            if next_after:
+                params["after"] = next_after
+            payload = _graph_request(
+                "GET",
+                f"{media_id}/comments",
+                token,
+                params=params,
+            )
+        page_count += 1
+        page_comments = payload.get("data") or []
+        if not isinstance(page_comments, list):
+            page_comments = []
+        comments.extend(page_comments[:remaining])
+        if len(comments) >= comments_limit:
+            break
+        paging = payload.get("paging") or {}
+        cursors = paging.get("cursors") or {}
+        next_url = paging.get("next")
+        next_after = cursors.get("after")
+        if not next_url and not next_after:
+            break
+
+    paging = payload.get("paging") if "payload" in locals() and isinstance(payload, dict) else {}
+    has_more = bool((paging or {}).get("next") or ((paging or {}).get("cursors") or {}).get("after"))
+    if has_more and page_count >= COMMENT_FETCH_MAX_PAGES:
+        logger.warning(
+            "Instagram comment fetch page cap reached for media_id=%s after %s pages.",
+            media_id,
+            COMMENT_FETCH_MAX_PAGES,
+        )
+    return comments
+
+
 def delete_instagram_comment(queue_id: str, comment_id: str) -> None:
     _, token = _get_entry_and_token(queue_id)
     _graph_request("DELETE", comment_id, token)
@@ -282,16 +346,11 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
     comments: List[Dict[str, object]] = []
     if comments_limit > 0:
         try:
-            data = _graph_request(
-                "GET",
-                f"{media_id}/comments",
+            comments = _fetch_instagram_comments(
+                media_id,
                 token,
-                params={
-                    "fields": "id,text,username,like_count,timestamp,replies{id,text,username,like_count,timestamp}",
-                    "limit": comments_limit,
-                },
+                comments_limit=comments_limit,
             )
-            comments = data.get("data") or []
             moderation_map = _moderate_instagram_comments(comments, entry.get("user_id"))
             if moderation_map:
                 _apply_comment_moderation(comments, moderation_map)

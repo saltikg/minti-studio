@@ -1,5 +1,6 @@
 # app/video_shorts/youtube_api.py
 
+import logging
 import os
 import requests
 import re
@@ -8,9 +9,11 @@ from urllib.parse import urlparse, parse_qs
 
 from google.auth.exceptions import RefreshError
 
+from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES
 from app.video_shorts.services.youtube_oauth import get_access_token, list_stored_refresh_tokens
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+logger = logging.getLogger(__name__)
 
 
 class YoutubeApiError(Exception):
@@ -665,11 +668,28 @@ def _fetch_video_comments_api_key(video_id: str, max_results: int):
         "textFormat": "plainText",
         "order": "time",
     }
-    try:
-        payload = _youtube_get_json("commentThreads", params, timeout=10)
-    except YoutubeApiError as exc:
-        raise YoutubeApiError(f"YouTube comments fetch failed: {exc}") from exc
-    items = payload.get("items") or []
+    items: List[Dict[str, Any]] = []
+    next_page_token: Optional[str] = None
+    page_count = 0
+    while page_count < COMMENT_FETCH_MAX_PAGES:
+        request_params = dict(params)
+        if next_page_token:
+            request_params["pageToken"] = next_page_token
+        try:
+            payload = _youtube_get_json("commentThreads", request_params, timeout=10)
+        except YoutubeApiError as exc:
+            raise YoutubeApiError(f"YouTube comments fetch failed: {exc}") from exc
+        items.extend(payload.get("items") or [])
+        page_count += 1
+        next_page_token = payload.get("nextPageToken")
+        if not next_page_token:
+            break
+    if next_page_token and page_count >= COMMENT_FETCH_MAX_PAGES:
+        logger.warning(
+            "YouTube comment fetch page cap reached for video_id=%s after %s pages.",
+            video_id,
+            COMMENT_FETCH_MAX_PAGES,
+        )
     return _parse_comments(items, video_id, "published")
 
 
@@ -699,15 +719,33 @@ def _fetch_video_comments_oauth(
     if moderation_status:
         params["moderationStatus"] = moderation_status
     headers = {"Authorization": f"Bearer {access_token}"}
-    try:
-        resp = requests.get(
-            "https://www.googleapis.com/youtube/v3/commentThreads",
-            params=params,
-            headers=headers,
-            timeout=10,
+    items: List[Dict[str, Any]] = []
+    next_page_token: Optional[str] = None
+    page_count = 0
+    while page_count < COMMENT_FETCH_MAX_PAGES:
+        request_params = dict(params)
+        if next_page_token:
+            request_params["pageToken"] = next_page_token
+        try:
+            resp = requests.get(
+                "https://www.googleapis.com/youtube/v3/commentThreads",
+                params=request_params,
+                headers=headers,
+                timeout=10,
+            )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise YoutubeApiError(f"YouTube comments fetch failed: {exc}")
+        payload = resp.json() or {}
+        items.extend(payload.get("items") or [])
+        page_count += 1
+        next_page_token = payload.get("nextPageToken")
+        if not next_page_token:
+            break
+    if next_page_token and page_count >= COMMENT_FETCH_MAX_PAGES:
+        logger.warning(
+            "YouTube comment fetch page cap reached for video_id=%s after %s pages.",
+            video_id,
+            COMMENT_FETCH_MAX_PAGES,
         )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise YoutubeApiError(f"YouTube comments fetch failed: {exc}")
-    items = resp.json().get("items") or []
     return _parse_comments(items, video_id, moderation_status or "published")
