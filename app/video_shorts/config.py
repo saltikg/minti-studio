@@ -161,6 +161,7 @@ IG_GRAPH_API_BASE = os.getenv("IG_GRAPH_API_BASE", "https://graph.instagram.com"
 IG_AUTH_BASE = os.getenv("IG_AUTH_BASE", "https://www.instagram.com/oauth/authorize")
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET") or IG_APP_SECRET
 META_APP_SECRET = os.getenv("META_APP_SECRET") or IG_APP_SECRET or os.getenv("FB_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
 IG_OAUTH_SCOPES = os.getenv(
