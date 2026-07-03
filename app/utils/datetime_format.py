@@ -32,6 +32,14 @@ def _normalize_datetime(value: object) -> Optional[datetime]:
         normalized = value.replace("Z", "+00:00")
         if normalized[-5:] in {"+0000", "-0000"}:
             normalized = f"{normalized[:-5]}{normalized[-5:-2]}:{normalized[-2:]}"
+        if normalized.isdigit():
+            try:
+                ts = int(normalized)
+                if ts > 10**12:
+                    ts = ts / 1000
+                return datetime.fromtimestamp(ts, tz=timezone.utc)
+            except (TypeError, ValueError, OSError):
+                return None
         try:
             return datetime.fromisoformat(normalized)
         except ValueError:
