@@ -23,6 +23,30 @@ def _to_iso(value) -> str | None:
     return text or None
 
 
+def _normalize_timestamp_text(value) -> str | None:
+    text = _to_iso(value)
+    if not text:
+        return None
+    try:
+        if text.isdigit():
+            ts = int(text)
+            if ts > 10**12:
+                ts = ts / 1000
+            return datetime.utcfromtimestamp(ts).isoformat()
+        candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(candidate)
+        return parsed.isoformat()
+    except Exception:
+        return text
+
+
+def _needs_backfill(value) -> bool:
+    text = _to_iso(value)
+    if not text:
+        return True
+    return text.isdigit()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Backfill missing published_at for Instagram comments."
@@ -44,10 +68,9 @@ def main() -> int:
     try:
         rows = conn.execute(
             """
-            SELECT comment_id, created_at, updated_at
+            SELECT comment_id, published_at, created_at, updated_at
             FROM social_comment_cache
             WHERE platform = ?
-              AND (published_at IS NULL OR TRIM(CAST(published_at AS VARCHAR)) = '')
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -55,8 +78,13 @@ def main() -> int:
         ).fetchall()
 
         updates: list[tuple[str, str]] = []
-        for comment_id, created_at, updated_at in rows:
-            fallback = _to_iso(created_at) or _to_iso(updated_at)
+        for comment_id, published_at, created_at, updated_at in rows:
+            if not _needs_backfill(published_at):
+                continue
+            fallback = (
+                _normalize_timestamp_text(created_at)
+                or _normalize_timestamp_text(updated_at)
+            )
             if not fallback:
                 continue
             updates.append((fallback, str(comment_id)))
@@ -76,7 +104,6 @@ def main() -> int:
             SET published_at = ?
             WHERE platform = ?
               AND comment_id = ?
-              AND (published_at IS NULL OR TRIM(CAST(published_at AS VARCHAR)) = '')
             """,
             [(fallback, "instagram", comment_id) for fallback, comment_id in updates],
         )

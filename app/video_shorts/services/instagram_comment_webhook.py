@@ -27,12 +27,33 @@ def _as_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _normalize_comment_timestamp(value: Any) -> str:
+    raw = _as_text(value)
+    if not raw:
+        return ""
+    try:
+        if raw.isdigit():
+            ts = int(raw)
+            if ts > 10**12:
+                ts = ts / 1000
+            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+        candidate = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        parsed = datetime.fromisoformat(candidate)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat()
+    except Exception:
+        return raw
+
+
 def _extract_comment_events(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     for entry in payload.get("entry") or []:
         if not isinstance(entry, dict):
             continue
-        entry_timestamp = _as_text(entry.get("time") or entry.get("timestamp"))
+        entry_timestamp = _normalize_comment_timestamp(entry.get("time") or entry.get("timestamp"))
         for change in entry.get("changes") or []:
             if not isinstance(change, dict):
                 continue
@@ -60,7 +81,7 @@ def _extract_comment_events(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "parent_id": _as_text(value.get("parent_id")),
                     "thread_id": _as_text(value.get("parent_id") or value.get("thread_id") or comment_id),
                     "text": _as_text(value.get("text") or value.get("message")),
-                    "timestamp": _as_text(
+                    "timestamp": _normalize_comment_timestamp(
                         value.get("timestamp")
                         or value.get("created_time")
                         or entry_timestamp
@@ -147,7 +168,7 @@ def process_instagram_comment_webhook_job(payload: Dict[str, Any]) -> Dict[str, 
     now = datetime.now(timezone.utc)
     parent_id = _as_text(event.get("parent_id")) or None
     thread_id = _as_text(event.get("thread_id")) or comment_id
-    published_at = _as_text(event.get("timestamp")) or now.isoformat()
+    published_at = _normalize_comment_timestamp(event.get("timestamp")) or now.isoformat()
 
     upsert_comment_records(
         [
