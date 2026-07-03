@@ -1939,14 +1939,8 @@
             const suspiciousEmptyLoad =
               currentInstagramExpectedTotal > 0 && comments.length === 0;
             if (suspiciousEmptyLoad) {
-              if (instagramEmptyLoadRetryCount < 1) {
-                instagramEmptyLoadRetryCount += 1;
-                setInstagramStatus("Comments are syncing, retrying...", false);
-                window.setTimeout(() => fetchInstagramComments(true), 500);
-                return;
-              }
               setInstagramStatus(
-                `Instagram reports ${currentInstagramExpectedTotal} comment${currentInstagramExpectedTotal === 1 ? "" : "s"}, but the comment list is still empty. Please press Refresh.`,
+                `Instagram reports ${currentInstagramExpectedTotal} comment${currentInstagramExpectedTotal === 1 ? "" : "s"}, but the cached comment list is empty. Please press Refresh.`,
                 true
               );
               return;
@@ -1986,7 +1980,7 @@
         }
         updateInstagramMeta(null);
         instagramModal.show();
-        fetchInstagramComments(true);
+        fetchInstagramComments(false);
       }
 
       function attachInstagramHandlers(el) {
