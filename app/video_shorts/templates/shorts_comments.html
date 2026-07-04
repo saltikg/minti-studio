@@ -1,5 +1,54 @@
 {% extends "vs_base.html" %}
 
+{% block extra_head %}
+  {{ super() }}
+  <style>
+    .vs-comments-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .vs-filter-dropdown {
+      position: relative;
+    }
+
+    .vs-filter-toggle {
+      min-width: 12rem;
+      justify-content: space-between;
+    }
+
+    .vs-filter-menu {
+      position: absolute;
+      top: calc(100% + 0.4rem);
+      left: 0;
+      z-index: 1040;
+      min-width: 15rem;
+      padding: 0.85rem;
+      border-radius: 0.9rem;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: #18212f;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+      color: #eef3f8;
+      display: none;
+    }
+
+    .vs-filter-dropdown.is-open .vs-filter-menu {
+      display: block;
+    }
+
+    .vs-filter-menu .form-check-label,
+    .vs-filter-menu .text-muted {
+      color: #eef3f8 !important;
+    }
+
+    .vs-filter-menu .form-check-input {
+      background-color: #0f1722;
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+  </style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid vs-content">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
@@ -8,46 +57,58 @@
       <p class="vs-comments-subtitle mb-0">AI-checked comments across YouTube, Instagram, and Facebook.</p>
     </div>
     <div class="vs-comments-filters">
-      <div class="border rounded p-2 bg-body-tertiary vs-comments-filter-group" id="commentPlatformFilterGroup">
-        <div class="small text-muted mb-1">Platforms</div>
-        <div class="d-flex flex-column gap-1">
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="youtube" {% if 'youtube' in selected_platform_filters %}checked{% endif %}>
-            <span class="form-check-label">YouTube</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="instagram" {% if 'instagram' in selected_platform_filters %}checked{% endif %}>
-            <span class="form-check-label">Instagram</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="facebook" {% if 'facebook' in selected_platform_filters %}checked{% endif %}>
-            <span class="form-check-label">Facebook</span>
-          </label>
+      <div class="vs-filter-dropdown" id="commentPlatformFilterGroup">
+        <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2 vs-filter-toggle" data-filter-toggle>
+          <span>Platforms</span>
+          <i class="bi bi-chevron-down small"></i>
+        </button>
+        <div class="vs-filter-menu">
+          <div class="small text-muted mb-2">Select platforms</div>
+          <div class="d-flex flex-column gap-1">
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="youtube" {% if 'youtube' in selected_platform_filters %}checked{% endif %}>
+              <span class="form-check-label">YouTube</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="instagram" {% if 'instagram' in selected_platform_filters %}checked{% endif %}>
+              <span class="form-check-label">Instagram</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="facebook" {% if 'facebook' in selected_platform_filters %}checked{% endif %}>
+              <span class="form-check-label">Facebook</span>
+            </label>
+          </div>
         </div>
       </div>
-      <div class="border rounded p-2 bg-body-tertiary vs-comments-filter-group" id="commentStatusFilterGroup">
-        <div class="small text-muted mb-1">Statuses</div>
-        <div class="d-flex flex-column gap-1">
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="published" {% if 'published' in selected_status_filters %}checked{% endif %}>
-            <span class="form-check-label">Published</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="hidden" {% if 'hidden' in selected_status_filters %}checked{% endif %}>
-            <span class="form-check-label">Hidden</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="pending" {% if 'pending' in selected_status_filters %}checked{% endif %}>
-            <span class="form-check-label">Pending</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="rejected" {% if 'rejected' in selected_status_filters %}checked{% endif %}>
-            <span class="form-check-label">Rejected</span>
-          </label>
-          <label class="form-check mb-0">
-            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="deleted" {% if 'deleted' in selected_status_filters %}checked{% endif %}>
-            <span class="form-check-label">Deleted</span>
-          </label>
+      <div class="vs-filter-dropdown" id="commentStatusFilterGroup">
+        <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-2 vs-filter-toggle" data-filter-toggle>
+          <span>Statuses</span>
+          <i class="bi bi-chevron-down small"></i>
+        </button>
+        <div class="vs-filter-menu">
+          <div class="small text-muted mb-2">Select statuses</div>
+          <div class="d-flex flex-column gap-1">
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="published" {% if 'published' in selected_status_filters %}checked{% endif %}>
+              <span class="form-check-label">Published</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="hidden" {% if 'hidden' in selected_status_filters %}checked{% endif %}>
+              <span class="form-check-label">Hidden</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="pending" {% if 'pending' in selected_status_filters %}checked{% endif %}>
+              <span class="form-check-label">Pending</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="rejected" {% if 'rejected' in selected_status_filters %}checked{% endif %}>
+              <span class="form-check-label">Rejected</span>
+            </label>
+            <label class="form-check mb-0">
+              <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="deleted" {% if 'deleted' in selected_status_filters %}checked{% endif %}>
+              <span class="form-check-label">Deleted</span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -288,6 +349,29 @@
 
 <script>
   const filterCheckboxes = document.querySelectorAll(".vs-comments-filter-check");
+  const filterDropdowns = document.querySelectorAll(".vs-filter-dropdown");
+
+  filterDropdowns.forEach((dropdown) => {
+    const toggle = dropdown.querySelector("[data-filter-toggle]");
+    toggle?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      filterDropdowns.forEach((other) => {
+        if (other !== dropdown) {
+          other.classList.remove("is-open");
+        }
+      });
+      dropdown.classList.toggle("is-open");
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    filterDropdowns.forEach((dropdown) => {
+      if (!dropdown.contains(event.target)) {
+        dropdown.classList.remove("is-open");
+      }
+    });
+  });
 
   function updateFilters() {
     const params = new URLSearchParams(window.location.search);
