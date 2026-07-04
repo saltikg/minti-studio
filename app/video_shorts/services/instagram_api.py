@@ -299,6 +299,16 @@ def delete_instagram_comment(queue_id: str, comment_id: str) -> None:
     _graph_request("DELETE", comment_id, token)
 
 
+def hide_instagram_comment(queue_id: str, comment_id: str) -> Dict[str, object]:
+    _, token = _get_entry_and_token(queue_id)
+    return _graph_request("POST", comment_id, token, params={"hide": "true"})
+
+
+def unhide_instagram_comment(queue_id: str, comment_id: str) -> Dict[str, object]:
+    _, token = _get_entry_and_token(queue_id)
+    return _graph_request("POST", comment_id, token, params={"hide": "false"})
+
+
 def reply_instagram_comment(queue_id: str, comment_id: str, message: str) -> Dict[str, str]:
     if not message:
         raise InstagramActionError("Yanıt metni boş olamaz.")

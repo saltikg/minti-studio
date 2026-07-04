@@ -929,6 +929,7 @@
     const statusLabels = {
       heldForReview: "Pending",
       published: "Published",
+      hidden: "Hidden",
       likelySpam: "Likely spam",
       rejected: "Rejected",
       deleted: "Deleted",
@@ -944,12 +945,14 @@
       heldForReview: "comment-status-held",
       likelySpam: "comment-status-held",
       published: "comment-status-published",
+      hidden: "comment-status-held",
       rejected: "comment-status-rejected",
     };
     const statusBadgeMap = {
       heldForReview: "vs-comment-status-held",
       likelySpam: "vs-comment-status-held",
       published: "vs-comment-status-published",
+      hidden: "bg-warning text-dark",
       rejected: "vs-comment-status-rejected",
       deleted: "bg-secondary",
     };
@@ -1862,6 +1865,19 @@
               createActionButton("bi-reply", "Reply", () =>
                 showInstagramReplyForm(li, commentId)
               )
+            );
+          }
+          if (normalizedStatus === "hidden") {
+            actions.appendChild(
+              createActionButton("bi-eye", "Göster", () => {
+                handleInstagramCommentAction(commentId, "unhide", "POST");
+              })
+            );
+          } else if (normalizedStatus !== "deleted") {
+            actions.appendChild(
+              createActionButton("bi-eye-slash", "Gizle", () => {
+                handleInstagramCommentAction(commentId, "hide", "POST");
+              })
             );
           }
           if (normalizedStatus !== "deleted") {

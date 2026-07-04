@@ -608,3 +608,92 @@ def fetch_instagram_deleted_comments(
         return deleted
     finally:
         conn.close()
+
+
+def fetch_instagram_comments_with_statuses(
+    queue_id: str,
+    statuses: List[str],
+    *,
+    limit: int = 200,
+) -> List[Dict[str, object]]:
+    if not queue_id or not statuses:
+        return []
+    normalized_statuses = [
+        str(status).strip().lower()
+        for status in statuses
+        if str(status).strip()
+    ]
+    if not normalized_statuses:
+        return []
+    placeholders = ", ".join("?" for _ in normalized_statuses)
+    conn = get_db_readonly()
+    try:
+        ensure_comment_cache_schema(conn)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    comment_id,
+                    parent_id,
+                    thread_id,
+                    author,
+                    text,
+                    published_at,
+                    like_count,
+                    moderation_flagged,
+                    moderation_reason,
+                    moderation_checked_at,
+                    updated_at,
+                    LOWER(COALESCE(status, '')) AS status
+                FROM social_comment_cache
+                WHERE platform = 'instagram'
+                  AND queue_id = ?
+                  AND LOWER(COALESCE(status, '')) IN ({placeholders})
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                [queue_id, *normalized_statuses, limit],
+            ).fetchall()
+        except Exception as exc:
+            if "social_comment_cache" in str(exc).lower():
+                return []
+            raise
+        results: List[Dict[str, object]] = []
+        for row in rows:
+            (
+                comment_id,
+                parent_id,
+                thread_id,
+                author,
+                text,
+                published_at,
+                like_count,
+                moderation_flagged,
+                moderation_reason,
+                moderation_checked_at,
+                updated_at,
+                status,
+            ) = row
+            results.append(
+                {
+                    "id": comment_id,
+                    "comment_id": comment_id,
+                    "parent_id": parent_id,
+                    "thread_id": thread_id,
+                    "username": author,
+                    "text": text,
+                    "timestamp": published_at,
+                    "like_count": like_count,
+                    "status": status,
+                    "is_reply": parent_id is not None,
+                    "moderation_flagged": moderation_flagged,
+                    "moderation_reason": moderation_reason,
+                    "moderation_checked_at": moderation_checked_at,
+                    "updated_at": updated_at,
+                    "is_deleted": status == "deleted",
+                    "is_hidden": status == "hidden",
+                }
+            )
+        return results
+    finally:
+        conn.close()

@@ -37,7 +37,7 @@ from app.video_shorts.services.comment_store import (
     fetch_comments_missing_moderation,
     fetch_comment_records_for_video,
     fetch_comment_owner,
-    fetch_instagram_deleted_comments,
+    fetch_instagram_comments_with_statuses,
     update_comment_moderation,
     update_comment_status,
     delete_comment_record,
@@ -60,8 +60,10 @@ from app.video_shorts.services.instagram_api import (
     InstagramActionError,
     refresh_instagram_media,
     delete_instagram_comment,
+    hide_instagram_comment,
     reply_instagram_comment,
     set_instagram_comment_like,
+    unhide_instagram_comment,
 )
 from src.trends.facebook_page_tokens import get_facebook_page_data
 from app.video_shorts.youtube_api import (
@@ -919,19 +921,55 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
         "instagram_username": entry.get("instagram_username"),
     }
     comments = (cache.get("comments") or []) if cache else []
-    deleted_comments = fetch_instagram_deleted_comments(str(entry.get("id") or ""))
-    if deleted_comments:
-        existing_ids = {
-            str(item.get("id") or item.get("comment_id") or "")
-            for item in comments
-            if isinstance(item, dict)
+    status_overrides = fetch_instagram_comments_with_statuses(
+        str(entry.get("id") or ""),
+        ["hidden", "deleted"],
+    )
+    if status_overrides:
+        override_by_id = {
+            str(item.get("id") or item.get("comment_id") or ""): item
+            for item in status_overrides
+            if str(item.get("id") or item.get("comment_id") or "")
         }
-        for deleted in deleted_comments:
-            deleted_id = str(deleted.get("id") or "")
-            if deleted_id and deleted_id not in existing_ids:
-                comments.append(deleted)
+
+        def apply_overrides(items: List[Dict[str, Any]]) -> None:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                comment_id = str(item.get("id") or item.get("comment_id") or "")
+                override = override_by_id.get(comment_id)
+                if override:
+                    item["status"] = override.get("status")
+                    item["moderation_flagged"] = override.get("moderation_flagged")
+                    item["moderation_reason"] = override.get("moderation_reason")
+                    item["moderation_checked_at"] = override.get("moderation_checked_at")
+                    if override.get("is_hidden"):
+                        item["is_hidden"] = True
+                    if override.get("is_deleted"):
+                        item["is_deleted"] = True
+                replies = (item.get("replies") or {}).get("data") if isinstance(item.get("replies"), dict) else []
+                apply_overrides(replies)
+
+        def collect_existing_ids(items: List[Dict[str, Any]], bucket: set[str]) -> None:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                comment_id = str(item.get("id") or item.get("comment_id") or "")
+                if comment_id:
+                    bucket.add(comment_id)
+                replies = (item.get("replies") or {}).get("data") if isinstance(item.get("replies"), dict) else []
+                collect_existing_ids(replies, bucket)
+
+        apply_overrides(comments)
+
+        existing_ids: set[str] = set()
+        collect_existing_ids(comments, existing_ids)
+        for override in status_overrides:
+            override_id = str(override.get("id") or override.get("comment_id") or "")
+            if override_id and override_id not in existing_ids:
+                comments.append(override)
     payload["comments"] = comments
-    payload["deleted_comment_count"] = len(deleted_comments)
+    payload["deleted_comment_count"] = sum(1 for item in status_overrides if item.get("status") == "deleted")
 
     if cache:
         payload["comments_last_synced"] = cache.get("last_synced")
@@ -1014,6 +1052,8 @@ def _comment_status_meta(status: Optional[str]) -> Tuple[str, str]:
         return "Pending", "bg-warning text-dark"
     if key == "published":
         return "Published", "bg-success"
+    if key == "hidden":
+        return "Hidden", "bg-warning text-dark"
     if key == "rejected":
         return "Rejected", "bg-danger"
     if key == "deleted":
@@ -1628,6 +1668,34 @@ def instagram_comment_delete(queue_id, comment_id):
         update_comment_status("instagram", comment_id, "deleted")
         refresh_instagram_media(queue_id, comments_limit=25)
         entry = get_instagram_queue_entry(queue_id) or entry
+    except InstagramActionError as exc:
+        return jsonify(success=False, message=str(exc)), 400
+    payload = _build_instagram_media_payload(entry)
+    return jsonify(success=True, **payload)
+
+
+@video_shorts_bp.route("/instagram/media/<queue_id>/comments/<comment_id>/hide", methods=["POST"])
+def instagram_comment_hide(queue_id, comment_id):
+    entry, error = _require_instagram_media_entry(queue_id)
+    if error:
+        return error
+    try:
+        hide_instagram_comment(queue_id, comment_id)
+        update_comment_status("instagram", comment_id, "hidden")
+    except InstagramActionError as exc:
+        return jsonify(success=False, message=str(exc)), 400
+    payload = _build_instagram_media_payload(entry)
+    return jsonify(success=True, **payload)
+
+
+@video_shorts_bp.route("/instagram/media/<queue_id>/comments/<comment_id>/unhide", methods=["POST"])
+def instagram_comment_unhide(queue_id, comment_id):
+    entry, error = _require_instagram_media_entry(queue_id)
+    if error:
+        return error
+    try:
+        unhide_instagram_comment(queue_id, comment_id)
+        update_comment_status("instagram", comment_id, "published")
     except InstagramActionError as exc:
         return jsonify(success=False, message=str(exc)), 400
     payload = _build_instagram_media_payload(entry)
