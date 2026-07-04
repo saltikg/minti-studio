@@ -17,6 +17,7 @@
       <select class="form-select form-select-sm vs-comments-filter" id="commentStatusFilter">
         <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All statuses</option>
         <option value="published" {% if status_filter == 'published' %}selected{% endif %}>Published</option>
+        <option value="hidden" {% if status_filter == 'hidden' %}selected{% endif %}>Hidden</option>
         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
         <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
         <option value="deleted" {% if status_filter == 'deleted' %}selected{% endif %}>Deleted</option>
@@ -150,6 +151,32 @@
                           <i class="bi bi-reply"></i>
                         </button>
                       {% endif %}
+                      {% if status_key == 'hidden' %}
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+                          data-comment-action="unhide"
+                          data-comment-id="{{ comment.comment_id }}"
+                          data-comment-platform="instagram"
+                          data-queue-id="{{ comment.queue_id }}"
+                          title="Unhide"
+                          aria-label="Unhide">
+                          <i class="bi bi-eye"></i>
+                        </button>
+                      {% elif status_key != 'deleted' %}
+                        <button
+                          type="button"
+                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+                          data-comment-action="hide"
+                          data-comment-id="{{ comment.comment_id }}"
+                          data-comment-platform="instagram"
+                          data-queue-id="{{ comment.queue_id }}"
+                          title="Hide"
+                          aria-label="Hide">
+                          <i class="bi bi-eye-slash"></i>
+                        </button>
+                      {% endif %}
+                      {% if status_key != 'deleted' %}
                       <button
                         type="button"
                         class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
@@ -161,6 +188,7 @@
                         aria-label="Delete">
                         <i class="bi bi-trash"></i>
                       </button>
+                      {% endif %}
                     {% elif comment.platform == 'facebook' %}
                       {% if not comment.parent_id %}
                         <button
@@ -258,13 +286,20 @@
     if (!commentId || !action || !platform) {
       return;
     }
-    if (["delete", "hide", "reject"].includes(action)) {
-      const confirmText =
-        action === "delete"
-          ? "Delete this comment?"
-          : action === "hide"
-          ? "Hide this user and reject future comments?"
-          : "Reject this comment?";
+    if (["delete", "hide", "reject", "unhide"].includes(action)) {
+      let confirmText = "Are you sure?";
+      if (action === "delete") {
+        confirmText = "Delete this comment?";
+      } else if (action === "reject") {
+        confirmText = "Reject this comment?";
+      } else if (action === "hide") {
+        confirmText =
+          platform === "instagram"
+            ? "Hide this comment?"
+            : "Hide this user and reject future comments?";
+      } else if (action === "unhide") {
+        confirmText = "Unhide this comment?";
+      }
       if (!confirm(confirmText)) {
         return;
       }
@@ -308,6 +343,10 @@
         }
         url = `/video_shorts/instagram/media/${queueId}/comments/${commentId}/reply`;
         payload.text = text.trim();
+      } else if (action === "hide") {
+        url = `/video_shorts/instagram/media/${queueId}/comments/${commentId}/hide`;
+      } else if (action === "unhide") {
+        url = `/video_shorts/instagram/media/${queueId}/comments/${commentId}/unhide`;
       } else if (action === "delete") {
         url = `/video_shorts/instagram/media/${queueId}/comments/${commentId}`;
         method = "DELETE";
