@@ -99,7 +99,13 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
                     video_title = excluded.video_title,
                     author = excluded.author,
                     text = excluded.text,
-                    status = excluded.status,
+                    status = CASE
+                        WHEN social_comment_cache.platform = 'instagram'
+                             AND LOWER(COALESCE(social_comment_cache.status, '')) = 'hidden'
+                             AND LOWER(COALESCE(excluded.status, '')) = 'published'
+                        THEN social_comment_cache.status
+                        ELSE excluded.status
+                    END,
                     comment_url = excluded.comment_url,
                     published_at = excluded.published_at,
                     like_count = excluded.like_count,

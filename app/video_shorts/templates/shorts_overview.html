@@ -1869,13 +1869,13 @@
           }
           if (normalizedStatus === "hidden") {
             actions.appendChild(
-              createActionButton("bi-eye", "Göster", () => {
+              createActionButton("bi-eye", "Unhide", () => {
                 handleInstagramCommentAction(commentId, "unhide", "POST");
               })
             );
           } else if (normalizedStatus !== "deleted") {
             actions.appendChild(
-              createActionButton("bi-eye-slash", "Gizle", () => {
+              createActionButton("bi-eye-slash", "Hide", () => {
                 handleInstagramCommentAction(commentId, "hide", "POST");
               })
             );
