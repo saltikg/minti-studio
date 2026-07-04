@@ -30,7 +30,6 @@ from app.video_shorts.services.comment_store import fetch_latest_comment_timesta
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.db import (
-    _schema_management_enabled,
     ensure_channel_owner_schema,
     get_db,
     get_db_readonly,
@@ -328,12 +327,17 @@ def _ensure_sync_state_table(conn) -> None:
             """
         )
         cols = table_columns(conn, "short_comment_sync_state")
-        if "last_comment_count" not in cols and _schema_management_enabled():
-            conn.execute(
-                "ALTER TABLE short_comment_sync_state ADD COLUMN last_comment_count INTEGER"
-            )
-            if hasattr(conn, "commit"):
-                conn.commit()
+        if "last_comment_count" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE short_comment_sync_state ADD COLUMN last_comment_count INTEGER"
+                )
+                if hasattr(conn, "commit"):
+                    conn.commit()
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
     except Exception as exc:
         if "read-only" in str(exc).lower():
             return
