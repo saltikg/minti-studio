@@ -535,6 +535,8 @@ def fetch_video_comments(
     max_results: int = 10,
     moderation_status: Optional[str] = None,
     user_id: Optional[str] = None,
+    prefer_user_oauth: bool = False,
+    allow_other_oauth_fallback: bool = True,
 ):
     """
     Get top-level comment threads for a video.
@@ -550,6 +552,32 @@ def fetch_video_comments(
 
     if moderation_status:
         return _fetch_video_comments_oauth(video_id, max_results, moderation_status, user_id=user_id)
+    if prefer_user_oauth and user_id:
+        oauth_error: Optional[Exception] = None
+        try:
+            return _fetch_video_comments_oauth(
+                video_id,
+                max_results,
+                None,
+                user_id=user_id,
+            )
+        except YoutubeApiError as exc:
+            oauth_error = exc
+            logger.warning(
+                "Owner OAuth YouTube comment fetch failed for video_id=%s user_id=%s; trying shared API key fallback: %s",
+                video_id,
+                user_id,
+                exc,
+            )
+        if _youtube_api_key():
+            try:
+                return _fetch_video_comments_api_key(video_id, max_results)
+            except YoutubeApiError as api_key_exc:
+                if oauth_error is not None:
+                    raise api_key_exc from oauth_error
+                raise
+        if oauth_error is not None:
+            raise oauth_error
     if _youtube_api_key():
         try:
             return _fetch_video_comments_api_key(video_id, max_results)
@@ -575,21 +603,22 @@ def fetch_video_comments(
             )
         except YoutubeApiError:
             pass
-    for token_info in list_stored_refresh_tokens():
-        if token_info.get("reauth_required"):
-            continue
-        candidate_user_id = token_info.get("user_id")
-        if not candidate_user_id:
-            continue
-        try:
-            return _fetch_video_comments_oauth(
-                video_id,
-                max_results,
-                None,
-                user_id=candidate_user_id,
-            )
-        except YoutubeApiError:
-            continue
+    if allow_other_oauth_fallback:
+        for token_info in list_stored_refresh_tokens():
+            if token_info.get("reauth_required"):
+                continue
+            candidate_user_id = token_info.get("user_id")
+            if not candidate_user_id:
+                continue
+            try:
+                return _fetch_video_comments_oauth(
+                    video_id,
+                    max_results,
+                    None,
+                    user_id=candidate_user_id,
+                )
+            except YoutubeApiError:
+                continue
     raise YoutubeApiError("Unable to fetch published comments: no API key or valid OAuth token")
 
 
