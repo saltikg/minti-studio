@@ -1,10 +1,16 @@
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import duckdb
 
+from app.video_shorts.config import COMMENT_AUTO_MODERATION_MODE
+from app.video_shorts.services.db import table_columns
 from app.video_shorts.services.db import get_db, get_db_readonly
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -34,6 +40,8 @@ def ensure_comment_cache_schema(conn) -> None:
                 moderation_flagged BOOLEAN,
                 moderation_reason VARCHAR,
                 moderation_checked_at TIMESTAMP,
+                auto_moderation_action VARCHAR,
+                auto_moderation_at TIMESTAMP,
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP,
                 PRIMARY KEY (platform, comment_id)
@@ -44,6 +52,54 @@ def ensure_comment_cache_schema(conn) -> None:
         if "read-only" in str(exc).lower():
             return
         raise
+    try:
+        columns = table_columns(conn, "social_comment_cache")
+    except Exception:
+        columns = set()
+    extra_columns = [
+        ("auto_moderation_action", "VARCHAR"),
+        ("auto_moderation_at", "TIMESTAMP"),
+    ]
+    for column_name, definition in extra_columns:
+        if column_name in columns:
+            continue
+        try:
+            conn.execute(
+                f"ALTER TABLE social_comment_cache ADD COLUMN {column_name} {definition}"
+            )
+            columns.add(column_name)
+        except Exception as exc:
+            if "read-only" in str(exc).lower():
+                return
+            raise
+
+
+def _prepare_auto_moderation_records(
+    records: List[Dict[str, object]],
+    now: datetime,
+) -> List[Dict[str, object]]:
+    mode = COMMENT_AUTO_MODERATION_MODE
+    if mode == "off":
+        return records
+    has_flagged = any(bool(record.get("moderation_flagged")) for record in records)
+    if mode == "enforce" and has_flagged:
+        logger.warning(
+            "COMMENT_AUTO_MODERATION_MODE=enforce is not implemented yet; running in shadow mode."
+        )
+        mode = "shadow"
+    for record in records:
+        if not bool(record.get("moderation_flagged")):
+            continue
+        record["auto_moderation_action"] = "would_hide"
+        record["auto_moderation_at"] = record.get("auto_moderation_at") or now
+        logger.info(
+            "SHADOW: would hide comment_id=%s target_id=%s platform=%s reason=%s",
+            record.get("comment_id"),
+            record.get("instagram_media_id") or record.get("video_id") or record.get("queue_id"),
+            record.get("platform"),
+            record.get("moderation_reason") or "",
+        )
+    return records
 
 
 def upsert_comment_records(records: List[Dict[str, object]]) -> None:
@@ -63,7 +119,8 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
     try:
         ensure_comment_cache_schema(conn)
         now = _utc_now()
-        for record in records:
+        prepared_records = _prepare_auto_moderation_records(records, now)
+        for record in prepared_records:
             conn.execute(
                 """
                 INSERT INTO social_comment_cache (
@@ -85,10 +142,12 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
                     moderation_flagged,
                     moderation_reason,
                     moderation_checked_at,
+                    auto_moderation_action,
+                    auto_moderation_at,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (platform, comment_id) DO UPDATE SET
                     parent_id = excluded.parent_id,
                     thread_id = excluded.thread_id,
@@ -112,6 +171,14 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
                     moderation_flagged = excluded.moderation_flagged,
                     moderation_reason = excluded.moderation_reason,
                     moderation_checked_at = excluded.moderation_checked_at,
+                    auto_moderation_action = COALESCE(
+                        social_comment_cache.auto_moderation_action,
+                        excluded.auto_moderation_action
+                    ),
+                    auto_moderation_at = COALESCE(
+                        social_comment_cache.auto_moderation_at,
+                        excluded.auto_moderation_at
+                    ),
                     updated_at = excluded.updated_at
                 """,
                 [
@@ -133,6 +200,8 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
                     record.get("moderation_flagged"),
                     record.get("moderation_reason"),
                     record.get("moderation_checked_at"),
+                    record.get("auto_moderation_action"),
+                    record.get("auto_moderation_at"),
                     record.get("created_at") or now,
                     now,
                 ],

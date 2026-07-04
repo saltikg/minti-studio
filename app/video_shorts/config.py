@@ -147,6 +147,10 @@ SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS = int(
     os.getenv("SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS", "5")
 )
 COMMENT_FETCH_MAX_PAGES = max(1, int(os.getenv("COMMENT_FETCH_MAX_PAGES", "10") or "10"))
+_comment_auto_moderation_mode = (os.getenv("COMMENT_AUTO_MODERATION_MODE", "shadow") or "shadow").strip().lower()
+if _comment_auto_moderation_mode not in {"off", "shadow", "enforce"}:
+    _comment_auto_moderation_mode = "shadow"
+COMMENT_AUTO_MODERATION_MODE = _comment_auto_moderation_mode
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET")
 YOUTUBE_REDIRECT_URI = os.getenv("YOUTUBE_REDIRECT_URI")
