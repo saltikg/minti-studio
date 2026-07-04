@@ -8,20 +8,48 @@
       <p class="vs-comments-subtitle mb-0">AI-checked comments across YouTube, Instagram, and Facebook.</p>
     </div>
     <div class="vs-comments-filters">
-      <select class="form-select form-select-sm vs-comments-filter" id="commentPlatformFilter">
-        <option value="all" {% if platform_filter == 'all' %}selected{% endif %}>All platforms</option>
-        <option value="youtube" {% if platform_filter == 'youtube' %}selected{% endif %}>YouTube</option>
-        <option value="instagram" {% if platform_filter == 'instagram' %}selected{% endif %}>Instagram</option>
-        <option value="facebook" {% if platform_filter == 'facebook' %}selected{% endif %}>Facebook</option>
-      </select>
-      <select class="form-select form-select-sm vs-comments-filter" id="commentStatusFilter">
-        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All statuses</option>
-        <option value="published" {% if status_filter == 'published' %}selected{% endif %}>Published</option>
-        <option value="hidden" {% if status_filter == 'hidden' %}selected{% endif %}>Hidden</option>
-        <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
-        <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
-        <option value="deleted" {% if status_filter == 'deleted' %}selected{% endif %}>Deleted</option>
-      </select>
+      <div class="border rounded p-2 bg-body-tertiary vs-comments-filter-group" id="commentPlatformFilterGroup">
+        <div class="small text-muted mb-1">Platforms</div>
+        <div class="d-flex flex-column gap-1">
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="youtube" {% if 'youtube' in selected_platform_filters %}checked{% endif %}>
+            <span class="form-check-label">YouTube</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="instagram" {% if 'instagram' in selected_platform_filters %}checked{% endif %}>
+            <span class="form-check-label">Instagram</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="platform" value="facebook" {% if 'facebook' in selected_platform_filters %}checked{% endif %}>
+            <span class="form-check-label">Facebook</span>
+          </label>
+        </div>
+      </div>
+      <div class="border rounded p-2 bg-body-tertiary vs-comments-filter-group" id="commentStatusFilterGroup">
+        <div class="small text-muted mb-1">Statuses</div>
+        <div class="d-flex flex-column gap-1">
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="published" {% if 'published' in selected_status_filters %}checked{% endif %}>
+            <span class="form-check-label">Published</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="hidden" {% if 'hidden' in selected_status_filters %}checked{% endif %}>
+            <span class="form-check-label">Hidden</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="pending" {% if 'pending' in selected_status_filters %}checked{% endif %}>
+            <span class="form-check-label">Pending</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="rejected" {% if 'rejected' in selected_status_filters %}checked{% endif %}>
+            <span class="form-check-label">Rejected</span>
+          </label>
+          <label class="form-check mb-0">
+            <input class="form-check-input vs-comments-filter-check" type="checkbox" name="status" value="deleted" {% if 'deleted' in selected_status_filters %}checked{% endif %}>
+            <span class="form-check-label">Deleted</span>
+          </label>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -259,13 +287,16 @@
 </div>
 
 <script>
-  const platformFilter = document.getElementById("commentPlatformFilter");
-  const statusFilter = document.getElementById("commentStatusFilter");
+  const filterCheckboxes = document.querySelectorAll(".vs-comments-filter-check");
 
   function updateFilters() {
     const params = new URLSearchParams(window.location.search);
-    params.set("platform", platformFilter.value);
-    params.set("status", statusFilter.value);
+    params.delete("platform");
+    params.delete("status");
+    const selectedPlatforms = Array.from(document.querySelectorAll('input[name="platform"]:checked')).map((el) => el.value);
+    const selectedStatuses = Array.from(document.querySelectorAll('input[name="status"]:checked')).map((el) => el.value);
+    selectedPlatforms.forEach((value) => params.append("platform", value));
+    selectedStatuses.forEach((value) => params.append("status", value));
     if (!params.get("sort")) {
       params.set("sort", "date");
     }
@@ -275,8 +306,7 @@
     window.location.search = params.toString();
   }
 
-  platformFilter?.addEventListener("change", updateFilters);
-  statusFilter?.addEventListener("change", updateFilters);
+  filterCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", updateFilters));
 
   async function handleAction(event) {
     const button = event.currentTarget;

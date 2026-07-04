@@ -1061,6 +1061,17 @@ def _comment_status_meta(status: Optional[str]) -> Tuple[str, str]:
     return "Unknown", "bg-secondary"
 
 
+def _parse_multi_filter_values(param_name: str) -> List[str]:
+    values: List[str] = []
+    for raw in request.args.getlist(param_name):
+        for item in str(raw or "").split(","):
+            normalized = item.strip().lower()
+            if not normalized or normalized == "all" or normalized in values:
+                continue
+            values.append(normalized)
+    return values
+
+
 def _build_short_title_map() -> Dict[str, str]:
     entries = _collect_short_broadcast_entries(brand_id=current_brand_id())
     title_map: Dict[str, str] = {}
@@ -3461,8 +3472,10 @@ def shorts_comments_page():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
-    status_filter = (request.args.get("status") or "all").strip().lower()
-    platform_filter = (request.args.get("platform") or "all").strip().lower()
+    status_filters = _parse_multi_filter_values("status")
+    platform_filters = _parse_multi_filter_values("platform")
+    status_filter = ",".join(status_filters) if status_filters else "all"
+    platform_filter = ",".join(platform_filters) if platform_filters else "all"
     sort_key = (request.args.get("sort") or "date").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     sort_dir = "asc" if sort_dir == "asc" else "desc"
@@ -3494,7 +3507,10 @@ def shorts_comments_page():
                 }
             )
         update_comment_moderation(updates)
-    if platform_filter in {"all", "youtube"} and should_sync:
+    selected_platforms = set(platform_filters)
+    include_all_platforms = not selected_platforms
+    include_youtube = include_all_platforms or "youtube" in selected_platforms
+    if include_youtube and should_sync:
         latest_by_video = fetch_latest_comment_timestamps(
             current_user["id"],
             platform="youtube",
@@ -3507,14 +3523,14 @@ def shorts_comments_page():
     comments = fetch_comment_records_for_video_ids(
         sorted(allowed_video_ids),
         limit=2000,
-        status=status_filter,
-        platform=platform_filter,
+        status=status_filters,
+        platform=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
     )
     brand_title_map = _build_short_title_map()
     comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
-    if platform_filter in {"all", "youtube"}:
+    if include_youtube:
         _apply_short_title_fallback(comments, brand_title_map)
     for comment in comments:
         status_label, status_badge = _comment_status_meta(comment.get("status"))
@@ -3525,6 +3541,8 @@ def shorts_comments_page():
         comments=comments,
         status_filter=status_filter,
         platform_filter=platform_filter,
+        selected_status_filters=status_filters,
+        selected_platform_filters=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
     )

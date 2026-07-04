@@ -1,7 +1,7 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import duckdb
 
@@ -15,6 +15,49 @@ logger = logging.getLogger(__name__)
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_filter_values(value: Optional[str | Sequence[str]]) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_values = [part.strip().lower() for part in value.split(",")]
+    else:
+        raw_values = []
+        for item in value:
+            raw_values.extend(part.strip().lower() for part in str(item or "").split(","))
+    normalized: List[str] = []
+    for item in raw_values:
+        if not item or item == "all" or item in normalized:
+            continue
+        normalized.append(item)
+    return normalized
+
+
+def _append_status_filter(where: List[str], params: List[object], status: Optional[str | Sequence[str]]) -> None:
+    values = _normalize_filter_values(status)
+    if not values:
+        return
+    pending_selected = "pending" in values
+    exact_values = [value for value in values if value != "pending"]
+    clauses: List[str] = []
+    if pending_selected:
+        clauses.append("LOWER(status) IN ('heldforreview', 'likelyspam', 'pending')")
+    if exact_values:
+        placeholders = ", ".join("?" for _ in exact_values)
+        clauses.append(f"LOWER(status) IN ({placeholders})")
+        params.extend(exact_values)
+    if clauses:
+        where.append("(" + " OR ".join(clauses) + ")")
+
+
+def _append_platform_filter(where: List[str], params: List[object], platform: Optional[str | Sequence[str]]) -> None:
+    values = _normalize_filter_values(platform)
+    if not values:
+        return
+    placeholders = ", ".join("?" for _ in values)
+    where.append(f"platform IN ({placeholders})")
+    params.extend(values)
 
 
 def ensure_comment_cache_schema(conn) -> None:
@@ -215,8 +258,8 @@ def fetch_comment_records(
     owner_user_id: str,
     *,
     limit: int = 200,
-    status: Optional[str] = None,
-    platform: Optional[str] = None,
+    status: Optional[str | Sequence[str]] = None,
+    platform: Optional[str | Sequence[str]] = None,
     sort_key: Optional[str] = None,
     sort_dir: str = "desc",
 ) -> List[Dict[str, object]]:
@@ -225,15 +268,8 @@ def fetch_comment_records(
         ensure_comment_cache_schema(conn)
         where = ["owner_user_id = ?"]
         params: List[object] = [owner_user_id]
-        if status and status != "all":
-            if status.lower() == "pending":
-                where.append("LOWER(status) IN ('heldforreview', 'likelyspam', 'pending')")
-            else:
-                where.append("LOWER(status) = ?")
-                params.append(status.lower())
-        if platform and platform != "all":
-            where.append("platform = ?")
-            params.append(platform)
+        _append_status_filter(where, params, status)
+        _append_platform_filter(where, params, platform)
         where_clause = " AND ".join(where)
         sort_dir_clean = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
         if (sort_key or "").lower() == "date":
@@ -283,8 +319,8 @@ def fetch_comment_records_for_video_ids(
     video_ids: List[str],
     *,
     limit: int = 200,
-    status: Optional[str] = None,
-    platform: Optional[str] = None,
+    status: Optional[str | Sequence[str]] = None,
+    platform: Optional[str | Sequence[str]] = None,
     sort_key: Optional[str] = None,
     sort_dir: str = "desc",
 ) -> List[Dict[str, object]]:
@@ -297,15 +333,8 @@ def fetch_comment_records_for_video_ids(
         placeholders = ", ".join(["?"] * len(normalized_video_ids))
         where = [f"video_id IN ({placeholders})"]
         params: List[object] = list(normalized_video_ids)
-        if status and status != "all":
-            if status.lower() == "pending":
-                where.append("LOWER(status) IN ('heldforreview', 'likelyspam', 'pending')")
-            else:
-                where.append("LOWER(status) = ?")
-                params.append(status.lower())
-        if platform and platform != "all":
-            where.append("platform = ?")
-            params.append(platform)
+        _append_status_filter(where, params, status)
+        _append_platform_filter(where, params, platform)
         where_clause = " AND ".join(where)
         sort_dir_clean = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
         if (sort_key or "").lower() == "date":
