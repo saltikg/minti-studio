@@ -16,7 +16,7 @@ from app.video_shorts.config import (
     YOUTUBE_OAUTH_SCOPES,
     YOUTUBE_REDIRECT_URI,
 )
-from app.video_shorts.services.brands import current_brand_id
+from app.video_shorts.services.brands import brand_scoped_user_id, current_brand_id
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 
 DEFAULT_SCOPES = [
@@ -326,6 +326,54 @@ def list_stored_refresh_tokens() -> List[Dict[str, object]]:
         for row in rows
         if row and row[0] and row[1]
     ]
+
+
+def resolve_token_lookup_user_id(
+    user_id: Optional[str],
+    brand_id: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    normalized_user_id = _normalize_user_id(user_id, brand_id)
+    if normalized_user_id:
+        return normalized_user_id, "brand_scoped" if "::" in normalized_user_id else "plain"
+    plain_user_id = str(user_id or "").strip()
+    if not plain_user_id:
+        return None, "missing_user_id"
+    conn = get_db_readonly()
+    try:
+        try:
+            _ensure_token_tables(conn)
+        except Exception as exc:
+            if "read-only" in str(exc).lower():
+                return None, "token_table_unavailable"
+            raise
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT user_id
+                FROM {TOKEN_TABLE}
+                WHERE user_id = ?
+                   OR user_id LIKE ?
+                ORDER BY updated_at DESC
+                """,
+                [plain_user_id, f"{plain_user_id}::%"],
+            ).fetchall()
+        except Exception as exc:
+            if TOKEN_TABLE in str(exc).lower():
+                return None, "token_table_missing"
+            raise
+    finally:
+        conn.close()
+    keys = [str(row[0]).strip() for row in rows if row and row[0]]
+    exact_keys = [key for key in keys if key == plain_user_id]
+    scoped_keys = [key for key in keys if key.startswith(f"{plain_user_id}::")]
+    if exact_keys:
+        return exact_keys[0], "plain_exact"
+    unique_keys = list(dict.fromkeys(scoped_keys))
+    if len(unique_keys) == 1:
+        return unique_keys[0], "single_scoped_fallback"
+    if len(unique_keys) > 1:
+        return None, "ambiguous_scoped_tokens"
+    return None, "no_token"
 
 
 def is_reauth_required(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> bool:

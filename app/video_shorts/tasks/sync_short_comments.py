@@ -39,8 +39,10 @@ from app.video_shorts.services.facebook_queue import update_facebook_queue_metri
 from app.video_shorts.services.instagram_queue import load_instagram_queue_map
 from app.video_shorts.services.instagram_api import refresh_instagram_media, InstagramActionError
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
+from app.video_shorts.services.brands import brand_scoped_user_id
 from app.video_shorts.tasks.daily_video_metrics_snapshot import capture_daily_snapshot
 from app.video_shorts.tasks.daily_subscriber_snapshot import capture_daily_subscriber_snapshot
+from app.video_shorts.services.youtube_oauth import resolve_token_lookup_user_id
 from app.video_shorts.youtube_api import YoutubeApiError, fetch_video_comments, fetch_video_stats
 from app.video_shorts.tasks.sync_instagram_metrics import _fetch_facebook_metrics
 from src.trends.facebook_page_tokens import get_facebook_page_data
@@ -96,15 +98,6 @@ def _normalize_comment_count(value: object) -> Optional[int]:
         return None
 
 
-def _invert_owner_short_ids(owner_short_ids: Dict[str, List[str]]) -> Dict[str, str]:
-    short_owner_ids: Dict[str, str] = {}
-    for owner_user_id, short_ids in owner_short_ids.items():
-        for short_id in short_ids:
-            if short_id:
-                short_owner_ids[str(short_id)] = owner_user_id
-    return short_owner_ids
-
-
 def _should_fetch_youtube_comments(
     short_id: str,
     current_comment_count: Optional[int],
@@ -143,9 +136,33 @@ def _should_fetch_youtube_comments(
     return False
 
 
+def _resolve_short_oauth_user_ids(
+    short_owner_context: Dict[str, Dict[str, Optional[str]]],
+) -> Dict[str, Optional[str]]:
+    resolved: Dict[str, Optional[str]] = {}
+    for short_id, context in short_owner_context.items():
+        owner_user_id = str(context.get("owner_user_id") or "").strip()
+        brand_id = str(context.get("brand_id") or "").strip() or None
+        if not owner_user_id:
+            resolved[short_id] = None
+            continue
+        if brand_id:
+            resolved[short_id] = brand_scoped_user_id(owner_user_id, brand_id=brand_id)
+            continue
+        lookup_user_id, resolution = resolve_token_lookup_user_id(owner_user_id, brand_id=None)
+        if not lookup_user_id and resolution == "ambiguous_scoped_tokens":
+            logger.warning(
+                "Skipping YouTube owner OAuth resolution for short_id=%s owner_user_id=%s because brand is unknown and multiple scoped token rows exist.",
+                short_id,
+                owner_user_id,
+            )
+        resolved[short_id] = lookup_user_id
+    return resolved
+
+
 def _sync_youtube_comment_totals(
     short_ids: List[str],
-    short_owner_ids: Dict[str, str],
+    short_oauth_user_ids: Dict[str, Optional[str]],
     sync_state: Dict[str, Dict[str, object]],
     sync_updates: Dict[str, Dict[str, object]],
 ) -> int:
@@ -165,7 +182,7 @@ def _sync_youtube_comment_totals(
                     short_id,
                     max_results=50,
                     moderation_status="heldForReview",
-                    user_id=short_owner_ids.get(short_id),
+                    user_id=short_oauth_user_ids.get(short_id),
                 )
                 pending_count = sum(
                     1 for comment in pending_comments if not comment.get("is_reply")
@@ -264,7 +281,7 @@ def _sync_facebook_comment_counts(entries: List[Dict[str, object]]) -> int:
     return refreshed
 
 
-def _load_owner_short_ids(entries: List[Dict[str, object]]) -> Dict[str, List[str]]:
+def _load_short_owner_context(entries: List[Dict[str, object]]) -> Dict[str, Dict[str, Optional[str]]]:
     video_ids = sorted({entry.get("video_id") for entry in entries if entry.get("video_id")})
     if not video_ids:
         return {}
@@ -274,7 +291,7 @@ def _load_owner_short_ids(entries: List[Dict[str, object]]) -> Dict[str, List[st
         placeholders = ", ".join("?" for _ in video_ids)
         rows = conn.execute(
             f"""
-            SELECT video_id, owner_user_id
+            SELECT video_id, owner_user_id, brand_id
             FROM youtube_videos
             WHERE video_id IN ({placeholders})
             """,
@@ -282,21 +299,50 @@ def _load_owner_short_ids(entries: List[Dict[str, object]]) -> Dict[str, List[st
         ).fetchall()
     finally:
         conn.close()
-    owner_by_video = {row[0]: row[1] for row in rows if row[0] and row[1]}
+    owner_by_video = {
+        row[0]: {
+            "owner_user_id": row[1],
+            "brand_id": row[2],
+        }
+        for row in rows
+        if row[0] and row[1]
+    }
     for item in list_ai_broadcast_entries(brand_id=None):
         video_id = item.get("video_id")
         owner_id = item.get("user_id")
         if video_id and owner_id:
-            owner_by_video.setdefault(video_id, owner_id)
-    result: Dict[str, List[str]] = {}
+            owner_by_video.setdefault(
+                video_id,
+                {
+                    "owner_user_id": owner_id,
+                    "brand_id": item.get("brand_id"),
+                },
+            )
+    result: Dict[str, Dict[str, Optional[str]]] = {}
     for entry in entries:
         short_id = entry.get("short_video_id")
         source_video_id = entry.get("video_id")
-        owner_user_id = owner_by_video.get(source_video_id)
+        owner_context = owner_by_video.get(source_video_id) or {}
+        owner_user_id = owner_context.get("owner_user_id")
         if not short_id or not owner_user_id:
             continue
-        result.setdefault(owner_user_id, []).append(short_id)
+        result[str(short_id)] = {
+            "owner_user_id": str(owner_user_id),
+            "brand_id": str(owner_context.get("brand_id") or "").strip() or None,
+        }
     return result
+
+
+def _group_short_ids_by_owner(
+    short_owner_context: Dict[str, Dict[str, Optional[str]]]
+) -> Dict[str, List[str]]:
+    grouped: Dict[str, List[str]] = {}
+    for short_id, context in short_owner_context.items():
+        owner_user_id = str(context.get("owner_user_id") or "").strip()
+        if not owner_user_id:
+            continue
+        grouped.setdefault(owner_user_id, []).append(short_id)
+    return grouped
 
 
 def _parse_sync_ts(value: object) -> Optional[datetime]:
@@ -479,6 +525,7 @@ def _sync_youtube_comments_for_videos(
     sync_state: Dict[str, Dict[str, object]],
     comment_counts: Dict[str, Optional[int]],
     sync_updates: Dict[str, Dict[str, object]],
+    short_oauth_user_ids: Dict[str, Optional[str]],
 ) -> int:
     updated_count = 0
     for short_id in short_ids:
@@ -492,12 +539,20 @@ def _sync_youtube_comments_for_videos(
         comments: List[Dict[str, object]] = []
         any_success = False
         try:
+            oauth_user_id = short_oauth_user_ids.get(short_id)
+            if not oauth_user_id:
+                logger.warning(
+                    "Skipping YouTube comment fetch for short_id=%s owner_user_id=%s because no unambiguous OAuth token key could be resolved.",
+                    short_id,
+                    owner_user_id,
+                )
+                continue
             comments.extend(
                 fetch_video_comments(
                     short_id,
                     max_results=50,
                     moderation_status="heldForReview",
-                    user_id=owner_user_id,
+                    user_id=oauth_user_id,
                 )
             )
             any_success = True
@@ -509,7 +564,7 @@ def _sync_youtube_comments_for_videos(
                     short_id,
                     max_results=50,
                     moderation_status=None,
-                    user_id=owner_user_id,
+                    user_id=oauth_user_id,
                     prefer_user_oauth=True,
                     allow_other_oauth_fallback=False,
                 )
@@ -621,8 +676,9 @@ def main() -> int:
                 all_short_video_ids = _unique_short_ids(entries)
                 sync_state = _load_sync_state(all_short_video_ids)
                 sync_updates: Dict[str, Dict[str, object]] = {}
-                owner_short_ids = _load_owner_short_ids(entries) if entries else {}
-                short_owner_ids = _invert_owner_short_ids(owner_short_ids)
+                short_owner_context = _load_short_owner_context(entries) if entries else {}
+                owner_short_ids = _group_short_ids_by_owner(short_owner_context)
+                short_oauth_user_ids = _resolve_short_oauth_user_ids(short_owner_context)
                 recent_entries = _select_recent_entries(entries, COMMENT_COUNT_SYNC_RECENT_SIZE)
                 short_video_ids = _unique_short_ids(recent_entries)
                 if not short_video_ids:
@@ -630,7 +686,7 @@ def main() -> int:
                 else:
                     refreshed = _sync_youtube_comment_totals(
                         short_video_ids,
-                        short_owner_ids,
+                        short_oauth_user_ids,
                         sync_state,
                         sync_updates,
                     )
@@ -688,6 +744,7 @@ def main() -> int:
                                     sync_state,
                                     comment_count_map,
                                     sync_updates,
+                                    short_oauth_user_ids,
                                 )
                                 total_records += updated_count
                             except Exception:
