@@ -1,6 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+import unicodedata
 from zoneinfo import ZoneInfo
 
 from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
@@ -58,6 +59,79 @@ def _format_channel_timestamp(value, tz_name: str) -> str:
         value = value.replace(tzinfo=timezone.utc)
     local_dt = value.astimezone(tz)
     return local_dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _normalize_scope_label(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    ascii_only = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return "".join(ch for ch in ascii_only if ch.isalnum())
+
+
+def _load_brand_scope_context(brand_id: str | None) -> tuple[str | None, str | None]:
+    if not brand_id:
+        return None, None
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT owner_user_id, name
+            FROM shorts_brands
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [brand_id],
+        ).fetchone()
+        if not row:
+            return None, None
+        owner_user_id = str(row[0]).strip() if row[0] else None
+        brand_name = str(row[1]).strip() if row[1] else None
+        return owner_user_id, brand_name
+    finally:
+        conn.close()
+
+
+def _preferred_brand_channel_ids(owner_user_id: str | None, brand_id: str | None) -> set[str] | None:
+    owner_text = str(owner_user_id or "").strip()
+    if not owner_text or not brand_id:
+        return None
+    brand_owner_user_id, brand_name = _load_brand_scope_context(brand_id)
+    if not brand_owner_user_id or brand_owner_user_id != owner_text:
+        return None
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT channel_id, channel_name
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+              AND COALESCE(is_active, true) = true
+            ORDER BY channel_id
+            """,
+            [owner_text, brand_id],
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return set()
+    if len(rows) == 1:
+        return {str(rows[0][0])}
+    brand_key = _normalize_scope_label(brand_name)
+    if not brand_key:
+        return {str(row[0]) for row in rows}
+    scored: list[tuple[int, str]] = []
+    for channel_id, channel_name in rows:
+        channel_key = _normalize_scope_label(channel_name)
+        score = 0
+        if channel_key == brand_key:
+            score = 100
+        elif brand_key and channel_key and (brand_key in channel_key or channel_key in brand_key):
+            score = 80
+        scored.append((score, str(channel_id)))
+    best_score = max((score for score, _channel_id in scored), default=0)
+    if best_score <= 0:
+        return {channel_id for _score, channel_id in scored}
+    return {channel_id for score, channel_id in scored if score == best_score}
 
 
 def _is_sources_owner(current_user) -> bool:
@@ -380,6 +454,10 @@ def channels_page():
     if current_user and not _is_sources_owner(current_user):
         return redirect(url_for("video_shorts_bp.my_videos_page"))
     brand_id = current_brand_id()
+    preferred_channel_ids = _preferred_brand_channel_ids(
+        (current_user or {}).get("id"),
+        brand_id,
+    )
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     schema_conn = get_db()
     ensure_brand_schema(schema_conn)
@@ -601,6 +679,12 @@ def channels_page():
     cols = [d[0] for d in conn.description]
     channels = [dict(zip(cols, r)) for r in rows]
     conn.close()
+    if preferred_channel_ids:
+        channels = [
+            channel
+            for channel in channels
+            if str(channel.get("channel_id")) in preferred_channel_ids
+        ]
 
     # progress hesapla
     for ch in channels:

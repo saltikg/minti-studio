@@ -2479,6 +2479,10 @@ def videos_page(channel_id):
         "owner_user_id": row[10],
         "brand_id": row[11],
     }
+    preferred_channel_ids = _preferred_brand_channel_ids(
+        channel.get("owner_user_id"),
+        brand_id,
+    )
     if not is_admin and channel["owner_user_id"] != current_user["id"]:
         conn.close()
         flash("You do not have permission to view this channel.", "danger")
@@ -2486,6 +2490,10 @@ def videos_page(channel_id):
     if not is_admin and brand_id and channel.get("brand_id") != brand_id:
         conn.close()
         flash("Bu channel aktif brand'e ait değil.", "warning")
+        return redirect(url_for("video_shorts_bp.channels_page"))
+    if preferred_channel_ids and str(channel.get("channel_id")) not in preferred_channel_ids:
+        conn.close()
+        flash("Bu channel aktif brand scope'una ait değil.", "warning")
         return redirect(url_for("video_shorts_bp.channels_page"))
 
     # Fetch parametresi geldiyse bir batch çek
