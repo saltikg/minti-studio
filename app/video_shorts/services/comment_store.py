@@ -60,6 +60,22 @@ def _append_platform_filter(where: List[str], params: List[object], platform: Op
     params.extend(values)
 
 
+def owner_user_id_matches(filter_user_id: Optional[str], row_owner_user_id: Optional[str]) -> bool:
+    filter_text = str(filter_user_id or "").strip()
+    row_text = str(row_owner_user_id or "").strip()
+    if not filter_text or not row_text:
+        return False
+    return row_text == filter_text or row_text.startswith(f"{filter_text}::")
+
+
+def _append_owner_user_filter(where: List[str], params: List[object], owner_user_id: Optional[str]) -> None:
+    owner_text = str(owner_user_id or "").strip()
+    if not owner_text:
+        return
+    where.append("(owner_user_id = ? OR owner_user_id LIKE ?)")
+    params.extend([owner_text, f"{owner_text}::%"])
+
+
 def ensure_comment_cache_schema(conn) -> None:
     try:
         conn.execute(
@@ -266,8 +282,9 @@ def fetch_comment_records(
     conn = get_db_readonly()
     try:
         ensure_comment_cache_schema(conn)
-        where = ["owner_user_id = ?"]
-        params: List[object] = [owner_user_id]
+        where: List[str] = []
+        params: List[object] = []
+        _append_owner_user_filter(where, params, owner_user_id)
         _append_status_filter(where, params, status)
         _append_platform_filter(where, params, platform)
         where_clause = " AND ".join(where)
@@ -334,9 +351,7 @@ def fetch_comment_records_for_video_ids(
         placeholders = ", ".join(["?"] * len(normalized_video_ids))
         where = [f"video_id IN ({placeholders})"]
         params: List[object] = list(normalized_video_ids)
-        if owner_user_id:
-            where.append("owner_user_id = ?")
-            params.append(owner_user_id)
+        _append_owner_user_filter(where, params, owner_user_id)
         _append_status_filter(where, params, status)
         _append_platform_filter(where, params, platform)
         where_clause = " AND ".join(where)
@@ -399,8 +414,9 @@ def fetch_comment_records_for_video(
     conn = get_db_readonly()
     try:
         ensure_comment_cache_schema(conn)
-        where = ["owner_user_id = ?", "video_id = ?"]
-        params: List[object] = [owner_user_id, video_id]
+        where = ["video_id = ?"]
+        params: List[object] = [video_id]
+        _append_owner_user_filter(where, params, owner_user_id)
         if status and status != "all":
             if status.lower() == "pending":
                 where.append("LOWER(status) IN ('heldforreview', 'likelyspam', 'pending')")
@@ -468,13 +484,13 @@ def fetch_latest_comment_timestamps(
                 """
                 SELECT video_id, MAX(published_at) AS latest_published_at
                 FROM social_comment_cache
-                WHERE owner_user_id = ?
+                WHERE (owner_user_id = ? OR owner_user_id LIKE ?)
                   AND platform = ?
                   AND published_at IS NOT NULL
                   AND published_at <> ''
                 GROUP BY video_id
                 """,
-                [owner_user_id, platform],
+                [owner_user_id, f"{owner_user_id}::%", platform],
             ).fetchall()
         except Exception as exc:
             if "social_comment_cache" in str(exc).lower():
@@ -498,14 +514,14 @@ def fetch_comments_missing_moderation(
                 """
                 SELECT platform, comment_id, text
                 FROM social_comment_cache
-                WHERE owner_user_id = ?
+                WHERE (owner_user_id = ? OR owner_user_id LIKE ?)
                   AND moderation_flagged IS NULL
                   AND text IS NOT NULL
                   AND text <> ''
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
-                [owner_user_id, limit],
+                [owner_user_id, f"{owner_user_id}::%", limit],
             ).fetchall()
         except Exception as exc:
             if "social_comment_cache" in str(exc).lower():

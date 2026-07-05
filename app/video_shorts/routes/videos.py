@@ -41,6 +41,7 @@ from app.video_shorts.services.comment_store import (
     update_comment_moderation,
     update_comment_status,
     delete_comment_record,
+    owner_user_id_matches,
 )
 from app.video_shorts.services.instagram_queue import (
     load_instagram_queue_map,
@@ -1150,7 +1151,7 @@ def _ensure_comment_owner_access(platform: str, comment_id: str):
     if current_user.get("role") == "admin":
         return current_user.get("id"), None
     owner_user_id = fetch_comment_owner(platform, comment_id)
-    if not owner_user_id or owner_user_id != current_user.get("id"):
+    if not owner_user_id_matches(current_user.get("id"), owner_user_id):
         return None, (jsonify(success=False, message="Forbidden"), 403)
     return owner_user_id, None
 
