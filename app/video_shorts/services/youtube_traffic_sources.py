@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import DefaultDict, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from flask import current_app, has_app_context
 from googleapiclient.errors import HttpError
 
-from app.video_shorts.services.db import get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
 from app.video_shorts.services.youtube_oauth import (
     build_authenticated_youtube_analytics,
-    list_stored_refresh_tokens,
+    resolve_token_lookup_user_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,13 +28,19 @@ UPSERT_SQL = f"""
 INSERT INTO {RAW_TRAFFIC_TABLE} (
     snapshot_date,
     video_id,
+    generated_video_id,
+    owner_user_id,
+    brand_id,
     traffic_source_type,
     views,
     fetched_at
 )
-VALUES (?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (snapshot_date, video_id, traffic_source_type)
 DO UPDATE SET
+    generated_video_id = COALESCE(EXCLUDED.generated_video_id, {RAW_TRAFFIC_TABLE}.generated_video_id),
+    owner_user_id = COALESCE(EXCLUDED.owner_user_id, {RAW_TRAFFIC_TABLE}.owner_user_id),
+    brand_id = COALESCE(EXCLUDED.brand_id, {RAW_TRAFFIC_TABLE}.brand_id),
     views = EXCLUDED.views,
     fetched_at = EXCLUDED.fetched_at
 """
@@ -40,15 +48,21 @@ RETENTION_UPSERT_SQL = f"""
 INSERT INTO {RAW_RETENTION_TABLE} (
     snapshot_date,
     video_id,
+    generated_video_id,
+    owner_user_id,
+    brand_id,
     views,
     average_view_duration_seconds,
     average_view_percentage,
     subscribers_gained,
     fetched_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (snapshot_date, video_id)
 DO UPDATE SET
+    generated_video_id = COALESCE(EXCLUDED.generated_video_id, {RAW_RETENTION_TABLE}.generated_video_id),
+    owner_user_id = COALESCE(EXCLUDED.owner_user_id, {RAW_RETENTION_TABLE}.owner_user_id),
+    brand_id = COALESCE(EXCLUDED.brand_id, {RAW_RETENTION_TABLE}.brand_id),
     views = EXCLUDED.views,
     average_view_duration_seconds = EXCLUDED.average_view_duration_seconds,
     average_view_percentage = EXCLUDED.average_view_percentage,
@@ -76,6 +90,58 @@ def _resolve_window(start_date: Optional[date] = None) -> Tuple[date, date]:
     return start_date, end_date
 
 
+def _ensure_raw_analytics_schema(conn) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {RAW_TRAFFIC_TABLE} (
+            snapshot_date DATE NOT NULL,
+            video_id VARCHAR NOT NULL,
+            generated_video_id BIGINT,
+            owner_user_id VARCHAR,
+            brand_id VARCHAR,
+            traffic_source_type VARCHAR NOT NULL,
+            views BIGINT,
+            fetched_at TIMESTAMP,
+            PRIMARY KEY (snapshot_date, video_id, traffic_source_type)
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {RAW_RETENTION_TABLE} (
+            snapshot_date DATE NOT NULL,
+            video_id VARCHAR NOT NULL,
+            generated_video_id BIGINT,
+            owner_user_id VARCHAR,
+            brand_id VARCHAR,
+            views BIGINT,
+            average_view_duration_seconds DOUBLE PRECISION,
+            average_view_percentage DOUBLE PRECISION,
+            subscribers_gained BIGINT,
+            fetched_at TIMESTAMP,
+            PRIMARY KEY (snapshot_date, video_id)
+        )
+        """
+    )
+    for table_name in (RAW_TRAFFIC_TABLE, RAW_RETENTION_TABLE):
+        cols = table_columns(conn, table_name)
+        for col_name, col_type in (
+            ("generated_video_id", "BIGINT"),
+            ("owner_user_id", "VARCHAR"),
+            ("brand_id", "VARCHAR"),
+        ):
+            if col_name in cols:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
 def _date_chunks(start: date, end: date, chunk_days: int = 30):
     current = start
     while current <= end:
@@ -84,45 +150,54 @@ def _date_chunks(start: date, end: date, chunk_days: int = 30):
         current = chunk_end + timedelta(days=1)
 
 
-def _load_video_ids() -> List[str]:
-    conn = get_db_readonly()
+def _load_published_generated_videos() -> List[Dict[str, object]]:
+    conn = get_db()
     try:
+        ensure_generated_videos_schema(conn)
         rows = conn.execute(
             """
-            SELECT DISTINCT youtube_video_id
-            FROM shorts_generated_videos
+            SELECT
+                gv.id,
+                gv.youtube_video_id,
+                COALESCE(NULLIF(TRIM(CAST(gv.user_id AS VARCHAR)), ''), b.owner_user_id) AS owner_user_id,
+                gv.brand_id
+            FROM shorts_generated_videos AS gv
+            LEFT JOIN shorts_brands AS b
+              ON b.id = gv.brand_id
             WHERE youtube_video_id IS NOT NULL
               AND TRIM(youtube_video_id) <> ''
               AND publish_status = 'published'
+            ORDER BY gv.created_at DESC, gv.id DESC
             """
         ).fetchall()
     finally:
         conn.close()
-    return [str(row[0]).strip() for row in rows if row and str(row[0] or "").strip()]
+    by_video_id: Dict[str, Dict[str, object]] = {}
+    for row in rows:
+        if not row:
+            continue
+        youtube_video_id = str(row[1] or "").strip()
+        if not youtube_video_id or youtube_video_id in by_video_id:
+            continue
+        by_video_id[youtube_video_id] = {
+            "generated_video_id": row[0],
+            "youtube_video_id": youtube_video_id,
+            "user_id": str(row[2] or "").strip() or None,
+            "brand_id": str(row[3] or "").strip() or None,
+        }
+    return list(by_video_id.values())
 
 
-def _build_analytics_client():
-    token_infos = list_stored_refresh_tokens()
-    for token_info in token_infos:
-        if token_info.get("reauth_required"):
-            continue
-        scoped_user_id = token_info.get("user_id")
-        refresh_token = token_info.get("refresh_token")
-        try:
-            analytics = build_authenticated_youtube_analytics(
-                refresh_token=refresh_token,
-                user_id=scoped_user_id,
-            )
-        except Exception as exc:
-            _log().warning(
-                "YouTube traffic sources analytics init failed user_id=%s: %s",
-                scoped_user_id,
-                exc,
-            )
-            continue
-        if analytics:
-            return analytics
-    return None
+def _build_analytics_client(scoped_user_id: str):
+    try:
+        return build_authenticated_youtube_analytics(user_id=scoped_user_id)
+    except Exception as exc:
+        _log().warning(
+            "YouTube traffic sources analytics init failed user_id=%s: %s",
+            scoped_user_id,
+            exc,
+        )
+        return None
 
 
 def _execute_query_with_retry(
@@ -228,13 +303,86 @@ def _normalize_retention_rows(
     return rows
 
 
+def _group_videos_by_owner(
+    generated_videos: Sequence[Dict[str, object]],
+) -> Tuple[
+    DefaultDict[Tuple[str, Optional[str], str], List[Dict[str, object]]],
+    List[Dict[str, object]],
+]:
+    grouped: DefaultDict[Tuple[str, Optional[str], str], List[Dict[str, object]]] = defaultdict(list)
+    skipped: List[Dict[str, object]] = []
+    for item in generated_videos:
+        user_id = str(item.get("user_id") or "").strip() or None
+        brand_id = str(item.get("brand_id") or "").strip() or None
+        youtube_video_id = str(item.get("youtube_video_id") or "").strip()
+        generated_video_id = item.get("generated_video_id")
+        if not user_id or not youtube_video_id:
+            skipped.append(
+                {
+                    "generated_video_id": generated_video_id,
+                    "youtube_video_id": youtube_video_id,
+                    "reason": "missing_owner_or_video_id",
+                }
+            )
+            continue
+        resolved_lookup_user_id, lookup_mode = resolve_token_lookup_user_id(user_id, brand_id)
+        if not resolved_lookup_user_id:
+            skipped.append(
+                {
+                    "generated_video_id": generated_video_id,
+                    "youtube_video_id": youtube_video_id,
+                    "user_id": user_id,
+                    "brand_id": brand_id,
+                    "reason": lookup_mode,
+                }
+            )
+            continue
+        grouped[(resolved_lookup_user_id, brand_id, user_id)].append(
+            dict(item)
+        )
+    return grouped, skipped
+
+
+def _video_meta_map(group_items: Sequence[Dict[str, object]]) -> Dict[str, Dict[str, object]]:
+    return {
+        str(item.get("youtube_video_id") or "").strip(): item
+        for item in group_items
+        if str(item.get("youtube_video_id") or "").strip()
+    }
+
+
+def _with_video_metadata(
+    rows: Sequence[Tuple[object, ...]],
+    video_meta: Mapping[str, Dict[str, object]],
+) -> List[Tuple[object, ...]]:
+    enriched: List[Tuple[object, ...]] = []
+    for row in rows:
+        video_id = str(row[1] or "").strip() if len(row) > 1 else ""
+        meta = video_meta.get(video_id)
+        if not meta:
+            continue
+        enriched.append(
+            (
+                row[0],
+                row[1],
+                meta.get("generated_video_id"),
+                meta.get("user_id"),
+                meta.get("brand_id"),
+                *row[2:],
+            )
+        )
+    return enriched
+
+
 def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, object]:
     log = _log()
     resolved_start_date, end_date = _resolve_window(start_date)
-    video_ids = _load_video_ids()
-    if not video_ids:
+    generated_videos = _load_published_generated_videos()
+    if not generated_videos:
         result = {
             "videos": 0,
+            "groups": 0,
+            "groups_skipped": 0,
             "rows_written": 0,
             "retention_rows_written": 0,
             "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",
@@ -242,46 +390,66 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
         log.info("YouTube traffic sources skipped result=%s", result)
         return result
 
-    analytics = _build_analytics_client()
-    if not analytics:
-        result = {
-            "videos": len(video_ids),
-            "rows_written": 0,
-            "retention_rows_written": 0,
-            "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",
-        }
-        log.warning("YouTube traffic sources skipped: no valid OAuth token result=%s", result)
-        return result
-
+    grouped_videos, skipped_videos = _group_videos_by_owner(generated_videos)
     fetched_at = datetime.utcnow()
     write_rows: List[Tuple[object, ...]] = []
     retention_write_rows: List[Tuple[object, ...]] = []
-    for chunk_start, chunk_end in _date_chunks(resolved_start_date, end_date):
-        for batch in _chunked(video_ids, BATCH_SIZE):
-            response = _execute_query_with_retry(
-                analytics,
-                start_date=chunk_start,
-                end_date=chunk_end,
-                batch=batch,
-                metrics="views",
-                dimensions="day,video,insightTrafficSourceType",
+    groups_skipped = 0
+    for skipped in skipped_videos:
+        log.warning(
+            "YouTube traffic sources skipped video generated_video_id=%s youtube_video_id=%s reason=%s",
+            skipped.get("generated_video_id"),
+            skipped.get("youtube_video_id"),
+            skipped.get("reason"),
+        )
+    for (lookup_user_id, brand_id, owner_user_id), group_items in grouped_videos.items():
+        analytics = _build_analytics_client(lookup_user_id)
+        if not analytics:
+            groups_skipped += 1
+            log.warning(
+                "YouTube traffic sources skipped owner group user_id=%s brand_id=%s lookup_user_id=%s reason=no_valid_oauth",
+                owner_user_id,
+                brand_id,
+                lookup_user_id,
             )
-            payload_rows = response.get("rows") or []
-            write_rows.extend(_normalize_rows(payload_rows, fetched_at))
-            retention_response = _execute_query_with_retry(
-                analytics,
-                start_date=chunk_start,
-                end_date=chunk_end,
-                batch=batch,
-                metrics="views,averageViewDuration,averageViewPercentage,subscribersGained",
-                dimensions="day,video",
-            )
-            retention_payload_rows = retention_response.get("rows") or []
-            retention_write_rows.extend(_normalize_retention_rows(retention_payload_rows, fetched_at))
-            time.sleep(INTER_BATCH_SLEEP_SECONDS)
+            continue
+        video_meta = _video_meta_map(group_items)
+        video_ids = list(video_meta.keys())
+        # Future per-owner quota budget hooks belong here, before the API loop runs.
+        for chunk_start, chunk_end in _date_chunks(resolved_start_date, end_date):
+            for batch in _chunked(video_ids, BATCH_SIZE):
+                response = _execute_query_with_retry(
+                    analytics,
+                    start_date=chunk_start,
+                    end_date=chunk_end,
+                    batch=batch,
+                    metrics="views",
+                    dimensions="day,video,insightTrafficSourceType",
+                )
+                payload_rows = response.get("rows") or []
+                write_rows.extend(
+                    _with_video_metadata(_normalize_rows(payload_rows, fetched_at), video_meta)
+                )
+                retention_response = _execute_query_with_retry(
+                    analytics,
+                    start_date=chunk_start,
+                    end_date=chunk_end,
+                    batch=batch,
+                    metrics="views,averageViewDuration,averageViewPercentage,subscribersGained",
+                    dimensions="day,video",
+                )
+                retention_payload_rows = retention_response.get("rows") or []
+                retention_write_rows.extend(
+                    _with_video_metadata(
+                        _normalize_retention_rows(retention_payload_rows, fetched_at),
+                        video_meta,
+                    )
+                )
+                time.sleep(INTER_BATCH_SLEEP_SECONDS)
 
     conn = get_db()
     try:
+        _ensure_raw_analytics_schema(conn)
         if write_rows:
             conn.executemany(UPSERT_SQL, write_rows)
         if retention_write_rows:
@@ -297,7 +465,9 @@ def ingest_traffic_sources(start_date: Optional[date] = None) -> Dict[str, objec
         conn.close()
 
     result = {
-        "videos": len(video_ids),
+        "videos": len(generated_videos),
+        "groups": len(grouped_videos),
+        "groups_skipped": groups_skipped,
         "rows_written": len(write_rows),
         "retention_rows_written": len(retention_write_rows),
         "window": f"{resolved_start_date.isoformat()}..{end_date.isoformat()}",

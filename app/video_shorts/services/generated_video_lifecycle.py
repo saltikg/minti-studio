@@ -106,6 +106,7 @@ def ensure_generated_videos_schema(conn) -> None:
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
                 id {id_type},
+                user_id VARCHAR,
                 brand_id VARCHAR,
                 source_video_id VARCHAR NOT NULL,
                 source_channel_type VARCHAR NOT NULL DEFAULT 'youtube',
@@ -134,6 +135,7 @@ def ensure_generated_videos_schema(conn) -> None:
 
     cols = table_columns(conn, TABLE_NAME)
     for col_name, col_type in (
+        ("user_id", "VARCHAR"),
         ("generated_title", "TEXT"),
         ("generated_description", "TEXT"),
         ("generated_excerpt", "TEXT"),
@@ -168,6 +170,7 @@ def ensure_generated_videos_schema(conn) -> None:
     except Exception:
         pass
     for col_name in (
+        "user_id",
         "source_video_id",
         "clip_filename",
         "youtube_video_id",
@@ -178,6 +181,32 @@ def ensure_generated_videos_schema(conn) -> None:
         try:
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{TABLE_NAME}_{col_name} ON {TABLE_NAME}({col_name})"
+            )
+        except Exception:
+            pass
+    if "user_id" in table_columns(conn, TABLE_NAME):
+        try:
+            conn.execute(
+                f"""
+                UPDATE {TABLE_NAME} AS gv
+                SET user_id = b.owner_user_id
+                FROM shorts_brands AS b
+                WHERE gv.user_id IS NULL
+                  AND gv.brand_id IS NOT NULL
+                  AND b.id = gv.brand_id
+                """
+            )
+        except Exception:
+            pass
+        try:
+            conn.execute(
+                f"""
+                UPDATE {TABLE_NAME} AS gv
+                SET user_id = yv.owner_user_id
+                FROM youtube_videos AS yv
+                WHERE gv.user_id IS NULL
+                  AND yv.video_id = gv.source_video_id
+                """
             )
         except Exception:
             pass
@@ -257,8 +286,53 @@ def _resolve_brand_id(conn, source_video_id: Optional[str], brand_id: Optional[s
     return str((row[0] if row else "") or "").strip() or None
 
 
+def _resolve_user_id(
+    conn,
+    source_video_id: Optional[str],
+    brand_id: Optional[str],
+    user_id: Optional[str],
+) -> Optional[str]:
+    clean_user_id = str(user_id or "").strip() or None
+    if clean_user_id:
+        return clean_user_id
+    clean_brand_id = str(brand_id or "").strip() or None
+    if clean_brand_id:
+        try:
+            row = conn.execute(
+                """
+                SELECT CAST(owner_user_id AS VARCHAR)
+                FROM shorts_brands
+                WHERE id = ?
+                LIMIT 1
+                """,
+                [clean_brand_id],
+            ).fetchone()
+        except Exception:
+            row = None
+        owner_user_id = str((row[0] if row else "") or "").strip() or None
+        if owner_user_id:
+            return owner_user_id
+    if not source_video_id:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT CAST(owner_user_id AS VARCHAR)
+            FROM youtube_videos
+            WHERE video_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [source_video_id],
+        ).fetchone()
+    except Exception:
+        return None
+    return str((row[0] if row else "") or "").strip() or None
+
+
 def upsert_generated_video_record(
     *,
+    user_id: Optional[str] = None,
     source_video_id: str,
     clip_filename: str,
     source_channel_type: str = "youtube",
@@ -291,6 +365,7 @@ def upsert_generated_video_record(
     try:
         ensure_generated_videos_schema(conn)
         resolved_brand_id = _resolve_brand_id(conn, source_video_id, brand_id)
+        resolved_user_id = _resolve_user_id(conn, source_video_id, resolved_brand_id, user_id)
         raw_plan_entry_json = _serialize_raw_plan_entry(raw_plan_entry)
         normalized_generation_status = _normalize_generation_status(generation_status, publish_status)
         content_fields = _extract_content_fields(raw_plan_entry)
@@ -343,6 +418,7 @@ def upsert_generated_video_record(
         conn.execute(
             f"""
             INSERT INTO {TABLE_NAME} (
+                user_id,
                 brand_id,
                 source_video_id,
                 source_channel_type,
@@ -371,9 +447,10 @@ def upsert_generated_video_record(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (source_video_id, source_channel_type, clip_filename)
             DO UPDATE SET
+                user_id = COALESCE(EXCLUDED.user_id, {TABLE_NAME}.user_id),
                 brand_id = COALESCE(EXCLUDED.brand_id, {TABLE_NAME}.brand_id),
                 output_filename = COALESCE(EXCLUDED.output_filename, {TABLE_NAME}.output_filename),
                 storage_file_key = COALESCE(EXCLUDED.storage_file_key, {TABLE_NAME}.storage_file_key),
@@ -399,6 +476,7 @@ def upsert_generated_video_record(
                 updated_at = CURRENT_TIMESTAMP
             """,
             [
+                resolved_user_id,
                 resolved_brand_id,
                 source_video_id,
                 (source_channel_type or "youtube").strip().lower(),
