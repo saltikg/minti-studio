@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone, time as dt_time
 from collections import deque
 import os
 import re
+import unicodedata
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
@@ -1020,15 +1021,121 @@ def _brand_allowed_source_video_ids(
         conn.close()
 
 
-def _load_video_owner_title_and_brand(video_id: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _normalize_scope_label(value: Optional[str]) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    ascii_only = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return "".join(ch for ch in ascii_only if ch.isalnum())
+
+
+def _load_brand_scope_context(brand_id: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    if not brand_id:
+        return None, None
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT owner_user_id, name
+            FROM shorts_brands
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [brand_id],
+        ).fetchone()
+        if not row:
+            return None, None
+        return (str(row[0]).strip() if row[0] else None), (str(row[1]).strip() if row[1] else None)
+    finally:
+        conn.close()
+
+
+def _preferred_brand_channel_ids(owner_user_id: Optional[str], brand_id: Optional[str]) -> Optional[set[str]]:
+    owner_text = str(owner_user_id or "").strip()
+    if not owner_text or not brand_id:
+        return None
+    brand_owner_user_id, brand_name = _load_brand_scope_context(brand_id)
+    if not brand_owner_user_id or brand_owner_user_id != owner_text:
+        return None
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT channel_id, channel_name
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+              AND COALESCE(is_active, true) = true
+            ORDER BY channel_id
+            """,
+            [owner_text, brand_id],
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return set()
+    if len(rows) == 1:
+        return {str(rows[0][0])}
+    brand_key = _normalize_scope_label(brand_name)
+    if not brand_key:
+        return {str(row[0]) for row in rows}
+    scored: List[Tuple[int, str]] = []
+    for channel_id, channel_name in rows:
+        channel_key = _normalize_scope_label(channel_name)
+        score = 0
+        if channel_key == brand_key:
+            score = 100
+        elif brand_key and channel_key and (brand_key in channel_key or channel_key in brand_key):
+            score = 80
+        scored.append((score, str(channel_id)))
+    best_score = max((score for score, _channel_id in scored), default=0)
+    if best_score <= 0:
+        return {channel_id for _score, channel_id in scored}
+    return {channel_id for score, channel_id in scored if score == best_score}
+
+
+def _filter_entries_to_channel_scope(
+    entries: List[Dict[str, Any]],
+    *,
+    owner_user_id: Optional[str],
+    brand_id: Optional[str],
+    preferred_channel_ids: Optional[set[str]],
+) -> List[Dict[str, Any]]:
+    if not entries or not preferred_channel_ids:
+        return entries
+    source_video_ids = sorted({str(entry.get("video_id") or "").strip() for entry in entries if str(entry.get("video_id") or "").strip()})
+    if not source_video_ids:
+        return []
+    conn = get_db_readonly()
+    try:
+        placeholders = ", ".join("?" for _ in source_video_ids)
+        sql = f"SELECT video_id, channel_id FROM youtube_videos WHERE video_id IN ({placeholders})"
+        params: List[Any] = list(source_video_ids)
+        owner_text = str(owner_user_id or "").strip()
+        if owner_text:
+            sql += " AND owner_user_id = ?"
+            params.append(owner_text)
+        if brand_id:
+            sql += " AND brand_id = ?"
+            params.append(brand_id)
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    channel_by_video = {str(video_id): str(channel_id) for video_id, channel_id in rows if video_id is not None and channel_id is not None}
+    return [
+        entry
+        for entry in entries
+        if channel_by_video.get(str(entry.get("video_id") or "").strip()) in preferred_channel_ids
+    ]
+
+
+def _load_video_scope(video_id: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     if not video_id:
-        return None, None, None
+        return None, None, None, None
     conn = get_db_readonly()
     try:
         ensure_channel_owner_schema(conn)
         row = conn.execute(
             """
-            SELECT v.title, v.owner_user_id, c.owner_user_id, v.brand_id
+            SELECT v.title, v.owner_user_id, c.owner_user_id, v.brand_id, v.channel_id
             FROM youtube_videos v
             LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
             WHERE v.video_id = ?
@@ -1036,9 +1143,9 @@ def _load_video_owner_title_and_brand(video_id: str) -> Tuple[Optional[str], Opt
             [video_id],
         ).fetchone()
         if not row:
-            return None, None, None
-        title, video_owner_id, channel_owner_id, brand_id = row
-        return title, video_owner_id or channel_owner_id, brand_id
+            return None, None, None, None
+        title, video_owner_id, channel_owner_id, brand_id, channel_id = row
+        return title, video_owner_id or channel_owner_id, brand_id, (str(channel_id) if channel_id is not None else None)
     finally:
         conn.close()
 
@@ -1118,9 +1225,18 @@ def _build_short_title_map() -> Dict[str, str]:
 
 def _build_allowed_comment_video_ids() -> set[str]:
     current_user = getattr(g, "vs_current_user", None) or {}
+    brand_id = current_brand_id()
+    owner_user_id = current_user.get("id")
     entries = _collect_short_broadcast_entries(
-        brand_id=current_brand_id(),
-        owner_user_id=current_user.get("id"),
+        brand_id=brand_id,
+        owner_user_id=owner_user_id,
+    )
+    preferred_channel_ids = _preferred_brand_channel_ids(owner_user_id, brand_id)
+    entries = _filter_entries_to_channel_scope(
+        entries,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        preferred_channel_ids=preferred_channel_ids,
     )
     allowed: set[str] = set()
     for entry in entries:
@@ -2948,7 +3064,8 @@ def shorts_overview():
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     is_admin = current_user and current_user.get("role") == "admin"
-    owner_scope_user_id = str((current_user or {}).get("id") or "").strip() or None
+    brand_owner_user_id, _brand_name = _load_brand_scope_context(brand_id)
+    owner_scope_user_id = brand_owner_user_id or (str((current_user or {}).get("id") or "").strip() or None)
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filter = (request.args.get("status") or "").strip().lower()
     comments_filter = (request.args.get("comments") or "").strip().lower()
@@ -2967,6 +3084,13 @@ def shorts_overview():
     all_entries = _collect_short_broadcast_entries(
         brand_id=brand_id,
         owner_user_id=owner_scope_user_id,
+    )
+    preferred_channel_ids = _preferred_brand_channel_ids(owner_scope_user_id, brand_id)
+    all_entries = _filter_entries_to_channel_scope(
+        all_entries,
+        owner_user_id=owner_scope_user_id,
+        brand_id=brand_id,
+        preferred_channel_ids=preferred_channel_ids,
     )
     total_scheduled = sum(1 for entry in all_entries if entry["publish_status"] == "scheduled")
     total_published = sum(1 for entry in all_entries if entry["publish_status"] == "published")
@@ -2993,6 +3117,8 @@ def shorts_overview():
             channel_params.append(brand_id)
         channel_sql += " ORDER BY channel_name"
         channel_rows = conn.execute(channel_sql, channel_params).fetchall()
+        if preferred_channel_ids:
+            channel_rows = [row for row in channel_rows if str(row[0]) in preferred_channel_ids]
         channel_map = {
             str(row[0]): row[1] or f"Channel {row[0]}"
             for row in channel_rows
@@ -3024,6 +3150,10 @@ def shorts_overview():
             if brand_id:
                 sql += " AND v.brand_id = ?"
                 params.append(brand_id)
+            if preferred_channel_ids:
+                channel_placeholders = ", ".join("?" for _ in preferred_channel_ids)
+                sql += f" AND CAST(v.channel_id AS VARCHAR) IN ({channel_placeholders})"
+                params.extend(sorted(preferred_channel_ids))
             video_rows = conn.execute(sql, params).fetchall()
             for row in video_rows:
                 channel_id_val = row[8]
@@ -3048,7 +3178,7 @@ def shorts_overview():
     allowed_channel_ids = set()
     for row in channel_rows:
         owner_id = row[2]
-        if current_user and owner_id == current_user["id"]:
+        if owner_scope_user_id and owner_id == owner_scope_user_id:
             allowed_channel_ids.add(str(row[0]))
     processed_entries: List[Dict[str, Any]] = []
     for entry in all_entries:
@@ -3515,6 +3645,9 @@ def shorts_comments_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    brand_id = current_brand_id()
+    brand_owner_user_id, _brand_name = _load_brand_scope_context(brand_id)
+    owner_scope_user_id = brand_owner_user_id or current_user["id"]
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filters = _parse_multi_filter_values("status")
     platform_filters = _parse_multi_filter_values("platform")
@@ -3525,7 +3658,7 @@ def shorts_comments_page():
     sort_dir = "asc" if sort_dir == "asc" else "desc"
     should_sync = (request.args.get("sync") or "").strip().lower() in {"1", "true", "yes"}
     allowed_video_ids = _build_allowed_comment_video_ids()
-    missing = fetch_comments_missing_moderation(current_user["id"], limit=200)
+    missing = fetch_comments_missing_moderation(owner_scope_user_id, limit=200)
     if missing:
         moderation_entries = [
             {
@@ -3535,7 +3668,7 @@ def shorts_comments_page():
             for row in missing
             if row.get("comment_id") and row.get("text")
         ]
-        moderation_map = moderate_text_entries(moderation_entries, current_user.get("id"))
+        moderation_map = moderate_text_entries(moderation_entries, owner_scope_user_id)
         updates = []
         for row in missing:
             key = f"{row['platform']}:{row['comment_id']}"
@@ -3556,11 +3689,11 @@ def shorts_comments_page():
     include_youtube = include_all_platforms or "youtube" in selected_platforms
     if include_youtube and should_sync:
         latest_by_video = fetch_latest_comment_timestamps(
-            current_user["id"],
+            owner_scope_user_id,
             platform="youtube",
         )
         _sync_youtube_comments_for_user(
-            current_user,
+            {**current_user, "id": owner_scope_user_id},
             max_videos=12,
             latest_by_video=latest_by_video,
         )
@@ -3571,7 +3704,7 @@ def shorts_comments_page():
         platform=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
-        owner_user_id=current_user["id"],
+        owner_user_id=owner_scope_user_id,
     )
     brand_title_map = _build_short_title_map()
     comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
@@ -3629,14 +3762,18 @@ def shorts_comments(video_id):
         return jsonify(success=False, message="Unauthorized"), 401
     is_admin = current_user.get("role") == "admin"
     active_brand_id = current_brand_id()
-    video_title, owner_user_id, video_brand_id = _load_video_owner_title_and_brand(video_id)
+    brand_owner_user_id, _brand_name = _load_brand_scope_context(active_brand_id)
+    video_title, owner_user_id, video_brand_id, video_channel_id = _load_video_scope(video_id)
     if not owner_user_id:
         owner_user_id = _resolve_owner_for_short_id(video_id)
     if is_admin and not owner_user_id:
-        owner_user_id = current_user.get("id")
+        owner_user_id = brand_owner_user_id or current_user.get("id")
         if not video_title:
             video_title = video_id
     if active_brand_id and video_brand_id and str(video_brand_id) != str(active_brand_id):
+        return jsonify(success=False, message="Forbidden"), 403
+    preferred_channel_ids = _preferred_brand_channel_ids(brand_owner_user_id or owner_user_id, active_brand_id)
+    if preferred_channel_ids and video_channel_id and video_channel_id not in preferred_channel_ids:
         return jsonify(success=False, message="Forbidden"), 403
     if not is_admin and owner_user_id and owner_user_id != current_user.get("id"):
         return jsonify(success=False, message="Forbidden"), 403
