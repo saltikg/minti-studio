@@ -969,8 +969,6 @@
     let currentFetchUrl = null;
     let refreshNextFetch = false;
     let currentVideoId = null;
-    let currentExpectedTotal = 0;
-    let emptyLoadRetryCount = 0;
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message || "";
@@ -1019,17 +1017,10 @@
       const videoId = targetEl.dataset.videoId || "";
       currentFilter = "all";
       currentVideoId = videoId;
-      const pendingHint = Number(targetEl.dataset.pendingCount || 0) || 0;
-      const publishedHint = Number(targetEl.dataset.publishedCount || 0) || 0;
-      const countEl = targetEl.querySelector("[data-role='comment-count']");
-      const countText = countEl ? String(countEl.textContent || "") : "";
-      const parsedFromText = Number((countText.match(/\d+/) || [0])[0]) || 0;
-      currentExpectedTotal = Math.max(pendingHint + publishedHint, parsedFromText);
-      emptyLoadRetryCount = 0;
       const baseUrl = new URL(url, window.location.origin);
       baseUrl.searchParams.set("status", "all");
       currentFetchUrl = baseUrl.href;
-      refreshNextFetch = true;
+      refreshNextFetch = false;
       modalTitle.textContent = title;
       updateMeta(videoId, currentFilter);
       modal.show();
@@ -1041,7 +1032,8 @@
         return;
       }
       const requestUrl = new URL(currentFetchUrl, window.location.origin);
-      if (refreshNextFetch) {
+      const isManualRefresh = refreshNextFetch;
+      if (isManualRefresh) {
         requestUrl.searchParams.set("refresh", "1");
         refreshNextFetch = false;
       }
@@ -1068,30 +1060,14 @@
           updateCounts(currentComments);
           buildFilters();
           applyFilter(currentFilter);
-          const fetchedVisibleCount = (currentCounts.heldForReview || 0) + (currentCounts.published || 0);
-          const suspiciousEmptyLoad =
-            currentExpectedTotal > 0 &&
-            currentComments.length === 0 &&
-            fetchedVisibleCount === 0;
-          if (suspiciousEmptyLoad) {
-            if (emptyLoadRetryCount < 1) {
-              emptyLoadRetryCount += 1;
-              refreshNextFetch = true;
-              setStatus("Comments are syncing, retrying...", false);
-              window.setTimeout(fetchComments, 500);
-              return;
-            }
-            setStatus("Comments could not be loaded yet. Please press Refresh.", true);
-            return;
-          }
-          emptyLoadRetryCount = 0;
-          currentExpectedTotal = fetchedVisibleCount;
           persistCounts(currentVideoId, {
             pending: currentCounts.heldForReview || 0,
             published: currentCounts.published || 0,
             rejected: currentCounts.rejected || 0,
           });
-          if (data.note) {
+          if (!currentComments.length && !isManualRefresh) {
+            setStatus("Showing cached comments. Press Refresh to fetch the latest.", false);
+          } else if (data.note) {
             setStatus(data.note, false);
           } else {
             setStatus("");
