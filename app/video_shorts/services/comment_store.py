@@ -323,6 +323,7 @@ def fetch_comment_records_for_video_ids(
     platform: Optional[str | Sequence[str]] = None,
     sort_key: Optional[str] = None,
     sort_dir: str = "desc",
+    owner_user_id: Optional[str] = None,
 ) -> List[Dict[str, object]]:
     normalized_video_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
     if not normalized_video_ids:
@@ -333,6 +334,9 @@ def fetch_comment_records_for_video_ids(
         placeholders = ", ".join(["?"] * len(normalized_video_ids))
         where = [f"video_id IN ({placeholders})"]
         params: List[object] = list(normalized_video_ids)
+        if owner_user_id:
+            where.append("owner_user_id = ?")
+            params.append(owner_user_id)
         _append_status_filter(where, params, status)
         _append_platform_filter(where, params, platform)
         where_clause = " AND ".join(where)
