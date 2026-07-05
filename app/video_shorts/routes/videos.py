@@ -1020,15 +1020,15 @@ def _brand_allowed_source_video_ids(
         conn.close()
 
 
-def _load_video_owner_and_title(video_id: str) -> Tuple[Optional[str], Optional[str]]:
+def _load_video_owner_title_and_brand(video_id: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     if not video_id:
-        return None, None
+        return None, None, None
     conn = get_db_readonly()
     try:
         ensure_channel_owner_schema(conn)
         row = conn.execute(
             """
-            SELECT v.title, v.owner_user_id, c.owner_user_id
+            SELECT v.title, v.owner_user_id, c.owner_user_id, v.brand_id
             FROM youtube_videos v
             LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
             WHERE v.video_id = ?
@@ -1036,9 +1036,9 @@ def _load_video_owner_and_title(video_id: str) -> Tuple[Optional[str], Optional[
             [video_id],
         ).fetchone()
         if not row:
-            return None, None
-        title, video_owner_id, channel_owner_id = row
-        return title, video_owner_id or channel_owner_id
+            return None, None, None
+        title, video_owner_id, channel_owner_id, brand_id = row
+        return title, video_owner_id or channel_owner_id, brand_id
     finally:
         conn.close()
 
@@ -1117,9 +1117,10 @@ def _build_short_title_map() -> Dict[str, str]:
 
 
 def _build_allowed_comment_video_ids() -> set[str]:
+    current_user = getattr(g, "vs_current_user", None) or {}
     entries = _collect_short_broadcast_entries(
         brand_id=current_brand_id(),
-        owner_user_id=_effective_non_admin_owner_user_id(),
+        owner_user_id=current_user.get("id"),
     )
     allowed: set[str] = set()
     for entry in entries:
@@ -2947,7 +2948,7 @@ def shorts_overview():
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     is_admin = current_user and current_user.get("role") == "admin"
-    owner_scope_user_id = None if is_admin else str((current_user or {}).get("id") or "").strip() or None
+    owner_scope_user_id = str((current_user or {}).get("id") or "").strip() or None
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filter = (request.args.get("status") or "").strip().lower()
     comments_filter = (request.args.get("comments") or "").strip().lower()
@@ -2981,22 +2982,17 @@ def shorts_overview():
     schema_conn.close()
     conn = get_db_readonly()
     try:
-        if is_admin:
-            channel_rows = conn.execute(
-                "SELECT channel_id, channel_name, owner_user_id, brand_id FROM youtube_channels ORDER BY channel_name"
-            ).fetchall()
-        else:
-            channel_sql = """
-                SELECT channel_id, channel_name, owner_user_id, brand_id
-                FROM youtube_channels
-                WHERE owner_user_id = ?
-            """
-            channel_params: List[Any] = [owner_scope_user_id]
-            if brand_id:
-                channel_sql += " AND brand_id = ?"
-                channel_params.append(brand_id)
-            channel_sql += " ORDER BY channel_name"
-            channel_rows = conn.execute(channel_sql, channel_params).fetchall()
+        channel_sql = """
+            SELECT channel_id, channel_name, owner_user_id, brand_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+        """
+        channel_params: List[Any] = [owner_scope_user_id]
+        if brand_id:
+            channel_sql += " AND brand_id = ?"
+            channel_params.append(brand_id)
+        channel_sql += " ORDER BY channel_name"
+        channel_rows = conn.execute(channel_sql, channel_params).fetchall()
         channel_map = {
             str(row[0]): row[1] or f"Channel {row[0]}"
             for row in channel_rows
@@ -3023,12 +3019,11 @@ def shorts_overview():
                 WHERE v.video_id IN ({placeholders})
             """
             params = list(video_ids)
-            if not is_admin:
-                sql += " AND v.owner_user_id = ?"
-                params.append(owner_scope_user_id)
-                if brand_id:
-                    sql += " AND v.brand_id = ?"
-                    params.append(brand_id)
+            sql += " AND v.owner_user_id = ?"
+            params.append(owner_scope_user_id)
+            if brand_id:
+                sql += " AND v.brand_id = ?"
+                params.append(brand_id)
             video_rows = conn.execute(sql, params).fetchall()
             for row in video_rows:
                 channel_id_val = row[8]
@@ -3053,7 +3048,7 @@ def shorts_overview():
     allowed_channel_ids = set()
     for row in channel_rows:
         owner_id = row[2]
-        if is_admin or (current_user and owner_id == current_user["id"]):
+        if current_user and owner_id == current_user["id"]:
             allowed_channel_ids.add(str(row[0]))
     processed_entries: List[Dict[str, Any]] = []
     for entry in all_entries:
@@ -3350,14 +3345,13 @@ def shorts_overview():
         )
 
     filtered_entries = processed_entries
-    if not is_admin:
-        filtered_entries = [
-            entry
-            for entry in filtered_entries
-            if entry.get("channel_id") and str(entry.get("channel_id")) in allowed_channel_ids
-        ]
-        total_scheduled = sum(1 for entry in filtered_entries if entry["publish_status"] == "scheduled")
-        total_published = sum(1 for entry in filtered_entries if entry["publish_status"] == "published")
+    filtered_entries = [
+        entry
+        for entry in filtered_entries
+        if entry.get("channel_id") and str(entry.get("channel_id")) in allowed_channel_ids
+    ]
+    total_scheduled = sum(1 for entry in filtered_entries if entry["publish_status"] == "scheduled")
+    total_published = sum(1 for entry in filtered_entries if entry["publish_status"] == "published")
     pending_videos_total = sum(1 for entry in filtered_entries if (entry.get("pending_comment_count") or 0) > 0)
     total_pending_comments = sum(entry.get("pending_comment_count") or 0 for entry in filtered_entries)
     unread_videos_total = sum(
@@ -3483,7 +3477,7 @@ def shorts_overview():
     channel_options = [
         {"id": row[0], "name": row[1] or f"Channel {row[0]}"}
         for row in channel_rows
-        if (str(row[0]) in allowed_channel_ids) or is_admin
+        if str(row[0]) in allowed_channel_ids
     ]
 
     return render_template(
@@ -3521,7 +3515,6 @@ def shorts_comments_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    is_admin = current_user.get("role") == "admin"
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filters = _parse_multi_filter_values("status")
     platform_filters = _parse_multi_filter_values("platform")
@@ -3578,7 +3571,7 @@ def shorts_comments_page():
         platform=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
-        owner_user_id=None if is_admin else current_user["id"],
+        owner_user_id=current_user["id"],
     )
     brand_title_map = _build_short_title_map()
     comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
@@ -3635,13 +3628,16 @@ def shorts_comments(video_id):
     if not current_user:
         return jsonify(success=False, message="Unauthorized"), 401
     is_admin = current_user.get("role") == "admin"
-    video_title, owner_user_id = _load_video_owner_and_title(video_id)
+    active_brand_id = current_brand_id()
+    video_title, owner_user_id, video_brand_id = _load_video_owner_title_and_brand(video_id)
     if not owner_user_id:
         owner_user_id = _resolve_owner_for_short_id(video_id)
     if is_admin and not owner_user_id:
         owner_user_id = current_user.get("id")
         if not video_title:
             video_title = video_id
+    if active_brand_id and video_brand_id and str(video_brand_id) != str(active_brand_id):
+        return jsonify(success=False, message="Forbidden"), 403
     if not is_admin and owner_user_id and owner_user_id != current_user.get("id"):
         return jsonify(success=False, message="Forbidden"), 403
     if not is_admin and not owner_user_id:
