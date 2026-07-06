@@ -527,12 +527,15 @@
 
       function buildTopSourceRows(lifecycleRows, trafficRows) {
         const topSourceMap = new Map();
+        const totalTrafficByDay = new Map();
         trafficRows.forEach((item) => {
           const day = Number(item.days_since_publish);
+          const sourceViews = Number(item.views || 0);
+          totalTrafficByDay.set(day, (totalTrafficByDay.get(day) || 0) + sourceViews);
           if (!topSourceMap.has(day)) {
             topSourceMap.set(day, {
               type: item.traffic_source_type || "unknown",
-              views: Number(item.views || 0),
+              views: sourceViews,
             });
           }
         });
@@ -540,14 +543,14 @@
         return lifecycleRows.slice(0, 14).map((item) => {
           const day = Number(item.days_since_publish || 0);
           const topSource = topSourceMap.get(day);
-          const views = Number(item.daily_views || 0);
+          const totalTrafficViews = Number(totalTrafficByDay.get(day) || 0);
           const topSourceViews = topSource ? Number(topSource.views || 0) : 0;
           return {
             day,
-            views,
+            views: totalTrafficViews,
             source: topSource ? topSource.type : "—",
             topSourceViews,
-            sourceShare: views > 0 ? (topSourceViews / views) * 100 : 0,
+            sourceShare: totalTrafficViews > 0 ? (topSourceViews / totalTrafficViews) * 100 : 0,
           };
         });
       }
