@@ -182,7 +182,7 @@
     }
     .dashboard-v2-kpis {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.9rem;
       margin: 0 0 1.15rem;
     }
@@ -207,9 +207,15 @@
       font-size: 0.78rem;
       margin-bottom: 0.7rem;
     }
+    .dashboard-v2-kpi-meta {
+      color: rgba(148, 163, 184, 0.72);
+      font-size: 0.78rem;
+      margin-top: 0.7rem;
+    }
     .dashboard-v2-kpi-value {
       display: flex;
-      align-items: baseline;
+      flex-direction: column;
+      align-items: flex-start;
       gap: 0.75rem;
       flex-wrap: wrap;
     }
@@ -400,9 +406,6 @@
       .dashboard-v2-performance-row {
         grid-template-columns: 1fr;
       }
-      .dashboard-v2-kpis {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
       .dashboard-v2-platform-field {
         align-items: stretch;
       }
@@ -414,6 +417,11 @@
       .dashboard-v2-filter-grid {
         grid-template-columns: 1fr;
       }
+      .dashboard-v2-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 575.98px) {
       .dashboard-v2-kpis {
         grid-template-columns: 1fr;
       }
@@ -476,6 +484,26 @@
       </div>
     </div>
 
+    {% if summary_cards %}
+      <div class="dashboard-v2-kpis mb-4">
+        {% for card in summary_cards %}
+          {% set foot_class = 'is-' ~ card.direction %}
+          {% set arrow = '↑' if card.direction == 'up' else ('↓' if card.direction == 'down' else '→') %}
+          <div class="dashboard-v2-kpi-card">
+            <div class="dashboard-v2-kpi-platform">Summary</div>
+            <div class="dashboard-v2-kpi-title">{{ card.title }}</div>
+            <div class="dashboard-v2-kpi-value">
+              <div class="dashboard-v2-kpi-number">{{ card.display_value }}</div>
+              <div class="dashboard-v2-kpi-foot {{ foot_class }}">
+                <span>{{ arrow }}</span>
+                <span>{{ card.change_label }}</span>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
     <div class="card shadow-sm vs-card mb-4">
       <div class="card-body">
         <div class="dashboard-v2-chart-header">
@@ -485,31 +513,10 @@
             </div>
           </div>
         </div>
-        {% if platform_kpis %}
-        {% endif %}
         {% if channel_series %}
           <div class="dashboard-v2-chart-row">
             <div class="dashboard-v2-chart-panel">
               <div class="dashboard-v2-chart-panel-inner" id="dashboardChartPanelInner">
-                {% if platform_kpis %}
-                  <div class="dashboard-v2-kpis">
-                    {% for kpi in platform_kpis %}
-                      {% set foot_class = 'is-' ~ kpi.direction %}
-                      {% set arrow = '↑' if kpi.direction == 'up' else ('↓' if kpi.direction == 'down' else '→') %}
-                      <div class="dashboard-v2-kpi-card">
-                        <div class="dashboard-v2-kpi-platform">{{ kpi.platform_label }}</div>
-                        <div class="dashboard-v2-kpi-title">Selected Period Growth</div>
-                        <div class="dashboard-v2-kpi-value">
-                          <div class="dashboard-v2-kpi-number">{{ "{:+,}".format(kpi.current_growth) }}</div>
-                        <div class="dashboard-v2-kpi-foot {{ foot_class }}">
-                          <span>{{ arrow }}</span>
-                          <span>{{ kpi.change_label }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  {% endfor %}
-                </div>
-                {% endif %}
                 <div class="dashboard-v2-chart-shell">
                   <canvas id="dailySubscriberDeltaChart"></canvas>
                 </div>

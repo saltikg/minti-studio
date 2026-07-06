@@ -135,6 +135,243 @@ def _brand_clause(brand_id: Optional[str]) -> Tuple[str, List[object]]:
     return " AND brand_id = ?", [brand_id]
 
 
+def _metric_delta_pct(current_total: int, previous_total: int) -> float:
+    return ((current_total - previous_total) / abs(previous_total)) * 100
+
+
+def _build_summary_change(*, current_total: int, previous_total: int, previous_has_coverage: bool) -> Mapping[str, object]:
+    if not previous_has_coverage:
+        return {
+            "direction": "neutral",
+            "change_label": "Yeni",
+            "pct_change": None,
+        }
+
+    if previous_total == 0:
+        if current_total == 0:
+            return {
+                "direction": "neutral",
+                "change_label": "0.0%",
+                "pct_change": 0.0,
+            }
+        return {
+            "direction": "up" if current_total > 0 else "down",
+            "change_label": "Onceki donem 0",
+            "pct_change": None,
+        }
+
+    pct_change = _metric_delta_pct(current_total, previous_total)
+    if pct_change > 0:
+        direction = "up"
+    elif pct_change < 0:
+        direction = "down"
+    else:
+        direction = "neutral"
+    return {
+        "direction": direction,
+        "change_label": f"{pct_change:.1f}%",
+        "pct_change": pct_change,
+    }
+
+
+def _compute_summary_cards(
+    conn,
+    *,
+    selected_platform: str,
+    start_date: date,
+    end_date: date,
+    brand_id: Optional[str],
+) -> List[Mapping[str, object]]:
+    current_start = start_date
+    current_end = end_date
+    period_length_days = (current_end - current_start).days + 1
+    previous_end = current_start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_length_days - 1)
+
+    brand_clause, brand_params = _brand_clause(brand_id)
+    platform_clause, platform_params = _platform_clause(selected_platform)
+
+    views_row = conn.execute(
+        f"""
+        WITH period_rows AS (
+            SELECT
+                snapshot_date,
+                CASE
+                    WHEN channel_type = 'youtube' THEN COALESCE(views, 0)
+                    ELSE COALESCE(reach, 0)
+                END AS metric_value
+            FROM {VIDEO_DAILY_DELTAS_TABLE}
+            WHERE snapshot_date BETWEEN ? AND ?
+              {brand_clause}
+              {platform_clause}
+        )
+        SELECT
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS current_total,
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS previous_total,
+            COUNT(*) FILTER (WHERE snapshot_date BETWEEN ? AND ?) AS previous_rows
+        FROM period_rows
+        """,
+        [
+            previous_start.isoformat(),
+            current_end.isoformat(),
+            *brand_params,
+            *platform_params,
+            current_start.isoformat(),
+            current_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+        ],
+    ).fetchone()
+    current_views = int(views_row[0] or 0)
+    previous_views = int(views_row[1] or 0)
+    previous_views_has_coverage = int(views_row[2] or 0) > 0
+
+    engagement_row = conn.execute(
+        f"""
+        WITH period_rows AS (
+            SELECT
+                snapshot_date,
+                COALESCE(likes, 0) + COALESCE(comments, 0) AS metric_value
+            FROM {VIDEO_DAILY_DELTAS_TABLE}
+            WHERE snapshot_date BETWEEN ? AND ?
+              {brand_clause}
+              {platform_clause}
+        )
+        SELECT
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS current_total,
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS previous_total,
+            COUNT(*) FILTER (WHERE snapshot_date BETWEEN ? AND ?) AS previous_rows
+        FROM period_rows
+        """,
+        [
+            previous_start.isoformat(),
+            current_end.isoformat(),
+            *brand_params,
+            *platform_params,
+            current_start.isoformat(),
+            current_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+        ],
+    ).fetchone()
+    current_engagement = int(engagement_row[0] or 0)
+    previous_engagement = int(engagement_row[1] or 0)
+    previous_engagement_has_coverage = int(engagement_row[2] or 0) > 0
+
+    subscribers_row = conn.execute(
+        f"""
+        WITH period_rows AS (
+            SELECT
+                snapshot_date,
+                COALESCE(daily_subscriber_delta, 0) AS metric_value
+            FROM {GROWTH_TABLE}
+            WHERE snapshot_date BETWEEN ? AND ?
+              {brand_clause}
+              {platform_clause}
+              AND daily_subscriber_delta IS NOT NULL
+        )
+        SELECT
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS current_total,
+            COALESCE(SUM(CASE WHEN snapshot_date BETWEEN ? AND ? THEN metric_value ELSE 0 END), 0) AS previous_total,
+            COUNT(*) FILTER (WHERE snapshot_date BETWEEN ? AND ?) AS previous_rows
+        FROM period_rows
+        """,
+        [
+            previous_start.isoformat(),
+            current_end.isoformat(),
+            *brand_params,
+            *platform_params,
+            current_start.isoformat(),
+            current_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+        ],
+    ).fetchone()
+    current_subscribers = int(subscribers_row[0] or 0)
+    previous_subscribers = int(subscribers_row[1] or 0)
+    previous_subscribers_has_coverage = int(subscribers_row[2] or 0) > 0
+
+    published_row = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) FILTER (WHERE published_at::date BETWEEN ? AND ?) AS current_total,
+            COUNT(*) FILTER (WHERE published_at::date BETWEEN ? AND ?) AS previous_total,
+            MIN(published_at::date) AS first_published_at
+        FROM main.shorts_generated_videos
+        WHERE publish_status = 'published'
+          AND published_at::date BETWEEN ? AND ?
+          {brand_clause}
+        """,
+        [
+            current_start.isoformat(),
+            current_end.isoformat(),
+            previous_start.isoformat(),
+            previous_end.isoformat(),
+            previous_start.isoformat(),
+            current_end.isoformat(),
+            *brand_params,
+        ],
+    ).fetchone()
+    current_published = int(published_row[0] or 0)
+    previous_published = int(published_row[1] or 0)
+    first_published_at = published_row[2]
+    previous_published_has_coverage = bool(first_published_at and first_published_at <= previous_end)
+
+    cards = [
+        {
+            "key": "views",
+            "title": "Goruntulenme",
+            "value": current_views,
+            "display_value": f"{current_views:,}",
+            **_build_summary_change(
+                current_total=current_views,
+                previous_total=previous_views,
+                previous_has_coverage=previous_views_has_coverage,
+            ),
+        },
+        {
+            "key": "subscribers",
+            "title": "Yeni abone",
+            "value": current_subscribers,
+            "display_value": f"{current_subscribers:,}",
+            **_build_summary_change(
+                current_total=current_subscribers,
+                previous_total=previous_subscribers,
+                previous_has_coverage=previous_subscribers_has_coverage,
+            ),
+        },
+        {
+            "key": "engagement",
+            "title": "Etkilesim",
+            "value": current_engagement,
+            "display_value": f"{current_engagement:,}",
+            **_build_summary_change(
+                current_total=current_engagement,
+                previous_total=previous_engagement,
+                previous_has_coverage=previous_engagement_has_coverage,
+            ),
+        },
+        {
+            "key": "published",
+            "title": "Yayinlanan",
+            "value": current_published,
+            "display_value": f"{current_published:,}",
+            **_build_summary_change(
+                current_total=current_published,
+                previous_total=previous_published,
+                previous_has_coverage=previous_published_has_coverage,
+            ),
+        },
+    ]
+    return cards
+
+
 def _relation_exists(conn, relation_name: str) -> bool:
     try:
         cursor = conn.execute("SELECT to_regclass(?)", [relation_name])
@@ -580,13 +817,12 @@ def dashboard_v2_page():
             if earliest_row and earliest_row[0] is not None
             else start_date
         )
-        platform_kpis = _compute_platform_kpis(
+        summary_cards = _compute_summary_cards(
             conn,
             selected_platform=selected_platform,
             start_date=start_date,
             end_date=end_date,
-            brand_clause=brand_clause,
-            brand_params=brand_params,
+            brand_id=brand_id,
         )
         top_videos = _fetch_top_videos(
             conn,
@@ -754,7 +990,7 @@ def dashboard_v2_page():
         channel_series=channel_series,
         daily_views_dates=daily_views_dates,
         daily_views_by_channel=daily_views_by_channel,
-        platform_kpis=platform_kpis,
+        summary_cards=summary_cards,
         top_videos=top_videos,
         audience_rows=audience_rows,
         summary_rows=summary_rows,
