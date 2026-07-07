@@ -89,11 +89,6 @@ def _fetch_period_summary_totals(
         SNAPSHOT_TABLE,
         brand_id=brand_id,
     )
-    comment_counts_by_platform = _fetch_daily_comment_counts(conn, start_date, end_date)
-    period_comment_totals: Dict[str, int] = {}
-    for platform, date_counts in comment_counts_by_platform.items():
-        period_comment_totals[platform] = sum(int(value or 0) for value in date_counts.values())
-
     metric_rows: List[Mapping[str, object]] = []
     try:
         metric_cursor = conn.execute(
@@ -107,6 +102,7 @@ def _fetch_period_summary_totals(
                         WHEN channel_type = 'instagram' THEN COALESCE(reach, views, 0)
                         ELSE COALESCE(views, 0)
                     END AS current_views,
+                    COALESCE(comments, 0) AS current_comments,
                     COALESCE(likes, 0) AS current_likes,
                     LAG(
                         CASE
@@ -114,6 +110,7 @@ def _fetch_period_summary_totals(
                             ELSE COALESCE(views, 0)
                         END
                     ) OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date) AS prev_views,
+                    LAG(COALESCE(comments, 0)) OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date) AS prev_comments,
                     LAG(COALESCE(likes, 0)) OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date) AS prev_likes
                 FROM {SNAPSHOT_TABLE}
                 WHERE snapshot_date <= ?
@@ -127,6 +124,12 @@ def _fetch_period_summary_totals(
                         ELSE GREATEST(COALESCE(current_views, 0) - COALESCE(prev_views, 0), 0)
                     END
                 ) AS views,
+                SUM(
+                    CASE
+                        WHEN prev_comments IS NULL THEN 0
+                        ELSE GREATEST(COALESCE(current_comments, 0) - COALESCE(prev_comments, 0), 0)
+                    END
+                ) AS comments,
                 SUM(
                     CASE
                         WHEN prev_likes IS NULL THEN 0
@@ -153,7 +156,7 @@ def _fetch_period_summary_totals(
         channel_key = (row.get("channel_type") or "").lower() or "all"
         totals_by_channel[channel_key] = {
             "views": int(row.get("views") or 0),
-            "comments": int(period_comment_totals.get(channel_key, 0) or 0),
+            "comments": int(row.get("comments") or 0),
             "likes": int(row.get("likes") or 0),
         }
 
@@ -162,7 +165,7 @@ def _fetch_period_summary_totals(
             option["value"],
             {
                 "views": 0,
-                "comments": int(period_comment_totals.get(option["value"], 0) or 0),
+                "comments": 0,
                 "likes": 0,
             },
         )
