@@ -1587,16 +1587,14 @@ def video_stats_page():
 
         selected_channel = channel_type if channel_type in chart_series else "all"
         chart_points = chart_series.get(selected_channel, chart_series["all"])
-        selected_totals = channel_totals.get(selected_channel) or channel_totals.get("all", {})
-        selected_prev_card_totals = card_prev_totals.get(selected_channel) or card_prev_totals.get("all", {})
         summary_cards = []
         for title, key, icon in [
             ("Total views", "views", "visibility"),
             ("Total comments", "comments", "comment"),
             ("Total likes", "likes", "thumb_up"),
         ]:
-            current_value = int(selected_totals.get(key) or 0)
-            previous_value = selected_prev_card_totals.get(key)
+            current_value = int(aggregated.get(key) or 0)
+            previous_value = aggregated_prev.get(key)
             change_meta = _build_change_meta(current_value, int(previous_value) if previous_value is not None else None)
             summary_cards.append(
                 {
@@ -1911,7 +1909,7 @@ def video_stats_page():
         selected_metric=selected_metric,
         channel_options=CHANNEL_OPTIONS,
         daily_totals=daily_totals,
-        range_totals=selected_totals,
+        range_totals=aggregated,
         summary_cards=summary_cards,
         top_videos=top_videos,
         top_view_video=top_videos[0] if top_videos else None,
