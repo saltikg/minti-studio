@@ -241,7 +241,6 @@
       <div>
         <div class="d-flex align-items-center gap-3 mb-1">
           <h1 class="h3 mb-0">Daily Video Statistics</h1>
-          <span class="badge text-bg-dark text-uppercase">DB: {{ db_backend or 'unknown' }}</span>
           <span class="stats-last-update">
             Last API update: {{ last_api_at|fmt_dt }}
           </span>
@@ -261,27 +260,6 @@
     {% endif %}
 
   {% set range_value = start_date.isoformat() ~ ' / ' ~ end_date.isoformat() %}
-
-  <div class="row g-3 mb-4 stats-grid">
-    {% for card in summary_cards %}
-      {% set arrow = '↑' if card.direction == 'up' else ('↓' if card.direction == 'down' else '→') %}
-      <div class="col-sm-6 col-md-4">
-        <div class="card metric-card shadow-sm vs-card">
-          <div class="card-body">
-            <p class="kpi-label vs-card-title mb-1">
-              <span class="material-icons me-1 align-middle" aria-hidden="true">{{ card.icon }}</span>
-              {{ card.title }}
-            </p>
-            <h2 class="h4 range-total" data-key="{{ card.key }}">{{ format_stat(card.display_value) }}</h2>
-            <div class="metric-change is-{{ card.direction }}" data-change-key="{{ card.key }}">
-              <span class="metric-change-arrow">{{ arrow }}</span>
-              <span class="metric-change-label">{{ card.change_label }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    {% endfor %}
-  </div>
 
   <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
     <div class="card-body">
@@ -316,6 +294,32 @@
         <input type="hidden" name="start" id="rangeStart" value="{{ start_date.isoformat() }}">
         <input type="hidden" name="end" id="rangeEnd" value="{{ end_date.isoformat() }}">
       </form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4 stats-grid">
+    {% for card in summary_cards %}
+      {% set arrow = '↑' if card.direction == 'up' else ('↓' if card.direction == 'down' else '→') %}
+      <div class="col-sm-6 col-md-4">
+        <div class="card metric-card shadow-sm vs-card">
+          <div class="card-body">
+            <p class="kpi-label vs-card-title mb-1">
+              <span class="material-icons me-1 align-middle" aria-hidden="true">{{ card.icon }}</span>
+              {{ card.title }}
+            </p>
+            <h2 class="h4 range-total" data-key="{{ card.key }}">{{ format_stat(card.display_value) }}</h2>
+            <div class="metric-change is-{{ card.direction }}" data-change-key="{{ card.key }}">
+              <span class="metric-change-arrow">{{ arrow }}</span>
+              <span class="metric-change-label">{{ card.change_label }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
+    <div class="card-body">
       <div class="chart-row mt-3">
         <div class="chart-card chart-area-card">
           <div class="chart-canvas-wrap">
@@ -813,60 +817,64 @@
           }
           return 0;
         };
+        const rawSubscriberDatasets = [
+          {
+            label: "YouTube",
+            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.youtube_net ?? null))),
+            borderColor: "#0ea5e9",
+            backgroundColor: "rgba(14, 165, 233, 0.2)",
+            tension: 0.28,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#0b1220",
+            pointBorderColor: "#0ea5e9",
+            pointBorderWidth: 2,
+          },
+          {
+            label: "Instagram",
+            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.instagram_net ?? null))),
+            borderColor: "#f59e0b",
+            backgroundColor: "rgba(245, 158, 11, 0.2)",
+            tension: 0.28,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#0b1220",
+            pointBorderColor: "#f59e0b",
+            pointBorderWidth: 2,
+          },
+          {
+            label: "Facebook",
+            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.facebook_net ?? null))),
+            borderColor: "#3b82f6",
+            backgroundColor: "rgba(59, 130, 246, 0.2)",
+            tension: 0.28,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#0b1220",
+            pointBorderColor: "#3b82f6",
+            pointBorderWidth: 2,
+          },
+          {
+            label: "TikTok",
+            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.tiktok_net ?? null))),
+            borderColor: "#ec4899",
+            backgroundColor: "rgba(236, 72, 153, 0.2)",
+            tension: 0.28,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#0b1220",
+            pointBorderColor: "#ec4899",
+            pointBorderWidth: 2,
+          },
+        ];
+        const subscriberDatasets = rawSubscriberDatasets.filter((dataset) =>
+          dataset.data.some((value) => value !== null && value !== 0)
+        );
         const subscriberChart = new Chart(subscriberCtx.getContext("2d"), {
           type: "line",
           data: {
             labels: subscriberLabels,
-            datasets: [
-              {
-                label: "YouTube",
-                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.youtube_net ?? null))),
-                borderColor: "#0ea5e9",
-                backgroundColor: "rgba(14, 165, 233, 0.2)",
-                tension: 0.28,
-                pointRadius: 5,
-                pointHoverRadius: 7,
-                pointBackgroundColor: "#0b1220",
-                pointBorderColor: "#0ea5e9",
-                pointBorderWidth: 2,
-              },
-              {
-                label: "Instagram",
-                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.instagram_net ?? null))),
-                borderColor: "#f59e0b",
-                backgroundColor: "rgba(245, 158, 11, 0.2)",
-                tension: 0.28,
-                pointRadius: 5,
-                pointHoverRadius: 7,
-                pointBackgroundColor: "#0b1220",
-                pointBorderColor: "#f59e0b",
-                pointBorderWidth: 2,
-              },
-              {
-                label: "Facebook",
-                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.facebook_net ?? null))),
-                borderColor: "#3b82f6",
-                backgroundColor: "rgba(59, 130, 246, 0.2)",
-                tension: 0.28,
-                pointRadius: 5,
-                pointHoverRadius: 7,
-                pointBackgroundColor: "#0b1220",
-                pointBorderColor: "#3b82f6",
-                pointBorderWidth: 2,
-              },
-              {
-                label: "TikTok",
-                data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.tiktok_net ?? null))),
-                borderColor: "#ec4899",
-                backgroundColor: "rgba(236, 72, 153, 0.2)",
-                tension: 0.28,
-                pointRadius: 5,
-                pointHoverRadius: 7,
-                pointBackgroundColor: "#0b1220",
-                pointBorderColor: "#ec4899",
-                pointBorderWidth: 2,
-              },
-            ],
+            datasets: subscriberDatasets,
           },
           options: {
             maintainAspectRatio: false,
@@ -1128,15 +1136,14 @@
       }
 
       const updateTotals = (channel) => {
-        const totals = channelTotals[channel] || channelTotals.all || {};
+        const cards = summaryCardsByChannel[channel] || summaryCardsByChannel.all || {};
         totalsEls.forEach((el) => {
           const key = el.dataset.key;
-          if (!key) {
+          if (!key || !cards[key]) {
             return;
           }
-          el.textContent = formatNumber(totals[key]);
+          el.textContent = formatNumber(cards[key].display_value);
         });
-        const cards = summaryCardsByChannel[channel] || summaryCardsByChannel.all || {};
         changeEls.forEach((el) => {
           const key = el.dataset.changeKey;
           if (!key || !cards[key]) {

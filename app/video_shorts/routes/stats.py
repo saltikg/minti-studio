@@ -77,6 +77,104 @@ def _build_change_meta(current_value: int, previous_value: Optional[int]) -> Map
     }
 
 
+def _fetch_period_summary_totals(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    brand_id: Optional[str] = None,
+) -> Dict[str, Dict[str, int]]:
+    snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
+        conn,
+        SNAPSHOT_TABLE,
+        brand_id=brand_id,
+    )
+    comment_counts_by_platform = _fetch_daily_comment_counts(conn, start_date, end_date)
+    period_comment_totals: Dict[str, int] = {}
+    for platform, date_counts in comment_counts_by_platform.items():
+        period_comment_totals[platform] = sum(int(value or 0) for value in date_counts.values())
+
+    metric_rows: List[Mapping[str, object]] = []
+    try:
+        metric_cursor = conn.execute(
+            f"""
+            WITH ordered AS (
+                SELECT
+                    channel_type,
+                    snapshot_date,
+                    video_id,
+                    CASE
+                        WHEN channel_type = 'instagram' THEN COALESCE(reach, views, 0)
+                        ELSE COALESCE(views, 0)
+                    END AS current_views,
+                    COALESCE(likes, 0) AS current_likes,
+                    LAG(
+                        CASE
+                            WHEN channel_type = 'instagram' THEN COALESCE(reach, views, 0)
+                            ELSE COALESCE(views, 0)
+                        END
+                    ) OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date) AS prev_views,
+                    LAG(COALESCE(likes, 0)) OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date) AS prev_likes
+                FROM {SNAPSHOT_TABLE}
+                WHERE snapshot_date <= ?
+                  {snapshot_brand_clause}
+            )
+            SELECT
+                channel_type,
+                SUM(
+                    CASE
+                        WHEN prev_views IS NULL THEN 0
+                        ELSE GREATEST(COALESCE(current_views, 0) - COALESCE(prev_views, 0), 0)
+                    END
+                ) AS views,
+                SUM(
+                    CASE
+                        WHEN prev_likes IS NULL THEN 0
+                        ELSE GREATEST(COALESCE(current_likes, 0) - COALESCE(prev_likes, 0), 0)
+                    END
+                ) AS likes
+            FROM ordered
+            WHERE snapshot_date BETWEEN ? AND ?
+            GROUP BY channel_type
+            """,
+            [
+                end_date.isoformat(),
+                *snapshot_brand_params,
+                start_date.isoformat(),
+                end_date.isoformat(),
+            ],
+        )
+        metric_rows = _rows_to_dict(metric_cursor)
+    except Exception:
+        metric_rows = []
+
+    totals_by_channel: Dict[str, Dict[str, int]] = {}
+    for row in metric_rows:
+        channel_key = (row.get("channel_type") or "").lower() or "all"
+        totals_by_channel[channel_key] = {
+            "views": int(row.get("views") or 0),
+            "comments": int(period_comment_totals.get(channel_key, 0) or 0),
+            "likes": int(row.get("likes") or 0),
+        }
+
+    for option in CHANNEL_OPTIONS:
+        totals_by_channel.setdefault(
+            option["value"],
+            {
+                "views": 0,
+                "comments": int(period_comment_totals.get(option["value"], 0) or 0),
+                "likes": 0,
+            },
+        )
+
+    totals_by_channel["all"] = {
+        "views": sum(entry["views"] for key, entry in totals_by_channel.items() if key != "all"),
+        "comments": sum(entry["comments"] for key, entry in totals_by_channel.items() if key != "all"),
+        "likes": sum(entry["likes"] for key, entry in totals_by_channel.items() if key != "all"),
+    }
+    return totals_by_channel
+
+
 def _brand_scope_clause(
     conn,
     table_name: str,
@@ -943,6 +1041,9 @@ def video_stats_page():
         start_date, end_date = end_date, start_date
     if (end_date - start_date).days > 60:
         start_date = end_date - timedelta(days=60)
+    period_days = (end_date - start_date).days + 1
+    previous_period_end = start_date - timedelta(days=1)
+    previous_period_start = previous_period_end - timedelta(days=period_days - 1)
 
     user_time_zone = _get_user_timezone()
     user_time_zone_label = _timezone_label(user_time_zone)
@@ -959,6 +1060,18 @@ def video_stats_page():
         subscriber_brand_clause, subscriber_brand_params = _brand_scope_clause(
             conn,
             SUBSCRIBER_SNAPSHOT_TABLE,
+            brand_id=active_brand_id,
+        )
+        period_totals_by_channel = _fetch_period_summary_totals(
+            conn,
+            start_date=start_date,
+            end_date=end_date,
+            brand_id=active_brand_id,
+        )
+        previous_period_totals_by_channel = _fetch_period_summary_totals(
+            conn,
+            start_date=previous_period_start,
+            end_date=previous_period_end,
             brand_id=active_brand_id,
         )
         youtube_channels_brand_clause, youtube_channels_brand_params = _brand_scope_clause(
@@ -1205,48 +1318,6 @@ def video_stats_page():
             "saved": sum(entry["saved"] for entry in prev_totals.values()),
         }
         prev_totals.setdefault("all", aggregated_prev)
-        card_prev_date = end_date - timedelta(days=1)
-        card_prev_params = [card_prev_date.isoformat(), *snapshot_brand_params]
-        card_prev_totals_cursor = conn.execute(
-            f"""
-            SELECT
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes,
-                SUM(COALESCE(impressions, 0)) AS impressions,
-                SUM(COALESCE(reach, 0)) AS reach,
-                SUM(COALESCE(saved, 0)) AS saved
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{snapshot_brand_clause}
-            GROUP BY channel_type
-            """,
-            card_prev_params,
-        )
-        card_prev_totals_list = _rows_to_dict(card_prev_totals_cursor)
-        card_prev_totals: Dict[str, Mapping[str, int]] = {}
-        for row in card_prev_totals_list:
-            key = row.get("channel_type") or "all"
-            effective_views = (row.get("reach") or 0) if key == "instagram" else (row.get("views") or 0)
-            card_prev_totals[key] = {
-                "views": effective_views,
-                "comments": row.get("comments") or 0,
-                "likes": row.get("likes") or 0,
-                "impressions": row.get("impressions") or 0,
-                "reach": row.get("reach") or 0,
-                "saved": row.get("saved") or 0,
-            }
-        card_prev_totals.setdefault(
-            "all",
-            {
-                "views": sum(entry["views"] for entry in card_prev_totals.values()),
-                "comments": sum(entry["comments"] for entry in card_prev_totals.values()),
-                "likes": sum(entry["likes"] for entry in card_prev_totals.values()),
-                "impressions": sum(entry["impressions"] for entry in card_prev_totals.values()),
-                "reach": sum(entry["reach"] for entry in card_prev_totals.values()),
-                "saved": sum(entry["saved"] for entry in card_prev_totals.values()),
-            },
-        )
         top_views_cursor = conn.execute(
             f"""
             WITH target AS (
@@ -1591,8 +1662,8 @@ def video_stats_page():
         ]
         summary_cards_by_channel: Dict[str, Dict[str, Mapping[str, object]]] = {}
         for channel_key in ["all", *[option["value"] for option in CHANNEL_OPTIONS if option["value"] != "all"]]:
-            current_totals = channel_totals.get(channel_key) or channel_totals.get("all", {})
-            previous_totals = card_prev_totals.get(channel_key) or card_prev_totals.get("all", {})
+            current_totals = period_totals_by_channel.get(channel_key) or period_totals_by_channel.get("all", {})
+            previous_totals = previous_period_totals_by_channel.get(channel_key) or previous_period_totals_by_channel.get("all", {})
             card_map: Dict[str, Mapping[str, object]] = {}
             for title, key, icon in summary_card_specs:
                 current_value = int(current_totals.get(key) or 0)
@@ -1915,7 +1986,7 @@ def video_stats_page():
         selected_metric=selected_metric,
         channel_options=CHANNEL_OPTIONS,
         daily_totals=daily_totals,
-        range_totals=aggregated,
+        range_totals=period_totals_by_channel.get(selected_channel) or period_totals_by_channel.get("all", {}),
         summary_cards=summary_cards,
         summary_cards_by_channel=summary_cards_by_channel,
         top_videos=top_videos,
