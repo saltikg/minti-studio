@@ -33,6 +33,7 @@ CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [
 ]
 
 DEFAULT_WINDOW_DAYS = 30
+VIDEO_LIST_PAGE_SIZE = 20
 
 
 def _rows_to_dict(cursor) -> List[Mapping[str, object]]:
@@ -44,6 +45,13 @@ def _channel_filter_clause(channel_type: Optional[str]) -> Tuple[str, List[objec
     if channel_type and channel_type != "all":
         return " AND channel_type = ?", [channel_type]
     return "", []
+
+
+def _parse_page_arg(name: str, default: int = 1) -> int:
+    try:
+        return max(int(request.args.get(name, str(default))), 1)
+    except (TypeError, ValueError):
+        return default
 
 
 def _brand_scope_clause(
@@ -765,12 +773,123 @@ def _fetch_top_videos_for_date(conn, target_date: date, channel_type: str, limit
     return rows
 
 
+def _fetch_stats_video_rows(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    brand_id: Optional[str],
+    page: int,
+    page_size: int = VIDEO_LIST_PAGE_SIZE,
+) -> Tuple[List[Mapping[str, object]], int]:
+    brand_clause = " AND gv.brand_id = ?" if brand_id else ""
+    brand_params = [brand_id] if brand_id else []
+    offset = (page - 1) * page_size
+
+    count_row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM analytics.dim_generated_videos gv
+        WHERE gv.publish_status = 'published'
+          AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
+          {brand_clause}
+        """,
+        [
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *brand_params,
+        ],
+    ).fetchone()
+    total_count = int((count_row or [0])[0] or 0)
+
+    rows = conn.execute(
+        f"""
+        WITH base AS (
+            SELECT
+                gv.generated_video_id,
+                gv.generated_title,
+                gv.youtube_video_id,
+                gv.instagram_media_id,
+                COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at) AS publish_at
+            FROM analytics.dim_generated_videos gv
+            WHERE gv.publish_status = 'published'
+              AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
+              {brand_clause}
+        ),
+        latest_youtube AS (
+            SELECT
+                s.video_id,
+                s.views,
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.video_id
+                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
+                ) AS rn
+            FROM main.shorts_video_daily_snapshots s
+            JOIN base b
+              ON b.youtube_video_id = s.video_id
+            WHERE s.channel_type = 'youtube'
+              {brand_clause}
+        ),
+        latest_instagram AS (
+            SELECT
+                s.video_id,
+                COALESCE(s.reach, s.views, 0) AS instagram_views,
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.video_id
+                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
+                ) AS rn
+            FROM main.shorts_video_daily_snapshots s
+            JOIN base b
+              ON b.instagram_media_id = s.video_id
+            WHERE s.channel_type = 'instagram'
+              {brand_clause}
+        )
+        SELECT
+            b.generated_title,
+            b.publish_at,
+            COALESCE(yt.views, 0) AS youtube_views,
+            COALESCE(ig.instagram_views, 0) AS instagram_views
+        FROM base b
+        LEFT JOIN latest_youtube yt
+          ON yt.video_id = b.youtube_video_id
+         AND yt.rn = 1
+        LEFT JOIN latest_instagram ig
+          ON ig.video_id = b.instagram_media_id
+         AND ig.rn = 1
+        ORDER BY b.publish_at DESC NULLS LAST, b.generated_video_id DESC
+        LIMIT ? OFFSET ?
+        """,
+        [
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *brand_params,
+            *brand_params,
+            *brand_params,
+            page_size,
+            offset,
+        ],
+    ).fetchall()
+
+    items: List[Mapping[str, object]] = []
+    for title, publish_at, youtube_views, instagram_views in rows:
+        items.append(
+            {
+                "video_title": (title or "").strip() or "Untitled video",
+                "publish_at": publish_at,
+                "youtube_views": int(youtube_views or 0),
+                "instagram_views": int(instagram_views or 0),
+            }
+        )
+    return items, total_count
+
+
 @video_shorts_bp.route("/stats", methods=["GET"])
 def video_stats_page():
     end_param = request.args.get("end")
     start_param = request.args.get("start")
     channel_type = request.args.get("channel", "all")
     selected_metric = request.args.get("metric", "views")
+    videos_page = _parse_page_arg("videos_page", 1)
 
     today = date.today()
     try:
@@ -1273,6 +1392,13 @@ def video_stats_page():
             reverse=True,
         )
         _populate_thumbnails(week_top_videos)
+        video_rows, video_rows_total = _fetch_stats_video_rows(
+            conn,
+            start_date=start_date,
+            end_date=end_date,
+            brand_id=active_brand_id,
+            page=videos_page,
+        )
 
         date_sequence = []
         current = start_date
@@ -1346,18 +1472,28 @@ def video_stats_page():
                 )
                 delta_entry = {
                     "date": date_key,
-                    "views_delta": None if prev_values["views"] is None else views - prev_values["views"],
-                    "comments_delta": None if prev_values["comments"] is None else comments - prev_values["comments"],
-                    "likes_delta": None if prev_values["likes"] is None else likes - prev_values["likes"],
+                    "views_delta": None,
+                    "comments_delta": comments,
+                    "likes_delta": None,
                 }
                 if key == "all":
+                    delta_entry["views_delta"] = (
+                        youtube_daily_views_map.get(date_key, 0)
+                        + analytics_daily_views.get("instagram", {}).get(date_key, 0)
+                    )
                     delta_entry["likes_delta"] = analytics_daily_likes_all.get(date_key, 0)
-                    delta_entry["youtube_daily_views"] = analytics_daily_views.get("youtube", {}).get(date_key, 0)
-                    delta_entry["instagram_daily_views"] = delta_entry["views_delta"] - delta_entry["youtube_daily_views"] if delta_entry["views_delta"] is not None else 0
+                    delta_entry["youtube_daily_views"] = youtube_daily_views_map.get(date_key, 0)
+                    delta_entry["instagram_daily_views"] = analytics_daily_views.get("instagram", {}).get(date_key, 0)
                 elif key == "youtube":
+                    delta_entry["views_delta"] = youtube_daily_views_map.get(date_key, 0)
                     delta_entry["likes_delta"] = youtube_daily_likes_map.get(date_key, 0)
                 elif key == "instagram":
+                    delta_entry["views_delta"] = analytics_daily_views.get(key, {}).get(date_key, 0)
                     delta_entry["likes_delta"] = analytics_daily_likes.get(key, {}).get(date_key, 0)
+                else:
+                    delta_entry["views_delta"] = None if prev_values["views"] is None else views - prev_values["views"]
+                    delta_entry["comments_delta"] = None if prev_values["comments"] is None else comments - prev_values["comments"]
+                    delta_entry["likes_delta"] = None if prev_values["likes"] is None else likes - prev_values["likes"]
                 chart_series_delta[key].append(delta_entry)
                 prev_values["views"] = views
                 prev_values["comments"] = comments
@@ -1653,6 +1789,21 @@ def video_stats_page():
     finally:
         conn.close()
 
+    video_rows_total_pages = max((video_rows_total + VIDEO_LIST_PAGE_SIZE - 1) // VIDEO_LIST_PAGE_SIZE, 1)
+    if videos_page > video_rows_total_pages:
+        videos_page = video_rows_total_pages
+        conn = get_db_readonly()
+        try:
+            video_rows, video_rows_total = _fetch_stats_video_rows(
+                conn,
+                start_date=start_date,
+                end_date=end_date,
+                brand_id=current_brand_id(),
+                page=videos_page,
+            )
+        finally:
+            conn.close()
+
     return render_template(
         "video_metrics.html",
         start_date=start_date,
@@ -1669,6 +1820,10 @@ def video_stats_page():
         channel_totals=channel_totals,
         selected_channel=selected_channel,
         top_table_rows=top_table_rows,
+        video_rows=video_rows,
+        videos_page=videos_page,
+        video_rows_total=video_rows_total,
+        video_rows_total_pages=video_rows_total_pages,
         today_top_videos=today_top_videos,
         week_top_videos=week_top_videos,
         user_time_zone_label=user_time_zone_label,
