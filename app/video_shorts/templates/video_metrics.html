@@ -16,14 +16,24 @@
       color: #021014 !important;
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
     }
-    #chartFilters {
-      overflow: visible;
+    .stats-filters-card,
+    .stats-filters-card.card,
+    .stats-filters-card .card-body,
+    #chartFilters,
+    #chartFilters.chart-toolbar,
+    #chartFilters.controls-bar,
+    .stats-filters-card .chart-control-range {
+      overflow: visible !important;
+    }
+    .stats-filters-card {
+      position: relative;
+      z-index: 20;
     }
     .preset-dropdown {
-      z-index: 2500;
+      z-index: 2600;
     }
     .stats-page .dropdown-menu {
-      z-index: 2500;
+      z-index: 2600;
     }
     .subscriber-legend {
       color: #cbd5f5;
@@ -267,7 +277,7 @@
 
   {% set range_value = start_date.isoformat() ~ ' / ' ~ end_date.isoformat() %}
 
-  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
+  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card stats-filters-card">
     <div class="card-body">
       <form id="chartFilters" method="get" class="chart-toolbar controls-bar flex-nowrap">
         <select class="form-select form-select-sm chart-control chart-control-metric vs-select" id="metricSelector" name="metric">
