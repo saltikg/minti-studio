@@ -81,6 +81,25 @@
       font-weight: 500;
       line-height: 1.35;
     }
+    .stats-video-list-thumb-col {
+      width: 32px;
+    }
+    .stats-video-list-thumb {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      object-fit: cover;
+      display: block;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .stats-video-list-thumb-placeholder {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: 1px dashed rgba(148, 163, 184, 0.22);
+      background: rgba(15, 23, 42, 0.54);
+    }
     .stats-video-list-date {
       color: rgba(226, 232, 240, 0.82);
       white-space: nowrap;
@@ -417,8 +436,10 @@
         <table class="table table-sm align-middle mb-0 vs-table stats-video-list-table">
           <thead>
             <tr>
+              <th></th>
               <th>Video Name</th>
               <th>Date</th>
+              <th class="text-end">Total Views</th>
               <th class="text-end">YT Views</th>
               <th class="text-end">Ins View</th>
             </tr>
@@ -426,6 +447,13 @@
           <tbody>
             {% for video in video_rows %}
               <tr>
+                <td class="stats-video-list-thumb-col">
+                  {% if video.thumbnail_url %}
+                    <img src="{{ video.thumbnail_url }}" alt="" class="stats-video-list-thumb">
+                  {% else %}
+                    <div class="stats-video-list-thumb-placeholder"></div>
+                  {% endif %}
+                </td>
                 <td class="stats-video-list-name">{{ video.video_title }}</td>
                 <td class="stats-video-list-date">
                   {% if video.publish_at %}
@@ -434,12 +462,13 @@
                     —
                   {% endif %}
                 </td>
+                <td class="stats-video-list-stat">{{ format_stat(video.total_views or 0) }}</td>
                 <td class="stats-video-list-stat">{{ format_stat(video.youtube_views or 0) }}</td>
                 <td class="stats-video-list-stat">{{ format_stat(video.instagram_views or 0) }}</td>
               </tr>
             {% else %}
               <tr>
-                <td colspan="4" class="text-center text-muted py-4">No videos found for this range.</td>
+                <td colspan="6" class="text-center text-muted py-4">No videos found for this range.</td>
               </tr>
             {% endfor %}
           </tbody>

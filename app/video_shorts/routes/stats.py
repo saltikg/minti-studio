@@ -848,6 +848,7 @@ def _fetch_stats_video_rows(
         SELECT
             b.generated_title,
             b.publish_at,
+            b.youtube_video_id,
             COALESCE(yt.views, 0) AS youtube_views,
             COALESCE(ig.instagram_views, 0) AS instagram_views
         FROM base b
@@ -872,13 +873,22 @@ def _fetch_stats_video_rows(
     ).fetchall()
 
     items: List[Mapping[str, object]] = []
-    for title, publish_at, youtube_views, instagram_views in rows:
+    for title, publish_at, youtube_video_id, youtube_views, instagram_views in rows:
+        youtube_video_id_text = str(youtube_video_id or "").strip()
+        youtube_views_value = int(youtube_views or 0)
+        instagram_views_value = int(instagram_views or 0)
         items.append(
             {
                 "video_title": (title or "").strip() or "Untitled video",
                 "publish_at": publish_at,
-                "youtube_views": int(youtube_views or 0),
-                "instagram_views": int(instagram_views or 0),
+                "youtube_views": youtube_views_value,
+                "instagram_views": instagram_views_value,
+                "total_views": youtube_views_value + instagram_views_value,
+                "thumbnail_url": (
+                    f"https://i.ytimg.com/vi/{youtube_video_id_text}/mqdefault.jpg"
+                    if youtube_video_id_text
+                    else None
+                ),
             }
         )
     return items, total_count
