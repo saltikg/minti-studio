@@ -1129,6 +1129,9 @@
         const totals = channelTotals[channel] || channelTotals.all || {};
         totalsEls.forEach((el) => {
           const key = el.dataset.key;
+          if (!key) {
+            return;
+          }
           el.textContent = formatNumber(totals[key]);
         });
       };
