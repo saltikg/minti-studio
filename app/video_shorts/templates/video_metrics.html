@@ -282,10 +282,10 @@
       <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2">
         <div class="d-flex align-items-center gap-2">
           <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
-          <span>YouTube subscriber verisi gelmiyor. Daily subscribers grafiği eksik olabilir.</span>
+          <span>YouTube subscriber data is missing. The daily subscribers chart may be incomplete.</span>
         </div>
         <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-sm btn-outline-dark">
-          Social Connect ile tekrar bağla
+          Reconnect via Social Connect
         </a>
       </div>
     {% endif %}
@@ -464,8 +464,8 @@
   <div class="card shadow-sm mb-4 vs-card details-toggle-card">
     <div class="card-body">
       <div class="details-toggle-copy">
-        <strong>Tümünü gör</strong>
-        Daily channel ve video detay tablolarını aç.
+        <strong>See all</strong>
+        Open the daily channel and video detail tables.
       </div>
       <button
         class="btn btn-outline-secondary vs-btn"
@@ -475,7 +475,7 @@
         aria-expanded="false"
         aria-controls="dashboardDetails"
       >
-        Tümünü gör
+        See all
       </button>
     </div>
   </div>
@@ -692,9 +692,9 @@
   <script>
     (function () {
       const metricInfo = {
-        views: { label: "İzlenme", color: "#0d6efd" },
-        comments: { label: "Yorum", color: "#6610f2" },
-        likes: { label: "Beğeni", color: "#198754" },
+        views: { label: "Views", color: "#0d6efd" },
+        comments: { label: "Comments", color: "#6610f2" },
+        likes: { label: "Likes", color: "#198754" },
       };
       const chartSeries = {{ chart_series|tojson }};
       const chartSeriesDelta = {{ chart_series_delta|tojson }};
