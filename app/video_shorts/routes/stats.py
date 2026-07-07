@@ -54,6 +54,29 @@ def _parse_page_arg(name: str, default: int = 1) -> int:
         return default
 
 
+def _build_change_meta(current_value: int, previous_value: Optional[int]) -> Mapping[str, object]:
+    if previous_value is None:
+        return {"direction": "neutral", "change_label": "—"}
+    if previous_value == 0:
+        if current_value == 0:
+            return {"direction": "neutral", "change_label": "0.0%"}
+        return {
+            "direction": "up" if current_value > 0 else "neutral",
+            "change_label": "Prev day 0",
+        }
+    pct_change = ((current_value - previous_value) / abs(previous_value)) * 100
+    if pct_change > 0:
+        direction = "up"
+    elif pct_change < 0:
+        direction = "down"
+    else:
+        direction = "neutral"
+    return {
+        "direction": direction,
+        "change_label": f"{pct_change:.1f}%",
+    }
+
+
 def _brand_scope_clause(
     conn,
     table_name: str,
@@ -1182,6 +1205,51 @@ def video_stats_page():
             "saved": sum(entry["saved"] for entry in prev_totals.values()),
         }
         prev_totals.setdefault("all", aggregated_prev)
+        card_prev_date = end_date - timedelta(days=1)
+        card_prev_params = [card_prev_date.isoformat()]
+        if channel_type and channel_type != "all":
+            card_prev_params.append(channel_type)
+        card_prev_params.extend(snapshot_brand_params)
+        card_prev_totals_cursor = conn.execute(
+            f"""
+            SELECT
+                channel_type,
+                SUM(COALESCE(views, 0)) AS views,
+                SUM(COALESCE(comments, 0)) AS comments,
+                SUM(COALESCE(likes, 0)) AS likes,
+                SUM(COALESCE(impressions, 0)) AS impressions,
+                SUM(COALESCE(reach, 0)) AS reach,
+                SUM(COALESCE(saved, 0)) AS saved
+            FROM {SNAPSHOT_TABLE}
+            WHERE snapshot_date = ?{filter_clause}
+            GROUP BY channel_type
+            """,
+            card_prev_params,
+        )
+        card_prev_totals_list = _rows_to_dict(card_prev_totals_cursor)
+        card_prev_totals: Dict[str, Mapping[str, int]] = {}
+        for row in card_prev_totals_list:
+            key = row.get("channel_type") or "all"
+            effective_views = (row.get("reach") or 0) if key == "instagram" else (row.get("views") or 0)
+            card_prev_totals[key] = {
+                "views": effective_views,
+                "comments": row.get("comments") or 0,
+                "likes": row.get("likes") or 0,
+                "impressions": row.get("impressions") or 0,
+                "reach": row.get("reach") or 0,
+                "saved": row.get("saved") or 0,
+            }
+        card_prev_totals.setdefault(
+            "all",
+            {
+                "views": sum(entry["views"] for entry in card_prev_totals.values()),
+                "comments": sum(entry["comments"] for entry in card_prev_totals.values()),
+                "likes": sum(entry["likes"] for entry in card_prev_totals.values()),
+                "impressions": sum(entry["impressions"] for entry in card_prev_totals.values()),
+                "reach": sum(entry["reach"] for entry in card_prev_totals.values()),
+                "saved": sum(entry["saved"] for entry in card_prev_totals.values()),
+            },
+        )
         top_views_cursor = conn.execute(
             f"""
             WITH target AS (
@@ -1519,6 +1587,26 @@ def video_stats_page():
 
         selected_channel = channel_type if channel_type in chart_series else "all"
         chart_points = chart_series.get(selected_channel, chart_series["all"])
+        selected_totals = channel_totals.get(selected_channel) or channel_totals.get("all", {})
+        selected_prev_card_totals = card_prev_totals.get(selected_channel) or card_prev_totals.get("all", {})
+        summary_cards = []
+        for title, key, icon in [
+            ("Total views", "views", "visibility"),
+            ("Total comments", "comments", "comment"),
+            ("Total likes", "likes", "thumb_up"),
+        ]:
+            current_value = int(selected_totals.get(key) or 0)
+            previous_value = selected_prev_card_totals.get(key)
+            change_meta = _build_change_meta(current_value, int(previous_value) if previous_value is not None else None)
+            summary_cards.append(
+                {
+                    "title": title,
+                    "icon": icon,
+                    "display_value": current_value,
+                    "change_label": change_meta["change_label"],
+                    "direction": change_meta["direction"],
+                }
+            )
 
         subscriber_totals: Dict[str, int] = {
             "youtube": 0,
@@ -1823,7 +1911,8 @@ def video_stats_page():
         selected_metric=selected_metric,
         channel_options=CHANNEL_OPTIONS,
         daily_totals=daily_totals,
-        range_totals=aggregated,
+        range_totals=selected_totals,
+        summary_cards=summary_cards,
         top_videos=top_videos,
         top_view_video=top_videos[0] if top_videos else None,
         top_comment_video=top_comment_video[0] if top_comment_video else None,

@@ -82,11 +82,11 @@
       line-height: 1.35;
     }
     .stats-video-list-thumb-col {
-      width: 32px;
+      width: 44px;
     }
     .stats-video-list-thumb {
-      width: 20px;
-      height: 20px;
+      width: 36px;
+      height: 36px;
       border-radius: 4px;
       object-fit: cover;
       display: block;
@@ -94,11 +94,25 @@
       background: rgba(15, 23, 42, 0.6);
     }
     .stats-video-list-thumb-placeholder {
-      width: 20px;
-      height: 20px;
+      width: 36px;
+      height: 36px;
       border-radius: 4px;
       border: 1px dashed rgba(148, 163, 184, 0.22);
       background: rgba(15, 23, 42, 0.54);
+    }
+    .metric-change {
+      margin-top: 0.45rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .metric-change.is-up {
+      color: #10b981;
+    }
+    .metric-change.is-down {
+      color: #ef4444;
+    }
+    .metric-change.is-neutral {
+      color: #94a3b8;
     }
     .stats-video-list-date {
       color: rgba(226, 232, 240, 0.82);
@@ -249,39 +263,24 @@
   {% set range_value = start_date.isoformat() ~ ' / ' ~ end_date.isoformat() %}
 
   <div class="row g-3 mb-4 stats-grid">
-    <div class="col-sm-6 col-md-4">
-      <div class="card metric-card shadow-sm vs-card">
-        <div class="card-body">
-          <p class="kpi-label vs-card-title mb-1">
-            <span class="material-icons me-1 align-middle" aria-hidden="true">visibility</span>
-            Total views
-          </p>
-          <h2 class="h4 range-total" data-key="views">{{ format_stat(range_totals.views) }}</h2>
+    {% for card in summary_cards %}
+      {% set arrow = '↑' if card.direction == 'up' else ('↓' if card.direction == 'down' else '→') %}
+      <div class="col-sm-6 col-md-4">
+        <div class="card metric-card shadow-sm vs-card">
+          <div class="card-body">
+            <p class="kpi-label vs-card-title mb-1">
+              <span class="material-icons me-1 align-middle" aria-hidden="true">{{ card.icon }}</span>
+              {{ card.title }}
+            </p>
+            <h2 class="h4 range-total">{{ format_stat(card.display_value) }}</h2>
+            <div class="metric-change is-{{ card.direction }}">
+              <span>{{ arrow }}</span>
+              <span>{{ card.change_label }}</span>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="col-sm-6 col-md-4">
-      <div class="card metric-card shadow-sm vs-card">
-        <div class="card-body">
-          <p class="kpi-label vs-card-title mb-1">
-            <span class="material-icons me-1 align-middle" aria-hidden="true">comment</span>
-            Total comments
-          </p>
-          <h2 class="h4 range-total" data-key="comments">{{ format_stat(range_totals.comments) }}</h2>
-        </div>
-      </div>
-    </div>
-    <div class="col-sm-6 col-md-4">
-      <div class="card metric-card shadow-sm vs-card">
-        <div class="card-body">
-          <p class="kpi-label vs-card-title mb-1">
-            <span class="material-icons me-1 align-middle" aria-hidden="true">thumb_up</span>
-            Total likes
-          </p>
-          <h2 class="h4 range-total" data-key="likes">{{ format_stat(range_totals.likes) }}</h2>
-        </div>
-      </div>
-    </div>
+    {% endfor %}
   </div>
 
   <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
