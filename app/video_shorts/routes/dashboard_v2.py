@@ -20,6 +20,7 @@ VIDEO_DAILY_DELTAS_TABLE = "analytics.fct_video_daily_deltas"
 DEFAULT_WINDOW_DAYS = 7
 MAX_TABLE_ROWS = 100
 MAX_TOP_VIDEOS = 8
+VIDEO_LIST_PAGE_SIZE = 20
 DASHBOARD_VIEW_PLATFORMS = ("youtube", "instagram", "facebook")
 PLATFORM_OPTIONS = [
     {"value": "all", "label": "All Platforms"},
@@ -121,6 +122,13 @@ def _normalize_filters() -> Tuple[str, date, date]:
     if selected_platform not in valid_values:
         selected_platform = "all"
     return selected_platform, start_date, end_date
+
+
+def _parse_page_arg(name: str, default: int = 1) -> int:
+    try:
+        return max(int(request.args.get(name, str(default))), 1)
+    except (TypeError, ValueError):
+        return default
 
 
 def _platform_clause(selected_platform: str) -> Tuple[str, List[object]]:
@@ -714,9 +722,121 @@ def _fetch_top_videos(
     return top_videos
 
 
+def _fetch_dashboard_video_rows(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    brand_id: Optional[str],
+    page: int,
+    page_size: int = VIDEO_LIST_PAGE_SIZE,
+) -> Tuple[List[Mapping[str, object]], int]:
+    brand_clause, brand_params = _brand_clause(brand_id)
+    offset = (page - 1) * page_size
+
+    count_row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM analytics.dim_generated_videos gv
+        WHERE gv.publish_status = 'published'
+          AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
+          {brand_clause}
+        """,
+        [
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *brand_params,
+        ],
+    ).fetchone()
+    total_count = int((count_row or [0])[0] or 0)
+
+    rows = conn.execute(
+        f"""
+        WITH base AS (
+            SELECT
+                gv.generated_video_id,
+                gv.generated_title,
+                gv.youtube_video_id,
+                gv.instagram_media_id,
+                COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at) AS publish_at
+            FROM analytics.dim_generated_videos gv
+            WHERE gv.publish_status = 'published'
+              AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
+              {brand_clause}
+        ),
+        latest_youtube AS (
+            SELECT
+                s.video_id,
+                s.views,
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.video_id
+                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
+                ) AS rn
+            FROM main.shorts_video_daily_snapshots s
+            JOIN base b
+              ON b.youtube_video_id = s.video_id
+            WHERE s.channel_type = 'youtube'
+              {brand_clause}
+        ),
+        latest_instagram AS (
+            SELECT
+                s.video_id,
+                COALESCE(s.reach, s.views, 0) AS instagram_views,
+                ROW_NUMBER() OVER (
+                    PARTITION BY s.video_id
+                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
+                ) AS rn
+            FROM main.shorts_video_daily_snapshots s
+            JOIN base b
+              ON b.instagram_media_id = s.video_id
+            WHERE s.channel_type = 'instagram'
+              {brand_clause}
+        )
+        SELECT
+            b.generated_title,
+            b.publish_at,
+            b.youtube_video_id,
+            COALESCE(yt.views, 0) AS youtube_views,
+            COALESCE(ig.instagram_views, 0) AS instagram_views
+        FROM base b
+        LEFT JOIN latest_youtube yt
+          ON yt.video_id = b.youtube_video_id
+         AND yt.rn = 1
+        LEFT JOIN latest_instagram ig
+          ON ig.video_id = b.instagram_media_id
+         AND ig.rn = 1
+        ORDER BY b.publish_at DESC NULLS LAST, b.generated_video_id DESC
+        LIMIT ? OFFSET ?
+        """,
+        [
+            start_date.isoformat(),
+            end_date.isoformat(),
+            *brand_params,
+            *brand_params,
+            *brand_params,
+            page_size,
+            offset,
+        ],
+    ).fetchall()
+
+    items: List[Mapping[str, object]] = []
+    for title, publish_at, youtube_video_id, youtube_views, instagram_views in rows:
+        items.append(
+            {
+                "video_title": (title or "").strip() or "Untitled video",
+                "publish_at": publish_at,
+                "youtube_video_id": str(youtube_video_id or "").strip(),
+                "youtube_views": int(youtube_views or 0),
+                "instagram_views": int(instagram_views or 0),
+            }
+        )
+    return items, total_count
+
+
 @video_shorts_bp.route("/dashboard-v2", methods=["GET"])
 def dashboard_v2_page():
     selected_platform, start_date, end_date = _normalize_filters()
+    videos_page = _parse_page_arg("videos_page", 1)
     brand_id = current_brand_id()
 
     conn = get_db_readonly()
@@ -751,35 +871,51 @@ def dashboard_v2_page():
         chart_rows = _rows_to_dict(chart_cursor)
 
         daily_views_platform_clause, daily_views_platform_params = _platform_clause(selected_platform)
+        prev_day = start_date - timedelta(days=1)
         daily_views_cursor = conn.execute(
             f"""
+            WITH raw_totals AS (
+                SELECT
+                    snapshot_date,
+                    channel_type,
+                    SUM(
+                        CASE
+                            WHEN channel_type = 'instagram' THEN COALESCE(reach, views, 0)
+                            ELSE COALESCE(views, 0)
+                        END
+                    ) AS total_views
+                FROM main.shorts_video_daily_snapshots
+                WHERE snapshot_date BETWEEN ? AND ?
+                  {brand_clause}
+                  {daily_views_platform_clause}
+                GROUP BY snapshot_date, channel_type
+            ),
+            seeded AS (
+                SELECT
+                    snapshot_date,
+                    channel_type,
+                    total_views,
+                    LAG(total_views) OVER (
+                        PARTITION BY channel_type
+                        ORDER BY snapshot_date
+                    ) AS prev_total_views
+                FROM raw_totals
+            )
             SELECT
                 snapshot_date,
                 channel_type,
-                SUM(
-                    CASE
-                        WHEN channel_type = 'youtube' THEN views
-                        ELSE reach
-                    END
-                ) AS daily_views
-            FROM {VIDEO_DAILY_DELTAS_TABLE}
+                GREATEST(total_views - COALESCE(prev_total_views, total_views), 0) AS daily_views
+            FROM seeded
             WHERE snapshot_date BETWEEN ? AND ?
-              {brand_clause}
-              {daily_views_platform_clause}
-            GROUP BY snapshot_date, channel_type
-            HAVING SUM(
-                CASE
-                    WHEN channel_type = 'youtube' THEN views
-                    ELSE reach
-                END
-            ) IS NOT NULL
             ORDER BY snapshot_date ASC, channel_type ASC
             """,
             [
-                start_date.isoformat(),
+                prev_day.isoformat(),
                 end_date.isoformat(),
                 *brand_params,
                 *daily_views_platform_params,
+                start_date.isoformat(),
+                end_date.isoformat(),
             ],
         )
         daily_channel_views_rows = _rows_to_dict(daily_views_cursor)
@@ -829,6 +965,13 @@ def dashboard_v2_page():
             start_date=start_date,
             end_date=end_date,
             brand_id=brand_id,
+        )
+        video_rows, video_rows_total = _fetch_dashboard_video_rows(
+            conn,
+            start_date=start_date,
+            end_date=end_date,
+            brand_id=brand_id,
+            page=videos_page,
         )
     finally:
         conn.close()
@@ -929,6 +1072,21 @@ def dashboard_v2_page():
             }
         )
 
+    video_rows_total_pages = max((video_rows_total + VIDEO_LIST_PAGE_SIZE - 1) // VIDEO_LIST_PAGE_SIZE, 1)
+    if videos_page > video_rows_total_pages:
+        videos_page = video_rows_total_pages
+        conn = get_db_readonly()
+        try:
+            video_rows, video_rows_total = _fetch_dashboard_video_rows(
+                conn,
+                start_date=start_date,
+                end_date=end_date,
+                brand_id=brand_id,
+                page=videos_page,
+            )
+        finally:
+            conn.close()
+
     audience_map = {}
     for row in chart_rows:
         snapshot_value = row.get("snapshot_date")
@@ -992,6 +1150,10 @@ def dashboard_v2_page():
         daily_views_by_channel=daily_views_by_channel,
         summary_cards=summary_cards,
         top_videos=top_videos,
+        video_rows=video_rows,
+        videos_page=videos_page,
+        video_rows_total=video_rows_total,
+        video_rows_total_pages=video_rows_total_pages,
         audience_rows=audience_rows,
         summary_rows=summary_rows,
         chart_row_count=len(chart_rows),

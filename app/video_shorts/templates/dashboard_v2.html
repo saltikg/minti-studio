@@ -389,6 +389,63 @@
       font-size: 0.92rem;
       white-space: nowrap;
     }
+    .dashboard-v2-video-list-card .card-body {
+      padding-top: 1rem;
+    }
+    .dashboard-v2-video-list-table th,
+    .dashboard-v2-video-list-table td {
+      vertical-align: middle;
+      border-color: rgba(148, 163, 184, 0.12);
+    }
+    .dashboard-v2-video-list-table th {
+      color: rgba(226, 232, 240, 0.74);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .dashboard-v2-video-list-name {
+      color: #f8fafc;
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    .dashboard-v2-video-list-date {
+      color: rgba(226, 232, 240, 0.82);
+      white-space: nowrap;
+    }
+    .dashboard-v2-video-list-stat {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .dashboard-v2-video-list-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .dashboard-v2-video-list-pagination-meta {
+      color: rgba(226, 232, 240, 0.7);
+      font-size: 0.85rem;
+    }
+    .dashboard-v2-video-list-pagination .pagination {
+      margin-bottom: 0;
+    }
+    .dashboard-v2-video-list-pagination .page-link {
+      background: rgba(15, 23, 42, 0.72);
+      border-color: rgba(148, 163, 184, 0.18);
+      color: #e2e8f0;
+    }
+    .dashboard-v2-video-list-pagination .page-item.active .page-link {
+      background: rgba(45, 212, 191, 0.18);
+      border-color: rgba(45, 212, 191, 0.4);
+      color: #f8fafc;
+    }
+    .dashboard-v2-video-list-pagination .page-item.disabled .page-link {
+      background: rgba(15, 23, 42, 0.42);
+      color: rgba(148, 163, 184, 0.65);
+    }
     @media (max-width: 1199.98px) {
       .dashboard-v2-page {
         padding-top: 88px;
@@ -618,6 +675,76 @@
             </table>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm vs-card dashboard-v2-video-list-card mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+          <div>
+            <p class="vs-card-title mb-1">Video Performance</p>
+            <small class="text-secondary">Video Name / Date / YT Views / Ins View</small>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0 vs-table dashboard-v2-video-list-table">
+            <thead>
+              <tr>
+                <th>Video Name</th>
+                <th>Date</th>
+                <th class="text-end">YT Views</th>
+                <th class="text-end">Ins View</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for video in video_rows %}
+                <tr>
+                  <td class="dashboard-v2-video-list-name">{{ video.video_title }}</td>
+                  <td class="dashboard-v2-video-list-date">
+                    {% if video.publish_at %}
+                      {{ video.publish_at.strftime('%b %-d, %Y') }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="dashboard-v2-video-list-stat">{{ "{:,}".format(video.youtube_views or 0) }}</td>
+                  <td class="dashboard-v2-video-list-stat">{{ "{:,}".format(video.instagram_views or 0) }}</td>
+                </tr>
+              {% else %}
+                <tr>
+                  <td colspan="4" class="text-center text-secondary py-4">No videos found for this range.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if video_rows_total_pages > 1 %}
+          <div class="dashboard-v2-video-list-pagination">
+            <div class="dashboard-v2-video-list-pagination-meta">
+              {{ video_rows_total }} videos total · Page {{ videos_page }} / {{ video_rows_total_pages }}
+            </div>
+            <nav aria-label="Video list pagination">
+              <ul class="pagination pagination-sm">
+                <li class="page-item {% if videos_page <= 1 %}disabled{% endif %}">
+                  <a class="page-link" href="{{ url_for('video_shorts_bp.dashboard_v2_page', channel_type=selected_platform, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page - 1) }}">Previous</a>
+                </li>
+                {% for page_num in range(1, video_rows_total_pages + 1) %}
+                  {% if page_num == 1 or page_num == video_rows_total_pages or (page_num >= videos_page - 1 and page_num <= videos_page + 1) %}
+                    <li class="page-item {% if page_num == videos_page %}active{% endif %}">
+                      <a class="page-link" href="{{ url_for('video_shorts_bp.dashboard_v2_page', channel_type=selected_platform, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=page_num) }}">{{ page_num }}</a>
+                    </li>
+                  {% elif page_num == videos_page - 2 or page_num == videos_page + 2 %}
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                  {% endif %}
+                {% endfor %}
+                <li class="page-item {% if videos_page >= video_rows_total_pages %}disabled{% endif %}">
+                  <a class="page-link" href="{{ url_for('video_shorts_bp.dashboard_v2_page', channel_type=selected_platform, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page + 1) }}">Next</a>
+                </li>
+              </ul>
+            </nav>
+          </div>
+        {% endif %}
       </div>
     </div>
 
