@@ -1206,10 +1206,7 @@ def video_stats_page():
         }
         prev_totals.setdefault("all", aggregated_prev)
         card_prev_date = end_date - timedelta(days=1)
-        card_prev_params = [card_prev_date.isoformat()]
-        if channel_type and channel_type != "all":
-            card_prev_params.append(channel_type)
-        card_prev_params.extend(snapshot_brand_params)
+        card_prev_params = [card_prev_date.isoformat(), *snapshot_brand_params]
         card_prev_totals_cursor = conn.execute(
             f"""
             SELECT
@@ -1221,7 +1218,7 @@ def video_stats_page():
                 SUM(COALESCE(reach, 0)) AS reach,
                 SUM(COALESCE(saved, 0)) AS saved
             FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{filter_clause}
+            WHERE snapshot_date = ?{snapshot_brand_clause}
             GROUP BY channel_type
             """,
             card_prev_params,
@@ -1587,24 +1584,33 @@ def video_stats_page():
 
         selected_channel = channel_type if channel_type in chart_series else "all"
         chart_points = chart_series.get(selected_channel, chart_series["all"])
-        summary_cards = []
-        for title, key, icon in [
+        summary_card_specs = [
             ("Total views", "views", "visibility"),
             ("Total comments", "comments", "comment"),
             ("Total likes", "likes", "thumb_up"),
-        ]:
-            current_value = int(aggregated.get(key) or 0)
-            previous_value = aggregated_prev.get(key)
-            change_meta = _build_change_meta(current_value, int(previous_value) if previous_value is not None else None)
-            summary_cards.append(
-                {
+        ]
+        summary_cards_by_channel: Dict[str, Dict[str, Mapping[str, object]]] = {}
+        for channel_key in ["all", *[option["value"] for option in CHANNEL_OPTIONS if option["value"] != "all"]]:
+            current_totals = channel_totals.get(channel_key) or channel_totals.get("all", {})
+            previous_totals = card_prev_totals.get(channel_key) or card_prev_totals.get("all", {})
+            card_map: Dict[str, Mapping[str, object]] = {}
+            for title, key, icon in summary_card_specs:
+                current_value = int(current_totals.get(key) or 0)
+                previous_value = previous_totals.get(key)
+                change_meta = _build_change_meta(current_value, int(previous_value) if previous_value is not None else None)
+                card_map[key] = {
+                    "key": key,
                     "title": title,
                     "icon": icon,
                     "display_value": current_value,
                     "change_label": change_meta["change_label"],
                     "direction": change_meta["direction"],
                 }
-            )
+            summary_cards_by_channel[channel_key] = card_map
+        summary_cards = [
+            summary_cards_by_channel.get(selected_channel, summary_cards_by_channel["all"])[key]
+            for _title, key, _icon in summary_card_specs
+        ]
 
         subscriber_totals: Dict[str, int] = {
             "youtube": 0,
@@ -1911,6 +1917,7 @@ def video_stats_page():
         daily_totals=daily_totals,
         range_totals=aggregated,
         summary_cards=summary_cards,
+        summary_cards_by_channel=summary_cards_by_channel,
         top_videos=top_videos,
         top_view_video=top_videos[0] if top_videos else None,
         top_comment_video=top_comment_video[0] if top_comment_video else None,

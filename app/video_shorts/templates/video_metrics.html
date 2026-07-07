@@ -272,10 +272,10 @@
               <span class="material-icons me-1 align-middle" aria-hidden="true">{{ card.icon }}</span>
               {{ card.title }}
             </p>
-            <h2 class="h4 range-total">{{ format_stat(card.display_value) }}</h2>
-            <div class="metric-change is-{{ card.direction }}">
-              <span>{{ arrow }}</span>
-              <span>{{ card.change_label }}</span>
+            <h2 class="h4 range-total" data-key="{{ card.key }}">{{ format_stat(card.display_value) }}</h2>
+            <div class="metric-change is-{{ card.direction }}" data-change-key="{{ card.key }}">
+              <span class="metric-change-arrow">{{ arrow }}</span>
+              <span class="metric-change-label">{{ card.change_label }}</span>
             </div>
           </div>
         </div>
@@ -679,6 +679,7 @@
       const chartSeriesDelta = {{ chart_series_delta|tojson }};
       const subscriberSeries = {{ subscriber_series|tojson }};
       const channelTotals = {{ channel_totals|tojson }};
+      const summaryCardsByChannel = {{ summary_cards_by_channel|tojson }};
       const defaultChannel = "{{ selected_channel }}";
       const defaultMetric = "{{ selected_metric }}";
       const metricSelect = document.getElementById("metricSelector");
@@ -686,6 +687,7 @@
       const ctx = document.getElementById("dailyMetricChart");
       const subscriberCtx = document.getElementById("dailySubscriberChart");
       const totalsEls = document.querySelectorAll(".range-total");
+      const changeEls = document.querySelectorAll(".metric-change");
       const topVideosTable = document.getElementById("topVideosTable");
       const topVideosTableData = {{ top_table_rows|tojson }};
       const insightsListEl = document.getElementById("insightsList");
@@ -1133,6 +1135,24 @@
             return;
           }
           el.textContent = formatNumber(totals[key]);
+        });
+        const cards = summaryCardsByChannel[channel] || summaryCardsByChannel.all || {};
+        changeEls.forEach((el) => {
+          const key = el.dataset.changeKey;
+          if (!key || !cards[key]) {
+            return;
+          }
+          const card = cards[key];
+          el.classList.remove("is-up", "is-down", "is-neutral");
+          el.classList.add(`is-${card.direction}`);
+          const arrowEl = el.querySelector(".metric-change-arrow");
+          const labelEl = el.querySelector(".metric-change-label");
+          if (arrowEl) {
+            arrowEl.textContent = card.direction === "up" ? "↑" : (card.direction === "down" ? "↓" : "→");
+          }
+          if (labelEl) {
+            labelEl.textContent = card.change_label;
+          }
         });
       };
       const refreshChart = () => {
