@@ -168,6 +168,21 @@
       background: rgba(15, 23, 42, 0.42);
       color: rgba(148, 163, 184, 0.65);
     }
+    .details-toggle-card .card-body {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .details-toggle-copy {
+      color: rgba(226, 232, 240, 0.76);
+    }
+    .details-toggle-copy strong {
+      display: block;
+      color: #f8fafc;
+      margin-bottom: 0.2rem;
+    }
   </style>
 {% endblock %}
 
@@ -446,6 +461,26 @@
     </div>
   </div>
 
+  <div class="card shadow-sm mb-4 vs-card details-toggle-card">
+    <div class="card-body">
+      <div class="details-toggle-copy">
+        <strong>Tümünü gör</strong>
+        Daily channel ve video detay tablolarını aç.
+      </div>
+      <button
+        class="btn btn-outline-secondary vs-btn"
+        type="button"
+        data-bs-toggle="collapse"
+        data-bs-target="#dashboardDetails"
+        aria-expanded="false"
+        aria-controls="dashboardDetails"
+      >
+        Tümünü gör
+      </button>
+    </div>
+  </div>
+
+  <div class="collapse" id="dashboardDetails">
   <div class="card shadow-sm mb-4 vs-card stats-video-list-card">
     <div class="card-header">
       Video Performance
@@ -644,41 +679,7 @@
       </div>
     </div>
   </div>
-
-      <div class="card shadow-sm mb-4 vs-card">
-    <div class="card-header">
-      Video ranking
-    </div>
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle vs-table">
-        <thead>
-          <tr>
-            <th scope="col">Video</th>
-            <th scope="col">Platform</th>
-            <th scope="col">Views Δ</th>
-            <th scope="col">Comments Δ</th>
-            <th scope="col">Likes Δ</th>
-          </tr>
-        </thead>
-        <tbody id="topVideosTable">
-          {% if top_videos %}
-            {% for row in top_videos %}
-              <tr>
-                <td>{{ row.video_title or row.video_id }}</td>
-                <td>{{ row.channel_type }}</td>
-                <td>{{ render_delta_badge(row.views_delta) }}</td>
-                <td>{{ render_delta_badge(row.comments_delta) }}</td>
-                <td>{{ render_delta_badge(row.likes_delta) }}</td>
-              </tr>
-            {% endfor %}
-          {% else %}
-            <tr>
-              <td colspan="5" class="text-center text-muted py-4">No videos found for this range.</td>
-            </tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
+  </div>
   </div>
 </div>
 {% endblock %}
@@ -708,8 +709,6 @@
       const subscriberCtx = document.getElementById("dailySubscriberChart");
       const totalsEls = document.querySelectorAll(".range-total");
       const changeEls = document.querySelectorAll(".metric-change");
-      const topVideosTable = document.getElementById("topVideosTable");
-      const topVideosTableData = {{ top_table_rows|tojson }};
       const insightsListEl = document.getElementById("insightsList");
       const insightsTitleEl = document.getElementById("insightsTitle");
       const insightsEmptyEl = document.getElementById("insightsEmpty");
@@ -1033,37 +1032,6 @@
         return `<span class="vs-badge ${variant}">${label}</span>`;
       };
 
-      const renderTopVideosTable = () => {
-        if (!topVideosTable) {
-          return;
-        }
-        const channel = channelSelect.value || "all";
-        const metric = metricSelect.value || "views";
-        const rows = (topVideosTableData || [])
-          .filter((row) => channel === "all" || row.channel_type === channel)
-          .sort((a, b) => (b[metric] || 0) - (a[metric] || 0))
-          .slice(0, 10);
-        if (!rows.length) {
-          topVideosTable.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No videos found for this range.</td></tr>`;
-          return;
-        }
-        topVideosTable.innerHTML = rows
-          .map((row) => {
-            const title = row.video_title || row.video_id || "—";
-            const platform = row.channel_name || row.channel_type || "—";
-            return `
-            <tr>
-              <td>${escapeHtml(title)}</td>
-              <td>${escapeHtml(platform)}</td>
-              <td>${createDeltaBadge(row.views_delta)}</td>
-              <td>${createDeltaBadge(row.comments_delta)}</td>
-              <td>${createDeltaBadge(row.likes_delta)}</td>
-            </tr>
-            `;
-          })
-          .join("");
-      };
-
       const createDeltaBadge = (value) => {
         const numeric = Number(value);
         const badge = (label, variant) => {
@@ -1188,7 +1156,6 @@
         chart.options.plugins.legend.display = metric === "views" && channel === "all";
         chart.update();
         updateTotals(channel);
-        renderTopVideosTable();
         resetInsights();
       };
 
@@ -1276,7 +1243,6 @@
       metricSelect.addEventListener("change", refreshChart);
       channelSelect.addEventListener("change", refreshChart);
       updateTotals(defaultChannel);
-      renderTopVideosTable();
       resetInsights();
     })();
   </script>
