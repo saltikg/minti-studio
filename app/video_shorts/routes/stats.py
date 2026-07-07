@@ -782,7 +782,8 @@ def _fetch_stats_video_rows(
     page: int,
     page_size: int = VIDEO_LIST_PAGE_SIZE,
 ) -> Tuple[List[Mapping[str, object]], int]:
-    brand_clause = " AND gv.brand_id = ?" if brand_id else ""
+    base_brand_clause = " AND gv.brand_id = ?" if brand_id else ""
+    snapshot_brand_clause = " AND s.brand_id = ?" if brand_id else ""
     brand_params = [brand_id] if brand_id else []
     offset = (page - 1) * page_size
 
@@ -792,7 +793,7 @@ def _fetch_stats_video_rows(
         FROM analytics.dim_generated_videos gv
         WHERE gv.publish_status = 'published'
           AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
-          {brand_clause}
+          {base_brand_clause}
         """,
         [
             start_date.isoformat(),
@@ -814,7 +815,7 @@ def _fetch_stats_video_rows(
             FROM analytics.dim_generated_videos gv
             WHERE gv.publish_status = 'published'
               AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
-              {brand_clause}
+              {base_brand_clause}
         ),
         latest_youtube AS (
             SELECT
@@ -828,7 +829,7 @@ def _fetch_stats_video_rows(
             JOIN base b
               ON b.youtube_video_id = s.video_id
             WHERE s.channel_type = 'youtube'
-              {brand_clause}
+              {snapshot_brand_clause}
         ),
         latest_instagram AS (
             SELECT
@@ -842,7 +843,7 @@ def _fetch_stats_video_rows(
             JOIN base b
               ON b.instagram_media_id = s.video_id
             WHERE s.channel_type = 'instagram'
-              {brand_clause}
+              {snapshot_brand_clause}
         )
         SELECT
             b.generated_title,
