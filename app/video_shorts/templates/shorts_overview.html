@@ -1667,7 +1667,7 @@
 
       function handleInstagramCommentAction(commentId, action, method, payload, onSuccess) {
         if (!commentId || !currentInstagramQueueId) {
-          return;
+          return Promise.resolve();
         }
         const url = action
           ? `/video_shorts/instagram/media/${currentInstagramQueueId}/comments/${commentId}/${action}`
@@ -1682,7 +1682,7 @@
         if (payload) {
           request.body = JSON.stringify(payload);
         }
-        fetch(url, request)
+        return fetch(url, request)
           .then((resp) => {
             if (!resp.ok) {
               return resp.text().then((text) => {
@@ -1704,14 +1704,15 @@
           })
           .catch((err) => {
             setInstagramStatus(err.message || "Action failed", true);
+            throw err;
           });
       }
 
       function handleInstagramReplyAction(commentId, text, parentLi, formEl) {
         if (!commentId || !text) {
-          return;
+          return Promise.resolve();
         }
-        handleInstagramCommentAction(
+        return handleInstagramCommentAction(
           commentId,
           "reply",
           "POST",
@@ -1762,7 +1763,22 @@
             return;
           }
           setInstagramStatus("");
-          handleInstagramReplyAction(commentId, replyText, li, form);
+          const originalLabel = sendBtn.textContent;
+          sendBtn.disabled = true;
+          cancelBtn.disabled = true;
+          textarea.disabled = true;
+          sendBtn.textContent = "Sending...";
+          handleInstagramReplyAction(commentId, replyText, li, form)
+            .catch(() => {})
+            .finally(() => {
+              if (!document.body.contains(sendBtn)) {
+                return;
+              }
+              sendBtn.disabled = false;
+              cancelBtn.disabled = false;
+              textarea.disabled = false;
+              sendBtn.textContent = originalLabel;
+            });
         });
         const cancelBtn = document.createElement("button");
         cancelBtn.type = "button";
