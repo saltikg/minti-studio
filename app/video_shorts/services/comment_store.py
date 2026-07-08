@@ -821,3 +821,83 @@ def fetch_instagram_comments_with_statuses(
         return results
     finally:
         conn.close()
+
+
+def fetch_instagram_comments_for_queue(
+    queue_id: str,
+    *,
+    limit: int = 200,
+) -> List[Dict[str, object]]:
+    if not queue_id:
+        return []
+    conn = get_db_readonly()
+    try:
+        ensure_comment_cache_schema(conn)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    comment_id,
+                    parent_id,
+                    thread_id,
+                    author,
+                    text,
+                    published_at,
+                    like_count,
+                    moderation_flagged,
+                    moderation_reason,
+                    moderation_checked_at,
+                    updated_at,
+                    LOWER(COALESCE(status, '')) AS status
+                FROM social_comment_cache
+                WHERE platform = 'instagram'
+                  AND queue_id = ?
+                ORDER BY published_at DESC NULLS LAST, updated_at DESC
+                LIMIT ?
+                """,
+                [queue_id, limit],
+            ).fetchall()
+        except Exception as exc:
+            if "social_comment_cache" in str(exc).lower():
+                return []
+            raise
+        results: List[Dict[str, object]] = []
+        for row in rows:
+            (
+                comment_id,
+                parent_id,
+                thread_id,
+                author,
+                text,
+                published_at,
+                like_count,
+                moderation_flagged,
+                moderation_reason,
+                moderation_checked_at,
+                updated_at,
+                status,
+            ) = row
+            results.append(
+                {
+                    "id": comment_id,
+                    "comment_id": comment_id,
+                    "parent_id": parent_id,
+                    "thread_id": thread_id,
+                    "author": author,
+                    "username": author,
+                    "text": text,
+                    "timestamp": published_at,
+                    "like_count": like_count,
+                    "status": status or "published",
+                    "is_reply": parent_id is not None,
+                    "moderation_flagged": moderation_flagged,
+                    "moderation_reason": moderation_reason,
+                    "moderation_checked_at": moderation_checked_at,
+                    "updated_at": updated_at,
+                    "is_deleted": status == "deleted",
+                    "is_hidden": status == "hidden",
+                }
+            )
+        return results
+    finally:
+        conn.close()

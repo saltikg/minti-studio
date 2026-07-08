@@ -38,6 +38,7 @@ from app.video_shorts.services.comment_store import (
     fetch_comments_missing_moderation,
     fetch_comment_records_for_video,
     fetch_comment_owner,
+    fetch_instagram_comments_for_queue,
     fetch_instagram_comments_with_statuses,
     update_comment_moderation,
     update_comment_status,
@@ -923,6 +924,7 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
         "instagram_username": entry.get("instagram_username"),
     }
     comments = (cache.get("comments") or []) if cache else []
+    authoritative_comments = fetch_instagram_comments_for_queue(str(entry.get("id") or ""), limit=250)
 
     def normalize_comment_authors(items: List[Dict[str, Any]]) -> None:
         for item in items:
@@ -934,6 +936,100 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
             normalize_comment_authors(replies)
 
     normalize_comment_authors(comments)
+
+    if authoritative_comments:
+        authoritative_by_id = {
+            str(item.get("id") or item.get("comment_id") or ""): item
+            for item in authoritative_comments
+            if str(item.get("id") or item.get("comment_id") or "")
+        }
+        existing_ids: set[str] = set()
+        top_level_by_id: Dict[str, Dict[str, Any]] = {}
+
+        def apply_authoritative(items: List[Dict[str, Any]]) -> None:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                comment_id = str(item.get("id") or item.get("comment_id") or "")
+                if comment_id:
+                    existing_ids.add(comment_id)
+                    top_level_by_id.setdefault(comment_id, item)
+                    override = authoritative_by_id.get(comment_id)
+                    if override:
+                        if override.get("author"):
+                            item["author"] = override.get("author")
+                            item["username"] = override.get("author")
+                        if override.get("text") and not item.get("text"):
+                            item["text"] = override.get("text")
+                        if override.get("timestamp") and not item.get("timestamp"):
+                            item["timestamp"] = override.get("timestamp")
+                        if override.get("like_count") is not None:
+                            item["like_count"] = override.get("like_count")
+                        if override.get("status"):
+                            item["status"] = override.get("status")
+                        if override.get("moderation_flagged") is not None:
+                            item["moderation_flagged"] = override.get("moderation_flagged")
+                        if override.get("moderation_reason"):
+                            item["moderation_reason"] = override.get("moderation_reason")
+                        if override.get("moderation_checked_at"):
+                            item["moderation_checked_at"] = override.get("moderation_checked_at")
+                        if override.get("is_hidden"):
+                            item["is_hidden"] = True
+                        if override.get("is_deleted"):
+                            item["is_deleted"] = True
+                replies = item.get("replies")
+                if not isinstance(replies, dict):
+                    replies = {"data": []}
+                    item["replies"] = replies
+                reply_items = replies.get("data")
+                if not isinstance(reply_items, list):
+                    reply_items = []
+                    replies["data"] = reply_items
+                for reply in reply_items:
+                    if isinstance(reply, dict):
+                        reply_id = str(reply.get("id") or reply.get("comment_id") or "")
+                        if reply_id:
+                            existing_ids.add(reply_id)
+                apply_authoritative(reply_items)
+
+        apply_authoritative(comments)
+
+        for authoritative in authoritative_comments:
+            comment_id = str(authoritative.get("id") or authoritative.get("comment_id") or "")
+            if not comment_id or comment_id in existing_ids:
+                continue
+            normalized = {
+                "id": comment_id,
+                "comment_id": comment_id,
+                "author": authoritative.get("author") or authoritative.get("username"),
+                "username": authoritative.get("author") or authoritative.get("username"),
+                "text": authoritative.get("text"),
+                "timestamp": authoritative.get("timestamp"),
+                "like_count": authoritative.get("like_count"),
+                "status": authoritative.get("status"),
+                "moderation_flagged": authoritative.get("moderation_flagged"),
+                "moderation_reason": authoritative.get("moderation_reason"),
+                "moderation_checked_at": authoritative.get("moderation_checked_at"),
+            }
+            parent_id = str(authoritative.get("parent_id") or "")
+            if parent_id:
+                parent = top_level_by_id.get(parent_id)
+                if parent is not None:
+                    replies = parent.get("replies")
+                    if not isinstance(replies, dict):
+                        replies = {"data": []}
+                        parent["replies"] = replies
+                    reply_items = replies.get("data")
+                    if not isinstance(reply_items, list):
+                        reply_items = []
+                        replies["data"] = reply_items
+                    reply_items.append(normalized)
+                    existing_ids.add(comment_id)
+                continue
+            normalized["replies"] = {"data": []}
+            comments.append(normalized)
+            top_level_by_id[comment_id] = normalized
+            existing_ids.add(comment_id)
 
     status_overrides = fetch_instagram_comments_with_statuses(
         str(entry.get("id") or ""),
