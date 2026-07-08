@@ -1031,6 +1031,55 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
             top_level_by_id[comment_id] = normalized
             existing_ids.add(comment_id)
 
+    def normalize_instagram_comment_tree(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        top_level_items: List[Dict[str, Any]] = []
+        top_level_by_id: Dict[str, Dict[str, Any]] = {}
+        pending_replies: Dict[str, List[Dict[str, Any]]] = {}
+
+        def ensure_replies_bucket(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+            replies = item.get("replies")
+            if not isinstance(replies, dict):
+                replies = {"data": []}
+                item["replies"] = replies
+            reply_items = replies.get("data")
+            if not isinstance(reply_items, list):
+                reply_items = []
+                replies["data"] = reply_items
+            return reply_items
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            comment_id = str(item.get("id") or item.get("comment_id") or "")
+            parent_id = str(item.get("parent_id") or "")
+            if parent_id:
+                pending_replies.setdefault(parent_id, []).append(item)
+                continue
+            top_level_items.append(item)
+            if comment_id:
+                top_level_by_id[comment_id] = item
+
+        for parent_id, replies in pending_replies.items():
+            parent = top_level_by_id.get(parent_id)
+            if parent is None:
+                continue
+            reply_bucket = ensure_replies_bucket(parent)
+            existing_reply_ids = {
+                str(reply.get("id") or reply.get("comment_id") or "")
+                for reply in reply_bucket
+                if isinstance(reply, dict)
+            }
+            for reply in replies:
+                reply_id = str(reply.get("id") or reply.get("comment_id") or "")
+                if reply_id and reply_id in existing_reply_ids:
+                    continue
+                reply_bucket.append(reply)
+                if reply_id:
+                    existing_reply_ids.add(reply_id)
+        return top_level_items
+
+    comments = normalize_instagram_comment_tree(comments)
+
     status_overrides = fetch_instagram_comments_with_statuses(
         str(entry.get("id") or ""),
         ["hidden", "deleted"],
