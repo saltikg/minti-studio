@@ -1051,8 +1051,13 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             comment_id = str(item.get("id") or item.get("comment_id") or "")
-            parent_id = str(item.get("parent_id") or "")
+            authoritative_parent_id = ""
+            authoritative_item = authoritative_by_id.get(comment_id) if authoritative_comments else None
+            if authoritative_item:
+                authoritative_parent_id = str(authoritative_item.get("parent_id") or "")
+            parent_id = authoritative_parent_id or str(item.get("parent_id") or "")
             if parent_id:
+                item["parent_id"] = parent_id
                 pending_replies.setdefault(parent_id, []).append(item)
                 continue
             top_level_items.append(item)
