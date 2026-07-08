@@ -6,7 +6,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.video_shorts.services.instagram_api import _instagram_comment_record
+from app.video_shorts.services.instagram_api import (
+    InstagramActionError,
+    _instagram_comment_record,
+    fetch_instagram_comment_details,
+)
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.instagram_queue import (
@@ -114,6 +118,41 @@ def _build_job_hash(queue_id: str, event: Dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _enrich_event_from_graph(queue_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+    if _as_text(event.get("author_username")):
+        return event
+    comment_id = _as_text(event.get("comment_id"))
+    if not comment_id:
+        return event
+    try:
+        details = fetch_instagram_comment_details(queue_id, comment_id)
+    except InstagramActionError as exc:
+        logger.warning(
+            "Instagram webhook author enrich failed for queue_id=%s comment_id=%s: %s",
+            queue_id,
+            comment_id,
+            exc,
+        )
+        return event
+    if not isinstance(details, dict):
+        return event
+    enriched = dict(event)
+    enriched_author = _as_text(details.get("username"))
+    if enriched_author:
+        enriched["author_username"] = enriched_author
+    if not _as_text(enriched.get("text")):
+        enriched["text"] = _as_text(details.get("text"))
+    if not _as_text(enriched.get("timestamp")):
+        enriched["timestamp"] = _normalize_comment_timestamp(details.get("timestamp"))
+    if enriched.get("like_count") is None and details.get("like_count") is not None:
+        enriched["like_count"] = details.get("like_count")
+    if not _as_text(enriched.get("parent_id")):
+        enriched["parent_id"] = _as_text(details.get("parent_id"))
+    if not _as_text(enriched.get("thread_id")):
+        enriched["thread_id"] = _as_text(details.get("parent_id") or comment_id)
+    return enriched
+
+
 def enqueue_instagram_comment_events(payload: Dict[str, Any]) -> Dict[str, int]:
     queued = 0
     skipped = 0
@@ -157,6 +196,7 @@ def process_instagram_comment_webhook_job(payload: Dict[str, Any]) -> Dict[str, 
     media_id = _as_text(event.get("media_id") or entry.get("instagram_media_id"))
     if not comment_id or not media_id:
         raise ValueError("Instagram webhook event is missing comment_id or media_id.")
+    event = _enrich_event_from_graph(queue_id, event)
 
     text = _as_text(event.get("text"))
     moderation_map = (

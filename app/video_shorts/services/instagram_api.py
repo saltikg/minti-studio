@@ -394,6 +394,18 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
     )
 
 
+def fetch_instagram_comment_details(queue_id: str, comment_id: str) -> Dict[str, object]:
+    if not comment_id:
+        raise InstagramActionError("Instagram comment_id eksik.")
+    _, token = _get_entry_and_token(queue_id)
+    return _graph_request(
+        "GET",
+        comment_id,
+        token,
+        params={"fields": "id,username,text,timestamp,parent_id,like_count"},
+    )
+
+
 def fetch_instagram_follower_count(business_account_id: str, token: str) -> Dict[str, Optional[int]]:
     if not business_account_id:
         raise InstagramActionError("Instagram business account id eksik.")

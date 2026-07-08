@@ -215,7 +215,7 @@ def upsert_comment_records(records: List[Dict[str, object]]) -> None:
                     queue_id = excluded.queue_id,
                     owner_user_id = excluded.owner_user_id,
                     video_title = excluded.video_title,
-                    author = excluded.author,
+                    author = COALESCE(NULLIF(excluded.author, ''), social_comment_cache.author),
                     text = excluded.text,
                     status = CASE
                         WHEN social_comment_cache.platform = 'instagram'
