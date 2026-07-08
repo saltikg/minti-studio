@@ -1791,7 +1791,7 @@
 
         const author = document.createElement("strong");
         author.className = "comment-author";
-        author.textContent = comment.username || "Anonymous";
+        author.textContent = comment.author || comment.username || "Anonymous";
         header.appendChild(author);
 
       const meta = document.createElement("small");
