@@ -923,6 +923,18 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
         "instagram_username": entry.get("instagram_username"),
     }
     comments = (cache.get("comments") or []) if cache else []
+
+    def normalize_comment_authors(items: List[Dict[str, Any]]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("author") and item.get("username"):
+                item["author"] = item.get("username")
+            replies = (item.get("replies") or {}).get("data") if isinstance(item.get("replies"), dict) else []
+            normalize_comment_authors(replies)
+
+    normalize_comment_authors(comments)
+
     status_overrides = fetch_instagram_comments_with_statuses(
         str(entry.get("id") or ""),
         ["hidden", "deleted"],
@@ -941,6 +953,8 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
                 comment_id = str(item.get("id") or item.get("comment_id") or "")
                 override = override_by_id.get(comment_id)
                 if override:
+                    if not override.get("author") and override.get("username"):
+                        override["author"] = override.get("username")
                     item["status"] = override.get("status")
                     item["moderation_flagged"] = override.get("moderation_flagged")
                     item["moderation_reason"] = override.get("moderation_reason")
@@ -967,6 +981,8 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
         existing_ids: set[str] = set()
         collect_existing_ids(comments, existing_ids)
         for override in status_overrides:
+            if not override.get("author") and override.get("username"):
+                override["author"] = override.get("username")
             override_id = str(override.get("id") or override.get("comment_id") or "")
             if override_id and override_id not in existing_ids:
                 comments.append(override)
