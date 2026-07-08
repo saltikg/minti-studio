@@ -103,7 +103,7 @@
 {%- endmacro %}
 
 {% block content %}
-  {% set all_connected = youtube_connected and instagram_connected and (not tiktok_configured or tiktok_connected) %}
+  {% set all_connected = youtube_connected and instagram_connected and facebook_connected %}
   {% set youtube_account = None %}
   {% if channel %}
     {% set youtube_account = "@" ~ (channel.handle or channel.custom_url or channel.title) %}
@@ -116,14 +116,6 @@
   {% endif %}
   {% set instagram_page = instagram_info.instagram_account_type if instagram_info else None %}
   {% set facebook_page = facebook_info.page_name if facebook_info else None %}
-  {% set tiktok_account = None %}
-  {% if tiktok_info and tiktok_info.display_name %}
-    {% set tiktok_account = tiktok_info.display_name %}
-  {% elif tiktok_info and tiktok_info.username %}
-    {% set tiktok_account = "@" ~ tiktok_info.username %}
-  {% elif tiktok_info and tiktok_info.open_id %}
-    {% set tiktok_account = tiktok_info.open_id %}
-  {% endif %}
 
   <div class="card shadow-sm vs-card">
     <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
@@ -140,7 +132,7 @@
       </div>
     </div>
 
-    {% if youtube_warning or instagram_warning or tiktok_warning or facebook_warning %}
+    {% if youtube_warning or instagram_warning or facebook_warning %}
       <div class="mb-3">
         {% if youtube_warning %}
           <div class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
@@ -150,11 +142,6 @@
         {% if instagram_warning %}
           <div class="alert alert-warning py-2 px-3 small" role="alert">
             {{ instagram_warning }}
-          </div>
-        {% endif %}
-        {% if tiktok_warning %}
-          <div class="alert alert-warning py-2 px-3 small" role="alert">
-            {{ tiktok_warning }}
           </div>
         {% endif %}
         {% if facebook_warning %}
@@ -209,24 +196,6 @@
       ) }}
 
       {{ platform_card(
-        "tiktok",
-        "TikTok",
-        "bi bi-music-note-beamed",
-        "Connect to publish TikTok videos.",
-        tiktok_status,
-        tiktok_configured and url_for('video_shorts_bp.tiktok_authorize') or None,
-        tiktok_connected and url_for('video_shorts_bp.tiktok_disconnect') or None,
-        tiktok_account,
-        None,
-        tiktok_connected_at,
-        [
-          {"label": "Open ID", "value": tiktok_info.open_id if tiktok_info else None},
-          {"label": "Username", "value": ('@' ~ tiktok_info.username) if tiktok_info and tiktok_info.username else None}
-        ],
-        None if tiktok_configured else "TikTok isn't configured yet. Please finish setup."
-      ) }}
-
-      {{ platform_card(
         "facebook",
         "Facebook Page",
         "bi bi-facebook text-primary",
@@ -275,13 +244,6 @@
             <ol class="vs-text-small ps-3 mb-0">
               <li>Select your Facebook account with the Connect button.</li>
               <li>Choose the Page you want to publish to.</li>
-            </ol>
-          </div>
-          <div>
-            <h6 class="mb-1 vs-card-title">TikTok</h6>
-            <ol class="vs-text-small ps-3 mb-0">
-              <li>Use Connect to choose your TikTok account.</li>
-              <li>After approving access, you will return here automatically.</li>
             </ol>
           </div>
         </div>
