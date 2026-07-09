@@ -2736,6 +2736,61 @@ def _detect_title_prompt_language(excerpt: str) -> Optional[str]:
     return None
 
 
+def _normalize_title_prompt_language(raw: Any) -> Optional[str]:
+    value = str(raw or "").strip().lower()
+    if not value:
+        return None
+    if value.startswith("en") or value == "english":
+        return "en"
+    if value.startswith("tr") or value in {"turkish", "turkce"}:
+        return "tr"
+    if value.startswith("ar") or value == "arabic":
+        return "ar"
+    return None
+
+
+def _infer_clip_language_from_segments(
+    segments: List[Dict[str, Any]],
+    start: Any,
+    end: Any,
+    *,
+    excerpt: str = "",
+) -> Optional[str]:
+    try:
+        clip_start = float(start)
+        clip_end = float(end)
+    except Exception:
+        return _detect_title_prompt_language(excerpt)
+
+    language_counts: Dict[str, int] = {}
+    for seg in segments or []:
+        try:
+            seg_start = float(seg.get("start", 0.0) or 0.0)
+        except Exception:
+            continue
+        seg_end_val = seg.get("end")
+        seg_dur_val = seg.get("duration")
+        try:
+            seg_end = float(seg_end_val) if seg_end_val is not None else None
+        except Exception:
+            seg_end = None
+        if seg_end is None:
+            try:
+                seg_end = seg_start + max(float(seg_dur_val or 0.0), 0.0)
+            except Exception:
+                seg_end = seg_start
+        if seg_end <= clip_start or seg_start >= clip_end:
+            continue
+        lang = _normalize_title_prompt_language(seg.get("lang") or seg.get("language"))
+        if not lang:
+            continue
+        language_counts[lang] = language_counts.get(lang, 0) + 1
+
+    if language_counts:
+        return max(language_counts.items(), key=lambda item: item[1])[0]
+    return _detect_title_prompt_language(excerpt)
+
+
 def _example_matches_language(example: Dict[str, str], language: Optional[str]) -> bool:
     normalized = str(language or "").strip().lower()
     if not normalized:
@@ -2786,11 +2841,12 @@ def _request_short_title_suggestion(
     *,
     user_id: Any = None,
     current_video_id: Optional[str] = None,
+    language_hint: Optional[str] = None,
 ) -> str:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     safe_excerpt = (excerpt or "").strip()[:2000]
-    detected_language = _detect_title_prompt_language(safe_excerpt)
+    detected_language = _normalize_title_prompt_language(language_hint) or _detect_title_prompt_language(safe_excerpt)
     system_prompt = (
         "You write strong titles for short vertical clips cut from longer talk, educational, and Q&A videos. "
         "Write the title in the EXACT same language as the transcript. "
@@ -6912,11 +6968,25 @@ def suggest_clip_title(video_pk):
     existing_title = str(plan_entry.get("title") or "").strip()
     if expected_current_title and existing_title != expected_current_title:
         return jsonify(success=True, skipped=True, title=existing_title)
+    language_hint = _normalize_title_prompt_language(
+        plan_entry.get("language") or plan_entry.get("lang")
+    )
+    if not language_hint:
+        video_info = _fetch_video_with_transcript(video_pk)
+        if video_info:
+            _, _, _, _, segments = video_info
+            language_hint = _infer_clip_language_from_segments(
+                segments,
+                plan_entry.get("start"),
+                plan_entry.get("end"),
+                excerpt=excerpt,
+            )
     try:
         new_title = _request_short_title_suggestion(
             excerpt,
             user_id=current_user.get("id") if current_user else None,
             current_video_id=video_id,
+            language_hint=language_hint,
         )
     except Exception as exc:
         current_app.logger.exception("Title suggestion failed: %s", exc)
@@ -9418,6 +9488,12 @@ def _generate_clip_plan_for_video(
                 )
             except Exception:
                 pass
+        plan_entry["language"] = _infer_clip_language_from_segments(
+            segments,
+            start,
+            end,
+            excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
+        )
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -9763,6 +9839,12 @@ def create_clip_plan_v2(video_pk):
                 plan_entry["transcript_full"] = build_transcript_for_range(segments, start, end, prefer_tr=True)
             except Exception:
                 pass
+        plan_entry["language"] = _infer_clip_language_from_segments(
+            segments,
+            start,
+            end,
+            excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
+        )
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -9862,6 +9944,12 @@ def create_clip_plan_v3(video_pk):
                 plan_entry["transcript_full"] = build_transcript_for_range(segments, start, end, prefer_tr=True)
             except Exception:
                 pass
+        plan_entry["language"] = _infer_clip_language_from_segments(
+            segments,
+            start,
+            end,
+            excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
+        )
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -9961,6 +10049,12 @@ def create_clip_plan_v4(video_pk):
                 plan_entry["transcript_full"] = build_transcript_for_range(segments, start, end, prefer_tr=True)
             except Exception:
                 pass
+        plan_entry["language"] = _infer_clip_language_from_segments(
+            segments,
+            start,
+            end,
+            excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
+        )
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
