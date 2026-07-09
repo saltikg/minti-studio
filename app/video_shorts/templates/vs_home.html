@@ -1337,34 +1337,7 @@
     </div>
   </section>
 
-  <footer class="site-footer">
-    <div class="footer-cta">
-      <h2 class="footer-cta-title">Grow your channel — starting today</h2>
-      <p class="footer-cta-subline">Upload one video and let MintiStudio handle the rest.</p>
-      <div class="footer-cta-actions">
-        <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
-          Try for free
-        </a>
-      </div>
-      <p class="footer-note">No credit card required</p>
-    </div>
-
-    <div class="footer-legal">
-      <a class="footer-brand" href="{{ url_for('video_shorts_bp.home') }}">
-        <span class="vs-app-logo-dot" aria-hidden="true">●</span>
-        <span>MintiStudio</span>
-      </a>
-
-      <div class="footer-links" aria-label="Legal links">
-        <a class="footer-link" href="{{ url_for('video_shorts_bp.privacy_page') }}">Privacy Policy</a>
-        <a class="footer-link" href="{{ url_for('video_shorts_bp.terms_page') }}">Terms of Service</a>
-        <a class="footer-link" href="{{ url_for('video_shorts_bp.data_deletion_page') }}">Data Deletion</a>
-        <span class="footer-link-disabled" title="Contact route is not available yet">Contact</span>
-      </div>
-    </div>
-
-    <p class="footer-copyright">© 2026 MintiStudio. All rights reserved.</p>
-  </footer>
+  {% include "_marketing_footer.html" %}
 </div>
 {% endblock %}
 

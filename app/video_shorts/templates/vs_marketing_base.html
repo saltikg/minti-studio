@@ -21,6 +21,151 @@
   <link rel="stylesheet"
     href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}">
 
+  <style>
+    .vs-marketing-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      color: var(--mint);
+      letter-spacing: 0.02em;
+    }
+
+    .vs-marketing-footer {
+      width: 100%;
+      max-width: 980px;
+      margin: 0 auto;
+      padding-top: 0.5rem;
+    }
+
+    .vs-marketing-footer .footer-cta {
+      text-align: center;
+      padding: 0 0 2rem;
+      border-bottom: 0.5px solid rgba(255, 255, 255, 0.11);
+    }
+
+    .vs-marketing-footer .footer-cta-title {
+      margin: 0;
+      font-size: clamp(1.8rem, 3vw, 2.4rem);
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+
+    .vs-marketing-footer .footer-cta-subline {
+      margin: 0.8rem auto 0;
+      max-width: 38rem;
+      color: var(--text-2);
+      font-size: 1rem;
+      line-height: 1.65;
+    }
+
+    .vs-marketing-footer .footer-cta-actions {
+      margin-top: 1.5rem;
+      display: flex;
+      justify-content: center;
+    }
+
+    .vs-marketing-footer .hero-link {
+      min-width: 14rem;
+    }
+
+    .vs-marketing-footer .hero-primary {
+      background: linear-gradient(135deg, #5dcaa5, #1d9e75);
+      border: none;
+      color: #07131a;
+      box-shadow: 0 10px 24px rgba(29, 158, 117, 0.28);
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.95rem 1.55rem;
+    }
+
+    .vs-marketing-footer .hero-primary:hover,
+    .vs-marketing-footer .hero-primary:focus {
+      background: linear-gradient(135deg, #69d4b0, #26aa81);
+      color: #07131a;
+    }
+
+    .vs-marketing-footer .footer-note {
+      margin: 0.95rem 0 0;
+      color: var(--text-2);
+      font-size: 0.9rem;
+    }
+
+    .vs-marketing-footer .footer-legal {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.2rem;
+      padding: 1.35rem 0 0;
+      flex-wrap: wrap;
+    }
+
+    .vs-marketing-footer .footer-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      color: rgba(248, 250, 252, 0.96);
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .vs-marketing-footer .footer-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 1rem 1.35rem;
+      flex-wrap: wrap;
+    }
+
+    .vs-marketing-footer .footer-link,
+    .vs-marketing-footer .footer-link-disabled {
+      color: rgba(148, 163, 184, 0.88);
+      font-size: 0.92rem;
+      text-decoration: none;
+      transition: color 0.18s ease;
+    }
+
+    .vs-marketing-footer .footer-link:hover,
+    .vs-marketing-footer .footer-link:focus {
+      color: rgba(248, 250, 252, 0.96);
+    }
+
+    .vs-marketing-footer .footer-link-disabled {
+      opacity: 0.74;
+      cursor: default;
+    }
+
+    .vs-marketing-footer .footer-copyright {
+      margin: 1rem 0 0;
+      text-align: center;
+      color: rgba(148, 163, 184, 0.82);
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 991px) {
+      .vs-marketing-footer .footer-legal {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+
+      .vs-marketing-footer .footer-links {
+        justify-content: center;
+      }
+    }
+
+    @media (max-width: 575px) {
+      .vs-marketing-footer .footer-cta {
+        padding-bottom: 1.65rem;
+      }
+
+      .vs-marketing-footer .footer-links {
+        gap: 0.8rem 1rem;
+      }
+    }
+  </style>
+
   {% block extra_styles %}{% endblock %}
 
   <meta name="robots" content="noindex, nofollow">
@@ -29,8 +174,9 @@
 <body class="vs-shell vs-app" data-theme="dark">
 
   <nav class="navbar vs-topnav px-3">
-    <a class="navbar-brand vs-navbar-brand fw-semibold" href="{{ url_for('video_shorts_bp.home') }}">
-      MintiStudio
+    <a class="navbar-brand vs-navbar-brand vs-marketing-brand fw-semibold" href="{{ url_for('video_shorts_bp.home') }}">
+      <span class="vs-app-logo-dot" aria-hidden="true">●</span>
+      <span>MintiStudio</span>
     </a>
     <div class="d-flex flex-wrap align-items-center gap-2 vs-topnav-actions">
       {% if vs_current_user %}
