@@ -6,6 +6,10 @@
 
 {% block extra_styles %}
 <style>
+  html {
+    scroll-behavior: smooth;
+  }
+
   .vs-home {
     display: flex;
     flex-direction: column;
@@ -18,23 +22,55 @@
     margin-bottom: 1.25rem;
   }
 
+  .vs-home .vs-home-hero {
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background:
+      radial-gradient(circle at top left, rgba(29, 158, 117, 0.16), transparent 32%),
+      linear-gradient(150deg, rgba(15, 23, 42, 0.94), rgba(11, 15, 20, 0.9));
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.42);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .vs-home .vs-home-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 82% 16%, rgba(93, 202, 165, 0.12), transparent 26%);
+    pointer-events: none;
+  }
+
+  .vs-home .vs-home-hero-inner {
+    position: relative;
+    z-index: 1;
+    padding: clamp(1.4rem, 2.4vw, 2.4rem);
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
   .vs-home .hero-title {
-    font-size: clamp(2.2rem, 3.8vw, 3.4rem);
-    font-weight: 700;
+    font-size: clamp(2.35rem, 4vw, 4.15rem);
+    font-weight: 500;
     line-height: 1.1;
-    margin-bottom: 0.75rem;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.85rem;
+    max-width: 11ch;
   }
 
   .vs-home .hero-subtitle {
     color: var(--text-2);
-    font-size: 1.05rem;
+    font-size: 1.06rem;
+    line-height: 1.65;
     margin: 0;
+    max-width: 42rem;
   }
 
   .vs-home .hero-meta {
     color: var(--text-2);
     font-size: 0.9rem;
-    margin-top: 0.65rem;
+    margin-top: 0.9rem;
   }
 
   .vs-home .hero-actions {
@@ -52,92 +88,232 @@
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-2);
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.95rem;
+    font-weight: 500;
   }
 
   .vs-home .hero-label-dot {
     width: 6px;
     height: 6px;
     border-radius: 999px;
-    background: var(--mint);
-    box-shadow: 0 0 12px rgba(45, 212, 191, 0.55);
+    background: #1d9e75;
+    box-shadow: 0 0 12px rgba(93, 202, 165, 0.55);
   }
 
-  .vs-home .preview-card {
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    background: linear-gradient(160deg, rgba(45, 212, 191, 0.08), rgba(17, 24, 39, 0.9));
+  .vs-home .hero-link {
+    min-width: 12rem;
   }
 
-  .vs-home .preview-title {
-    font-size: 0.72rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+  .vs-home .hero-note {
+    margin-top: 0.9rem;
+    font-size: 0.88rem;
     color: var(--text-2);
   }
 
-  .vs-home .kpi-row {
+  .vs-home .hero-primary {
+    background: linear-gradient(135deg, #5dcaa5, #1d9e75);
+    border: none;
+    color: #07131a;
+    box-shadow: 0 10px 24px rgba(29, 158, 117, 0.28);
+  }
+
+  .vs-home .hero-primary:hover,
+  .vs-home .hero-primary:focus {
+    background: linear-gradient(135deg, #69d4b0, #26aa81);
+    color: #07131a;
+  }
+
+  .vs-home .hero-secondary {
+    border-color: rgba(93, 202, 165, 0.46);
+    color: var(--text-1);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .vs-home .hero-secondary:hover,
+  .vs-home .hero-secondary:focus {
+    border-color: rgba(93, 202, 165, 0.7);
+    background: rgba(93, 202, 165, 0.08);
+    color: var(--text-1);
+  }
+
+  .vs-home .hero-flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1.5fr) auto minmax(0, 1.2fr);
+    gap: 1rem;
+    align-items: center;
+    margin-top: 0.4rem;
+  }
+
+  .vs-home .flow-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.95rem;
+    min-width: 0;
+  }
+
+  .vs-home .flow-stage-label {
+    font-size: 0.95rem;
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .vs-home .flow-arrow {
+    color: rgba(93, 202, 165, 0.9);
+    font-size: 1.55rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .vs-home .flow-card {
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(7, 13, 18, 0.7);
+    min-height: 200px;
+    padding: 1rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .vs-home .flow-card::before {
+    content: "";
+    position: absolute;
+    inset: auto auto -18% -10%;
+    width: 56%;
+    aspect-ratio: 1;
+    background: radial-gradient(circle, rgba(29, 158, 117, 0.16), transparent 68%);
+    pointer-events: none;
+  }
+
+  .vs-home .flow-wide {
+    aspect-ratio: 16 / 9;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)),
+      rgba(15, 23, 42, 0.92);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .vs-home .flow-wide::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, rgba(93, 202, 165, 0.1), transparent 40%),
+      radial-gradient(circle at 70% 30%, rgba(93, 202, 165, 0.12), transparent 26%);
+  }
+
+  .vs-home .flow-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+  }
+
+  .vs-home .flow-play .bi {
+    width: 3rem;
+    height: 3rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(7, 13, 18, 0.68);
+    color: #5dcaa5;
+    font-size: 1.15rem;
+    border: 1px solid rgba(93, 202, 165, 0.3);
+  }
+
+  .vs-home .flow-duration {
+    position: absolute;
+    right: 0.9rem;
+    bottom: 0.9rem;
+    z-index: 1;
+    font-size: 0.82rem;
+    color: var(--text-1);
+    padding: 0.28rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(7, 13, 18, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .vs-home .flow-clips {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
-  }
-
-  .vs-home .kpi-card {
-    background: rgba(15, 23, 42, 0.75);
-    border: 1px solid var(--border-soft);
-    border-radius: 12px;
-    padding: 0.75rem;
-  }
-
-  .vs-home .kpi-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-2);
-  }
-
-  .vs-home .kpi-value {
-    font-size: 1.1rem;
-    font-weight: 700;
-  }
-
-  .vs-home .bar-chart {
-    display: grid;
-    grid-template-columns: repeat(10, minmax(0, 1fr));
+    height: 100%;
     align-items: end;
-    gap: 6px;
-    height: 86px;
-    margin-top: 0.9rem;
   }
 
-  .vs-home .bar {
-    height: var(--h);
-    border-radius: 10px 10px 4px 4px;
-    background: linear-gradient(180deg, rgba(45, 212, 191, 0.9), rgba(45, 212, 191, 0.15));
+  .vs-home .flow-clip {
+    aspect-ratio: 9 / 16;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      linear-gradient(180deg, rgba(93, 202, 165, 0.2), transparent 34%),
+      linear-gradient(150deg, rgba(255, 255, 255, 0.05), rgba(17, 24, 39, 0.9));
+    position: relative;
+    overflow: hidden;
   }
 
-  .vs-home .top-list {
+  .vs-home .flow-clip:nth-child(2) {
+    transform: translateY(-0.4rem);
+  }
+
+  .vs-home .flow-clip:nth-child(3) {
+    transform: translateY(0.35rem);
+  }
+
+  .vs-home .flow-clip::before {
+    content: "";
+    position: absolute;
+    inset: 0.75rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .vs-home .flow-platforms {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 1rem;
+    gap: 0.75rem;
+    height: 100%;
+    justify-content: center;
   }
 
-  .vs-home .top-row {
+  .vs-home .platform-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.55rem 0.75rem;
-    background: rgba(15, 23, 42, 0.75);
-    border: 1px solid var(--border-soft);
-    border-radius: 12px;
-    font-size: 0.85rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.78);
   }
 
-  .vs-home .top-title {
+  .vs-home .platform-row .bi-youtube {
+    color: #ff4f63;
+  }
+
+  .vs-home .platform-row .bi-instagram {
+    color: #f472b6;
+  }
+
+  .vs-home .platform-row .bi-facebook {
+    color: #60a5fa;
+  }
+
+  .vs-home .platform-row .bi-check-circle-fill {
+    color: #5dcaa5;
+    margin-left: auto;
+  }
+
+  .vs-home .platform-label {
+    font-size: 0.98rem;
+    font-weight: 500;
     color: var(--text-1);
-    font-weight: 600;
   }
 
   .vs-home .card-title-small {
@@ -211,84 +387,143 @@
     flex-wrap: wrap;
     gap: 0.75rem;
   }
+
+  @media (max-width: 991px) {
+    .vs-home .vs-home-hero-inner {
+      gap: 1.6rem;
+    }
+
+    .vs-home .hero-title {
+      max-width: none;
+    }
+
+    .vs-home .hero-flow {
+      grid-template-columns: 1fr;
+      gap: 0.8rem;
+    }
+
+    .vs-home .flow-arrow {
+      transform: rotate(90deg);
+      justify-self: center;
+    }
+
+    .vs-home .flow-card {
+      min-height: 0;
+    }
+
+    .vs-home .flow-clips {
+      min-height: 220px;
+    }
+  }
+
+  @media (max-width: 575px) {
+    .vs-home {
+      gap: 3rem;
+    }
+
+    .vs-home .vs-home-hero-inner {
+      padding: 1.2rem;
+    }
+
+    .vs-home .hero-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .vs-home .hero-link {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .vs-home .flow-clips {
+      gap: 0.55rem;
+      min-height: 180px;
+    }
+
+    .vs-home .platform-row {
+      padding: 0.8rem;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="vs-home">
   <section class="vs-home-hero">
-    <div class="row g-4 align-items-center">
-      <div class="col-lg-6">
+    <div class="vs-home-hero-inner">
+      <div class="hero-copy">
         <div class="hero-label">
           <span class="hero-label-dot"></span>
-          MintiStudio
+          MINTISTUDIO
         </div>
-        <h1 class="hero-title">Publish daily without the chaos</h1>
+        <h1 class="hero-title">Upload one video.<br>We'll handle the rest.</h1>
         <p class="hero-subtitle">
-          Connect sources, generate shorts, schedule posts, and track winners from one dashboard.
+          Clips, publishing, and insights — one panel to grow your channel.
         </p>
-        <div class="hero-meta">Content ops panel for creators and solopreneurs. Not a video editor.</div>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.quick_short') }}">
-            Create your first short
+          <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
+            Try for free
           </a>
-          <a class="btn btn-outline-secondary" href="{{ vs_library_href }}">
-            Open my videos
+          <a class="btn btn-outline-secondary hero-secondary hero-link" href="#how-it-works">
+            See how it works
           </a>
         </div>
+        <div class="hero-note">No credit card required</div>
       </div>
-      <div class="col-lg-6">
-        <div class="card preview-card">
-          <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between mb-3">
-              <div class="preview-title">Dashboard preview</div>
-              <span class="badge">Live</span>
+
+      <div class="hero-flow" id="how-it-works">
+        <div class="flow-stage">
+          <div class="flow-card">
+            <div class="flow-wide">
+              <div class="flow-play">
+                <i class="bi bi-play-fill"></i>
+              </div>
+              <div class="flow-duration">24:03</div>
             </div>
-            <div class="kpi-row">
-              <div class="kpi-card">
-                <div class="kpi-label">Views</div>
-                <div class="kpi-value">24.8k</div>
-              </div>
-              <div class="kpi-card">
-                <div class="kpi-label">Shorts</div>
-                <div class="kpi-value">42</div>
-              </div>
-              <div class="kpi-card">
-                <div class="kpi-label">Scheduled</div>
-                <div class="kpi-value">18</div>
-              </div>
+          </div>
+          <p class="flow-stage-label">1 long video</p>
+        </div>
+
+        <div class="flow-arrow" aria-hidden="true">
+          <i class="bi bi-arrow-right"></i>
+        </div>
+
+        <div class="flow-stage">
+          <div class="flow-card">
+            <div class="flow-clips">
+              <div class="flow-clip"></div>
+              <div class="flow-clip"></div>
+              <div class="flow-clip"></div>
             </div>
-            <div class="bar-chart">
-              <span class="bar" style="--h: 35%;"></span>
-              <span class="bar" style="--h: 55%;"></span>
-              <span class="bar" style="--h: 40%;"></span>
-              <span class="bar" style="--h: 70%;"></span>
-              <span class="bar" style="--h: 60%;"></span>
-              <span class="bar" style="--h: 80%;"></span>
-              <span class="bar" style="--h: 50%;"></span>
-              <span class="bar" style="--h: 65%;"></span>
-              <span class="bar" style="--h: 45%;"></span>
-              <span class="bar" style="--h: 75%;"></span>
-            </div>
-            <div class="top-list">
-              <div class="top-row">
-                <span class="top-title">Top videos</span>
-                <span class="text-muted">Last 7 days</span>
+          </div>
+          <p class="flow-stage-label">Multiple short clips</p>
+        </div>
+
+        <div class="flow-arrow" aria-hidden="true">
+          <i class="bi bi-arrow-right"></i>
+        </div>
+
+        <div class="flow-stage">
+          <div class="flow-card">
+            <div class="flow-platforms">
+              <div class="platform-row">
+                <i class="bi bi-youtube"></i>
+                <span class="platform-label">YouTube</span>
+                <i class="bi bi-check-circle-fill"></i>
               </div>
-              <div class="top-row">
-                <span class="top-title">AI hooks that win</span>
-                <span class="text-muted">8.4k</span>
+              <div class="platform-row">
+                <i class="bi bi-instagram"></i>
+                <span class="platform-label">Instagram</span>
+                <i class="bi bi-check-circle-fill"></i>
               </div>
-              <div class="top-row">
-                <span class="top-title">30-min creator stack</span>
-                <span class="text-muted">6.2k</span>
-              </div>
-              <div class="top-row">
-                <span class="top-title">Best shorts pipeline</span>
-                <span class="text-muted">5.7k</span>
+              <div class="platform-row">
+                <i class="bi bi-facebook"></i>
+                <span class="platform-label">Facebook</span>
+                <i class="bi bi-check-circle-fill"></i>
               </div>
             </div>
           </div>
+          <p class="flow-stage-label">Published everywhere</p>
         </div>
       </div>
     </div>
