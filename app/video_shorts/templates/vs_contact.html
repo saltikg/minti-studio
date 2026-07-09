@@ -1,0 +1,165 @@
+{% extends "vs_marketing_base.html" %}
+
+{% block title %}Contact{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .vs-contact {
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 0.5rem 0 0;
+  }
+
+  .vs-contact-header {
+    text-align: center;
+    margin-bottom: 1.4rem;
+  }
+
+  .vs-contact-title {
+    margin: 0;
+    font-size: clamp(2rem, 3.4vw, 2.6rem);
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-contact-subline {
+    margin: 0.85rem 0 0;
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+
+  .vs-contact-card {
+    border-radius: 12px;
+    border: 0.5px solid rgba(255, 255, 255, 0.12);
+    background: #0d1117;
+    box-shadow: none;
+  }
+
+  .vs-contact-card .card-body {
+    padding: 1.2rem;
+  }
+
+  .vs-contact-field,
+  .vs-contact-field:focus,
+  .vs-contact-textarea,
+  .vs-contact-textarea:focus {
+    background: rgba(255, 255, 255, 0.03);
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
+    color: rgba(248, 250, 252, 0.96);
+    box-shadow: none;
+  }
+
+  .vs-contact-field::placeholder,
+  .vs-contact-textarea::placeholder {
+    color: rgba(148, 163, 184, 0.82);
+  }
+
+  .vs-contact-field:focus,
+  .vs-contact-textarea:focus {
+    border-color: rgba(93, 202, 165, 0.75);
+    outline: 2px solid rgba(93, 202, 165, 0.22);
+    outline-offset: 0;
+  }
+
+  .vs-contact-textarea {
+    min-height: 150px;
+    resize: vertical;
+  }
+
+  .vs-contact-submit {
+    width: 100%;
+    background: linear-gradient(135deg, #5dcaa5, #1d9e75);
+    border: none;
+    color: #07131a;
+    box-shadow: 0 10px 24px rgba(29, 158, 117, 0.28);
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 0.95rem 1.55rem;
+  }
+
+  .vs-contact-submit:hover,
+  .vs-contact-submit:focus {
+    background: linear-gradient(135deg, #69d4b0, #26aa81);
+    color: #07131a;
+  }
+
+  .vs-contact-inline-note {
+    margin: 1rem 0 0;
+    text-align: center;
+    color: var(--text-2);
+    font-size: 0.92rem;
+  }
+
+  .vs-contact-inline-note a {
+    color: rgba(248, 250, 252, 0.96);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vs-contact">
+  <div class="vs-contact-header">
+    <h1 class="vs-contact-title">Get in touch</h1>
+    <p class="vs-contact-subline">Questions, feedback, or need a hand? Send us a message and we'll get back to you.</p>
+  </div>
+
+  <div class="card vs-contact-card">
+    <div class="card-body">
+      {% if contact_success %}
+        <div class="alert alert-success mb-3" role="status">Thanks — we'll be in touch.</div>
+      {% endif %}
+      {% if contact_error %}
+        <div class="alert alert-danger mb-3" role="alert">{{ contact_error }}</div>
+      {% endif %}
+
+      <form method="post" novalidate>
+        <div class="mb-3">
+          <input
+            type="text"
+            name="name"
+            class="form-control vs-contact-field"
+            placeholder="Your name"
+            aria-label="Your name"
+            value="{{ contact_form.name or '' }}"
+            required
+            autofocus>
+        </div>
+        <div class="mb-3">
+          <input
+            type="email"
+            name="email"
+            class="form-control vs-contact-field"
+            placeholder="you@example.com"
+            aria-label="Your email"
+            value="{{ contact_form.email or '' }}"
+            required>
+        </div>
+        <div class="mb-3">
+          <textarea
+            name="message"
+            class="form-control vs-contact-textarea"
+            placeholder="How can we help?"
+            aria-label="Your message"
+            required>{{ contact_form.message or '' }}</textarea>
+        </div>
+        {% include "_turnstile_widget.html" %}
+        <button class="btn vs-contact-submit" type="submit">Send message</button>
+      </form>
+    </div>
+  </div>
+
+  <p class="vs-contact-inline-note">Looking for a quick answer? <a href="{{ url_for('video_shorts_bp.home') }}#faq">Check the FAQ.</a></p>
+</div>
+
+{% include "_marketing_footer.html" %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if vs_turnstile_enabled and vs_turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
+{% endblock %}

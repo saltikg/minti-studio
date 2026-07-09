@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -112,7 +113,14 @@ def _resend_headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _resend_payload(*, to_email: str, subject: str, html: str, text: str) -> dict[str, object]:
+def _resend_payload(
+    *,
+    to_email: str,
+    subject: str,
+    html: str,
+    text: str,
+    reply_to_email: str = "",
+) -> dict[str, object]:
     _api_key, mail_from, reply_to = _resolve_mail_settings()
     payload: dict[str, object] = {
         "from": formataddr(("MintiStudio", mail_from)),
@@ -121,18 +129,34 @@ def _resend_payload(*, to_email: str, subject: str, html: str, text: str) -> dic
         "html": html,
         "text": text,
     }
-    if reply_to:
-        payload["reply_to"] = reply_to
+    resolved_reply_to = (reply_to_email or "").strip() or reply_to
+    if resolved_reply_to:
+        payload["reply_to"] = resolved_reply_to
     return payload
 
 
-def send_resend_email(*, to_email: str, subject: str, html: str, text: str) -> None:
+def send_resend_email(
+    *,
+    to_email: str,
+    subject: str,
+    html: str,
+    text: str,
+    reply_to_email: str = "",
+    error_message: str = "Verification email could not be sent.",
+) -> None:
     api_key, mail_from, reply_to = _resolve_mail_settings()
-    payload = _resend_payload(to_email=to_email, subject=subject, html=html, text=text)
+    resolved_reply_to = (reply_to_email or "").strip() or reply_to
+    payload = _resend_payload(
+        to_email=to_email,
+        subject=subject,
+        html=html,
+        text=text,
+        reply_to_email=reply_to_email,
+    )
     logger.info(
         "Resend email request prepared: from=%s reply_to=%s to=%s",
         formataddr(("MintiStudio", mail_from)),
-        reply_to or "(empty)",
+        resolved_reply_to or "(empty)",
         to_email,
     )
     body = json.dumps(payload).encode("utf-8")
@@ -150,10 +174,10 @@ def send_resend_email(*, to_email: str, subject: str, html: str, text: str) -> N
     except urllib_error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         logger.exception("Resend email send failed: status=%s body=%s", exc.code, detail)
-        raise RuntimeError("Verification email could not be sent.") from exc
+        raise RuntimeError(error_message) from exc
     except Exception as exc:
         logger.exception("Resend email send failed")
-        raise RuntimeError("Verification email could not be sent.") from exc
+        raise RuntimeError(error_message) from exc
 
 
 def send_verification_email(*, to_email: str, verify_token: str, recipient_name: str = "") -> None:
@@ -223,3 +247,38 @@ def send_password_reset_email(*, to_email: str, reset_token: str, recipient_name
         "If you did not request a password reset, you can ignore this email."
     )
     send_resend_email(to_email=to_email, subject=subject, html=html, text=text)
+
+
+def send_contact_email(*, name: str, email: str, message: str) -> None:
+    sender_name = (name or "").strip()
+    sender_email = (email or "").strip()
+    message_body = (message or "").strip()
+    subject = f"Contact form: {sender_name}"
+    escaped_name = html.escape(sender_name)
+    escaped_email = html.escape(sender_email)
+    escaped_message = html.escape(message_body).replace("\n", "<br>")
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:640px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:16px;">New contact form message</div>
+        <p style="margin:0 0 10px;"><strong>Name:</strong> {escaped_name}</p>
+        <p style="margin:0 0 10px;"><strong>Email:</strong> {escaped_email}</p>
+        <p style="margin:0 0 8px;"><strong>Message:</strong></p>
+        <div style="white-space:normal;">{escaped_message}</div>
+      </div>
+    </div>
+    """.strip()
+    text_body = (
+        "New contact form message\n\n"
+        f"Name: {sender_name}\n"
+        f"Email: {sender_email}\n\n"
+        f"{message_body}"
+    )
+    send_resend_email(
+        to_email="info@mintistudio.com",
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        reply_to_email=sender_email,
+        error_message="Contact message could not be sent.",
+    )

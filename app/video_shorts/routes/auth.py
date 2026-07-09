@@ -51,6 +51,7 @@ from app.video_shorts.services.email_verification import (
     password_reset_token_expiry,
     send_verification_email,
     send_password_reset_email,
+    send_contact_email,
     verification_token_expiry,
 )
 from app.video_shorts.services.auth_protection import (
@@ -114,6 +115,7 @@ REGISTER_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
 FORGOT_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
 RESEND_VERIFICATION_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
 RESET_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=3600)]
+CONTACT_RATE_LIMITS = [RateLimitRule(limit=3, window_seconds=60), RateLimitRule(limit=10, window_seconds=3600)]
 
 
 def _format_size_bytes(num: int) -> str:
@@ -693,6 +695,7 @@ def _guard_video_shorts():
         "video_shorts_bp.privacy_page",
         "video_shorts_bp.data_deletion_page",
         "video_shorts_bp.terms_page",
+        "video_shorts_bp.contact_page",
         "video_shorts_bp.static",
         "video_shorts_bp.caption_tasks",
         "video_shorts_bp.caption_result",
@@ -1594,3 +1597,63 @@ def data_deletion_page():
 @video_shorts_bp.route("/terms")
 def terms_page():
     return render_template("vs_terms.html")
+
+
+@video_shorts_bp.route("/contact", methods=["GET", "POST"])
+def contact_page():
+    form_data = {
+        "name": "",
+        "email": "",
+        "message": "",
+    }
+    error = ""
+    success = False
+    status_code = 200
+
+    if request.method == "POST":
+        form_data = {
+            "name": (request.form.get("name") or "").strip(),
+            "email": _normalize_auth_email(request.form.get("email") or ""),
+            "message": (request.form.get("message") or "").strip(),
+        }
+        allowed, _retry_after = check_rate_limits(
+            "contact-form",
+            _rate_limit_key(form_data["email"]),
+            CONTACT_RATE_LIMITS,
+        )
+        if not allowed:
+            error = "Too many attempts. Please try again later."
+            status_code = 429
+        elif not form_data["name"] or not form_data["email"] or not form_data["message"]:
+            error = "Please fill in all fields."
+            status_code = 400
+        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", form_data["email"]):
+            error = "Please enter a valid email address."
+            status_code = 400
+        elif not _verify_turnstile_or_fail():
+            error = "Verification failed. Please try again."
+            status_code = 400
+        else:
+            try:
+                send_contact_email(
+                    name=form_data["name"],
+                    email=form_data["email"],
+                    message=form_data["message"],
+                )
+            except Exception:
+                logger.exception("Contact form send failed for %s", form_data["email"])
+                error = "We couldn't send your message right now. Please try again."
+                status_code = 502
+            else:
+                success = True
+                form_data = {"name": "", "email": "", "message": ""}
+
+    return (
+        render_template(
+            "vs_contact.html",
+            contact_form=form_data,
+            contact_error=error,
+            contact_success=success,
+        ),
+        status_code,
+    )
