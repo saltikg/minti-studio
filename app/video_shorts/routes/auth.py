@@ -691,6 +691,8 @@ def _guard_video_shorts():
         "video_shorts_bp.google_oauth_callback",
         "video_shorts_bp.logout",
         "video_shorts_bp.privacy_page",
+        "video_shorts_bp.data_deletion_page",
+        "video_shorts_bp.terms_page",
         "video_shorts_bp.static",
         "video_shorts_bp.caption_tasks",
         "video_shorts_bp.caption_result",
