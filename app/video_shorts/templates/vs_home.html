@@ -135,6 +135,29 @@
     animation: vsHomeFadeUp 0.8s ease-out 0.22s forwards;
   }
 
+  .vs-home .flow-shell-header {
+    text-align: center;
+    margin: 0 auto 1.5rem;
+    max-width: 720px;
+  }
+
+  .vs-home .flow-shell-title {
+    font-size: clamp(2.2rem, 3.8vw, 3.8rem);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.75rem;
+  }
+
+  .vs-home .flow-shell-eyebrow {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(93, 202, 165, 0.9);
+  }
+
   .vs-home .hero-primary {
     background: linear-gradient(135deg, #5dcaa5, #1d9e75);
     border: none;
@@ -618,7 +641,6 @@
   <section class="vs-home-hero">
     <div class="vs-home-hero-inner">
       <div class="hero-copy">
-        <h1 class="hero-title">Upload one video.<br>We'll handle the rest.</h1>
         <div class="hero-actions">
           <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
             Try for free
@@ -627,6 +649,10 @@
       </div>
 
       <div class="flow-shell">
+        <div class="flow-shell-header">
+          <h1 class="flow-shell-title">Upload one video.<br>We'll handle the rest.</h1>
+          <p class="flow-shell-eyebrow">HOW IT WORKS</p>
+        </div>
         <div class="hero-flow" id="how-it-works">
           <div class="flow-stage">
             <div class="flow-card">
