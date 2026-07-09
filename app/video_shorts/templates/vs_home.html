@@ -184,6 +184,17 @@
     overflow: hidden;
   }
 
+  .vs-home .flow-wide picture,
+  .vs-home .flow-wide-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .vs-home .flow-wide-image {
+    object-fit: cover;
+  }
+
   .vs-home .flow-wide::after {
     content: "";
     position: absolute;
@@ -239,7 +250,6 @@
   }
 
   .vs-home .flow-clip {
-    aspect-ratio: 9 / 16;
     border-radius: 16px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background:
@@ -247,14 +257,18 @@
       linear-gradient(150deg, rgba(255, 255, 255, 0.05), rgba(17, 24, 39, 0.9));
     position: relative;
     overflow: hidden;
+    display: flex;
   }
 
-  .vs-home .flow-clip::before {
-    content: "";
-    position: absolute;
-    inset: 0.75rem;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
+  .vs-home .flow-clip picture,
+  .vs-home .flow-clip-image {
+    display: block;
+    width: 100%;
+  }
+
+  .vs-home .flow-clip-image {
+    height: auto;
+    object-fit: contain;
   }
 
   .vs-home .flow-platforms {
@@ -545,6 +559,20 @@
           <div class="flow-stage">
             <div class="flow-card">
               <div class="flow-wide">
+                <picture>
+                  <source
+                    srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.webp') }}"
+                    type="image/webp"
+                  >
+                  <img
+                    src="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.jpeg') }}"
+                    alt="Long-form source video ready to be turned into clips"
+                    class="flow-wide-image"
+                    width="640"
+                    height="331"
+                    loading="lazy"
+                  >
+                </picture>
                 <div class="flow-play">
                   <i class="bi bi-play-fill"></i>
                 </div>
@@ -561,9 +589,54 @@
           <div class="flow-stage">
             <div class="flow-card">
               <div class="flow-clips">
-                <div class="flow-clip"></div>
-                <div class="flow-clip"></div>
-                <div class="flow-clip"></div>
+                <div class="flow-clip">
+                  <picture>
+                    <source
+                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_1.webp') }}"
+                      type="image/webp"
+                    >
+                    <img
+                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_1.jpeg') }}"
+                      alt="Short-form clip example one prepared for publishing"
+                      class="flow-clip-image"
+                      width="360"
+                      height="563"
+                      loading="lazy"
+                    >
+                  </picture>
+                </div>
+                <div class="flow-clip">
+                  <picture>
+                    <source
+                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_2.webp') }}"
+                      type="image/webp"
+                    >
+                    <img
+                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_2.jpeg') }}"
+                      alt="Short-form clip example two ready for distribution"
+                      class="flow-clip-image"
+                      width="360"
+                      height="568"
+                      loading="lazy"
+                    >
+                  </picture>
+                </div>
+                <div class="flow-clip">
+                  <picture>
+                    <source
+                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_3.webp') }}"
+                      type="image/webp"
+                    >
+                    <img
+                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_3.jpeg') }}"
+                      alt="Short-form clip example three lined up for cross-platform posting"
+                      class="flow-clip-image"
+                      width="360"
+                      height="593"
+                      loading="lazy"
+                    >
+                  </picture>
+                </div>
               </div>
             </div>
             <p class="flow-stage-label">Get multiple short clips</p>
