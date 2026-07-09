@@ -21,6 +21,15 @@
     }
   }
 
+  @keyframes vsHomeFloat {
+    0%, 100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0, -5px, 0);
+    }
+  }
+
   .vs-home {
     display: flex;
     flex-direction: column;
@@ -191,6 +200,30 @@
     justify-content: center;
   }
 
+  .vs-home .flow-wide,
+  .vs-home .flow-clips,
+  .vs-home .platform-pill,
+  .vs-home .fork-cards {
+    opacity: 0;
+    animation: vsHomeFadeUp 0.75s ease-out forwards;
+  }
+
+  .vs-home .flow-wide {
+    animation-delay: 0.46s;
+  }
+
+  .vs-home .flow-clips {
+    animation-delay: 0.7s;
+  }
+
+  .vs-home .platform-pill {
+    animation-delay: 0.94s;
+  }
+
+  .vs-home .fork-cards {
+    animation-delay: 1.08s;
+  }
+
   .vs-home .hero-flow > .flow-stage:nth-of-type(1) .flow-card {
     max-width: 296px;
   }
@@ -317,6 +350,42 @@
     background: rgba(15, 23, 42, 0.78);
   }
 
+  .vs-home .flow-stage:nth-child(1) .flow-card,
+  .vs-home .flow-stage:nth-child(3) .flow-card,
+  .vs-home .flow-stage:nth-child(5) .flow-card,
+  .vs-home .flow-fork .fork-card,
+  .vs-home .flow-arrow .bi {
+    animation: vsHomeFloat 5.2s ease-in-out infinite;
+  }
+
+  .vs-home .flow-stage:nth-child(1) .flow-card {
+    animation-delay: 1.15s;
+  }
+
+  .vs-home .flow-arrow:nth-child(2) .bi {
+    animation-delay: 1.28s;
+  }
+
+  .vs-home .flow-stage:nth-child(3) .flow-card {
+    animation-delay: 1.42s;
+  }
+
+  .vs-home .flow-arrow:nth-child(4) .bi {
+    animation-delay: 1.56s;
+  }
+
+  .vs-home .flow-stage:nth-child(5) .flow-card {
+    animation-delay: 1.7s;
+  }
+
+  .vs-home .flow-fork .fork-card:nth-child(1) {
+    animation-delay: 1.84s;
+  }
+
+  .vs-home .flow-fork .fork-card:nth-child(2) {
+    animation-delay: 2s;
+  }
+
   .vs-home .platform-pill .bi-youtube {
     color: #ff4f63;
   }
@@ -343,27 +412,27 @@
     animation: vsHomeFadeUp 0.7s ease-out forwards;
   }
 
-  .vs-home .hero-flow > .flow-stage:nth-of-type(1) {
+  .vs-home .hero-flow > .flow-stage:nth-child(1) {
     animation-delay: 0.38s;
   }
 
-  .vs-home .hero-flow > .flow-arrow:nth-of-type(2) {
+  .vs-home .hero-flow > .flow-arrow:nth-child(2) {
     animation-delay: 0.5s;
   }
 
-  .vs-home .hero-flow > .flow-stage:nth-of-type(2) {
+  .vs-home .hero-flow > .flow-stage:nth-child(3) {
     animation-delay: 0.62s;
   }
 
-  .vs-home .hero-flow > .flow-arrow:nth-of-type(4) {
+  .vs-home .hero-flow > .flow-arrow:nth-child(4) {
     animation-delay: 0.74s;
   }
 
-  .vs-home .hero-flow > .flow-stage:nth-of-type(3) {
+  .vs-home .hero-flow > .flow-stage:nth-child(5) {
     animation-delay: 0.86s;
   }
 
-  .vs-home .hero-flow > .flow-fork {
+  .vs-home .hero-flow > .flow-fork:nth-child(6) {
     animation-delay: 0.98s;
   }
 
@@ -601,7 +670,14 @@
     .vs-home .flow-shell,
     .vs-home .flow-stage,
     .vs-home .flow-arrow,
-    .vs-home .flow-fork {
+    .vs-home .flow-fork,
+    .vs-home .flow-wide,
+    .vs-home .flow-clips,
+    .vs-home .platform-pill,
+    .vs-home .fork-cards,
+    .vs-home .flow-card,
+    .vs-home .fork-card,
+    .vs-home .flow-arrow .bi {
       opacity: 1;
       animation: none;
       transform: none;
