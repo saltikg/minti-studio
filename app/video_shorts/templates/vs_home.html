@@ -639,6 +639,88 @@
     line-height: 1.45;
   }
 
+  .vs-home .faq-section {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .faq-title {
+    margin: 0 0 1.3rem;
+    font-size: clamp(1.7rem, 2.8vw, 2.25rem);
+    font-weight: 500;
+    line-height: 1.14;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .faq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    text-align: left;
+  }
+
+  .vs-home .faq-item {
+    border-radius: 10px;
+    border: 0.5px solid rgba(255, 255, 255, 0.12);
+    background: #0d1117;
+    overflow: hidden;
+  }
+
+  .vs-home .faq-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.05rem;
+    border: 0;
+    background: transparent;
+    color: rgba(248, 250, 252, 0.96);
+    text-align: left;
+    font-size: 0.91rem;
+    font-weight: 600;
+  }
+
+  .vs-home .faq-trigger:focus-visible {
+    outline: 2px solid rgba(93, 202, 165, 0.8);
+    outline-offset: -2px;
+  }
+
+  .vs-home .faq-chevron {
+    color: #5dcaa5;
+    font-size: 1rem;
+    transition: transform 0.22s ease;
+    flex: 0 0 auto;
+  }
+
+  .vs-home .faq-trigger[aria-expanded="true"] .faq-chevron {
+    transform: rotate(180deg);
+  }
+
+  .vs-home .faq-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.24s ease;
+  }
+
+  .vs-home .faq-panel.is-open {
+    grid-template-rows: 1fr;
+  }
+
+  .vs-home .faq-panel-inner {
+    overflow: hidden;
+  }
+
+  .vs-home .faq-answer {
+    margin: 0;
+    padding: 0 1.05rem 1rem;
+    color: #9a9a92;
+    font-size: 0.81rem;
+    line-height: 1.6;
+  }
+
   .vs-home .card-copy {
     color: var(--text-2);
     margin: 0;
@@ -837,6 +919,11 @@
       opacity: 1;
       animation: none;
       transform: none;
+    }
+
+    .vs-home .faq-chevron,
+    .vs-home .faq-panel {
+      transition: none;
     }
   }
 </style>
@@ -1037,6 +1124,108 @@
     </div>
   </section>
 
+  <section class="faq-section">
+    <h2 class="faq-title">Questions?</h2>
+
+    <div class="faq-list" aria-label="Frequently asked questions">
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-1" id="faq-trigger-1">
+          <span>How does MintiStudio work?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-1" role="region" aria-labelledby="faq-trigger-1" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">Upload one long video. MintiStudio clips the best moments, publishes them to your channels on a schedule, and shows how they perform — all from one panel.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-2" id="faq-trigger-2">
+          <span>Who is MintiStudio for?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-2" role="region" aria-labelledby="faq-trigger-2" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">Creators, educators, and solopreneurs who post long videos and want to grow with Shorts — without turning into full-time editors.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-3" id="faq-trigger-3">
+          <span>Which platforms can I publish to?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-3" role="region" aria-labelledby="faq-trigger-3" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">YouTube, Instagram, and Facebook — with more platforms on the way.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-4" id="faq-trigger-4">
+          <span>Which languages does it support?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-4" role="region" aria-labelledby="faq-trigger-4" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">MintiStudio is AI-powered, so it works across many languages — with the best results in English.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-5" id="faq-trigger-5">
+          <span>Can I still edit if I want to?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-5" role="region" aria-labelledby="faq-trigger-5" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">MintiStudio builds each short for you — clips, captions, and formatting. And if you want to fine-tune, a built-in editor is right there.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-6" id="faq-trigger-6">
+          <span>Can I see how my videos are doing?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-6" role="region" aria-labelledby="faq-trigger-6" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">Yes. Track views and performance across your platforms from one dashboard, so you can see what's working and make more of it.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-7" id="faq-trigger-7">
+          <span>Can it handle my comments too?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-7" role="region" aria-labelledby="faq-trigger-7" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">Yes. Your social media comments land in one inbox, AI flags the ones that need attention, and you can reply, hide, or delete right there.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-8" id="faq-trigger-8">
+          <span>Is it free to try?</span>
+          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="faq-panel" id="faq-panel-8" role="region" aria-labelledby="faq-trigger-8" hidden>
+          <div class="faq-panel-inner">
+            <p class="faq-answer">Yes — start free, no credit card required, and publish your first shorts right away.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section>
     <h2 class="section-title">The daily shorts mindset</h2>
     <div class="hooks-grid">
@@ -1101,4 +1290,29 @@
     </div>
   </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".faq-trigger").forEach(function (trigger) {
+      trigger.addEventListener("click", function () {
+        const panelId = trigger.getAttribute("aria-controls");
+        const panel = panelId ? document.getElementById(panelId) : null;
+        if (!panel) return;
+        const isOpen = trigger.getAttribute("aria-expanded") === "true";
+        trigger.setAttribute("aria-expanded", isOpen ? "false" : "true");
+        if (isOpen) {
+          panel.classList.remove("is-open");
+          panel.setAttribute("hidden", "");
+        } else {
+          panel.removeAttribute("hidden");
+          requestAnimationFrame(function () {
+            panel.classList.add("is-open");
+          });
+        }
+      });
+    });
+  });
+</script>
 {% endblock %}
