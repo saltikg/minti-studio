@@ -1,0 +1,84 @@
+{% extends "vs_base.html" %}
+{% block title %}Billing Test Checkout{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .vs-billing-test {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+    .vs-billing-test-card {
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      padding: 20px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+    }
+    .vs-billing-test-meta {
+      color: rgba(255,255,255,0.7);
+      font-size: 0.95rem;
+    }
+    #checkout {
+      min-height: 680px;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="vs-billing-test">
+    <div class="page-title mb-2">Billing test checkout</div>
+    <div class="vs-text-muted mb-4">TEMPORARY — remove in Part 3.</div>
+    <div class="vs-billing-test-card">
+      <div class="mb-3">
+        <div class="fw-semibold">Selected plan</div>
+        <div class="vs-billing-test-meta">{{ billing_plan_id }} · {{ billing_interval }}</div>
+      </div>
+      {% if not stripe_ready or not stripe_publishable_key %}
+        <div class="alert alert-warning mb-0">Stripe is not configured yet.</div>
+      {% else %}
+        <div id="checkout"></div>
+        <div id="checkout-error" class="alert alert-danger mt-3 d-none"></div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if stripe_ready and stripe_publishable_key %}
+    <script src="https://js.stripe.com/v3/"></script>
+    <script>
+      (async function () {
+        const errorEl = document.getElementById("checkout-error");
+        const mountEl = document.getElementById("checkout");
+        try {
+          const stripe = Stripe({{ stripe_publishable_key|tojson }});
+          const checkout = await stripe.initEmbeddedCheckout({
+            fetchClientSecret: async () => {
+              const response = await fetch("{{ url_for('video_shorts_bp.create_checkout_session_route') }}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  plan_id: {{ billing_plan_id|tojson }},
+                  interval: {{ billing_interval|tojson }}
+                })
+              });
+              const payload = await response.json();
+              if (!response.ok || !payload.client_secret) {
+                throw new Error(payload.error || "Could not create checkout session.");
+              }
+              return payload.client_secret;
+            }
+          });
+          checkout.mount("#checkout");
+        } catch (error) {
+          if (mountEl) mountEl.innerHTML = "";
+          if (errorEl) {
+            errorEl.textContent = error.message || "Could not start embedded checkout.";
+            errorEl.classList.remove("d-none");
+          }
+        }
+      })();
+    </script>
+  {% endif %}
+{% endblock %}

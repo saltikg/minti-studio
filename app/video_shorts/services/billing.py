@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
 
 import stripe
 
@@ -49,6 +50,10 @@ PRICE_ID_TO_PLAN_INTERVAL: Dict[str, Tuple[str, str]] = {
 }
 
 
+def stripe_is_configured() -> bool:
+    return bool(STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY)
+
+
 def get_price_id_for_plan(plan_id: str, interval: str) -> Optional[str]:
     normalized_plan_id = (plan_id or "").strip()
     normalized_interval = (interval or "").strip().lower()
@@ -60,4 +65,131 @@ def get_plan_for_price_id(price_id: str) -> Optional[Tuple[str, str]]:
     if not normalized_price_id:
         return None
     return PRICE_ID_TO_PLAN_INTERVAL.get(normalized_price_id)
+
+
+def interval_is_supported(interval: str) -> bool:
+    return (interval or "").strip().lower() in {"month", "year"}
+
+
+def plan_is_paid(plan_id: str) -> bool:
+    return (plan_id or "").strip() in {"plan_2gb", "plan_10gb", "plan_100gb"}
+
+
+def build_checkout_return_url(base_url: str) -> str:
+    root = (base_url or "").rstrip("/")
+    return f"{root}/video_shorts/billing/complete?session_id={{CHECKOUT_SESSION_ID}}"
+
+
+def create_customer(*, email: str, shorts_user_id: str) -> stripe.Customer:
+    return stripe.Customer.create(
+        email=(email or "").strip() or None,
+        metadata={"shorts_user_id": str(shorts_user_id)},
+    )
+
+
+def create_embedded_checkout_session(
+    *,
+    customer_id: str,
+    price_id: str,
+    shorts_user_id: str,
+    plan_id: str,
+    interval: str,
+    return_url: str,
+) -> stripe.checkout.Session:
+    metadata = {
+        "shorts_user_id": str(shorts_user_id),
+        "plan_id": str(plan_id),
+        "interval": str(interval),
+    }
+    return stripe.checkout.Session.create(
+        mode="subscription",
+        ui_mode="embedded",
+        customer=customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        return_url=return_url,
+        metadata=metadata,
+        subscription_data={"metadata": metadata},
+    )
+
+
+def retrieve_checkout_session(session_id: str) -> stripe.checkout.Session:
+    return stripe.checkout.Session.retrieve((session_id or "").strip())
+
+
+def retrieve_subscription(subscription_id: str) -> stripe.Subscription:
+    return stripe.Subscription.retrieve((subscription_id or "").strip())
+
+
+def construct_webhook_event(*, payload: bytes, signature: str) -> stripe.Event:
+    return stripe.Webhook.construct_event(
+        payload=payload,
+        sig_header=signature,
+        secret=STRIPE_WEBHOOK_SECRET,
+    )
+
+
+def _subscription_period_end(subscription: Any) -> Optional[datetime]:
+    unix_ts = getattr(subscription, "current_period_end", None)
+    if unix_ts is None and isinstance(subscription, dict):
+        unix_ts = subscription.get("current_period_end")
+    if not unix_ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(unix_ts), tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def _subscription_price_id(subscription: Any) -> str:
+    items = getattr(subscription, "items", None)
+    if items is None and isinstance(subscription, dict):
+        items = subscription.get("items")
+    if not items:
+        return ""
+    data = getattr(items, "data", None)
+    if data is None and isinstance(items, dict):
+        data = items.get("data")
+    if not data:
+        return ""
+    first_item = data[0]
+    price = getattr(first_item, "price", None)
+    if price is None and isinstance(first_item, dict):
+        price = first_item.get("price")
+    if not price:
+        return ""
+    price_id = getattr(price, "id", None)
+    if price_id is None and isinstance(price, dict):
+        price_id = price.get("id")
+    return (price_id or "").strip()
+
+
+def resolve_plan_interval_from_subscription(subscription: Any) -> Optional[Tuple[str, str]]:
+    price_id = _subscription_price_id(subscription)
+    if not price_id:
+        return None
+    return get_plan_for_price_id(price_id)
+
+
+def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
+    resolved = resolve_plan_interval_from_subscription(subscription)
+    plan_id = resolved[0] if resolved else None
+    interval = resolved[1] if resolved else None
+    status = getattr(subscription, "status", None)
+    if status is None and isinstance(subscription, dict):
+        status = subscription.get("status")
+    subscription_id = getattr(subscription, "id", None)
+    if subscription_id is None and isinstance(subscription, dict):
+        subscription_id = subscription.get("id")
+    customer_id = getattr(subscription, "customer", None)
+    if customer_id is None and isinstance(subscription, dict):
+        customer_id = subscription.get("customer")
+    return {
+        "plan_id": plan_id,
+        "billing_interval": interval,
+        "subscription_status": (status or "").strip() or None,
+        "stripe_subscription_id": (subscription_id or "").strip() or None,
+        "stripe_customer_id": (customer_id or "").strip() or None,
+        "subscription_current_period_end": _subscription_period_end(subscription),
+        "price_id": _subscription_price_id(subscription),
+    }
 

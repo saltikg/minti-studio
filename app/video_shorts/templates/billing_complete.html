@@ -1,0 +1,24 @@
+{% extends "vs_base.html" %}
+{% block title %}Billing Complete{% endblock %}
+
+{% block content %}
+  <div style="max-width:720px;">
+    <h1 class="page-title mb-2">Billing status</h1>
+    <div class="vs-text-muted mb-4">Checkout finished. Subscription activation happens only after the Stripe webhook is processed.</div>
+
+    {% if stripe_error_message %}
+      <div class="alert alert-danger">Could not load checkout session: {{ stripe_error_message }}</div>
+    {% elif not stripe_session_id %}
+      <div class="alert alert-warning">Missing session_id.</div>
+    {% else %}
+      <div class="card vs-card">
+        <div class="card-body">
+          <div class="fw-semibold mb-2">Session</div>
+          <div class="vs-text-muted mb-3">{{ stripe_session_id }}</div>
+          <div class="fw-semibold mb-2">Stripe status</div>
+          <div>{{ stripe_status_summary }}</div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}
