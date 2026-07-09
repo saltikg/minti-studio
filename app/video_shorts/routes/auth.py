@@ -707,6 +707,8 @@ def _guard_video_shorts():
         "video_shorts_bp.switch_brand",
         "video_shorts_bp.set_default_brand",
         "video_shorts_bp.create_brand",
+        "video_shorts_bp.create_checkout_session_route",
+        "video_shorts_bp.billing_webhook",
     }
     if request.endpoint in allowed:
         return
