@@ -2713,6 +2713,8 @@ def _detect_title_prompt_language(excerpt: str) -> Optional[str]:
     text = " ".join(str(excerpt or "").strip().split())
     if not text:
         return None
+    if re.search(r"[\u0600-\u06FF]", text):
+        return "ar"
     lowered = f" {text.lower()} "
     if any(ch in text for ch in "çğıöşüÇĞİÖŞÜ"):
         return "tr"
@@ -2732,6 +2734,24 @@ def _detect_title_prompt_language(excerpt: str) -> Optional[str]:
     if english_score >= turkish_score + 1 and english_score >= 2:
         return "en"
     return None
+
+
+def _example_matches_language(example: Dict[str, str], language: Optional[str]) -> bool:
+    normalized = str(language or "").strip().lower()
+    if not normalized:
+        return True
+    sample = " ".join(
+        [
+            str(example.get("excerpt") or "").strip(),
+            str(example.get("title") or "").strip(),
+        ]
+    ).strip()
+    if not sample:
+        return False
+    detected = _detect_title_prompt_language(sample)
+    if not detected:
+        return normalized not in {"tr", "en", "ar"}
+    return detected == normalized
 
 
 def _generic_short_title_examples_for_language(language: Optional[str]) -> List[Dict[str, str]]:
@@ -2774,6 +2794,7 @@ def _request_short_title_suggestion(
     system_prompt = (
         "You write strong titles for short vertical clips cut from longer talk, educational, and Q&A videos. "
         "Write the title in the EXACT same language as the transcript. "
+        "Never translate the transcript into Turkish, English, or any other language. "
         "Make it specific to the single most interesting point, claim, or question in this excerpt. "
         "Prefer concrete wording over vague summary language. "
         "For Q&A clips, surface the core question or claim naturally. "
@@ -2790,6 +2811,11 @@ def _request_short_title_suggestion(
     except Exception:
         current_app.logger.exception("Failed to load user title style examples")
         examples = []
+    if detected_language:
+        examples = [
+            example for example in examples
+            if _example_matches_language(example, detected_language)
+        ]
     if len(examples) < 2:
         examples = _generic_short_title_examples_for_language(detected_language)
 
@@ -2807,6 +2833,11 @@ def _request_short_title_suggestion(
             + "\n".join(example_lines)
         )
     prompt_parts.append(
+        (
+            f"Transcript language hint: {detected_language}.\n"
+            "The output title must stay in that same language.\n\n"
+        ) if detected_language else ""
+        +
         f"Current transcript excerpt:\n{safe_excerpt or 'No transcript available.'}\n\n"
         "Create one short title only."
     )
