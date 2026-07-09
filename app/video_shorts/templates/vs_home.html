@@ -54,6 +54,30 @@
     text-align: center;
   }
 
+  .vs-home .flow-heading {
+    width: 100%;
+    max-width: 980px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .flow-eyebrow {
+    display: inline-block;
+    margin-bottom: 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+
+  .vs-home .flow-title {
+    margin: 0;
+    font-size: clamp(1.7rem, 3vw, 2.4rem);
+    font-weight: 500;
+    color: var(--text-1);
+  }
+
   .vs-home .hero-title {
     font-size: clamp(2.35rem, 4vw, 4.15rem);
     font-weight: 500;
@@ -117,11 +141,11 @@
 
   .vs-home .hero-flow {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1.5fr) auto minmax(0, 1.2fr);
+    grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1.35fr) auto minmax(0, 1fr) minmax(0, 0.95fr);
     gap: 1rem;
     align-items: start;
     width: 100%;
-    max-width: 700px;
+    max-width: 980px;
     margin: 0 auto;
   }
 
@@ -134,8 +158,9 @@
   }
 
   .vs-home .flow-stage-label {
-    font-size: 0.95rem;
-    color: var(--text-2);
+    font-size: 0.875rem;
+    color: var(--text-1);
+    font-weight: 500;
     margin: 0;
     text-align: center;
   }
@@ -248,44 +273,116 @@
   .vs-home .flow-platforms {
     width: 100%;
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    height: 100%;
+    align-items: center;
     justify-content: center;
+    height: 100%;
     min-height: 200px;
   }
 
-  .vs-home .platform-row {
+  .vs-home .platform-pill {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.85rem 0.95rem;
-    border-radius: 14px;
+    gap: 0.95rem;
+    padding: 0.95rem 1.15rem;
+    border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(15, 23, 42, 0.78);
   }
 
-  .vs-home .platform-row .bi-youtube {
+  .vs-home .platform-pill .bi-youtube {
     color: #ff4f63;
   }
 
-  .vs-home .platform-row .bi-instagram {
+  .vs-home .platform-pill .bi-instagram {
     color: #f472b6;
   }
 
-  .vs-home .platform-row .bi-facebook {
+  .vs-home .platform-pill .bi-facebook {
     color: #60a5fa;
   }
 
-  .vs-home .platform-row .bi-check-circle-fill {
-    color: #5dcaa5;
-    margin-left: auto;
+  .vs-home .platform-pill .bi {
+    font-size: 1.1rem;
   }
 
-  .vs-home .platform-label {
-    font-size: 0.98rem;
-    font-weight: 500;
+  .vs-home .flow-fork {
+    min-height: 200px;
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    align-items: center;
+    gap: 0.85rem;
+  }
+
+  .vs-home .fork-lines {
+    position: relative;
+    height: 150px;
+    width: 56px;
+  }
+
+  .vs-home .fork-lines::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    width: 18px;
+    height: 2px;
+    background: rgba(93, 202, 165, 0.95);
+  }
+
+  .vs-home .fork-line {
+    position: absolute;
+    left: 20px;
+    width: 34px;
+    height: 2px;
+    background: rgba(93, 202, 165, 0.95);
+    transform-origin: left center;
+  }
+
+  .vs-home .fork-line-up {
+    top: 44px;
+    transform: rotate(-32deg);
+  }
+
+  .vs-home .fork-line-down {
+    bottom: 44px;
+    transform: rotate(32deg);
+  }
+
+  .vs-home .fork-line::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    border-top: 2px solid rgba(93, 202, 165, 0.95);
+    border-right: 2px solid rgba(93, 202, 165, 0.95);
+    transform: translateY(-50%) rotate(45deg);
+  }
+
+  .vs-home .fork-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  .vs-home .fork-card {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.78);
     color: var(--text-1);
+    font-size: 0.9rem;
+    font-weight: 500;
+    min-height: 54px;
+  }
+
+  .vs-home .fork-card .bi {
+    color: #5dcaa5;
+    font-size: 1rem;
   }
 
   .vs-home .card-title-small {
@@ -387,6 +484,41 @@
     .vs-home .flow-clips {
       min-height: 220px;
     }
+
+    .vs-home .flow-fork {
+      grid-template-columns: 1fr;
+      gap: 0.65rem;
+      min-height: 0;
+    }
+
+    .vs-home .fork-lines {
+      width: 2px;
+      height: 44px;
+      justify-self: center;
+    }
+
+    .vs-home .fork-lines::before {
+      left: 0;
+      top: 0;
+      width: 2px;
+      height: 12px;
+    }
+
+    .vs-home .fork-line {
+      left: 0;
+      width: 24px;
+    }
+
+    .vs-home .fork-line-up {
+      top: 14px;
+      transform: rotate(55deg);
+    }
+
+    .vs-home .fork-line-down {
+      top: 28px;
+      bottom: auto;
+      transform: rotate(-55deg);
+    }
   }
 
   @media (max-width: 575px) {
@@ -439,6 +571,11 @@
         </div>
       </div>
 
+      <div class="flow-heading">
+        <div class="flow-eyebrow">How it works</div>
+        <h2 class="flow-title">From one video to a growing channel</h2>
+      </div>
+
       <div class="hero-flow" id="how-it-works">
         <div class="flow-stage">
           <div class="flow-card">
@@ -449,7 +586,7 @@
               <div class="flow-duration">24:03</div>
             </div>
           </div>
-          <p class="flow-stage-label">1 long video</p>
+          <p class="flow-stage-label">Start with one long video</p>
         </div>
 
         <div class="flow-arrow" aria-hidden="true">
@@ -464,7 +601,7 @@
               <div class="flow-clip"></div>
             </div>
           </div>
-          <p class="flow-stage-label">Multiple short clips</p>
+          <p class="flow-stage-label">Get multiple short clips</p>
         </div>
 
         <div class="flow-arrow" aria-hidden="true">
@@ -474,24 +611,31 @@
         <div class="flow-stage">
           <div class="flow-card">
             <div class="flow-platforms">
-              <div class="platform-row">
+              <div class="platform-pill">
                 <i class="bi bi-youtube"></i>
-                <span class="platform-label">YouTube</span>
-                <i class="bi bi-check-circle-fill"></i>
-              </div>
-              <div class="platform-row">
                 <i class="bi bi-instagram"></i>
-                <span class="platform-label">Instagram</span>
-                <i class="bi bi-check-circle-fill"></i>
-              </div>
-              <div class="platform-row">
                 <i class="bi bi-facebook"></i>
-                <span class="platform-label">Facebook</span>
-                <i class="bi bi-check-circle-fill"></i>
               </div>
             </div>
           </div>
-          <p class="flow-stage-label">Published everywhere</p>
+          <p class="flow-stage-label">Auto-posts everywhere</p>
+        </div>
+
+        <div class="flow-fork">
+          <div class="fork-lines" aria-hidden="true">
+            <span class="fork-line fork-line-up"></span>
+            <span class="fork-line fork-line-down"></span>
+          </div>
+          <div class="fork-cards">
+            <div class="fork-card">
+              <i class="bi bi-flag"></i>
+              <span>Comment insights</span>
+            </div>
+            <div class="fork-card">
+              <i class="bi bi-graph-up"></i>
+              <span>Track growth</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
