@@ -10,6 +10,17 @@
     scroll-behavior: smooth;
   }
 
+  @keyframes vsHomeFadeUp {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 18px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
   .vs-home {
     display: flex;
     flex-direction: column;
@@ -52,6 +63,8 @@
     max-width: 640px;
     margin: 0 auto;
     text-align: center;
+    opacity: 0;
+    animation: vsHomeFadeUp 0.7s ease-out 0.08s forwards;
   }
 
   .vs-home .hero-title {
@@ -98,6 +111,8 @@
     border: 1px solid rgba(255, 255, 255, 0.025);
     background: rgba(15, 23, 42, 0.36);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.008);
+    opacity: 0;
+    animation: vsHomeFadeUp 0.8s ease-out 0.22s forwards;
   }
 
   .vs-home .hero-primary {
@@ -142,6 +157,8 @@
     gap: 0.95rem;
     min-width: 0;
     align-items: center;
+    opacity: 0;
+    animation: vsHomeFadeUp 0.7s ease-out forwards;
   }
 
   .vs-home .flow-stage-label {
@@ -160,6 +177,8 @@
     justify-content: center;
     align-self: start;
     margin-top: 5.2rem;
+    opacity: 0;
+    animation: vsHomeFadeUp 0.55s ease-out forwards;
   }
 
   .vs-home .flow-card {
@@ -320,6 +339,32 @@
     grid-template-columns: 56px 1fr;
     align-items: center;
     gap: 1.2rem;
+    opacity: 0;
+    animation: vsHomeFadeUp 0.7s ease-out forwards;
+  }
+
+  .vs-home .hero-flow > .flow-stage:nth-of-type(1) {
+    animation-delay: 0.38s;
+  }
+
+  .vs-home .hero-flow > .flow-arrow:nth-of-type(2) {
+    animation-delay: 0.5s;
+  }
+
+  .vs-home .hero-flow > .flow-stage:nth-of-type(2) {
+    animation-delay: 0.62s;
+  }
+
+  .vs-home .hero-flow > .flow-arrow:nth-of-type(4) {
+    animation-delay: 0.74s;
+  }
+
+  .vs-home .hero-flow > .flow-stage:nth-of-type(3) {
+    animation-delay: 0.86s;
+  }
+
+  .vs-home .hero-flow > .flow-fork {
+    animation-delay: 0.98s;
   }
 
   .vs-home .fork-lines {
@@ -544,6 +589,22 @@
 
     .vs-home .platform-row {
       padding: 0.8rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    .vs-home .hero-copy,
+    .vs-home .flow-shell,
+    .vs-home .flow-stage,
+    .vs-home .flow-arrow,
+    .vs-home .flow-fork {
+      opacity: 1;
+      animation: none;
+      transform: none;
     }
   }
 </style>
