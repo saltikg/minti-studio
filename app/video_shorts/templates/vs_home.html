@@ -54,30 +54,6 @@
     text-align: center;
   }
 
-  .vs-home .flow-heading {
-    width: 100%;
-    max-width: 980px;
-    margin: 0 auto;
-    text-align: center;
-  }
-
-  .vs-home .flow-eyebrow {
-    display: inline-block;
-    margin-bottom: 0.7rem;
-    font-size: 0.72rem;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-2);
-  }
-
-  .vs-home .flow-title {
-    margin: 0;
-    font-size: clamp(1.7rem, 3vw, 2.4rem);
-    font-weight: 500;
-    color: var(--text-1);
-  }
-
   .vs-home .hero-title {
     font-size: clamp(2.35rem, 4vw, 4.15rem);
     font-weight: 500;
@@ -111,6 +87,17 @@
 
   .vs-home .hero-link {
     min-width: 12rem;
+  }
+
+  .vs-home .flow-shell {
+    width: 100%;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 1.35rem 1.1rem;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.36);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
 
   .vs-home .hero-primary {
@@ -540,6 +527,11 @@
       min-width: 0;
     }
 
+    .vs-home .flow-shell {
+      padding: 1rem 0.85rem;
+      border-radius: 20px;
+    }
+
     .vs-home .flow-clips {
       gap: 0.55rem;
       min-height: 180px;
@@ -565,75 +557,69 @@
           <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
             Try for free
           </a>
-          <a class="btn btn-outline-secondary hero-secondary hero-link" href="#how-it-works">
-            See how it works
-          </a>
         </div>
       </div>
 
-      <div class="flow-heading">
-        <div class="flow-eyebrow">How it works</div>
-        <h2 class="flow-title">From one video to a growing channel</h2>
-      </div>
-
-      <div class="hero-flow" id="how-it-works">
-        <div class="flow-stage">
-          <div class="flow-card">
-            <div class="flow-wide">
-              <div class="flow-play">
-                <i class="bi bi-play-fill"></i>
-              </div>
-              <div class="flow-duration">24:03</div>
-            </div>
-          </div>
-          <p class="flow-stage-label">Start with one long video</p>
-        </div>
-
-        <div class="flow-arrow" aria-hidden="true">
-          <i class="bi bi-arrow-right"></i>
-        </div>
-
-        <div class="flow-stage">
-          <div class="flow-card">
-            <div class="flow-clips">
-              <div class="flow-clip"></div>
-              <div class="flow-clip"></div>
-              <div class="flow-clip"></div>
-            </div>
-          </div>
-          <p class="flow-stage-label">Get multiple short clips</p>
-        </div>
-
-        <div class="flow-arrow" aria-hidden="true">
-          <i class="bi bi-arrow-right"></i>
-        </div>
-
-        <div class="flow-stage">
-          <div class="flow-card">
-            <div class="flow-platforms">
-              <div class="platform-pill">
-                <i class="bi bi-youtube"></i>
-                <i class="bi bi-instagram"></i>
-                <i class="bi bi-facebook"></i>
+      <div class="flow-shell">
+        <div class="hero-flow" id="how-it-works">
+          <div class="flow-stage">
+            <div class="flow-card">
+              <div class="flow-wide">
+                <div class="flow-play">
+                  <i class="bi bi-play-fill"></i>
+                </div>
+                <div class="flow-duration">24:03</div>
               </div>
             </div>
+            <p class="flow-stage-label">Start with one long video</p>
           </div>
-          <p class="flow-stage-label">Auto-posts everywhere</p>
-        </div>
 
-        <div class="flow-fork">
-          <div class="fork-lines" aria-hidden="true">
-            <span class="fork-line fork-line-up"></span>
-            <span class="fork-line fork-line-down"></span>
+          <div class="flow-arrow" aria-hidden="true">
+            <i class="bi bi-arrow-right"></i>
           </div>
-          <div class="fork-cards">
-            <div class="fork-card">
-              <i class="bi bi-flag"></i>
-              <span>Comment insights</span>
+
+          <div class="flow-stage">
+            <div class="flow-card">
+              <div class="flow-clips">
+                <div class="flow-clip"></div>
+                <div class="flow-clip"></div>
+                <div class="flow-clip"></div>
+              </div>
             </div>
-            <div class="fork-card">
-              <i class="bi bi-graph-up"></i>
-              <span>Track growth</span>
+            <p class="flow-stage-label">Get multiple short clips</p>
+          </div>
+
+          <div class="flow-arrow" aria-hidden="true">
+            <i class="bi bi-arrow-right"></i>
+          </div>
+
+          <div class="flow-stage">
+            <div class="flow-card">
+              <div class="flow-platforms">
+                <div class="platform-pill">
+                  <i class="bi bi-youtube"></i>
+                  <i class="bi bi-instagram"></i>
+                  <i class="bi bi-facebook"></i>
+                </div>
+              </div>
+            </div>
+            <p class="flow-stage-label">Auto-posts everywhere</p>
+          </div>
+
+          <div class="flow-fork">
+            <div class="fork-lines" aria-hidden="true">
+              <span class="fork-line fork-line-up"></span>
+              <span class="fork-line fork-line-down"></span>
+            </div>
+            <div class="fork-cards">
+              <div class="fork-card">
+                <i class="bi bi-flag"></i>
+                <span>Comment insights</span>
+              </div>
+              <div class="fork-card">
+                <i class="bi bi-graph-up"></i>
+                <span>Track growth</span>
+              </div>
             </div>
           </div>
         </div>
