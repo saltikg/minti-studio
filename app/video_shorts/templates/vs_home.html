@@ -592,6 +592,111 @@
     font-weight: 600;
   }
 
+  .vs-home .dashboard-proof-section {
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .dashboard-proof-eyebrow {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(93, 202, 165, 0.9);
+  }
+
+  .vs-home .dashboard-proof-title {
+    margin: 0.65rem 0 0;
+    font-size: clamp(1.9rem, 3vw, 2.7rem);
+    font-weight: 500;
+    line-height: 1.14;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .dashboard-proof-subline {
+    margin: 0.75rem auto 0;
+    max-width: 42rem;
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+
+  .vs-home .dashboard-proof-frames {
+    margin: 1.6rem auto 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    max-width: 960px;
+  }
+
+  .vs-home .dashboard-proof-frame {
+    overflow: hidden;
+    border-radius: 12px;
+    border: 0.5px solid rgba(255, 255, 255, 0.12);
+    background: rgba(13, 17, 23, 0.96);
+    text-align: left;
+  }
+
+  .vs-home .dashboard-proof-browserbar {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    padding: 0.72rem 0.85rem;
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .vs-home .dashboard-proof-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.42);
+  }
+
+  .vs-home .dashboard-proof-image {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1.95 / 1;
+    object-fit: cover;
+  }
+
+  .vs-home .dashboard-proof-callouts {
+    margin: 1.4rem auto 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem;
+    max-width: 960px;
+  }
+
+  .vs-home .dashboard-proof-callout {
+    padding: 1rem 1rem 0;
+  }
+
+  .vs-home .dashboard-proof-callout .bi {
+    display: inline-flex;
+    margin-bottom: 0.55rem;
+    color: #5dcaa5;
+    font-size: 1.15rem;
+  }
+
+  .vs-home .dashboard-proof-callout-title {
+    margin: 0;
+    color: rgba(248, 250, 252, 0.98);
+    font-size: 0.96rem;
+    font-weight: 600;
+  }
+
+  .vs-home .dashboard-proof-callout-copy {
+    margin: 0.35rem 0 0;
+    color: var(--text-2);
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
   .vs-home .audience-section {
     width: 100%;
     max-width: 600px;
@@ -1147,6 +1252,16 @@
       grid-template-columns: 1fr;
     }
 
+    .vs-home .dashboard-proof-frames {
+      grid-template-columns: 1fr;
+      max-width: 720px;
+    }
+
+    .vs-home .dashboard-proof-callouts {
+      grid-template-columns: 1fr;
+      max-width: 640px;
+    }
+
     .vs-home .pricing-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1430,6 +1545,76 @@
       <div class="comparison-capability comparison-foot-label"></div>
       <div class="comparison-minti comparison-minti-foot">1 login</div>
       <div class="comparison-other comparison-foot-label">4 tools</div>
+    </div>
+  </section>
+
+  <section class="dashboard-proof-section">
+    <p class="dashboard-proof-eyebrow">YOUR DASHBOARD</p>
+    <h2 class="dashboard-proof-title">See your whole channel in one place</h2>
+    <p class="dashboard-proof-subline">Views and subscriber growth across every platform — from a single dashboard.</p>
+
+    <div class="dashboard-proof-frames">
+      <div class="dashboard-proof-frame">
+        <div class="dashboard-proof-browserbar" aria-hidden="true">
+          <span class="dashboard-proof-dot"></span>
+          <span class="dashboard-proof-dot"></span>
+          <span class="dashboard-proof-dot"></span>
+        </div>
+        <picture>
+          <source
+            srcset="{{ url_for('video_shorts_bp.static', filename='img/dashboard_1.webp') }}"
+            type="image/webp"
+          >
+          <img
+            src="{{ url_for('video_shorts_bp.static', filename='img/dashboard_1.jpeg') }}"
+            alt="Views by platform chart"
+            class="dashboard-proof-image"
+            width="1226"
+            height="624"
+            loading="lazy"
+          >
+        </picture>
+      </div>
+
+      <div class="dashboard-proof-frame">
+        <div class="dashboard-proof-browserbar" aria-hidden="true">
+          <span class="dashboard-proof-dot"></span>
+          <span class="dashboard-proof-dot"></span>
+          <span class="dashboard-proof-dot"></span>
+        </div>
+        <picture>
+          <source
+            srcset="{{ url_for('video_shorts_bp.static', filename='img/dashboard_2.webp') }}"
+            type="image/webp"
+          >
+          <img
+            src="{{ url_for('video_shorts_bp.static', filename='img/dashboard_2.png') }}"
+            alt="Daily subscribers chart"
+            class="dashboard-proof-image"
+            width="1300"
+            height="656"
+            loading="lazy"
+          >
+        </picture>
+      </div>
+    </div>
+
+    <div class="dashboard-proof-callouts">
+      <div class="dashboard-proof-callout">
+        <i class="bi bi-bar-chart-line" aria-hidden="true"></i>
+        <p class="dashboard-proof-callout-title">Views by platform</p>
+        <p class="dashboard-proof-callout-copy">Know where your reach comes from.</p>
+      </div>
+      <div class="dashboard-proof-callout">
+        <i class="bi bi-people" aria-hidden="true"></i>
+        <p class="dashboard-proof-callout-title">Subscriber growth</p>
+        <p class="dashboard-proof-callout-copy">Watch every channel climb.</p>
+      </div>
+      <div class="dashboard-proof-callout">
+        <i class="bi bi-grid-1x2" aria-hidden="true"></i>
+        <p class="dashboard-proof-callout-title">One dashboard</p>
+        <p class="dashboard-proof-callout-copy">Every platform, side by side.</p>
+      </div>
     </div>
   </section>
 
