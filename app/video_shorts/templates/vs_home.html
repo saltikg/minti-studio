@@ -32,6 +32,15 @@
     }
   }
 
+  @keyframes vsFlowFade {
+    0%, 8% {
+      opacity: 0;
+    }
+    18%, 100% {
+      opacity: 1;
+    }
+  }
+
   @keyframes vsFlowDrift {
     0%, 100% {
       transform: translate3d(0, 0, 0);
@@ -120,7 +129,7 @@
   }
 
   .vs-home .hero-link {
-    min-width: 12rem;
+    min-width: 14rem;
   }
 
   .vs-home .flow-shell {
@@ -163,6 +172,9 @@
     border: none;
     color: #07131a;
     box-shadow: 0 10px 24px rgba(29, 158, 117, 0.28);
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 0.95rem 1.55rem;
   }
 
   .vs-home .hero-primary:hover,
@@ -203,9 +215,9 @@
   }
 
   .vs-home .flow-stage-label {
-    font-size: 0.875rem;
+    font-size: 1rem;
     color: var(--text-1);
-    font-weight: 500;
+    font-weight: 600;
     margin: 0;
     text-align: center;
   }
@@ -243,6 +255,13 @@
     animation-delay:
       var(--flow-delay, 0s),
       calc(var(--flow-delay, 0s) + 1.15s);
+  }
+
+  .vs-home .flow-reveal-line {
+    opacity: 1;
+    will-change: opacity;
+    animation: vsFlowFade 7.8s cubic-bezier(0.22, 1, 0.36, 1) infinite both;
+    animation-delay: var(--flow-delay, 0s);
   }
 
   .vs-home .hero-flow > .flow-stage:nth-of-type(1) .flow-card {
@@ -751,8 +770,8 @@
 
           <div class="flow-fork">
             <div class="fork-lines" aria-hidden="true">
-              <span class="fork-line fork-line-up flow-reveal" style="--flow-delay: 2.9s;"></span>
-              <span class="fork-line fork-line-down flow-reveal" style="--flow-delay: 3.1s;"></span>
+              <span class="fork-line fork-line-up flow-reveal-line" style="--flow-delay: 2.9s;"></span>
+              <span class="fork-line fork-line-down flow-reveal-line" style="--flow-delay: 3.1s;"></span>
             </div>
             <div class="fork-cards">
               <div class="fork-card flow-reveal" style="--flow-delay: 3.45s;">
