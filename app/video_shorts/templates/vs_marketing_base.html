@@ -399,14 +399,20 @@
       </a>
 
       <div class="vs-marketing-nav">
-        {% for label, anchor in marketing_nav_items %}
-          <a class="vs-marketing-nav-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
-        {% endfor %}
+        {% block marketing_nav_links %}
+          {% for label, anchor in marketing_nav_items %}
+            <a class="vs-marketing-nav-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
+          {% endfor %}
+        {% endblock %}
       </div>
 
       <div class="vs-marketing-actions">
-        <a class="vs-marketing-login" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
-        <a class="vs-marketing-cta" href="{{ url_for('video_shorts_bp.register') }}">Try for free</a>
+        {% block marketing_login_link %}
+          <a class="vs-marketing-login" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
+        {% endblock %}
+        {% block marketing_cta %}
+          <a class="vs-marketing-cta" href="{{ url_for('video_shorts_bp.register') }}">Try for free</a>
+        {% endblock %}
         <button
           type="button"
           class="vs-marketing-menu-btn"
@@ -421,10 +427,12 @@
 
     <div class="vs-marketing-mobile-panel" id="vs-marketing-mobile-panel">
       <div class="vs-marketing-mobile-links">
-        {% for label, anchor in marketing_nav_items %}
-          <a class="vs-marketing-mobile-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
-        {% endfor %}
-        <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
+        {% block marketing_mobile_links %}
+          {% for label, anchor in marketing_nav_items %}
+            <a class="vs-marketing-mobile-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
+          {% endfor %}
+          <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
+        {% endblock %}
       </div>
     </div>
   </nav>
