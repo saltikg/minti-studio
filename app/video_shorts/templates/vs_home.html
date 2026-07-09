@@ -483,6 +483,115 @@
     margin-bottom: 0.35rem;
   }
 
+  .vs-home .comparison-section {
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .comparison-eyebrow {
+    margin: 0 0 0.65rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(93, 202, 165, 0.9);
+  }
+
+  .vs-home .comparison-title {
+    margin: 0 0 0.75rem;
+    font-size: clamp(1.8rem, 3vw, 2.45rem);
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .comparison-subline {
+    margin: 0 auto 1.5rem;
+    max-width: 30rem;
+    color: var(--text-2);
+    font-size: 0.98rem;
+    line-height: 1.6;
+  }
+
+  .vs-home .comparison-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 0.95fr);
+    gap: 0;
+    text-align: left;
+    align-items: stretch;
+  }
+
+  .vs-home .comparison-head {
+    padding: 0 0 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-2);
+  }
+
+  .vs-home .comparison-head-muted {
+    color: rgba(255, 255, 255, 0.48);
+  }
+
+  .vs-home .comparison-capability,
+  .vs-home .comparison-minti,
+  .vs-home .comparison-other {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    padding: 0.85rem 0.85rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .vs-home .comparison-capability {
+    gap: 0.65rem;
+    color: rgba(226, 232, 240, 0.9);
+    font-weight: 500;
+  }
+
+  .vs-home .comparison-capability .bi {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 0.95rem;
+  }
+
+  .vs-home .comparison-minti {
+    justify-content: center;
+    border-left: 1.5px solid #5dcaa5;
+    border-right: 1.5px solid #5dcaa5;
+    color: #5dcaa5;
+    font-weight: 600;
+  }
+
+  .vs-home .comparison-minti-head {
+    border-top: 1.5px solid #5dcaa5;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    padding-top: 0.9rem;
+  }
+
+  .vs-home .comparison-minti-foot {
+    border-bottom: 1.5px solid #5dcaa5;
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 16px;
+    padding-bottom: 0.95rem;
+  }
+
+  .vs-home .comparison-check {
+    font-size: 1.05rem;
+    color: #5dcaa5;
+  }
+
+  .vs-home .comparison-other {
+    color: rgba(255, 255, 255, 0.56);
+    justify-content: flex-start;
+  }
+
+  .vs-home .comparison-foot-label {
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 600;
+  }
+
   .vs-home .card-copy {
     color: var(--text-2);
     margin: 0;
@@ -604,6 +713,10 @@
       bottom: auto;
       transform: rotate(-55deg);
     }
+
+    .vs-home .comparison-grid {
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.7fr) minmax(0, 0.95fr);
+    }
   }
 
   @media (max-width: 575px) {
@@ -636,6 +749,24 @@
 
     .vs-home .platform-row {
       padding: 0.8rem;
+    }
+
+    .vs-home .comparison-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(88px, 0.52fr) minmax(0, 0.95fr);
+    }
+
+    .vs-home .comparison-capability,
+    .vs-home .comparison-minti,
+    .vs-home .comparison-other {
+      min-height: 64px;
+      padding: 0.8rem 0.6rem;
+      font-size: 0.88rem;
+    }
+
+    .vs-home .comparison-other {
+      line-height: 1.4;
+      align-items: flex-start;
+      padding-top: 0.92rem;
     }
   }
 
@@ -777,7 +908,7 @@
             <div class="fork-cards">
               <div class="fork-card flow-reveal" style="--flow-delay: 3.45s;">
                 <i class="bi bi-flag"></i>
-                <span>Comment insights</span>
+                <span>Comment moderation</span>
               </div>
               <div class="fork-card flow-reveal" style="--flow-delay: 3.8s;">
                 <i class="bi bi-graph-up"></i>
@@ -792,6 +923,38 @@
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="comparison-section">
+    <p class="comparison-eyebrow">WHY MINTISTUDIO</p>
+    <h2 class="comparison-title">Your growth partner, not just a clip tool</h2>
+    <p class="comparison-subline">Everything a growing channel needs, in one place — instead of stitching apps together.</p>
+
+    <div class="comparison-grid" aria-label="Why MintiStudio comparison">
+      <div class="comparison-head"></div>
+      <div class="comparison-head comparison-minti comparison-minti-head">MintiStudio</div>
+      <div class="comparison-head comparison-head-muted">On your own</div>
+
+      <div class="comparison-capability"><i class="bi bi-scissors"></i><span>Clips</span></div>
+      <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
+      <div class="comparison-other">a clipping app</div>
+
+      <div class="comparison-capability"><i class="bi bi-send"></i><span>Publishing</span></div>
+      <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
+      <div class="comparison-other">a scheduler</div>
+
+      <div class="comparison-capability"><i class="bi bi-bar-chart"></i><span>Analytics</span></div>
+      <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
+      <div class="comparison-other">an analytics tool</div>
+
+      <div class="comparison-capability"><i class="bi bi-chat-dots"></i><span>Comment moderation</span></div>
+      <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
+      <div class="comparison-other">done by hand</div>
+
+      <div class="comparison-capability comparison-foot-label"></div>
+      <div class="comparison-minti comparison-minti-foot">1 login</div>
+      <div class="comparison-other comparison-foot-label">4 tools</div>
     </div>
   </section>
 
