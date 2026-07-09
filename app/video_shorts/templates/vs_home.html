@@ -85,34 +85,8 @@
     justify-content: center;
   }
 
-  .vs-home .hero-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.7rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-2);
-    margin-bottom: 0.95rem;
-    font-weight: 500;
-  }
-
-  .vs-home .hero-label-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: #1d9e75;
-    box-shadow: 0 0 12px rgba(93, 202, 165, 0.55);
-  }
-
   .vs-home .hero-link {
     min-width: 12rem;
-  }
-
-  .vs-home .hero-note {
-    margin-top: 0.9rem;
-    font-size: 0.88rem;
-    color: var(--text-2);
   }
 
   .vs-home .hero-primary {
@@ -145,7 +119,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1.5fr) auto minmax(0, 1.2fr);
     gap: 1rem;
-    align-items: center;
+    align-items: start;
     width: 100%;
     max-width: 700px;
     margin: 0 auto;
@@ -172,6 +146,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    align-self: start;
+    margin-top: 5.2rem;
   }
 
   .vs-home .flow-card {
@@ -179,6 +155,9 @@
     min-height: 200px;
     padding: 0.25rem;
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .vs-home .flow-wide {
@@ -241,7 +220,7 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
     height: 100%;
-    align-items: end;
+    align-items: center;
     min-height: 200px;
   }
 
@@ -254,14 +233,6 @@
       linear-gradient(150deg, rgba(255, 255, 255, 0.05), rgba(17, 24, 39, 0.9));
     position: relative;
     overflow: hidden;
-  }
-
-  .vs-home .flow-clip:nth-child(2) {
-    transform: translateY(-0.4rem);
-  }
-
-  .vs-home .flow-clip:nth-child(3) {
-    transform: translateY(0.35rem);
   }
 
   .vs-home .flow-clip::before {
@@ -396,11 +367,14 @@
       grid-template-columns: 1fr;
       gap: 0.8rem;
       max-width: 420px;
+      align-items: center;
     }
 
     .vs-home .flow-arrow {
       transform: rotate(90deg);
       justify-self: center;
+      align-self: center;
+      margin-top: 0;
     }
 
     .vs-home .flow-card {
@@ -448,10 +422,6 @@
   <section class="vs-home-hero">
     <div class="vs-home-hero-inner">
       <div class="hero-copy">
-        <div class="hero-label">
-          <span class="hero-label-dot"></span>
-          MINTISTUDIO
-        </div>
         <h1 class="hero-title">Upload one video.<br>We'll handle the rest.</h1>
         <p class="hero-subtitle">
           Clips, publishing, and insights — one panel to grow your channel.
@@ -464,7 +434,6 @@
             See how it works
           </a>
         </div>
-        <div class="hero-note">No credit card required</div>
       </div>
 
       <div class="hero-flow" id="how-it-works">
