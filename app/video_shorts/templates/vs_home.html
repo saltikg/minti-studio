@@ -787,6 +787,99 @@
     gap: 0.75rem;
   }
 
+  .vs-home .site-footer {
+    width: 100%;
+    max-width: 980px;
+    margin: 0 auto;
+    padding-top: 0.5rem;
+  }
+
+  .vs-home .footer-cta {
+    text-align: center;
+    padding: 0 0 2rem;
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.11);
+  }
+
+  .vs-home .footer-cta-title {
+    margin: 0;
+    font-size: clamp(1.8rem, 3vw, 2.4rem);
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .footer-cta-subline {
+    margin: 0.8rem auto 0;
+    max-width: 38rem;
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+
+  .vs-home .footer-cta-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: center;
+  }
+
+  .vs-home .footer-note {
+    margin: 0.95rem 0 0;
+    color: var(--text-2);
+    font-size: 0.9rem;
+  }
+
+  .vs-home .footer-legal {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.2rem;
+    padding: 1.35rem 0 0;
+    flex-wrap: wrap;
+  }
+
+  .vs-home .footer-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+    color: rgba(248, 250, 252, 0.96);
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .vs-home .footer-links {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1rem 1.35rem;
+    flex-wrap: wrap;
+  }
+
+  .vs-home .footer-link,
+  .vs-home .footer-link-disabled {
+    color: rgba(148, 163, 184, 0.88);
+    font-size: 0.92rem;
+    text-decoration: none;
+    transition: color 0.18s ease;
+  }
+
+  .vs-home .footer-link:hover,
+  .vs-home .footer-link:focus {
+    color: rgba(248, 250, 252, 0.96);
+  }
+
+  .vs-home .footer-link-disabled {
+    opacity: 0.74;
+    cursor: default;
+  }
+
+  .vs-home .footer-copyright {
+    margin: 1rem 0 0;
+    text-align: center;
+    color: rgba(148, 163, 184, 0.82);
+    font-size: 0.8rem;
+  }
+
   @media (max-width: 991px) {
     .vs-home .vs-home-hero-inner {
       gap: 1.6rem;
@@ -850,6 +943,16 @@
     .vs-home .audience-grid {
       grid-template-columns: 1fr;
     }
+
+    .vs-home .footer-legal {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .vs-home .footer-links {
+      justify-content: center;
+    }
   }
 
   @media (max-width: 575px) {
@@ -905,6 +1008,14 @@
     .vs-home .audience-card {
       min-height: 88px;
       padding: 1.15rem 1rem;
+    }
+
+    .vs-home .footer-cta {
+      padding-bottom: 1.65rem;
+    }
+
+    .vs-home .footer-links {
+      gap: 0.8rem 1rem;
     }
   }
 
@@ -1226,23 +1337,34 @@
     </div>
   </section>
 
-  <section>
-    <div class="card cta-card">
-      <div class="card-body d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3">
-        <div>
-          <div class="cta-title">Ready to build momentum?</div>
-        </div>
-        <div class="cta-actions">
-          <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.quick_short') }}">
-            Create your first short
-          </a>
-          <a class="btn btn-outline-secondary" href="{{ url_for('video_shorts_bp.channels_page') }}">
-            Connect a source
-          </a>
-        </div>
+  <footer class="site-footer">
+    <div class="footer-cta">
+      <h2 class="footer-cta-title">Grow your channel — starting today</h2>
+      <p class="footer-cta-subline">Upload one video and let MintiStudio handle the rest.</p>
+      <div class="footer-cta-actions">
+        <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
+          Try for free
+        </a>
+      </div>
+      <p class="footer-note">No credit card required</p>
+    </div>
+
+    <div class="footer-legal">
+      <a class="footer-brand" href="{{ url_for('video_shorts_bp.home') }}">
+        <span class="vs-app-logo-dot" aria-hidden="true">●</span>
+        <span>MintiStudio</span>
+      </a>
+
+      <div class="footer-links" aria-label="Legal links">
+        <a class="footer-link" href="{{ url_for('video_shorts_bp.privacy_page') }}">Privacy Policy</a>
+        <a class="footer-link" href="{{ url_for('video_shorts_bp.terms_page') }}">Terms of Service</a>
+        <a class="footer-link" href="{{ url_for('video_shorts_bp.data_deletion_page') }}">Data Deletion</a>
+        <span class="footer-link-disabled" title="Contact route is not available yet">Contact</span>
       </div>
     </div>
-  </section>
+
+    <p class="footer-copyright">© 2026 MintiStudio. All rights reserved.</p>
+  </footer>
 </div>
 {% endblock %}
 
