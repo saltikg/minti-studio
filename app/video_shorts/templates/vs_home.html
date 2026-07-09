@@ -74,17 +74,18 @@
     padding: clamp(1.4rem, 2.4vw, 2.8rem) 0 0;
     display: flex;
     flex-direction: column;
-    gap: 2.3rem;
+    gap: 1.35rem;
     align-items: center;
+    width: 100%;
   }
 
   .vs-home .hero-copy {
     width: 100%;
-    max-width: 640px;
+    max-width: 1120px;
     margin: 0 auto;
     text-align: center;
     opacity: 0;
-    animation: vsHomeFadeUp 0.7s ease-out 0.08s forwards;
+    animation: vsHomeFadeUp 0.7s ease-out 0.3s forwards;
   }
 
   .vs-home .hero-title {
@@ -124,7 +125,7 @@
 
   .vs-home .flow-shell {
     width: 100%;
-    max-width: 1120px;
+    max-width: none;
     margin: 0 auto;
     padding: 1.35rem 1.1rem;
     border-radius: 24px;
@@ -641,14 +642,7 @@
   <section class="vs-home-hero">
     <div class="vs-home-hero-inner">
       <div class="hero-copy">
-        <div class="hero-actions">
-          <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
-            Try for free
-          </a>
-        </div>
-      </div>
-
-      <div class="flow-shell">
+        <div class="flow-shell">
         <div class="flow-shell-header">
           <h1 class="flow-shell-title">Upload one video.<br>We'll handle the rest.</h1>
           <p class="flow-shell-eyebrow">HOW IT WORKS</p>
@@ -773,6 +767,12 @@
               </div>
             </div>
           </div>
+        </div>
+        </div>
+        <div class="hero-actions">
+          <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
+            Try for free
+          </a>
         </div>
       </div>
     </div>
