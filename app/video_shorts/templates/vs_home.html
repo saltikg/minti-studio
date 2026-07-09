@@ -592,6 +592,53 @@
     font-weight: 600;
   }
 
+  .vs-home .audience-section {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .audience-title {
+    margin: 0 0 1.3rem;
+    font-size: clamp(1.7rem, 2.8vw, 2.25rem);
+    font-weight: 500;
+    line-height: 1.14;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .audience-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+  }
+
+  .vs-home .audience-card {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-height: 96px;
+    padding: 1.35rem;
+    border-radius: 12px;
+    border: 0.5px solid rgba(255, 255, 255, 0.11);
+    background: rgba(15, 23, 42, 0.72);
+    text-align: left;
+  }
+
+  .vs-home .audience-card .bi {
+    font-size: 1.9rem;
+    color: #5dcaa5;
+    flex: 0 0 auto;
+  }
+
+  .vs-home .audience-card-text {
+    margin: 0;
+    color: rgba(248, 250, 252, 0.95);
+    font-size: 0.91rem;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
   .vs-home .card-copy {
     color: var(--text-2);
     margin: 0;
@@ -717,6 +764,10 @@
     .vs-home .comparison-grid {
       grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.7fr) minmax(0, 0.95fr);
     }
+
+    .vs-home .audience-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 575px) {
@@ -767,6 +818,11 @@
       line-height: 1.4;
       align-items: flex-start;
       padding-top: 0.92rem;
+    }
+
+    .vs-home .audience-card {
+      min-height: 88px;
+      padding: 1.15rem 1rem;
     }
   }
 
@@ -955,6 +1011,29 @@
       <div class="comparison-capability comparison-foot-label"></div>
       <div class="comparison-minti comparison-minti-foot">1 login</div>
       <div class="comparison-other comparison-foot-label">4 tools</div>
+    </div>
+  </section>
+
+  <section class="audience-section">
+    <h2 class="audience-title">Sound familiar?</h2>
+
+    <div class="audience-grid">
+      <div class="audience-card">
+        <i class="bi bi-clock-history"></i>
+        <p class="audience-card-text">You're on YouTube but never post Shorts</p>
+      </div>
+      <div class="audience-card">
+        <i class="bi bi-instagram"></i>
+        <p class="audience-card-text">Instagram feels like a second job</p>
+      </div>
+      <div class="audience-card">
+        <i class="bi bi-chat-dots"></i>
+        <p class="audience-card-text">Comments pile up — the old ones you never see</p>
+      </div>
+      <div class="audience-card">
+        <i class="bi bi-graph-up-arrow"></i>
+        <p class="audience-card-text">You can't tell which videos actually worked</p>
+      </div>
     </div>
   </section>
 
