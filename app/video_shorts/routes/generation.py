@@ -6103,6 +6103,16 @@ def shorts_storage_plans():
     is_admin = current_user.get("role") == "admin"
     billing_user = load_billing_user_state(current_user["id"])
     has_managed_subscription = user_has_managed_subscription(billing_user)
+    subscription_cancel_notice = None
+    if billing_user and billing_user.get("subscription_cancel_at_period_end"):
+        period_end = billing_user.get("subscription_current_period_end")
+        if isinstance(period_end, datetime):
+            effective_date = period_end.astimezone(timezone.utc).strftime("%B %d, %Y")
+        else:
+            effective_date = "the end of your billing period"
+        current_plan_name = None
+        if billing_user.get("plan_id"):
+            current_plan_name = billing_user.get("plan_id")
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
@@ -6132,6 +6142,12 @@ def shorts_storage_plans():
     plans = _load_storage_plan_catalog(conn)
     conn.close()
     current_plan = next((plan for plan in plans if plan["plan_id"] == current_user.get("plan_id")), None)
+    if billing_user and billing_user.get("subscription_cancel_at_period_end"):
+        current_plan_name = (current_plan or {}).get("label") or current_plan_name or "your paid plan"
+        subscription_cancel_notice = (
+            f"Your subscription is set to cancel. You'll keep {current_plan_name} until "
+            f"{effective_date}, then move to Free."
+        )
 
     return render_template(
         "shorts_storage_plans.html",
@@ -6142,6 +6158,7 @@ def shorts_storage_plans():
         stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
         billing_has_managed_subscription=has_managed_subscription,
         billing_portal_url=url_for("video_shorts_bp.billing_portal"),
+        subscription_cancel_notice=subscription_cancel_notice,
     )
 
 

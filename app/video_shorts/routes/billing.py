@@ -85,6 +85,7 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
+                subscription_cancel_at_period_end,
                 billing_interval,
                 plan_id
             FROM shorts_users
@@ -103,8 +104,9 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
         "stripe_subscription_id": row[3],
         "subscription_status": row[4],
         "subscription_current_period_end": row[5],
-        "billing_interval": row[6],
-        "plan_id": row[7],
+        "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else False,
+        "billing_interval": row[7],
+        "plan_id": row[8],
     }
 
 
@@ -160,6 +162,7 @@ def _update_user_subscription_state(
     stripe_subscription_id: Optional[str],
     subscription_status: Optional[str],
     subscription_current_period_end,
+    subscription_cancel_at_period_end: Optional[bool],
     billing_interval: Optional[str],
 ) -> None:
     conn = get_db()
@@ -173,6 +176,7 @@ def _update_user_subscription_state(
                 stripe_subscription_id = ?,
                 subscription_status = ?,
                 subscription_current_period_end = ?,
+                subscription_cancel_at_period_end = ?,
                 billing_interval = ?,
                 updated_at = now()
             WHERE id = ?
@@ -183,6 +187,7 @@ def _update_user_subscription_state(
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
+                subscription_cancel_at_period_end,
                 billing_interval,
                 user_id,
             ],
@@ -199,6 +204,7 @@ def _update_user_status_only(
     stripe_customer_id: Optional[str] = None,
     stripe_subscription_id: Optional[str] = None,
     subscription_current_period_end=None,
+    subscription_cancel_at_period_end: Optional[bool] = None,
     billing_interval: Optional[str] = None,
 ) -> None:
     conn = get_db()
@@ -211,6 +217,7 @@ def _update_user_status_only(
                 stripe_subscription_id = COALESCE(?, stripe_subscription_id),
                 subscription_status = ?,
                 subscription_current_period_end = COALESCE(?, subscription_current_period_end),
+                subscription_cancel_at_period_end = COALESCE(?, subscription_cancel_at_period_end),
                 billing_interval = COALESCE(?, billing_interval),
                 updated_at = now()
             WHERE id = ?
@@ -220,6 +227,7 @@ def _update_user_status_only(
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
+                subscription_cancel_at_period_end,
                 billing_interval,
                 user_id,
             ],
@@ -422,6 +430,7 @@ def _sync_subscription_to_user(subscription: Any, *, metadata: Optional[Dict[str
         stripe_subscription_id=normalized.get("stripe_subscription_id"),
         subscription_status=normalized.get("subscription_status"),
         subscription_current_period_end=normalized.get("subscription_current_period_end"),
+        subscription_cancel_at_period_end=normalized.get("subscription_cancel_at_period_end"),
         billing_interval=normalized.get("billing_interval"),
     )
     return True
@@ -462,6 +471,7 @@ def _handle_subscription_deleted(subscription: Any) -> bool:
         stripe_subscription_id=None,
         subscription_status="canceled",
         subscription_current_period_end=normalized.get("subscription_current_period_end"),
+        subscription_cancel_at_period_end=False,
         billing_interval=None,
     )
     return True
@@ -492,6 +502,7 @@ def _handle_invoice_payment_failed(invoice: Any) -> bool:
         subscription_status="past_due",
         stripe_customer_id=customer_id or None,
         stripe_subscription_id=subscription_id or None,
+        subscription_cancel_at_period_end=None,
         billing_interval=interval,
     )
     return True

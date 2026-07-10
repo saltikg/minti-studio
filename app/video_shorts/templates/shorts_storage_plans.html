@@ -42,6 +42,11 @@
     background: rgba(245, 158, 11, 0.14);
     border-color: rgba(245, 158, 11, 0.3);
   }
+  .usage-banner.subscription-cancel {
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: var(--text-1);
+  }
   .usage-meters {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -240,6 +245,11 @@
         Upgrade / Compare plans
       </button>
     </div>
+    {% if subscription_cancel_notice %}
+      <div class="usage-banner subscription-cancel mb-3">
+        {{ subscription_cancel_notice }}
+      </div>
+    {% endif %}
     <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
     <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
     <div id="usage-panel-error" class="usage-error usage-panel-numbers d-none">Usage could not be loaded right now.</div>

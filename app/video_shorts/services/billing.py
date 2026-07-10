@@ -183,6 +183,15 @@ def _subscription_price_id(subscription: Any) -> str:
     return (price_id or "").strip()
 
 
+def _subscription_cancel_at_period_end(subscription: Any) -> Optional[bool]:
+    value = getattr(subscription, "cancel_at_period_end", None)
+    if value is None and isinstance(subscription, dict):
+        value = subscription.get("cancel_at_period_end")
+    if value is None:
+        return None
+    return bool(value)
+
+
 def resolve_plan_interval_from_subscription(subscription: Any) -> Optional[Tuple[str, str]]:
     price_id = _subscription_price_id(subscription)
     if not price_id:
@@ -210,6 +219,7 @@ def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
         "stripe_subscription_id": (subscription_id or "").strip() or None,
         "stripe_customer_id": (customer_id or "").strip() or None,
         "subscription_current_period_end": _subscription_period_end(subscription),
+        "subscription_cancel_at_period_end": _subscription_cancel_at_period_end(subscription),
         "price_id": _subscription_price_id(subscription),
     }
 
@@ -229,6 +239,7 @@ def load_billing_user_state(user_id: str) -> Optional[Dict[str, Any]]:
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
+                subscription_cancel_at_period_end,
                 billing_interval,
                 plan_id
             FROM shorts_users
@@ -247,8 +258,9 @@ def load_billing_user_state(user_id: str) -> Optional[Dict[str, Any]]:
         "stripe_subscription_id": row[3],
         "subscription_status": row[4],
         "subscription_current_period_end": row[5],
-        "billing_interval": row[6],
-        "plan_id": row[7],
+        "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else False,
+        "billing_interval": row[7],
+        "plan_id": row[8],
     }
 
 
