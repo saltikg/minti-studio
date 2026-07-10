@@ -234,7 +234,34 @@ def _extract_metadata(payload: Any) -> Dict[str, Any]:
     metadata = getattr(payload, "metadata", None)
     if metadata is None and isinstance(payload, dict):
         metadata = payload.get("metadata")
-    return dict(metadata or {})
+    if not metadata:
+        return {}
+    try:
+        if isinstance(metadata, dict):
+            return {str(key): value for key, value in metadata.items()}
+        to_dict_recursive = getattr(metadata, "to_dict_recursive", None)
+        if callable(to_dict_recursive):
+            value = to_dict_recursive()
+            if isinstance(value, dict):
+                return {str(key): item for key, item in value.items()}
+        to_dict = getattr(metadata, "to_dict", None)
+        if callable(to_dict):
+            value = to_dict()
+            if isinstance(value, dict):
+                return {str(key): item for key, item in value.items()}
+        items_method = getattr(metadata, "items", None)
+        if callable(items_method):
+            try:
+                return {str(key): value for key, value in items_method()}
+            except Exception:
+                pass
+        extracted: Dict[str, Any] = {}
+        for key in metadata:
+            extracted[str(key)] = metadata[key]
+        return extracted
+    except Exception as exc:
+        logger.warning("Stripe metadata extraction failed for payload_type=%s: %s", type(payload).__name__, exc)
+        return {}
 
 
 @video_shorts_bp.route("/billing/create-checkout-session", methods=["POST"])

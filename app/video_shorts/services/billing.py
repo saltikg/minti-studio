@@ -133,6 +133,18 @@ def _subscription_period_end(subscription: Any) -> Optional[datetime]:
     if unix_ts is None and isinstance(subscription, dict):
         unix_ts = subscription.get("current_period_end")
     if not unix_ts:
+        items = getattr(subscription, "items", None)
+        if items is None and isinstance(subscription, dict):
+            items = subscription.get("items")
+        data = getattr(items, "data", None) if items is not None else None
+        if data is None and isinstance(items, dict):
+            data = items.get("data")
+        first_item = data[0] if data else None
+        if first_item is not None:
+            unix_ts = getattr(first_item, "current_period_end", None)
+            if unix_ts is None and isinstance(first_item, dict):
+                unix_ts = first_item.get("current_period_end")
+    if not unix_ts:
         return None
     try:
         return datetime.fromtimestamp(int(unix_ts), tz=timezone.utc)
