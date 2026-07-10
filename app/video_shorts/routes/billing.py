@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from typing import Any, Dict, Optional
 
 import stripe
-from flask import g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.billing import (
