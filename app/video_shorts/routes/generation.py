@@ -6143,11 +6143,7 @@ def shorts_storage_plans():
     conn.close()
     current_plan = next((plan for plan in plans if plan["plan_id"] == current_user.get("plan_id")), None)
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
-        current_plan_name = (current_plan or {}).get("label") or current_plan_name or "your paid plan"
-        subscription_cancel_notice = (
-            f"Your subscription is set to cancel. You'll keep {current_plan_name} until "
-            f"{effective_date}, then move to Free."
-        )
+        subscription_cancel_notice = f"Ends {effective_date} -> Free"
 
     return render_template(
         "shorts_storage_plans.html",
