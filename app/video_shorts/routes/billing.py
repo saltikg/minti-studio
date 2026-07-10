@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 from typing import Any, Dict, Optional
 
 import stripe
@@ -39,6 +40,32 @@ def _current_user_or_401():
     if not current_user:
         return None, _billing_error("unauthorized", 401)
     return current_user, None
+
+
+def _is_public_host(host: str) -> bool:
+    value = (host or "").strip().lower()
+    if not value:
+        return False
+    host_only = value.split(":", 1)[0]
+    return host_only not in {"127.0.0.1", "localhost", "0.0.0.0"}
+
+
+def _public_base_url() -> str:
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip()
+    forwarded_host = (request.headers.get("X-Forwarded-Host") or "").split(",", 1)[0].strip()
+    if forwarded_proto and _is_public_host(forwarded_host):
+        return f"{forwarded_proto}://{forwarded_host}"
+
+    host = (request.headers.get("Host") or "").strip()
+    if _is_public_host(host):
+        scheme = forwarded_proto or request.scheme or "https"
+        return f"{scheme}://{host}"
+
+    parsed = urlparse((current_app.config.get("BASE_URL") or "").strip())
+    if parsed.scheme and _is_public_host(parsed.netloc):
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    return request.url_root.rstrip("/")
 
 
 def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
@@ -238,15 +265,38 @@ def create_checkout_session_route():
         if customer_id:
             _save_customer_id(current_user["id"], customer_id)
 
-    base_url = request.url_root.rstrip("/")
-    session = create_embedded_checkout_session(
-        customer_id=customer_id,
-        price_id=price_id,
-        shorts_user_id=current_user["id"],
-        plan_id=plan_id,
-        interval=interval,
-        return_url=build_checkout_return_url(base_url),
-    )
+    base_url = _public_base_url()
+    return_url = build_checkout_return_url(base_url)
+    try:
+        session = create_embedded_checkout_session(
+            customer_id=customer_id,
+            price_id=price_id,
+            shorts_user_id=current_user["id"],
+            plan_id=plan_id,
+            interval=interval,
+            return_url=return_url,
+        )
+    except stripe.StripeError as exc:
+        logger.exception(
+            "Stripe checkout session creation failed user_id=%s plan_id=%s interval=%s customer_id=%s return_url=%s",
+            current_user["id"],
+            plan_id,
+            interval,
+            customer_id or "-",
+            return_url,
+        )
+        message = getattr(exc, "user_message", None) or str(exc) or "Stripe checkout session creation failed."
+        return _billing_error(message, 500)
+    except Exception as exc:
+        logger.exception(
+            "Unexpected checkout session creation failure user_id=%s plan_id=%s interval=%s customer_id=%s return_url=%s",
+            current_user["id"],
+            plan_id,
+            interval,
+            customer_id or "-",
+            return_url,
+        )
+        return _billing_error(str(exc) or "Unexpected checkout session creation failure.", 500)
     return jsonify({"client_secret": session.client_secret})
 
 

@@ -37,7 +37,7 @@
         <div class="alert alert-warning mb-0">Stripe is not configured yet.</div>
       {% else %}
         <div id="checkout"></div>
-        <div id="checkout-error" class="alert alert-danger mt-3 d-none"></div>
+        <div id="checkout-error" class="alert alert-danger mt-3 d-none" role="alert"></div>
       {% endif %}
     </div>
   </div>
@@ -51,8 +51,28 @@
       (async function () {
         const errorEl = document.getElementById("checkout-error");
         const mountEl = document.getElementById("checkout");
+        const publishableKey = {{ stripe_publishable_key|tojson }};
+        const showError = (message) => {
+          console.error("[Stripe Embedded Checkout]", message);
+          if (mountEl) {
+            mountEl.innerHTML = "";
+          }
+          if (errorEl) {
+            errorEl.textContent = message || "Could not start embedded checkout.";
+            errorEl.classList.remove("d-none");
+          }
+        };
+
+        if (!publishableKey) {
+          showError("Stripe publishable key is missing.");
+          return;
+        }
+        if (!window.Stripe) {
+          showError("Stripe.js failed to load.");
+          return;
+        }
         try {
-          const stripe = Stripe({{ stripe_publishable_key|tojson }});
+          const stripe = window.Stripe(publishableKey);
           const checkout = await stripe.initEmbeddedCheckout({
             fetchClientSecret: async () => {
               const response = await fetch("{{ url_for('video_shorts_bp.create_checkout_session_route') }}", {
@@ -63,20 +83,16 @@
                   interval: {{ billing_interval|tojson }}
                 })
               });
-              const payload = await response.json();
+              const payload = await response.json().catch(() => null);
               if (!response.ok || !payload.client_secret) {
-                throw new Error(payload.error || "Could not create checkout session.");
+                throw new Error((payload && payload.error) || `Could not create checkout session (HTTP ${response.status}).`);
               }
               return payload.client_secret;
             }
           });
           checkout.mount("#checkout");
         } catch (error) {
-          if (mountEl) mountEl.innerHTML = "";
-          if (errorEl) {
-            errorEl.textContent = error.message || "Could not start embedded checkout.";
-            errorEl.classList.remove("d-none");
-          }
+          showError(error.message || "Could not start embedded checkout.");
         }
       })();
     </script>
