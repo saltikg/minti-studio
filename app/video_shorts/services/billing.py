@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import stripe
-from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.db import ensure_auth_user_schema, get_db, get_db_readonly
 
 
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
@@ -14,6 +15,9 @@ STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
+
+
+logger = logging.getLogger(__name__)
 
 # TEST price IDs — replace with live price IDs before going live.
 _PRICE_ID_DEFAULTS: Dict[Tuple[str, str], str] = {
@@ -224,44 +228,125 @@ def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
     }
 
 
-def load_billing_user_state(user_id: str) -> Optional[Dict[str, Any]]:
-    normalized_user_id = (user_id or "").strip()
-    if not normalized_user_id:
-        return None
-    conn = get_db_readonly()
+def _update_user_subscription_snapshot(
+    *,
+    user_id: str,
+    plan_id: Optional[str],
+    stripe_customer_id: Optional[str],
+    stripe_subscription_id: Optional[str],
+    subscription_status: Optional[str],
+    subscription_current_period_end,
+    subscription_cancel_at_period_end: Optional[bool],
+    billing_interval: Optional[str],
+) -> None:
+    conn = get_db()
     try:
-        row = conn.execute(
+        ensure_auth_user_schema(conn)
+        conn.execute(
             """
-            SELECT
-                CAST(id AS VARCHAR),
-                email,
+            UPDATE shorts_users
+            SET plan_id = COALESCE(?, plan_id),
+                stripe_customer_id = COALESCE(?, stripe_customer_id),
+                stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+                subscription_status = COALESCE(?, subscription_status),
+                subscription_current_period_end = COALESCE(?, subscription_current_period_end),
+                subscription_cancel_at_period_end = COALESCE(?, subscription_cancel_at_period_end),
+                billing_interval = COALESCE(?, billing_interval),
+                updated_at = now()
+            WHERE id = ?
+            """,
+            [
+                plan_id,
                 stripe_customer_id,
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
                 subscription_cancel_at_period_end,
                 billing_interval,
-                plan_id
-            FROM shorts_users
-            WHERE id = ?
-            """,
-            [normalized_user_id],
-        ).fetchone()
+                user_id,
+            ],
+        )
+        conn.commit()
     finally:
         conn.close()
-    if not row:
+
+
+def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Optional[Dict[str, Any]]:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
         return None
-    return {
-        "id": row[0],
-        "email": row[1],
-        "stripe_customer_id": row[2],
-        "stripe_subscription_id": row[3],
-        "subscription_status": row[4],
-        "subscription_current_period_end": row[5],
-        "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else False,
-        "billing_interval": row[7],
-        "plan_id": row[8],
-    }
+    def _read_state() -> Optional[Dict[str, Any]]:
+        conn = get_db_readonly()
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    CAST(id AS VARCHAR),
+                    email,
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    subscription_status,
+                    subscription_current_period_end,
+                    subscription_cancel_at_period_end,
+                    billing_interval,
+                    plan_id
+                FROM shorts_users
+                WHERE id = ?
+                """,
+                [normalized_user_id],
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "email": row[1],
+            "stripe_customer_id": row[2],
+            "stripe_subscription_id": row[3],
+            "subscription_status": row[4],
+            "subscription_current_period_end": row[5],
+            "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else None,
+            "billing_interval": row[7],
+            "plan_id": row[8],
+        }
+
+    state = _read_state()
+    if not state:
+        return None
+    subscription_id = (state.get("stripe_subscription_id") or "").strip()
+    if not refresh_live or not subscription_id or not STRIPE_SECRET_KEY:
+        if state.get("subscription_cancel_at_period_end") is None:
+            state["subscription_cancel_at_period_end"] = False
+        return state
+    try:
+        live_subscription = retrieve_subscription(subscription_id)
+        normalized = normalize_subscription_payload(live_subscription)
+        current_cancel = state.get("subscription_cancel_at_period_end")
+        if (
+            current_cancel is None
+            or current_cancel != normalized.get("subscription_cancel_at_period_end")
+            or state.get("subscription_current_period_end") != normalized.get("subscription_current_period_end")
+            or (state.get("subscription_status") or None) != normalized.get("subscription_status")
+            or (state.get("billing_interval") or None) != normalized.get("billing_interval")
+            or (state.get("plan_id") or None) != normalized.get("plan_id")
+        ):
+            _update_user_subscription_snapshot(
+                user_id=normalized_user_id,
+                plan_id=normalized.get("plan_id"),
+                stripe_customer_id=normalized.get("stripe_customer_id"),
+                stripe_subscription_id=normalized.get("stripe_subscription_id"),
+                subscription_status=normalized.get("subscription_status"),
+                subscription_current_period_end=normalized.get("subscription_current_period_end"),
+                subscription_cancel_at_period_end=normalized.get("subscription_cancel_at_period_end"),
+                billing_interval=normalized.get("billing_interval"),
+            )
+            state = _read_state() or state
+    except Exception:
+        logger.exception("Failed to refresh live Stripe subscription state user_id=%s subscription_id=%s", normalized_user_id, subscription_id)
+    if state.get("subscription_cancel_at_period_end") is None:
+        state["subscription_cancel_at_period_end"] = False
+    return state
 
 
 def user_has_managed_subscription(user_state: Optional[Dict[str, Any]]) -> bool:

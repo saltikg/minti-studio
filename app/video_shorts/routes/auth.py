@@ -1499,7 +1499,7 @@ def account_page():
     current_user = _current_user()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    billing_user = load_billing_user_state(current_user["id"])
+    billing_user = load_billing_user_state(current_user["id"], refresh_live=True)
     has_managed_subscription = user_has_managed_subscription(billing_user)
 
     account_items = [

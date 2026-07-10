@@ -6101,7 +6101,7 @@ def shorts_storage_plans():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
-    billing_user = load_billing_user_state(current_user["id"])
+    billing_user = load_billing_user_state(current_user["id"], refresh_live=True)
     has_managed_subscription = user_has_managed_subscription(billing_user)
     subscription_cancel_notice = None
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
