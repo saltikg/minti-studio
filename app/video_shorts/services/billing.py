@@ -103,7 +103,7 @@ def create_embedded_checkout_session(
     }
     return stripe.checkout.Session.create(
         mode="subscription",
-        ui_mode="embedded",
+        ui_mode="embedded_page",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
         return_url=return_url,
@@ -192,4 +192,3 @@ def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
         "subscription_current_period_end": _subscription_period_end(subscription),
         "price_id": _subscription_price_id(subscription),
     }
-
