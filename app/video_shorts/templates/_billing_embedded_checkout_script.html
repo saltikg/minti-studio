@@ -1,0 +1,107 @@
+{% if stripe_ready and stripe_publishable_key %}
+  <script src="https://js.stripe.com/v3/"></script>
+  <script>
+    (function () {
+      let stripeInstance = null;
+      let activeCheckout = null;
+      const publishableKey = {{ stripe_publishable_key|tojson }};
+
+      function ensureStripe() {
+        if (!publishableKey) {
+          throw new Error("Stripe publishable key is missing.");
+        }
+        if (!window.Stripe) {
+          throw new Error("Stripe.js failed to load.");
+        }
+        if (!stripeInstance) {
+          stripeInstance = window.Stripe(publishableKey);
+        }
+        return stripeInstance;
+      }
+
+      async function mountEmbeddedCheckout(options) {
+        const {
+          planId,
+          interval,
+          mountSelector,
+          errorSelector,
+          onMounting,
+          onMounted,
+          onError,
+        } = options || {};
+
+        const mountEl = document.querySelector(mountSelector);
+        const errorEl = document.querySelector(errorSelector);
+        const showError = (message) => {
+          if (mountEl) {
+            mountEl.innerHTML = "";
+          }
+          if (errorEl) {
+            errorEl.textContent = message || "Could not start checkout.";
+            errorEl.classList.remove("d-none");
+          }
+          if (typeof onError === "function") {
+            onError(message || "Could not start checkout.");
+          }
+        };
+
+        if (errorEl) {
+          errorEl.classList.add("d-none");
+          errorEl.textContent = "";
+        }
+        if (!mountEl) {
+          showError("Checkout mount target is missing.");
+          return null;
+        }
+
+        try {
+          const stripe = ensureStripe();
+          if (typeof onMounting === "function") {
+            onMounting();
+          }
+          if (activeCheckout && typeof activeCheckout.destroy === "function") {
+            try {
+              activeCheckout.destroy();
+            } catch (destroyError) {
+              console.warn("[Stripe Embedded Checkout] destroy failed", destroyError);
+            }
+            activeCheckout = null;
+          }
+          mountEl.innerHTML = "";
+          const checkout = await stripe.initEmbeddedCheckout({
+            fetchClientSecret: async () => {
+              const response = await fetch({{ url_for('video_shorts_bp.create_checkout_session_route')|tojson }}, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({
+                  plan_id: planId,
+                  interval: interval
+                })
+              });
+              const payload = await response.json().catch(() => null);
+              if (!response.ok || !payload || !payload.client_secret) {
+                throw new Error((payload && payload.error) || `Could not create checkout session (HTTP ${response.status}).`);
+              }
+              return payload.client_secret;
+            }
+          });
+          activeCheckout = checkout;
+          checkout.mount(mountSelector);
+          if (typeof onMounted === "function") {
+            onMounted();
+          }
+          return checkout;
+        } catch (error) {
+          console.error("[Stripe Embedded Checkout]", error);
+          showError(error?.message || "Could not start checkout.");
+          return null;
+        }
+      }
+
+      window.MintiEmbeddedCheckout = {
+        mount: mountEmbeddedCheckout,
+      };
+    })();
+  </script>
+{% endif %}

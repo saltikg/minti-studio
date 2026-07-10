@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import stripe
+from app.video_shorts.services.db import get_db_readonly
 
 
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
@@ -120,6 +121,13 @@ def retrieve_subscription(subscription_id: str) -> stripe.Subscription:
     return stripe.Subscription.retrieve((subscription_id or "").strip())
 
 
+def create_billing_portal_session(*, customer_id: str, return_url: str) -> stripe.billing_portal.Session:
+    return stripe.billing_portal.Session.create(
+        customer=(customer_id or "").strip(),
+        return_url=return_url,
+    )
+
+
 def construct_webhook_event(*, payload: bytes, signature: str) -> stripe.Event:
     return stripe.Webhook.construct_event(
         payload=payload,
@@ -204,3 +212,52 @@ def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
         "subscription_current_period_end": _subscription_period_end(subscription),
         "price_id": _subscription_price_id(subscription),
     }
+
+
+def load_billing_user_state(user_id: str) -> Optional[Dict[str, Any]]:
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        return None
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                CAST(id AS VARCHAR),
+                email,
+                stripe_customer_id,
+                stripe_subscription_id,
+                subscription_status,
+                subscription_current_period_end,
+                billing_interval,
+                plan_id
+            FROM shorts_users
+            WHERE id = ?
+            """,
+            [normalized_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "email": row[1],
+        "stripe_customer_id": row[2],
+        "stripe_subscription_id": row[3],
+        "subscription_status": row[4],
+        "subscription_current_period_end": row[5],
+        "billing_interval": row[6],
+        "plan_id": row[7],
+    }
+
+
+def user_has_managed_subscription(user_state: Optional[Dict[str, Any]]) -> bool:
+    if not user_state:
+        return False
+    customer_id = (user_state.get("stripe_customer_id") or "").strip()
+    subscription_id = (user_state.get("stripe_subscription_id") or "").strip()
+    status = (user_state.get("subscription_status") or "").strip().lower()
+    if not customer_id or not subscription_id:
+        return False
+    return status not in {"", "canceled", "incomplete_expired"}

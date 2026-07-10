@@ -193,6 +193,24 @@
     color: var(--text-2);
     font-size: 0.92rem;
   }
+  .plan-manage-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .plan-checkout-shell {
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    padding: 10px;
+  }
+  .plan-checkout-status {
+    color: var(--text-2);
+    font-size: 0.9rem;
+  }
+  #planEmbeddedCheckout {
+    min-height: 620px;
+  }
 </style>
 {% endblock %}
 
@@ -203,6 +221,12 @@
     <h3 class="mb-1 vs-card-title">Plan &amp; storage</h3>
     <div class="vs-text-muted">Your plan usage this month.</div>
   </div>
+  {% if billing_has_managed_subscription %}
+    <a href="{{ billing_portal_url }}" class="btn btn-sm vs-btn vs-btn-secondary plan-manage-link">
+      <i class="bi bi-credit-card-2-front" aria-hidden="true"></i>
+      <span>Manage subscription</span>
+    </a>
+  {% endif %}
 </div>
 
 <div class="card shadow-sm usage-panel mb-4">
@@ -459,18 +483,26 @@
             <div class="vs-modal-value" id="planConfirmCurrent"></div>
           </div>
         </div>
-        <div class="vs-modal-hint mt-3">You can change this later.</div>
+        <div class="vs-modal-hint mt-3" id="planConfirmHint">You can change this later.</div>
+        <div id="planCheckoutShell" class="plan-checkout-shell d-none mt-3">
+          <div id="planCheckoutStatus" class="plan-checkout-status mb-2">Preparing secure checkout…</div>
+          <div id="planCheckoutError" class="alert alert-danger d-none mb-3" role="alert"></div>
+          <div id="planEmbeddedCheckout"></div>
+        </div>
       </div>
       <div class="modal-footer vs-modal-footer">
-        <button type="button" class="btn vs-btn vs-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn vs-btn vs-btn-secondary" data-bs-dismiss="modal" id="planConfirmCancel">Cancel</button>
         <form method="post" id="planConfirmForm" class="m-0" action="{{ url_for('video_shorts_bp.shorts_storage_plans') }}">
           <input type="hidden" name="plan_id" id="planConfirmPlanId">
+          <input type="hidden" name="interval" id="planConfirmInterval">
           <button type="submit" class="btn vs-btn vs-btn-primary" id="planConfirmSubmit">Confirm</button>
         </form>
       </div>
     </div>
   </div>
 </div>
+
+{% include "_billing_embedded_checkout_script.html" %}
 
 <script>
   (function () {
@@ -490,8 +522,14 @@
     const planStorageEl = document.getElementById("planConfirmStorage");
     const planCurrentEl = document.getElementById("planConfirmCurrent");
     const planIdInput = document.getElementById("planConfirmPlanId");
+    const planIntervalInput = document.getElementById("planConfirmInterval");
     const confirmForm = document.getElementById("planConfirmForm");
     const confirmBtn = document.getElementById("planConfirmSubmit");
+    const planConfirmHint = document.getElementById("planConfirmHint");
+    const planConfirmCancel = document.getElementById("planConfirmCancel");
+    const planCheckoutShell = document.getElementById("planCheckoutShell");
+    const planCheckoutStatus = document.getElementById("planCheckoutStatus");
+    const planCheckoutError = document.getElementById("planCheckoutError");
     const usageLoading = document.getElementById("usage-panel-loading");
     const usageError = document.getElementById("usage-panel-error");
     const usageContent = document.getElementById("usage-panel-content");
@@ -511,6 +549,10 @@
     const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
     const usageMonthDetails = new Map();
+    const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
+    const stripeReady = {{ stripe_ready|tojson }};
+    const portalUrl = {{ billing_portal_url|tojson }};
+    let selectedPlan = null;
 
     function getModal(el) {
       if (!el || !window.bootstrap) return null;
@@ -842,15 +884,50 @@
     }
     setBillingCycle(yearlyToggle && yearlyToggle.checked);
 
+    const resetPlanConfirmState = () => {
+      if (confirmForm) {
+        confirmForm.classList.remove("d-none");
+      }
+      if (planCheckoutShell) {
+        planCheckoutShell.classList.add("d-none");
+      }
+      if (planCheckoutError) {
+        planCheckoutError.classList.add("d-none");
+        planCheckoutError.textContent = "";
+      }
+      if (planCheckoutStatus) {
+        planCheckoutStatus.textContent = "Preparing secure checkout…";
+      }
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Confirm";
+      }
+      if (planConfirmCancel) {
+        planConfirmCancel.disabled = false;
+      }
+    };
+
     planButtons.forEach((button) => {
       button.addEventListener("click", () => {
         const isYearly = yearlyToggle && yearlyToggle.checked;
+        const billingInterval = isYearly ? "year" : "month";
         const planName = button.dataset.planName;
         const planQuota = button.dataset.planQuota;
         const monthlyPrice = button.dataset.priceMonthly;
         const yearlyPrice = button.dataset.priceYearly;
         const displayPrice = isYearly ? yearlyPrice : monthlyPrice;
         const displayPeriod = isYearly ? "per year" : "per month";
+        const planId = button.dataset.planId;
+        const isFreePlan = planId === "plan_free";
+        const shouldUsePortal = billingHasManagedSubscription;
+
+        selectedPlan = {
+          planId,
+          planName,
+          interval: billingInterval,
+          isFreePlan,
+          shouldUsePortal,
+        };
 
         if (planTitleEl) {
           planTitleEl.textContent = `Switch to ${planName}?`;
@@ -870,8 +947,30 @@
           planCurrentEl.textContent = currentPlanName;
         }
         if (planIdInput) {
-          planIdInput.value = button.dataset.planId;
+          planIdInput.value = planId;
         }
+        if (planIntervalInput) {
+          planIntervalInput.value = billingInterval;
+        }
+        if (planConfirmHint) {
+          if (shouldUsePortal) {
+            planConfirmHint.textContent = "You already have a Stripe subscription. Manage changes in the Billing Portal.";
+          } else if (isFreePlan) {
+            planConfirmHint.textContent = "This switches you to Free immediately.";
+          } else {
+            planConfirmHint.textContent = "Your plan updates after payment completes and the Stripe webhook is processed.";
+          }
+        }
+        if (confirmBtn) {
+          if (shouldUsePortal) {
+            confirmBtn.textContent = isFreePlan ? "Open Billing Portal to cancel" : "Open Billing Portal";
+          } else if (isFreePlan) {
+            confirmBtn.textContent = "Switch to Free";
+          } else {
+            confirmBtn.textContent = "Continue to payment";
+          }
+        }
+        resetPlanConfirmState();
         if (planCompareModalEl && planCompareModalEl.classList.contains("show")) {
           const openConfirm = () => {
             planCompareModalEl.removeEventListener("hidden.bs.modal", openConfirm);
@@ -887,7 +986,76 @@
     });
 
     if (confirmForm && confirmBtn) {
-      confirmForm.addEventListener("submit", () => {
+      confirmForm.addEventListener("submit", async (event) => {
+        if (!selectedPlan) {
+          return;
+        }
+        if (selectedPlan.shouldUsePortal) {
+          event.preventDefault();
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Opening…";
+          window.location.href = portalUrl;
+          return;
+        }
+        if (!selectedPlan.isFreePlan) {
+          event.preventDefault();
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Loading checkout…";
+          if (planConfirmCancel) {
+            planConfirmCancel.disabled = true;
+          }
+          if (confirmForm) {
+            confirmForm.classList.add("d-none");
+          }
+          if (planCheckoutShell) {
+            planCheckoutShell.classList.remove("d-none");
+          }
+          if (!stripeReady || !window.MintiEmbeddedCheckout) {
+            if (planCheckoutError) {
+              planCheckoutError.textContent = "Stripe checkout is not configured right now.";
+              planCheckoutError.classList.remove("d-none");
+            }
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Continue to payment";
+            if (confirmForm) {
+              confirmForm.classList.remove("d-none");
+            }
+            if (planConfirmCancel) {
+              planConfirmCancel.disabled = false;
+            }
+            return;
+          }
+          await window.MintiEmbeddedCheckout.mount({
+            planId: selectedPlan.planId,
+            interval: selectedPlan.interval,
+            mountSelector: "#planEmbeddedCheckout",
+            errorSelector: "#planCheckoutError",
+            onMounting: () => {
+              if (planCheckoutStatus) {
+                planCheckoutStatus.textContent = "Preparing secure checkout…";
+              }
+            },
+            onMounted: () => {
+              if (planCheckoutStatus) {
+                planCheckoutStatus.textContent = "Complete payment below. Your plan updates after Stripe confirms the subscription.";
+              }
+            },
+            onError: () => {
+              confirmBtn.disabled = false;
+              confirmBtn.textContent = "Continue to payment";
+              if (confirmForm) {
+                confirmForm.classList.remove("d-none");
+              }
+              if (planCheckoutShell) {
+                planCheckoutShell.classList.add("d-none");
+              }
+              if (planConfirmCancel) {
+                planConfirmCancel.disabled = false;
+              }
+            },
+          });
+          return;
+        }
         confirmBtn.disabled = true;
         confirmBtn.textContent = "Saving…";
       });

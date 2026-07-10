@@ -103,6 +103,12 @@ from app.video_shorts.services.user_preferences import (
     load_user_bool_preference,
     save_user_bool_preference,
 )
+from app.video_shorts.services.billing import (
+    STRIPE_PUBLISHABLE_KEY,
+    load_billing_user_state,
+    stripe_is_configured,
+    user_has_managed_subscription,
+)
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _find_source_video,
@@ -6095,10 +6101,22 @@ def shorts_storage_plans():
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
+    billing_user = load_billing_user_state(current_user["id"])
+    has_managed_subscription = user_has_managed_subscription(billing_user)
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
         plan_id = (request.form.get("plan_id") or "").strip() or None
+        normalized_plan_id = (plan_id or "").strip()
+        if not is_admin:
+            if normalized_plan_id and normalized_plan_id != "plan_free":
+                conn.close()
+                flash("Paid plan changes must go through checkout.", "warning")
+                return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+            if normalized_plan_id == "plan_free" and has_managed_subscription:
+                conn.close()
+                flash("Manage your active subscription in Stripe Billing Portal to switch to Free.", "warning")
+                return redirect(url_for("video_shorts_bp.billing_portal"))
         conn.execute(
             """
             UPDATE shorts_users
@@ -6120,6 +6138,10 @@ def shorts_storage_plans():
         plans=plans,
         is_admin=is_admin,
         current_plan_label=(current_plan or {}).get("label") or "Free",
+        stripe_ready=stripe_is_configured(),
+        stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
+        billing_has_managed_subscription=has_managed_subscription,
+        billing_portal_url=url_for("video_shorts_bp.billing_portal"),
     )
 
 

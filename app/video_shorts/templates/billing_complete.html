@@ -18,13 +18,16 @@
     .vs-billing-session {
       word-break: break-all;
     }
+    .vs-billing-complete-redirect {
+      color: rgba(255, 255, 255, 0.82);
+    }
   </style>
 {% endblock %}
 
 {% block content %}
   <div class="vs-billing-complete">
     <h1 class="page-title mb-2">Billing status</h1>
-    <div class="vs-text-muted mb-4">Checkout finished. Subscription activation happens only after the Stripe webhook is processed.</div>
+    <div class="vs-text-muted mb-4">Checkout finished. Your plan is being updated now.</div>
 
     {% if stripe_error_message %}
       <div class="alert alert-danger">Could not load checkout session: {{ stripe_error_message }}</div>
@@ -37,8 +40,23 @@
           <div class="vs-billing-session mb-3">{{ stripe_session_id }}</div>
           <div class="fw-semibold mb-2">Stripe status</div>
           <div class="vs-billing-status">{{ stripe_status_summary }}</div>
+          <div class="vs-billing-complete-redirect mt-3">
+            Returning you to Plan &amp; Storage…
+            <a href="{{ billing_redirect_url }}" class="link-light ms-1">Go now</a>
+          </div>
         </div>
       </div>
     {% endif %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if billing_redirect_url %}
+    <script>
+      window.setTimeout(() => {
+        window.location.href = {{ billing_redirect_url|tojson }};
+      }, 2200);
+    </script>
+  {% endif %}
 {% endblock %}

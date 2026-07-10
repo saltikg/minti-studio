@@ -61,6 +61,10 @@ from app.video_shorts.services.auth_protection import (
     turnstile_site_key,
     verify_turnstile_token,
 )
+from app.video_shorts.services.billing import (
+    load_billing_user_state,
+    user_has_managed_subscription,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -1495,6 +1499,8 @@ def account_page():
     current_user = _current_user()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    billing_user = load_billing_user_state(current_user["id"])
+    has_managed_subscription = user_has_managed_subscription(billing_user)
 
     account_items = [
         {
@@ -1519,6 +1525,16 @@ def account_page():
             "href": url_for("video_shorts_bp.shorts_storage_plans"),
         },
     ]
+    if has_managed_subscription:
+        account_items.append(
+            {
+                "title": "Manage Subscription",
+                "subtitle": "Open Stripe Billing Portal",
+                "meta": "Change plans, update billing, or cancel your subscription in Stripe.",
+                "icon": "credit_card",
+                "href": url_for("video_shorts_bp.billing_portal"),
+            }
+        )
     return render_template("shorts_account.html", account_items=account_items)
 
 

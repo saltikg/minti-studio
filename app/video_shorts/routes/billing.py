@@ -5,13 +5,14 @@ from urllib.parse import urlparse
 from typing import Any, Dict, Optional
 
 import stripe
-from flask import current_app, g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     STRIPE_WEBHOOK_SECRET,
     build_checkout_return_url,
+    create_billing_portal_session,
     construct_webhook_event,
     create_customer,
     create_embedded_checkout_session,
@@ -105,6 +106,17 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
         "billing_interval": row[6],
         "plan_id": row[7],
     }
+
+
+def _user_has_managed_subscription(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    customer_id = (user.get("stripe_customer_id") or "").strip()
+    subscription_id = (user.get("stripe_subscription_id") or "").strip()
+    status = (user.get("subscription_status") or "").strip().lower()
+    if not customer_id or not subscription_id:
+        return False
+    return status not in {"", "canceled", "incomplete_expired"}
 
 
 def _save_customer_id(user_id: str, customer_id: str) -> None:
@@ -285,6 +297,8 @@ def create_checkout_session_route():
     user = _load_billing_user(current_user["id"])
     if not user:
         return _billing_error("user_not_found", 404)
+    if _user_has_managed_subscription(user):
+        return _billing_error("subscription_managed_in_portal", 409)
 
     customer_id = (user.get("stripe_customer_id") or "").strip()
     if not customer_id:
@@ -331,25 +345,29 @@ def create_checkout_session_route():
     return jsonify({"client_secret": session.client_secret})
 
 
-@video_shorts_bp.route("/billing/test-checkout", methods=["GET"])
-def billing_test_checkout():
-    # TEMPORARY — remove in Part 3.
+@video_shorts_bp.route("/billing/portal", methods=["GET"])
+def billing_portal():
     current_user, error = _current_user_or_401()
     if error:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    plan_id = (request.args.get("plan_id") or "plan_2gb").strip()
-    interval = (request.args.get("interval") or "month").strip().lower()
-    if not plan_is_paid(plan_id):
-        plan_id = "plan_2gb"
-    if not interval_is_supported(interval):
-        interval = "month"
-    return render_template(
-        "billing_test_checkout.html",
-        stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
-        billing_plan_id=plan_id,
-        billing_interval=interval,
-        stripe_ready=stripe_is_configured(),
-    )
+    user = _load_billing_user(current_user["id"])
+    customer_id = (user or {}).get("stripe_customer_id") or ""
+    if not customer_id:
+        flash("No Stripe subscription was found for this account.", "warning")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+    base_url = _public_base_url()
+    return_url = f"{base_url}{url_for('video_shorts_bp.shorts_storage_plans')}"
+    try:
+        session = create_billing_portal_session(customer_id=customer_id, return_url=return_url)
+    except stripe.StripeError:
+        logger.exception("Stripe billing portal creation failed user_id=%s customer_id=%s", current_user["id"], customer_id)
+        flash("Could not open Stripe Billing Portal right now.", "danger")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+    except Exception:
+        logger.exception("Unexpected billing portal creation failure user_id=%s customer_id=%s", current_user["id"], customer_id)
+        flash("Could not open Stripe Billing Portal right now.", "danger")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+    return redirect(getattr(session, "url", None) or url_for("video_shorts_bp.shorts_storage_plans"))
 
 
 @video_shorts_bp.route("/billing/complete", methods=["GET"])
@@ -373,6 +391,7 @@ def billing_complete():
         stripe_session=session_obj,
         stripe_status_summary=status_summary,
         stripe_error_message=error_message,
+        billing_redirect_url=url_for("video_shorts_bp.shorts_storage_plans"),
     )
 
 
