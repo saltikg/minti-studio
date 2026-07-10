@@ -42,10 +42,32 @@
     background: rgba(245, 158, 11, 0.14);
     border-color: rgba(245, 158, 11, 0.3);
   }
-  .usage-banner.subscription-cancel {
-    background: rgba(245, 158, 11, 0.14);
-    border-color: rgba(245, 158, 11, 0.3);
-    color: var(--text-1);
+  .subscription-cancel-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.16);
+    color: #fde68a;
+    font-size: 0.95rem;
+    font-weight: 800;
+    line-height: 1.1;
+    vertical-align: middle;
+  }
+  .subscription-cancel-inline i {
+    font-size: 1rem;
+    line-height: 1;
+  }
+  @media (max-width: 767px) {
+    .subscription-cancel-inline {
+      display: flex;
+      margin-left: 0;
+      margin-top: 10px;
+      width: fit-content;
+    }
   }
   .usage-meters {
     display: grid;
@@ -238,18 +260,21 @@
   <div class="card-body p-4">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
       <div>
-        <div class="vs-card-title mb-1" id="usage-plan-copy">Current plan: {{ current_plan_label }}</div>
+        <div class="vs-card-title mb-1" id="usage-plan-copy">
+          Current plan: {{ current_plan_label }}
+          {% if subscription_cancel_notice %}
+            <span class="subscription-cancel-inline">
+              <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+              <span>{{ subscription_cancel_notice }}</span>
+            </span>
+          {% endif %}
+        </div>
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
       <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
         Upgrade / Compare plans
       </button>
     </div>
-    {% if subscription_cancel_notice %}
-      <div class="usage-banner subscription-cancel mb-3">
-        {{ subscription_cancel_notice }}
-      </div>
-    {% endif %}
     <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
     <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
     <div id="usage-panel-error" class="usage-error usage-panel-numbers d-none">Usage could not be loaded right now.</div>
