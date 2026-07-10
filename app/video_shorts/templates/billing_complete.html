@@ -1,8 +1,28 @@
 {% extends "vs_base.html" %}
 {% block title %}Billing Complete{% endblock %}
 
+{% block extra_styles %}
+  <style>
+    .vs-billing-complete {
+      max-width: 720px;
+    }
+    .vs-billing-complete,
+    .vs-billing-complete .page-title,
+    .vs-billing-complete .card-body,
+    .vs-billing-complete .fw-semibold,
+    .vs-billing-complete .vs-text-muted,
+    .vs-billing-complete .vs-billing-session,
+    .vs-billing-complete .vs-billing-status {
+      color: #ffffff !important;
+    }
+    .vs-billing-session {
+      word-break: break-all;
+    }
+  </style>
+{% endblock %}
+
 {% block content %}
-  <div style="max-width:720px;">
+  <div class="vs-billing-complete">
     <h1 class="page-title mb-2">Billing status</h1>
     <div class="vs-text-muted mb-4">Checkout finished. Subscription activation happens only after the Stripe webhook is processed.</div>
 
@@ -14,9 +34,9 @@
       <div class="card vs-card">
         <div class="card-body">
           <div class="fw-semibold mb-2">Session</div>
-          <div class="vs-text-muted mb-3">{{ stripe_session_id }}</div>
+          <div class="vs-billing-session mb-3">{{ stripe_session_id }}</div>
           <div class="fw-semibold mb-2">Stripe status</div>
-          <div>{{ stripe_status_summary }}</div>
+          <div class="vs-billing-status">{{ stripe_status_summary }}</div>
         </div>
       </div>
     {% endif %}
