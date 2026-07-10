@@ -262,9 +262,10 @@
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
       <div>
         <div class="vs-card-title mb-1" id="usage-plan-copy">
-          Current plan: {{ current_plan_label }}
+          <span>Current plan: </span>
+          <span id="usage-plan-name">{{ current_plan_label }}</span>
           {% if subscription_cancel_notice %}
-            <span class="subscription-cancel-inline">
+            <span class="subscription-cancel-inline" id="usage-plan-cancel-badge">
               <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
               <span>{{ subscription_cancel_notice }}</span>
             </span>
@@ -572,6 +573,7 @@
     const usageMeters = document.getElementById("usage-meters");
     const usageResetCopy = document.getElementById("usage-reset-copy");
     const usagePlanCopy = document.getElementById("usage-plan-copy");
+    const usagePlanName = document.getElementById("usage-plan-name");
     const usageBanner = document.getElementById("usage-panel-banner");
     const usageUpgradeBtn = document.getElementById("usage-upgrade-btn");
     const usageHistoryLoading = document.getElementById("usage-history-loading");
@@ -790,11 +792,12 @@
       }
 
       if (usageResetCopy) {
-        usageResetCopy.textContent = formatResetCopy(payload?.period?.reset_at);
+        const planId = payload?.plan?.id || "";
+        usageResetCopy.textContent = planId === "plan_free" ? "" : formatResetCopy(payload?.period?.reset_at);
       }
-      if (usagePlanCopy) {
+      if (usagePlanName) {
         const planName = payload?.plan?.name || "{{ current_plan_label }}";
-        usagePlanCopy.textContent = `Current plan: ${planName}`;
+        usagePlanName.textContent = planName;
       }
 
       if (usageUpgradeBtn) {
