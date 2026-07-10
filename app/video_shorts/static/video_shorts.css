@@ -194,10 +194,13 @@ body.vs-app {
   font-size: 0.85rem;
 }
 
-.vs-auth .form-label,
+.vs-auth .form-label {
+  color: rgba(248, 250, 252, 0.96) !important;
+}
+
 .vs-auth .small,
 .vs-auth .text-muted {
-  color: var(--muted) !important;
+  color: rgba(226, 232, 240, 0.88) !important;
 }
 
 .vs-auth .form-control {
