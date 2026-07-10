@@ -37,6 +37,10 @@ def _billing_error(message: str, status: int = 400):
 
 def _current_user_or_401():
     current_user = getattr(g, "vs_current_user", None)
+    if current_user is None:
+        from app.video_shorts.routes.auth import _current_user
+
+        current_user = _current_user()
     if not current_user:
         return None, _billing_error("unauthorized", 401)
     return current_user, None
@@ -303,8 +307,8 @@ def create_checkout_session_route():
 @video_shorts_bp.route("/billing/test-checkout", methods=["GET"])
 def billing_test_checkout():
     # TEMPORARY — remove in Part 3.
-    current_user = getattr(g, "vs_current_user", None)
-    if not current_user:
+    current_user, error = _current_user_or_401()
+    if error:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     plan_id = (request.args.get("plan_id") or "plan_2gb").strip()
     interval = (request.args.get("interval") or "month").strip().lower()
@@ -323,8 +327,8 @@ def billing_test_checkout():
 
 @video_shorts_bp.route("/billing/complete", methods=["GET"])
 def billing_complete():
-    current_user = getattr(g, "vs_current_user", None)
-    if not current_user:
+    current_user, error = _current_user_or_401()
+    if error:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     session_id = (request.args.get("session_id") or "").strip()
     session_obj = None
