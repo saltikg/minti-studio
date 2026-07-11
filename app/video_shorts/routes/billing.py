@@ -22,6 +22,7 @@ from app.video_shorts.services.billing import (
     normalize_subscription_payload,
     plan_is_paid,
     resolve_plan_interval_from_subscription,
+    schedule_subscription_cancel_at_period_end,
     retrieve_checkout_session,
     retrieve_subscription,
     stripe_is_configured,
@@ -376,6 +377,61 @@ def billing_portal():
         flash("Could not open Stripe Billing Portal right now.", "danger")
         return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
     return redirect(getattr(session, "url", None) or url_for("video_shorts_bp.shorts_storage_plans"))
+
+
+@video_shorts_bp.route("/billing/switch-to-free", methods=["POST"])
+def billing_switch_to_free():
+    current_user, error = _current_user_or_401()
+    if error:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if not stripe_is_configured():
+        flash("Billing is not configured right now.", "danger")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    user = _load_billing_user(current_user["id"])
+    if not _user_has_managed_subscription(user):
+        flash("No active paid subscription was found for this account.", "warning")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    if user and user.get("subscription_cancel_at_period_end"):
+        flash("Your subscription is already set to switch to Free at period end.", "info")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    subscription_id = (user.get("stripe_subscription_id") or "").strip() if user else ""
+    if not subscription_id:
+        flash("No Stripe subscription was found for this account.", "warning")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    try:
+        subscription = schedule_subscription_cancel_at_period_end(subscription_id)
+        _sync_subscription_to_user(subscription, metadata={"shorts_user_id": current_user["id"]})
+    except stripe.StripeError:
+        logger.exception(
+            "Stripe switch-to-free failed user_id=%s subscription_id=%s",
+            current_user["id"],
+            subscription_id,
+        )
+        flash("Could not switch this subscription to Free right now.", "danger")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+    except Exception:
+        logger.exception(
+            "Unexpected switch-to-free failure user_id=%s subscription_id=%s",
+            current_user["id"],
+            subscription_id,
+        )
+        flash("Could not switch this subscription to Free right now.", "danger")
+        return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
+
+    period_end = _load_billing_user(current_user["id"]) or {}
+    effective_at = period_end.get("subscription_current_period_end")
+    if effective_at:
+        flash(
+            f"Subscription will switch to Free on {effective_at.strftime('%B %d, %Y')}.",
+            "success",
+        )
+    else:
+        flash("Subscription will switch to Free at the end of the current billing period.", "success")
+    return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
 
 
 @video_shorts_bp.route("/billing/complete", methods=["GET"])

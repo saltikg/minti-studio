@@ -577,6 +577,7 @@
     const planIdInput = document.getElementById("planConfirmPlanId");
     const planIntervalInput = document.getElementById("planConfirmInterval");
     const confirmForm = document.getElementById("planConfirmForm");
+    const defaultConfirmFormAction = confirmForm ? confirmForm.getAttribute("action") : "";
     const confirmBtn = document.getElementById("planConfirmSubmit");
     const planConfirmHint = document.getElementById("planConfirmHint");
     const planConfirmCancel = document.getElementById("planConfirmCancel");
@@ -608,6 +609,7 @@
     const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
     const stripeReady = {{ stripe_ready|tojson }};
     const portalUrl = {{ billing_portal_url|tojson }};
+    const switchToFreeUrl = {{ url_for('video_shorts_bp.billing_switch_to_free')|tojson }};
     let selectedPlan = null;
 
     function getModal(el) {
@@ -1009,11 +1011,16 @@
         if (planIntervalInput) {
           planIntervalInput.value = billingInterval;
         }
+        if (confirmForm && defaultConfirmFormAction) {
+          confirmForm.action = defaultConfirmFormAction;
+        }
         if (planConfirmHint) {
           if (isFreePlan && subscriptionCancelAtPeriodEnd) {
             planConfirmHint.textContent = `Your paid subscription is already set to cancel on ${subscriptionCancelEffectiveDate || "the end of your billing period"}.`;
           } else if (shouldUsePortal) {
-            planConfirmHint.textContent = "You already have a Stripe subscription. Manage changes in the Billing Portal.";
+            planConfirmHint.textContent = isFreePlan
+              ? "Your paid subscription will stay active until period end, then switch to Free automatically."
+              : "You already have a Stripe subscription. Manage changes in the Billing Portal.";
           } else if (isFreePlan) {
             planConfirmHint.textContent = "This switches you to Free immediately.";
           } else {
@@ -1049,6 +1056,12 @@
     if (confirmForm && confirmBtn) {
       confirmForm.addEventListener("submit", async (event) => {
         if (!selectedPlan) {
+          return;
+        }
+        if (selectedPlan.shouldUsePortal && selectedPlan.isFreePlan) {
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Switching…";
+          confirmForm.action = switchToFreeUrl;
           return;
         }
         if (selectedPlan.shouldUsePortal) {

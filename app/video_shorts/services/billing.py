@@ -132,6 +132,13 @@ def create_billing_portal_session(*, customer_id: str, return_url: str) -> strip
     )
 
 
+def schedule_subscription_cancel_at_period_end(subscription_id: str) -> stripe.Subscription:
+    return stripe.Subscription.modify(
+        (subscription_id or "").strip(),
+        cancel_at_period_end=True,
+    )
+
+
 def construct_webhook_event(*, payload: bytes, signature: str) -> stripe.Event:
     return stripe.Webhook.construct_event(
         payload=payload,
