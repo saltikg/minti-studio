@@ -6102,17 +6102,21 @@ def shorts_storage_plans():
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
     billing_user = load_billing_user_state(current_user["id"], refresh_live=True)
+    effective_plan_id = (
+        (billing_user or {}).get("plan_id")
+        or current_user.get("plan_id")
+        or "plan_free"
+    )
     has_managed_subscription = user_has_managed_subscription(billing_user)
     subscription_cancel_notice = None
+    subscription_cancel_effective_date = None
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
         period_end = billing_user.get("subscription_current_period_end")
         if isinstance(period_end, datetime):
             effective_date = period_end.astimezone(timezone.utc).strftime("%B %d, %Y")
+            subscription_cancel_effective_date = effective_date
         else:
             effective_date = "the end of your billing period"
-        current_plan_name = None
-        if billing_user.get("plan_id"):
-            current_plan_name = billing_user.get("plan_id")
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
@@ -6141,7 +6145,7 @@ def shorts_storage_plans():
         return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
     plans = _load_storage_plan_catalog(conn)
     conn.close()
-    current_plan = next((plan for plan in plans if plan["plan_id"] == current_user.get("plan_id")), None)
+    current_plan = next((plan for plan in plans if plan["plan_id"] == effective_plan_id), None)
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
         subscription_cancel_notice = f"Ends {effective_date} -> Free"
 
@@ -6155,6 +6159,9 @@ def shorts_storage_plans():
         billing_has_managed_subscription=has_managed_subscription,
         billing_portal_url=url_for("video_shorts_bp.billing_portal"),
         subscription_cancel_notice=subscription_cancel_notice,
+        current_plan_id=effective_plan_id,
+        subscription_cancel_at_period_end=bool((billing_user or {}).get("subscription_cancel_at_period_end")),
+        subscription_cancel_effective_date=subscription_cancel_effective_date,
     )
 
 

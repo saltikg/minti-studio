@@ -334,7 +334,7 @@
         </div>
         <div class="row g-3 mb-2">
   {% for plan in plans %}
-    {% set is_selected_plan = vs_current_user and vs_current_user.plan_id == plan.plan_id %}
+    {% set is_selected_plan = current_plan_id == plan.plan_id %}
     {% set tier_label = plan.label %}
     {% set monthly_price = plan.price_monthly %}
     {% set yearly_total = 90 %}
@@ -398,7 +398,13 @@
           </ul>
           <div class="plan-actions">
             {% if is_selected_plan %}
-              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
+              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>
+                {% if subscription_cancel_at_period_end %}
+                  Current plan · Cancels {{ subscription_cancel_effective_date or "soon" }}
+                {% else %}
+                  Current plan
+                {% endif %}
+              </button>
             {% elif is_admin %}
               <button
                 type="button"
@@ -418,6 +424,10 @@
                   Switch to Studio
                 {% endif %}
               </button>
+            {% elif plan.plan_id == "plan_free" and subscription_cancel_at_period_end %}
+              <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>
+                Cancels {{ subscription_cancel_effective_date or "soon" }}
+              </button>
             {% else %}
               <button
                 type="button"
@@ -428,7 +438,13 @@
                 data-price-monthly="{{ monthly_price }}"
                 data-price-yearly="{{ yearly_total }}">
                 {% if tier_label == "Free" %}
-                  Start free
+                  {% if subscription_cancel_at_period_end %}
+                    Cancels {{ subscription_cancel_effective_date or "soon" }}
+                  {% elif billing_has_managed_subscription %}
+                    Cancel subscription
+                  {% else %}
+                    Start free
+                  {% endif %}
                 {% elif tier_label == "Starter" %}
                   Upgrade to Starter
                 {% elif tier_label == "Creator" %}
@@ -588,6 +604,8 @@
 
     const usageMonthDetails = new Map();
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
+    const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
+    const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
     const stripeReady = {{ stripe_ready|tojson }};
     const portalUrl = {{ billing_portal_url|tojson }};
     let selectedPlan = null;
@@ -992,7 +1010,9 @@
           planIntervalInput.value = billingInterval;
         }
         if (planConfirmHint) {
-          if (shouldUsePortal) {
+          if (isFreePlan && subscriptionCancelAtPeriodEnd) {
+            planConfirmHint.textContent = `Your paid subscription is already set to cancel on ${subscriptionCancelEffectiveDate || "the end of your billing period"}.`;
+          } else if (shouldUsePortal) {
             planConfirmHint.textContent = "You already have a Stripe subscription. Manage changes in the Billing Portal.";
           } else if (isFreePlan) {
             planConfirmHint.textContent = "This switches you to Free immediately.";
@@ -1001,7 +1021,9 @@
           }
         }
         if (confirmBtn) {
-          if (shouldUsePortal) {
+          if (isFreePlan && subscriptionCancelAtPeriodEnd) {
+            confirmBtn.textContent = "Open Billing Portal";
+          } else if (shouldUsePortal) {
             confirmBtn.textContent = isFreePlan ? "Open Billing Portal to cancel" : "Open Billing Portal";
           } else if (isFreePlan) {
             confirmBtn.textContent = "Switch to Free";
