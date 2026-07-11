@@ -32,6 +32,8 @@ from app.video_shorts.services.db import ensure_auth_user_schema, get_db, get_db
 
 logger = logging.getLogger(__name__)
 
+_TERMINAL_SUBSCRIPTION_STATUSES = {"canceled", "incomplete_expired", "unpaid"}
+
 
 def _billing_error(message: str, status: int = 400):
     return jsonify({"error": message}), status
@@ -249,6 +251,25 @@ def _resolve_user_id_for_event(*, metadata: Dict[str, Any], customer_id: str) ->
         conn.close()
 
 
+def _sync_terminal_subscription_to_free(
+    *,
+    user_id: str,
+    normalized: Dict[str, Any],
+    status_override: Optional[str] = None,
+) -> bool:
+    _update_user_subscription_state(
+        user_id=user_id,
+        plan_id="plan_free",
+        stripe_customer_id=normalized.get("stripe_customer_id"),
+        stripe_subscription_id=None,
+        subscription_status=status_override or normalized.get("subscription_status") or "canceled",
+        subscription_current_period_end=normalized.get("subscription_current_period_end"),
+        subscription_cancel_at_period_end=False,
+        billing_interval=None,
+    )
+    return True
+
+
 def _extract_metadata(payload: Any) -> Dict[str, Any]:
     if payload is None:
         return {}
@@ -461,6 +482,7 @@ def billing_complete():
 
 def _sync_subscription_to_user(subscription: Any, *, metadata: Optional[Dict[str, Any]] = None) -> bool:
     normalized = normalize_subscription_payload(subscription)
+    normalized_status = (normalized.get("subscription_status") or "").strip().lower()
     user_id = _resolve_user_id_for_event(
         metadata=metadata or _extract_metadata(subscription),
         customer_id=normalized.get("stripe_customer_id") or "",
@@ -472,6 +494,8 @@ def _sync_subscription_to_user(subscription: Any, *, metadata: Optional[Dict[str
             normalized.get("stripe_customer_id") or "-",
         )
         return False
+    if normalized_status in _TERMINAL_SUBSCRIPTION_STATUSES:
+        return _sync_terminal_subscription_to_free(user_id=user_id, normalized=normalized)
     if not normalized.get("plan_id") or not normalized.get("billing_interval"):
         logger.warning(
             "Stripe webhook subscription price mapping missing subscription_id=%s price_id=%s",
@@ -520,17 +544,11 @@ def _handle_subscription_deleted(subscription: Any) -> bool:
             normalized.get("stripe_customer_id") or "-",
         )
         return False
-    _update_user_subscription_state(
+    return _sync_terminal_subscription_to_free(
         user_id=user_id,
-        plan_id="plan_free",
-        stripe_customer_id=normalized.get("stripe_customer_id"),
-        stripe_subscription_id=None,
-        subscription_status="canceled",
-        subscription_current_period_end=normalized.get("subscription_current_period_end"),
-        subscription_cancel_at_period_end=False,
-        billing_interval=None,
+        normalized=normalized,
+        status_override="canceled",
     )
-    return True
 
 
 def _handle_invoice_payment_failed(invoice: Any) -> bool:
