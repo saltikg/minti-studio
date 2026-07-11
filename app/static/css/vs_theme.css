@@ -1139,7 +1139,7 @@ a:hover {
 
 .vs-app .plan-card-selected {
   border-color: rgba(45, 212, 191, 0.45);
-  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.18);
+  box-shadow: none;
 }
 
 .vs-app .plan-card .plan-badge {
