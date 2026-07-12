@@ -142,6 +142,14 @@ def _save_customer_id(user_id: str, customer_id: str) -> None:
         conn.close()
 
 
+def _is_missing_stripe_customer_error(exc: Exception) -> bool:
+    return (
+        isinstance(exc, stripe.InvalidRequestError)
+        and getattr(exc, "code", None) == "resource_missing"
+        and getattr(exc, "param", None) == "customer"
+    )
+
+
 def _find_user_by_customer_id(conn, customer_id: str) -> Optional[str]:
     if not customer_id:
         return None
@@ -342,15 +350,45 @@ def create_checkout_session_route():
 
     base_url = _public_base_url()
     return_url = build_checkout_return_url(base_url)
-    try:
-        session = create_embedded_checkout_session(
-            customer_id=customer_id,
-            price_id=price_id,
+    def _create_or_refresh_customer(existing_customer_id: str) -> str:
+        fresh_customer = create_customer(
+            email=(user.get("email") or current_user.get("email") or "").strip(),
             shorts_user_id=current_user["id"],
-            plan_id=plan_id,
-            interval=interval,
-            return_url=return_url,
         )
+        fresh_customer_id = (fresh_customer.id or "").strip()
+        if fresh_customer_id:
+            _save_customer_id(current_user["id"], fresh_customer_id)
+        logger.warning(
+            "Replaced stale Stripe customer_id for user_id=%s old_customer_id=%s new_customer_id=%s",
+            current_user["id"],
+            existing_customer_id or "-",
+            fresh_customer_id or "-",
+        )
+        return fresh_customer_id
+
+    try:
+        try:
+            session = create_embedded_checkout_session(
+                customer_id=customer_id,
+                price_id=price_id,
+                shorts_user_id=current_user["id"],
+                plan_id=plan_id,
+                interval=interval,
+                return_url=return_url,
+            )
+        except stripe.StripeError as exc:
+            if customer_id and _is_missing_stripe_customer_error(exc):
+                customer_id = _create_or_refresh_customer(customer_id)
+                session = create_embedded_checkout_session(
+                    customer_id=customer_id,
+                    price_id=price_id,
+                    shorts_user_id=current_user["id"],
+                    plan_id=plan_id,
+                    interval=interval,
+                    return_url=return_url,
+                )
+            else:
+                raise
     except stripe.StripeError as exc:
         logger.exception(
             "Stripe checkout session creation failed user_id=%s plan_id=%s interval=%s customer_id=%s return_url=%s",
