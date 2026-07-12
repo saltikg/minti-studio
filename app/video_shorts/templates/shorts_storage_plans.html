@@ -236,8 +236,62 @@
     color: var(--text-2);
     font-size: 0.9rem;
   }
+  .plan-confirm-modal .modal-dialog {
+    max-width: 840px;
+  }
+  .plan-confirm-modal .modal-content {
+    max-height: 90vh;
+  }
+  .plan-confirm-modal .modal-body {
+    overflow: hidden;
+  }
+  .plan-confirm-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
+    gap: 18px;
+    align-items: start;
+    min-height: 0;
+  }
+  .plan-confirm-summary,
+  .plan-confirm-checkout {
+    min-width: 0;
+  }
+  .plan-confirm-summary {
+    align-self: start;
+  }
+  .plan-confirm-summary .vs-modal-grid {
+    grid-template-columns: 1fr;
+  }
+  .plan-confirm-checkout {
+    max-height: calc(90vh - 190px);
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .plan-confirm-checkout .plan-checkout-shell {
+    margin-top: 0 !important;
+  }
+  .plan-confirm-checkout .plan-checkout-shell:not(.d-none) {
+    min-height: 100%;
+  }
   #planEmbeddedCheckout {
     min-height: 620px;
+  }
+  @media (max-width: 899.98px) {
+    .plan-confirm-modal .modal-content {
+      max-height: 90vh;
+    }
+    .plan-confirm-modal .modal-body {
+      overflow-y: auto;
+    }
+    .plan-confirm-layout {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .plan-confirm-checkout {
+      max-height: none;
+      overflow: visible;
+      padding-right: 0;
+    }
   }
 </style>
 {% endblock %}
@@ -512,7 +566,7 @@
   </div>
 </div>
 
-<div class="modal fade" id="planConfirmModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade plan-confirm-modal" id="planConfirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
       <div class="modal-header vs-modal-header">
@@ -520,27 +574,33 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body vs-modal-body">
-        <div class="vs-modal-lead" id="planConfirmTitle"></div>
-        <div class="vs-modal-grid mt-3">
-          <div class="vs-modal-item">
-            <div class="vs-modal-key">Price</div>
-            <div class="vs-modal-price" id="planConfirmPrice"></div>
-            <div class="vs-modal-sub" id="planConfirmBilling"></div>
+        <div class="plan-confirm-layout">
+          <div class="plan-confirm-summary">
+            <div class="vs-modal-lead" id="planConfirmTitle"></div>
+            <div class="vs-modal-grid mt-3">
+              <div class="vs-modal-item">
+                <div class="vs-modal-key">Price</div>
+                <div class="vs-modal-price" id="planConfirmPrice"></div>
+                <div class="vs-modal-sub" id="planConfirmBilling"></div>
+              </div>
+              <div class="vs-modal-item">
+                <div class="vs-modal-key">Storage</div>
+                <div class="vs-modal-value" id="planConfirmStorage"></div>
+              </div>
+              <div class="vs-modal-item">
+                <div class="vs-modal-key">Current plan</div>
+                <div class="vs-modal-value" id="planConfirmCurrent"></div>
+              </div>
+            </div>
+            <div class="vs-modal-hint mt-3" id="planConfirmHint">You can change this later.</div>
           </div>
-          <div class="vs-modal-item">
-            <div class="vs-modal-key">Storage</div>
-            <div class="vs-modal-value" id="planConfirmStorage"></div>
+          <div class="plan-confirm-checkout">
+            <div id="planCheckoutShell" class="plan-checkout-shell d-none mt-3">
+              <div id="planCheckoutStatus" class="plan-checkout-status mb-2">Preparing secure checkout…</div>
+              <div id="planCheckoutError" class="alert alert-danger d-none mb-3" role="alert"></div>
+              <div id="planEmbeddedCheckout"></div>
+            </div>
           </div>
-          <div class="vs-modal-item">
-            <div class="vs-modal-key">Current plan</div>
-            <div class="vs-modal-value" id="planConfirmCurrent"></div>
-          </div>
-        </div>
-        <div class="vs-modal-hint mt-3" id="planConfirmHint">You can change this later.</div>
-        <div id="planCheckoutShell" class="plan-checkout-shell d-none mt-3">
-          <div id="planCheckoutStatus" class="plan-checkout-status mb-2">Preparing secure checkout…</div>
-          <div id="planCheckoutError" class="alert alert-danger d-none mb-3" role="alert"></div>
-          <div id="planEmbeddedCheckout"></div>
         </div>
       </div>
       <div class="modal-footer vs-modal-footer">
