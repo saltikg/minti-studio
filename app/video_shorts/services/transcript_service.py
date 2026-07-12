@@ -129,6 +129,15 @@ def _detect_primary_audio_language(video_path: Path) -> str:
         try:
             ffmpeg_bin = Path(_resolve_ffmpeg())
             ffprobe_bin = ffmpeg_bin.with_name("ffprobe")
+            try:
+                current_app.logger.info(
+                    "lang_probe ffmpeg_resolved=%r ffprobe_bin=%r exists=%s",
+                    str(ffmpeg_bin),
+                    str(ffprobe_bin),
+                    ffprobe_bin.exists(),
+                )
+            except Exception:
+                pass
             ffprobe_cmd = [
                 str(ffprobe_bin if ffprobe_bin.exists() else "ffprobe"),
                 "-v",
@@ -139,6 +148,10 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                 "default=noprint_wrappers=1:nokey=1",
                 str(video_path),
             ]
+            try:
+                current_app.logger.info("lang_probe ffprobe_cmd=%s", ffprobe_cmd)
+            except Exception:
+                pass
             proc = subprocess.run(
                 ffprobe_cmd,
                 stdout=subprocess.PIPE,
@@ -147,12 +160,29 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                 check=False,
                 timeout=max(30, int(FFMPEG_TIMEOUT)),
             )
+            try:
+                current_app.logger.info(
+                    "lang_probe ffprobe rc=%s stdout=%r stderr=%r",
+                    proc.returncode,
+                    (proc.stdout or "").strip(),
+                    (proc.stderr or "").strip()[:500],
+                )
+            except Exception:
+                pass
             if proc.returncode == 0:
                 raw_duration = (proc.stdout or "").strip()
                 if raw_duration:
                     duration_seconds = float(raw_duration)
-        except Exception:
+        except Exception as e:
+            try:
+                current_app.logger.warning("lang_probe ffprobe exception: %r", e)
+            except Exception:
+                pass
             duration_seconds = None
+        try:
+            current_app.logger.info("lang_probe parsed_duration=%r", duration_seconds)
+        except Exception:
+            pass
 
         if not duration_seconds or duration_seconds < 90.0:
             # Short clips keep the original single-window behavior.
