@@ -1,8 +1,9 @@
 import logging
 import re
 from datetime import datetime, timezone
+from functools import wraps
 
-from flask import current_app, g, redirect, render_template, request, session, url_for, flash
+from flask import abort, current_app, g, redirect, render_template, request, session, url_for, flash
 from werkzeug.security import check_password_hash, generate_password_hash
 from google_auth_oauthlib.flow import Flow
 from google.oauth2 import id_token
@@ -474,6 +475,17 @@ def _current_brand():
 
 def _is_authenticated():
     return _current_user() is not None
+
+
+def require_admin(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        current_user = getattr(g, "vs_current_user", None) or _current_user()
+        if not current_user or (current_user.get("role") or "").strip().lower() != "admin":
+            abort(404)
+        return view_func(*args, **kwargs)
+
+    return wrapped
 
 
 def _ensure_onboarding_flag_column(conn) -> None:

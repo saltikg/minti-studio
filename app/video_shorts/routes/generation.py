@@ -14,7 +14,7 @@ from urllib.parse import urlencode, urlparse, parse_qsl, parse_qs
 
 from google.auth.exceptions import RefreshError
 
-from flask import current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 import requests
 from werkzeug.utils import secure_filename
 
@@ -138,6 +138,9 @@ from app.video_shorts.services.transcript_service import (
     _transcribe_with_whisper,
     build_transcript_for_range,
 )
+from app.video_shorts.routes.auth import require_admin
+from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
+from src.trends.token_store_db import connect_store, relation_missing
 from app.video_shorts.services.non_speech_rules import load_non_speech_rules, add_non_speech_keyword
 
 DEFAULT_VIDEO_DATE_TOP = 1006
@@ -5698,14 +5701,10 @@ def _load_storage_plan_admin_users(
 def _load_admin_auth_users(
     conn,
     search_text: str = "",
-    verification_filters: Optional[List[str]] = None,
-    provider_filters: Optional[List[str]] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
     normalized_search = (search_text or "").strip().lower()
-    normalized_verification = {value for value in (verification_filters or []) if value in {"verified", "unverified"}}
-    normalized_providers = {value for value in (provider_filters or []) if value in {"email", "google", "both"}}
     where_clauses: List[str] = []
     params: List[Any] = []
 
@@ -5713,8 +5712,8 @@ def _load_admin_auth_users(
         where_clauses.append(
             """
             (
-                lower(coalesce(u.name, '')) LIKE ?
-                OR lower(coalesce(u.email, '')) LIKE ?
+                lower(coalesce(u.email, '')) LIKE ?
+                OR lower(coalesce(u.name, '')) LIKE ?
                 OR lower(coalesce(u.username, '')) LIKE ?
                 OR CAST(u.id AS VARCHAR) LIKE ?
             )
@@ -5723,23 +5722,69 @@ def _load_admin_auth_users(
         search_value = f"%{normalized_search}%"
         params.extend([search_value, search_value, search_value, search_value])
 
-    verification_conditions: List[str] = []
-    if "verified" in normalized_verification:
-        verification_conditions.append("COALESCE(u.email_verified, FALSE) = TRUE")
-    if "unverified" in normalized_verification:
-        verification_conditions.append("COALESCE(u.email_verified, FALSE) = FALSE")
-    if verification_conditions:
-        where_clauses.append("(" + " OR ".join(verification_conditions) + ")")
+    youtube_columns = table_columns(conn, "youtube_videos")
+    generated_columns = table_columns(conn, "shorts_generated_videos")
 
-    provider_conditions: List[str] = []
-    if "email" in normalized_providers:
-        provider_conditions.append("(coalesce(u.password_hash, '') <> '' AND coalesce(u.google_sub, '') = '')")
-    if "google" in normalized_providers:
-        provider_conditions.append("(coalesce(u.google_sub, '') <> '' AND coalesce(u.password_hash, '') = '')")
-    if "both" in normalized_providers:
-        provider_conditions.append("(coalesce(u.google_sub, '') <> '' AND coalesce(u.password_hash, '') <> '')")
-    if provider_conditions:
-        where_clauses.append("(" + " OR ".join(provider_conditions) + ")")
+    youtube_activity_fields = [
+        column
+        for column in ("updated_at", "published_at", "downloaded_at", "last_checked_at")
+        if column in youtube_columns
+    ]
+    youtube_activity_expr = (
+        f"MAX(COALESCE({', '.join(youtube_activity_fields)})) AS last_video_activity"
+        if youtube_activity_fields
+        else "NULL AS last_video_activity"
+    )
+    youtube_join = ""
+    if youtube_columns and "owner_user_id" in youtube_columns:
+        youtube_join = f"""
+        LEFT JOIN (
+            SELECT
+                CAST(owner_user_id AS VARCHAR) AS owner_user_id,
+                COUNT(*) AS uploaded_videos,
+                {youtube_activity_expr}
+            FROM youtube_videos
+            GROUP BY CAST(owner_user_id AS VARCHAR)
+        ) yv ON yv.owner_user_id = CAST(u.id AS VARCHAR)
+        """
+
+    generated_activity_fields = [
+        column
+        for column in (
+            "updated_at",
+            "created_at",
+            "published_at",
+            "planned_publish_at",
+            "youtube_published_at",
+            "instagram_published_at",
+            "facebook_published_at",
+            "tiktok_published_at",
+        )
+        if column in generated_columns
+    ]
+    generated_activity_expr = (
+        f"MAX(COALESCE({', '.join(generated_activity_fields)})) AS last_short_activity"
+        if generated_activity_fields
+        else "NULL AS last_short_activity"
+    )
+    published_short_expr = (
+        "SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'published' THEN 1 ELSE 0 END) AS shorts_published"
+        if "publish_status" in generated_columns
+        else "0 AS shorts_published"
+    )
+    generated_join = ""
+    if generated_columns and "user_id" in generated_columns:
+        generated_join = f"""
+        LEFT JOIN (
+            SELECT
+                CAST(user_id AS VARCHAR) AS user_id,
+                COUNT(*) AS shorts_generated,
+                {published_short_expr},
+                {generated_activity_expr}
+            FROM shorts_generated_videos
+            GROUP BY CAST(user_id AS VARCHAR)
+        ) gv ON gv.user_id = CAST(u.id AS VARCHAR)
+        """
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     total_count = conn.execute(
@@ -5757,13 +5802,17 @@ def _load_admin_auth_users(
           u.name,
           u.email,
           u.username,
-          COALESCE(u.email_verified, FALSE),
-          u.email_verified_at,
-          u.email_verification_sent_at,
-          u.google_sub,
-          u.password_hash,
-          u.created_at
+          u.plan_id,
+          u.subscription_status,
+          u.created_at,
+          COALESCE(yv.uploaded_videos, 0),
+          COALESCE(gv.shorts_generated, 0),
+          COALESCE(gv.shorts_published, 0),
+          yv.last_video_activity,
+          gv.last_short_activity
         FROM shorts_users u
+        {youtube_join}
+        {generated_join}
         {where_sql}
         ORDER BY coalesce(u.created_at, u.updated_at) DESC, CAST(u.id AS VARCHAR) DESC
         LIMIT ? OFFSET ?
@@ -5772,33 +5821,140 @@ def _load_admin_auth_users(
     ).fetchall()
     users: List[Dict[str, Any]] = []
     for row in rows:
-        has_google = bool((row[7] or "").strip())
-        has_password = bool((row[8] or "").strip())
-        if has_google and has_password:
-            provider = "Both"
-            provider_key = "both"
-        elif has_google:
-            provider = "Google"
-            provider_key = "google"
-        else:
-            provider = "Email"
-            provider_key = "email"
+        last_activity = row[10]
+        if row[11] and (last_activity is None or row[11] > last_activity):
+            last_activity = row[11]
         users.append(
             {
                 "id": row[0],
                 "name": row[1] or row[3] or "Unnamed user",
                 "email": row[2] or "",
                 "username": row[3] or "",
-                "email_verified": bool(row[4]),
-                "email_verified_at": row[5],
-                "email_verification_sent_at": row[6],
-                "provider": provider,
-                "provider_key": provider_key,
-                "can_resend_verification": has_password and not bool(row[4]) and bool(row[2]),
-                "created_at": row[9],
+                "plan_id": row[4] or "plan_free",
+                "subscription_status": row[5] or "—",
+                "created_at": row[6],
+                "uploaded_videos": int(row[7] or 0),
+                "shorts_generated": int(row[8] or 0),
+                "shorts_published": int(row[9] or 0),
+                "last_activity_at": last_activity,
             }
         )
     return users, int(total_count or 0)
+
+
+def _token_table_has_any_rows(table_name: str, owner_user_id: str) -> bool:
+    owner_text = str(owner_user_id or "").strip()
+    if not owner_text:
+        return False
+    try:
+        conn = connect_store(read_only=True, retries=2, error_cls=RuntimeError)
+    except Exception:
+        return False
+    try:
+        row = conn.execute(
+            f"SELECT 1 FROM {table_name} WHERE user_id = ? OR user_id LIKE ? LIMIT 1",
+            [owner_text, f"{owner_text}::%"],
+        ).fetchone()
+        return bool(row)
+    except Exception as exc:
+        if relation_missing(exc, table_name):
+            return False
+        return False
+    finally:
+        conn.close()
+
+
+def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
+    youtube_columns = table_columns(conn, "youtube_videos")
+    generated_columns = table_columns(conn, "shorts_generated_videos")
+    if generated_columns:
+        try:
+            ensure_generated_videos_schema(conn)
+        except Exception:
+            pass
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+
+    row = conn.execute(
+        """
+        SELECT
+          CAST(id AS VARCHAR),
+          username,
+          name,
+          email,
+          role,
+          plan_id,
+          subscription_status,
+          subscription_current_period_end,
+          created_at,
+          updated_at,
+          google_sub
+        FROM shorts_users
+        WHERE CAST(id AS VARCHAR) = ?
+        LIMIT 1
+        """,
+        [user_id],
+    ).fetchone()
+    if not row:
+        return None
+
+    uploaded_videos = 0
+    if youtube_columns and "owner_user_id" in youtube_columns:
+        uploaded_videos = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM youtube_videos WHERE owner_user_id = ?",
+                [user_id],
+            ).fetchone()[0]
+            or 0
+        )
+
+    shorts_generated = 0
+    shorts_published = 0
+    if generated_columns and "user_id" in generated_columns:
+        shorts_generated = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM shorts_generated_videos WHERE user_id = ?",
+                [user_id],
+            ).fetchone()[0]
+            or 0
+        )
+        if "publish_status" in generated_columns:
+            shorts_published = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM shorts_generated_videos
+                    WHERE user_id = ?
+                      AND lower(coalesce(publish_status, '')) = 'published'
+                    """,
+                    [user_id],
+                ).fetchone()[0]
+                or 0
+            )
+
+    connected_platforms = {
+        "youtube": _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id),
+        "instagram": _token_table_has_any_rows("instagram_oauth_tokens", user_id),
+        "facebook": _token_table_has_any_rows("facebook_page_tokens", user_id),
+        "tiktok": _token_table_has_any_rows("tiktok_oauth_tokens", user_id),
+    }
+
+    return {
+        "id": row[0],
+        "username": row[1] or "",
+        "name": row[2] or row[1] or "Unnamed user",
+        "email": row[3] or "",
+        "role": row[4] or "member",
+        "plan_id": row[5] or "plan_free",
+        "subscription_status": row[6] or "",
+        "subscription_current_period_end": row[7],
+        "created_at": row[8],
+        "updated_at": row[9],
+        "google_sub_present": bool((row[10] or "").strip()),
+        "uploaded_videos": uploaded_videos,
+        "shorts_generated": shorts_generated,
+        "shorts_published": shorts_published,
+        "connected_platforms": connected_platforms,
+    }
 
 
 @video_shorts_bp.route("/shorts/scripts")
@@ -6212,12 +6368,9 @@ def admin_storage_plans():
 
 
 @video_shorts_bp.route("/admin/users", methods=["GET", "POST"])
+@require_admin
 def admin_users():
-    current_user = getattr(g, "vs_current_user", None)
-    if not current_user:
-        return redirect(url_for("video_shorts_bp.login", next=request.url))
-    if current_user.get("role") != "admin":
-        return redirect(url_for("video_shorts_bp.account_page"))
+    current_user = getattr(g, "vs_current_user", None) or {}
 
     conn = get_db()
     ensure_storage_user_schema(conn)
@@ -6266,8 +6419,6 @@ def admin_users():
         return redirect(url_for("video_shorts_bp.admin_users", **redirect_args))
 
     search_text = (request.args.get("q") or "").strip()
-    selected_verification = [value for value in request.args.getlist("verification") if value in {"verified", "unverified"}]
-    selected_providers = [value for value in request.args.getlist("provider") if value in {"email", "google", "both"}]
     try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
@@ -6277,8 +6428,6 @@ def admin_users():
     total_users = _load_admin_auth_users(
         conn,
         search_text=search_text,
-        verification_filters=selected_verification,
-        provider_filters=selected_providers,
         limit=1,
         offset=0,
     )[1]
@@ -6287,22 +6436,39 @@ def admin_users():
     users, total_users = _load_admin_auth_users(
         conn,
         search_text=search_text,
-        verification_filters=selected_verification,
-        provider_filters=selected_providers,
         limit=per_page,
         offset=(page - 1) * per_page,
     )
     conn.close()
     return render_template(
         "shorts_admin_users.html",
+        admin_title="Users",
         users=users,
         search_text=search_text,
-        selected_verification=selected_verification,
-        selected_providers=selected_providers,
         page=page,
         per_page=per_page,
         total_users=total_users,
         total_pages=total_pages,
+        current_admin=current_user,
+    )
+
+
+@video_shorts_bp.route("/admin/users/<user_id>", methods=["GET"])
+@require_admin
+def admin_user_detail(user_id: str):
+    conn = get_db_readonly()
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        detail = _load_admin_user_detail(conn, user_id)
+    finally:
+        conn.close()
+    if not detail:
+        abort(404)
+    return render_template(
+        "shorts_admin_user_detail.html",
+        admin_title=detail["name"],
+        user_detail=detail,
     )
 
 

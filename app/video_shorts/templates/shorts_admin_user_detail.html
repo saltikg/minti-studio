@@ -1,0 +1,154 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}{{ user_detail.name }}{% endblock %}
+{% block admin_heading %}{{ user_detail.name }}{% endblock %}
+{% block admin_subheading %}
+  <p>{{ user_detail.email or user_detail.username or user_detail.id }}</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-detail-grid {
+      display: grid;
+      gap: 18px;
+    }
+    .admin-detail-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .admin-detail-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      background: rgba(8, 14, 22, 0.76);
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.22);
+      padding: 18px;
+    }
+    .admin-detail-kv {
+      display: grid;
+      grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+      gap: 10px 18px;
+    }
+    .admin-detail-kv dt {
+      color: rgba(255, 255, 255, 0.58);
+      font-weight: 600;
+    }
+    .admin-detail-kv dd {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+      word-break: break-word;
+    }
+    .admin-detail-stat-label {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .admin-detail-stat-value {
+      margin-top: 8px;
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .admin-detail-platforms {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .admin-detail-platform-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.88);
+    }
+    .admin-detail-platform-pill.is-connected {
+      background: rgba(45, 212, 191, 0.14);
+      color: #99f6e4;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    @media (max-width: 991.98px) {
+      .admin-detail-summary {
+        grid-template-columns: 1fr;
+      }
+      .admin-detail-kv {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="admin-detail-grid">
+    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+      <a href="{{ url_for('video_shorts_bp.admin_users') }}" class="btn btn-outline-light">← Back to users</a>
+      <div class="vs-admin-muted">User ID: {{ user_detail.id }}</div>
+    </div>
+
+    <section class="admin-detail-summary">
+      <article class="admin-detail-card">
+        <div class="admin-detail-stat-label">Videos uploaded</div>
+        <div class="admin-detail-stat-value">{{ user_detail.uploaded_videos }}</div>
+      </article>
+      <article class="admin-detail-card">
+        <div class="admin-detail-stat-label">Shorts generated</div>
+        <div class="admin-detail-stat-value">{{ user_detail.shorts_generated }}</div>
+      </article>
+      <article class="admin-detail-card">
+        <div class="admin-detail-stat-label">Shorts published</div>
+        <div class="admin-detail-stat-value">{{ user_detail.shorts_published }}</div>
+      </article>
+    </section>
+
+    <section class="admin-detail-card">
+      <h2 class="h5 mb-3">Account info</h2>
+      <dl class="admin-detail-kv">
+        <dt>Name</dt>
+        <dd>{{ user_detail.name }}</dd>
+
+        <dt>Email</dt>
+        <dd>{{ user_detail.email or '—' }}</dd>
+
+        <dt>Username</dt>
+        <dd>{{ user_detail.username or '—' }}</dd>
+
+        <dt>Role</dt>
+        <dd>{{ user_detail.role }}</dd>
+
+        <dt>Plan</dt>
+        <dd>{{ user_detail.plan_id }}</dd>
+
+        <dt>Subscription status</dt>
+        <dd>{{ user_detail.subscription_status or '—' }}</dd>
+
+        <dt>Current period end</dt>
+        <dd>{{ user_detail.subscription_current_period_end.strftime('%b %-d, %Y · %H:%M') if user_detail.subscription_current_period_end and user_detail.subscription_current_period_end.strftime else (user_detail.subscription_current_period_end or '—') }}</dd>
+
+        <dt>Created</dt>
+        <dd>{{ user_detail.created_at.strftime('%b %-d, %Y · %H:%M') if user_detail.created_at and user_detail.created_at.strftime else (user_detail.created_at or '—') }}</dd>
+
+        <dt>Google sub present</dt>
+        <dd>{{ 'Yes' if user_detail.google_sub_present else 'No' }}</dd>
+      </dl>
+    </section>
+
+    <section class="admin-detail-card">
+      <h2 class="h5 mb-3">Connected platforms</h2>
+      <div class="admin-detail-platforms">
+        {% for platform, connected in user_detail.connected_platforms.items() %}
+          <span class="admin-detail-platform-pill {% if connected %}is-connected{% endif %}">
+            <span>{{ platform|capitalize }}</span>
+            <span>{{ 'Connected' if connected else 'Not connected' }}</span>
+          </span>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="admin-detail-card">
+      <h2 class="h5 mb-3">Event Timeline</h2>
+      <p class="vs-admin-muted mb-0">This will be populated once <code>user_events</code> exists.</p>
+    </section>
+  </div>
+{% endblock %}

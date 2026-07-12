@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Admin{% endblock %} · MintiStudio</title>
+  <link rel="icon" type="image/png" href="{{ url_for('video_shorts_bp.static', filename='img/favicon-admin.ico') }}">
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}">
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body.vs-admin-body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(20, 184, 166, 0.10), transparent 36%),
+        radial-gradient(circle at top right, rgba(59, 130, 246, 0.10), transparent 34%),
+        #071018;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .vs-admin-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 1030;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      background: rgba(7, 16, 24, 0.92);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+    }
+    .vs-admin-topbar a {
+      color: rgba(255, 255, 255, 0.92);
+      text-decoration: none;
+    }
+    .vs-admin-topbar a:hover {
+      color: #7dd3fc;
+    }
+    .vs-admin-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .vs-admin-brand-dot {
+      color: #2dd4bf;
+      font-size: 1rem;
+      line-height: 1;
+    }
+    .vs-admin-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 24px;
+      padding: 24px;
+    }
+    .vs-admin-sidebar {
+      align-self: start;
+      position: sticky;
+      top: 92px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      background: rgba(8, 14, 22, 0.76);
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
+      padding: 18px 14px;
+    }
+    .vs-admin-sidebar-title {
+      margin: 0 0 14px;
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .vs-admin-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .vs-admin-nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: 12px;
+      padding: 10px 12px;
+      color: rgba(255, 255, 255, 0.82);
+      text-decoration: none;
+      transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+    }
+    .vs-admin-nav-link:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+    }
+    .vs-admin-nav-link.is-active {
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .vs-admin-main {
+      min-width: 0;
+    }
+    .vs-admin-pagehead {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .vs-admin-pagehead h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2vw, 2rem);
+      line-height: 1.1;
+    }
+    .vs-admin-pagehead p {
+      margin: 6px 0 0;
+      color: rgba(255, 255, 255, 0.62);
+    }
+    .vs-admin-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      background: rgba(8, 14, 22, 0.76);
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.22);
+    }
+    .vs-admin-muted {
+      color: rgba(255, 255, 255, 0.62);
+    }
+    @media (max-width: 991.98px) {
+      .vs-admin-shell {
+        grid-template-columns: 1fr;
+      }
+      .vs-admin-sidebar {
+        position: static;
+      }
+    }
+  </style>
+  {% block extra_styles %}{% endblock %}
+</head>
+<body class="vs-admin-body">
+  <header class="vs-admin-topbar">
+    <a class="vs-admin-brand" href="{{ url_for('video_shorts_bp.admin_users') }}">
+      <span class="vs-admin-brand-dot" aria-hidden="true">●</span>
+      <span>MintiStudio Admin</span>
+    </a>
+    <a href="{{ url_for('video_shorts_bp.channels_page') }}">← Back to app</a>
+  </header>
+
+  <div class="vs-admin-shell">
+    <aside class="vs-admin-sidebar">
+      <div class="vs-admin-sidebar-title">Admin</div>
+      <nav class="vs-admin-nav" aria-label="Admin navigation">
+        <a
+          href="{{ url_for('video_shorts_bp.admin_users') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span>Users</span>
+        </a>
+      </nav>
+    </aside>
+
+    <main class="vs-admin-main">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endwith %}
+
+      <div class="vs-admin-pagehead">
+        <div>
+          <h1>{% block admin_heading %}{{ admin_title or 'Admin' }}{% endblock %}</h1>
+          {% block admin_subheading %}{% endblock %}
+        </div>
+      </div>
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>
