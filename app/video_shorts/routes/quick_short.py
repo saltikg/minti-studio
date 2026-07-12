@@ -43,6 +43,7 @@ from app.video_shorts.services.render_jobs import (
     update_job_payload,
 )
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
@@ -594,6 +595,11 @@ def quick_short_ingest_youtube():
             return _json_error("Channel details could not be prepared.")
         video_pk = _upsert_video(conn, meta, channel_id, current_user.get("id"), brand_id)
         conn.commit()
+        track_event(
+            current_user["id"],
+            "video_uploaded",
+            video_id=video_id,
+        )
     finally:
         conn.close()
     if not video_pk:
@@ -788,6 +794,11 @@ def quick_short_upload_complete():
             )
         row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
         conn.commit()
+        track_event(
+            current_user["id"],
+            "video_uploaded",
+            video_id=video_id,
+        )
     finally:
         conn.close()
     video_pk = row[0] if row else None

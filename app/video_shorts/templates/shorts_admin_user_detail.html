@@ -69,6 +69,29 @@
       color: #99f6e4;
       border: 1px solid rgba(45, 212, 191, 0.22);
     }
+    .admin-detail-timeline {
+      display: grid;
+      gap: 12px;
+    }
+    .admin-detail-timeline-row {
+      display: grid;
+      gap: 6px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .admin-detail-timeline-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.9rem;
+    }
+    .admin-detail-timeline-title {
+      color: rgba(255, 255, 255, 0.96);
+      font-weight: 600;
+    }
     @media (max-width: 991.98px) {
       .admin-detail-summary {
         grid-template-columns: 1fr;
@@ -148,7 +171,26 @@
 
     <section class="admin-detail-card">
       <h2 class="h5 mb-3">Event Timeline</h2>
-      <p class="vs-admin-muted mb-0">This will be populated once <code>user_events</code> exists.</p>
+      {% if user_detail.timeline_events %}
+        <div class="admin-detail-timeline">
+          {% for event in user_detail.timeline_events %}
+            <article class="admin-detail-timeline-row">
+              <div class="admin-detail-timeline-title">
+                {{ event.event_name }}
+                {% if event.status %}<span class="vs-admin-muted">· {{ event.status }}</span>{% endif %}
+              </div>
+              <div class="admin-detail-timeline-meta">
+                <span>{{ event.created_at.strftime('%b %-d, %Y · %H:%M') if event.created_at and event.created_at.strftime else (event.created_at or '—') }}</span>
+                {% if event.platform %}<span>platform: {{ event.platform }}</span>{% endif %}
+                {% if event.video_id %}<span>video: {{ event.video_id }}</span>{% endif %}
+                {% if event.short_id %}<span>short: {{ event.short_id }}</span>{% endif %}
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="vs-admin-muted mb-0">No events recorded yet.</p>
+      {% endif %}
     </section>
   </div>
 {% endblock %}

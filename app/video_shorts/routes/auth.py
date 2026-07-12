@@ -66,6 +66,7 @@ from app.video_shorts.services.billing import (
     load_billing_user_state,
     user_has_managed_subscription,
 )
+from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -892,6 +893,7 @@ def register():
                     persisted[0] if persisted else None,
                 )
                 conn.close()
+                track_event(user_id, "signup")
                 try:
                     send_verification_email(to_email=email, verify_token=verify_token, recipient_name=name)
                 except Exception:
@@ -1417,6 +1419,7 @@ def google_oauth_callback():
     conn = get_db()
     ensure_storage_user_schema(conn)
     ensure_auth_user_schema(conn)
+    created_new_user = False
     row = conn.execute(
         """
         SELECT CAST(id AS VARCHAR)
@@ -1446,6 +1449,7 @@ def google_oauth_callback():
         conn.commit()
     else:
         user_id = str(uuid4())
+        created_new_user = True
         conn.execute(
             """
             INSERT INTO shorts_users (
@@ -1466,6 +1470,8 @@ def google_oauth_callback():
     ensure_brand_schema(conn)
     brand = ensure_brand_for_user(conn, user_id=user_id, user_name=name or email)
     conn.close()
+    if created_new_user:
+        track_event(user_id, "signup")
     session["vs_user_id"] = user_id
     if brand:
         session["vs_brand_id"] = brand["id"]

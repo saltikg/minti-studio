@@ -103,6 +103,7 @@ from app.video_shorts.services.user_preferences import (
     load_user_bool_preference,
     save_user_bool_preference,
 )
+from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     load_billing_user_state,
@@ -5930,6 +5931,32 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "facebook": _token_table_has_any_rows("facebook_page_tokens", user_id),
         "tiktok": _token_table_has_any_rows("tiktok_oauth_tokens", user_id),
     }
+    timeline_rows: List[Dict[str, Any]] = []
+    try:
+        timeline = conn.execute(
+            """
+            SELECT created_at, event_name, status, platform, video_id, short_id
+            FROM user_events
+            WHERE user_id = ?
+               OR user_id LIKE ?
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+            [user_id, f"{user_id}::%"],
+        ).fetchall()
+        timeline_rows = [
+            {
+                "created_at": event_row[0],
+                "event_name": event_row[1] or "",
+                "status": event_row[2] or "",
+                "platform": event_row[3] or "",
+                "video_id": event_row[4] or "",
+                "short_id": event_row[5] or "",
+            }
+            for event_row in timeline
+        ]
+    except Exception:
+        timeline_rows = []
 
     return {
         "id": row[0],
@@ -5947,6 +5974,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "shorts_generated": shorts_generated,
         "shorts_published": shorts_published,
         "connected_platforms": connected_platforms,
+        "timeline_events": timeline_rows,
     }
 
 
@@ -7764,6 +7792,7 @@ def facebook_oauth_callback():
         expires_at=expires_at,
         scopes=FB_OAUTH_SCOPES,
     )
+    track_event(user_id, "channel_connected", platform="facebook")
     saved = get_facebook_page_data(user_id)
     current_app.logger.info(
         "Facebook OAuth saved db_record_id=%s fb_user_id=%s page_id=%s token_tail=%s updated_at=%s",
@@ -8243,6 +8272,7 @@ def instagram_oauth_callback():
         expires_at=expires_at,
         scopes=scopes,
     )
+    track_event(user_id, "channel_connected", platform="instagram")
     try:
         subscribe_payload = subscribe_instagram_comment_webhooks(graph_ig_id, long_token)
         current_app.logger.info(
@@ -8436,6 +8466,7 @@ def tiktok_oauth_callback():
         expires_at=expires_at,
         refresh_expires_at=refresh_expires_at,
     )
+    track_event(user_id, "channel_connected", platform="tiktok")
     flash("TikTok connected.", "success")
     return redirect(url_for("video_shorts_bp.social_connect"))
 
@@ -8508,6 +8539,7 @@ def youtube_oauth_callback():
         return redirect(next_url)
 
     store_refresh_token(refresh_token, user_id=current_user["id"])
+    track_event(current_user["id"], "channel_connected", platform="youtube")
     flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
     return redirect(next_url)
 
@@ -11597,6 +11629,15 @@ def autoclip_video(video_pk):
                     clip_filename,
                     exc,
                 )
+            owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
+            if owner_event_user_id:
+                track_event(
+                    owner_event_user_id,
+                    "short_generated",
+                    video_id=vid,
+                    short_id=clip_filename,
+                    status="completed",
+                )
             made += 1
     except Exception as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
@@ -11613,6 +11654,15 @@ def autoclip_video(video_pk):
                 vid,
                 clip_filename,
                 exc,
+            )
+        owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
+        if owner_event_user_id:
+            track_event(
+                owner_event_user_id,
+                "short_generated",
+                video_id=vid,
+                short_id=clip_filename,
+                status="failed",
             )
         error_message = f"Clip {plan_index} failed: {e}"
     finally:

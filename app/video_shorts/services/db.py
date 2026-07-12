@@ -463,6 +463,38 @@ def ensure_storage_user_schema(conn):
         )
 
 
+def ensure_user_events_schema(conn) -> None:
+    if not _schema_management_enabled():
+        return
+    json_type = "JSONB" if getattr(conn, "backend_name", "") == "postgres" else "TEXT"
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS user_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id VARCHAR NOT NULL,
+            event_name VARCHAR NOT NULL,
+            video_id VARCHAR,
+            short_id VARCHAR,
+            platform VARCHAR,
+            status VARCHAR,
+            metadata {json_type},
+            created_at TIMESTAMP DEFAULT now()
+        )
+        """
+    )
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_events_user_created_at ON user_events(user_id, created_at DESC)"
+        )
+    except Exception:
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_events_user_created_at ON user_events(user_id, created_at)"
+            )
+        except Exception:
+            pass
+
+
 def ensure_auth_user_schema(conn) -> None:
     user_columns = table_columns(conn, "shorts_users")
     if not user_columns:
