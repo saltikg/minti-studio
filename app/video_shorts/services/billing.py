@@ -109,6 +109,7 @@ def create_embedded_checkout_session(
     return stripe.checkout.Session.create(
         mode="subscription",
         ui_mode="embedded_page",
+        redirect_on_completion="if_required",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
         return_url=return_url,

@@ -1174,6 +1174,23 @@
                 planCheckoutStatus.textContent = "Complete payment below. Your plan updates after Stripe confirms the subscription.";
               }
             },
+            onComplete: () => {
+              if (planCheckoutError) {
+                planCheckoutError.classList.add("d-none");
+                planCheckoutError.textContent = "";
+              }
+              if (planCheckoutStatus) {
+                planCheckoutStatus.textContent = "Your plan has been upgraded.";
+              }
+              if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = "Done";
+              }
+              window.setTimeout(() => {
+                getModal(planModalEl)?.hide();
+                window.location.href = {{ url_for('video_shorts_bp.shorts_storage_plans')|tojson }};
+              }, 1400);
+            },
             onError: () => {
               confirmBtn.disabled = false;
               confirmBtn.textContent = "Continue to payment";

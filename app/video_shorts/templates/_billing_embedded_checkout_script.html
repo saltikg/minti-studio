@@ -27,6 +27,7 @@
           errorSelector,
           onMounting,
           onMounted,
+          onComplete,
           onError,
         } = options || {};
 
@@ -84,7 +85,12 @@
                 throw new Error((payload && payload.error) || `Could not create checkout session (HTTP ${response.status}).`);
               }
               return payload.client_secret;
-            }
+            },
+            onComplete: () => {
+              if (typeof onComplete === "function") {
+                onComplete();
+              }
+            },
           });
           activeCheckout = checkout;
           checkout.mount(mountSelector);
