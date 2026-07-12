@@ -158,7 +158,7 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
-                timeout=max(30, int(FFMPEG_TIMEOUT)),
+                timeout=max(30, int(FFMPEG_TIMEOUT) if FFMPEG_TIMEOUT else 30),
             )
             try:
                 current_app.logger.info(
