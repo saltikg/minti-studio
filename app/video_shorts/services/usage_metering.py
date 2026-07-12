@@ -248,6 +248,7 @@ def load_storage_plan_catalog(conn=None, plan_ids: Optional[list[str]] = None) -
                 "quota_bytes": quota_bytes,
                 "quota_label": _format_storage_gb(quota_bytes).replace(" storage", ""),
                 "price_monthly": monthly_price,
+                "monthly_price": monthly_price,
                 "price_yearly": yearly_price,
                 "yearly_price": yearly_price,
                 "yearly_compare_monthly": monthly_compare,
