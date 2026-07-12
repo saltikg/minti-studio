@@ -176,6 +176,7 @@ from app.video_shorts.services.render_jobs import (
 )
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
+    load_storage_plan_catalog as load_usage_storage_plan_catalog,
     release_export,
     reserve_export,
 )
@@ -5590,40 +5591,9 @@ def shorts_storage():
 
 
 def _load_storage_plan_catalog(conn) -> List[Dict[str, Any]]:
-    plan_label_map = {
-        "plan_free": "Free",
-        "plan_2gb": "Starter",
-        "plan_10gb": "Creator",
-        "plan_100gb": "Studio",
-    }
+    plans = load_usage_storage_plan_catalog(conn)
     plan_order = ["plan_free", "plan_2gb", "plan_10gb", "plan_100gb"]
-    plan_rows = conn.execute(
-        """
-        SELECT
-            plan_id,
-            label,
-            quota_bytes,
-            price_monthly,
-            monthly_export_limit,
-            monthly_transcription_minutes
-        FROM shorts_storage_plans
-        ORDER BY sort_order, label
-        """
-    ).fetchall()
-    plan_lookup = {
-        row[0]: {
-            "plan_id": row[0],
-            "label": plan_label_map.get(row[0], row[1]),
-            "quota_bytes": row[2],
-            "quota_label": _format_size_bytes(row[2]),
-            "price_monthly": row[3] or 0,
-            "monthly_export_limit": int(row[4] or 0),
-            "monthly_transcription_minutes": int(row[5] or 0),
-            "transcription_limit_label": f"{int((row[5] or 0) / 60)}h",
-        }
-        for row in plan_rows
-        if row[0] in plan_order
-    }
+    plan_lookup = {plan["plan_id"]: plan for plan in plans if plan.get("plan_id") in plan_order}
     return [plan_lookup[plan_id] for plan_id in plan_order if plan_id in plan_lookup]
 
 

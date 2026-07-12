@@ -408,15 +408,8 @@
     {% set is_selected_plan = current_plan_id == plan.plan_id %}
     {% set tier_label = plan.label %}
     {% set monthly_price = plan.price_monthly %}
-    {% set yearly_total = 90 %}
-    {% if plan.plan_id == "plan_free" %}
-      {% set yearly_total = 0 %}
-    {% elif plan.plan_id == "plan_10gb" %}
-      {% set yearly_total = 180 %}
-    {% elif plan.plan_id == "plan_100gb" %}
-      {% set yearly_total = 450 %}
-    {% endif %}
-    {% set yearly_monthly = yearly_total / 12 %}
+    {% set yearly_total = plan.price_yearly %}
+    {% set yearly_monthly = plan.yearly_compare_monthly / 12 if plan.yearly_compare_monthly else 0 %}
     <div class="col-sm-6 col-lg-3">
       <div class="card shadow-sm h-100 position-relative plan-card {% if is_selected_plan %}plan-card-selected{% endif %}">
         {% if is_selected_plan %}

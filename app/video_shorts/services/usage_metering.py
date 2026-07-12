@@ -86,6 +86,7 @@ def ensure_usage_metering_schema(conn) -> None:
     extra_plan_columns = [
         ("name", "VARCHAR"),
         ("price_monthly", "NUMERIC DEFAULT 0"),
+        ("price_yearly", "NUMERIC DEFAULT 0"),
         ("storage_quota_bytes", "BIGINT"),
         ("monthly_export_limit", "INTEGER"),
         ("monthly_transcription_minutes", "NUMERIC"),
@@ -157,6 +158,7 @@ def ensure_usage_metering_schema(conn) -> None:
                 sort_order,
                 name,
                 price_monthly,
+                price_yearly,
                 storage_quota_bytes,
                 monthly_export_limit,
                 monthly_transcription_minutes,
@@ -164,7 +166,7 @@ def ensure_usage_metering_schema(conn) -> None:
                 max_concurrent_jobs,
                 is_active
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(plan_id)
             DO UPDATE SET
                 label = excluded.label,
@@ -172,6 +174,7 @@ def ensure_usage_metering_schema(conn) -> None:
                 sort_order = excluded.sort_order,
                 name = excluded.name,
                 price_monthly = excluded.price_monthly,
+                price_yearly = excluded.price_yearly,
                 storage_quota_bytes = excluded.storage_quota_bytes,
                 monthly_export_limit = excluded.monthly_export_limit,
                 monthly_transcription_minutes = excluded.monthly_transcription_minutes,
@@ -186,6 +189,7 @@ def ensure_usage_metering_schema(conn) -> None:
                 plan.get("sort_order", 0),
                 plan["label"],
                 plan.get("price_monthly", 0),
+                plan.get("price_yearly", plan.get("price_monthly", 0) * 12),
                 plan["quota_bytes"],
                 plan.get("monthly_export_limit"),
                 plan.get("monthly_transcription_minutes"),
@@ -195,6 +199,71 @@ def ensure_usage_metering_schema(conn) -> None:
             ],
         )
     conn.commit()
+
+
+def _format_storage_gb(quota_bytes: Any) -> str:
+    size_gb = int(round((int(quota_bytes or 0)) / float(1024 ** 3)))
+    return f"{size_gb} GB storage"
+
+
+def _format_transcription_hours(minutes: Any) -> str:
+    hours = int(round((int(minutes or 0)) / 60.0))
+    return f"{hours}h transcription"
+
+
+def load_storage_plan_catalog(conn=None) -> list[dict]:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_db()
+    ensure_usage_metering_schema(conn)
+    plan_rows = conn.execute(
+        f"""
+        SELECT
+            plan_id,
+            COALESCE(name, label) AS name,
+            COALESCE(storage_quota_bytes, quota_bytes) AS storage_quota_bytes,
+            price_monthly,
+            price_yearly,
+            monthly_export_limit,
+            monthly_transcription_minutes
+        FROM {PLANS_TABLE}
+        WHERE COALESCE(is_active, TRUE) = TRUE
+        ORDER BY sort_order, label
+        """
+    ).fetchall()
+    plans: list[dict] = []
+    for row in plan_rows:
+        monthly_price = int(row[3] or 0)
+        yearly_price = int(row[4] or (monthly_price * 12))
+        monthly_compare = monthly_price * 12
+        quota_bytes = int(row[2] or 0)
+        transcription_minutes = int(row[6] or 0)
+        plans.append(
+            {
+                "plan_id": row[0],
+                "label": row[1],
+                "quota_bytes": quota_bytes,
+                "quota_label": _format_storage_gb(quota_bytes).replace(" storage", ""),
+                "price_monthly": monthly_price,
+                "price_yearly": yearly_price,
+                "yearly_compare_monthly": monthly_compare,
+                "monthly_export_limit": int(row[5] or 0),
+                "monthly_transcription_minutes": transcription_minutes,
+                "transcription_limit_label": f"{int(transcription_minutes / 60)}h",
+                "monthly_note": "forever" if monthly_price == 0 else "per month",
+                "yearly_note": "forever" if yearly_price == 0 else f"${monthly_compare} if monthly",
+                "lines": [
+                    f"{int(row[5] or 0)} shorts / month",
+                    _format_transcription_hours(transcription_minutes),
+                    _format_storage_gb(quota_bytes),
+                ],
+                "is_featured": str(row[0] or "") == "plan_10gb",
+                "button_label": "Start free" if monthly_price == 0 else "Get started",
+            }
+        )
+    if owns_connection and conn is not None:
+        conn.close()
+    return plans
 
 
 def _ensure_usage_row(conn, user_id: str, period_start: date) -> None:
