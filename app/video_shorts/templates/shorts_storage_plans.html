@@ -246,11 +246,7 @@
     overflow: hidden;
   }
   .plan-confirm-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
-    gap: 18px;
-    align-items: start;
-    min-height: 0;
+    display: block;
   }
   .plan-confirm-summary,
   .plan-confirm-checkout {
@@ -258,14 +254,31 @@
   }
   .plan-confirm-summary {
     align-self: start;
+    max-width: 460px;
+    margin: 0 auto;
   }
   .plan-confirm-summary .vs-modal-grid {
     grid-template-columns: 1fr;
   }
   .plan-confirm-checkout {
+    display: none;
     max-height: calc(90vh - 190px);
     overflow-y: auto;
     padding-right: 4px;
+  }
+  .plan-confirm-modal.has-checkout .plan-confirm-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr);
+    gap: 18px;
+    align-items: start;
+    min-height: 0;
+  }
+  .plan-confirm-modal.has-checkout .plan-confirm-summary {
+    max-width: none;
+    margin: 0;
+  }
+  .plan-confirm-modal.has-checkout .plan-confirm-checkout {
+    display: block;
   }
   .plan-confirm-checkout .plan-checkout-shell {
     margin-top: 0 !important;
@@ -284,13 +297,17 @@
       overflow-y: auto;
     }
     .plan-confirm-layout {
-      grid-template-columns: 1fr;
-      gap: 16px;
+      display: block;
     }
     .plan-confirm-checkout {
       max-height: none;
       overflow: visible;
       padding-right: 0;
+    }
+    .plan-confirm-modal.has-checkout .plan-confirm-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
     }
   }
 </style>
@@ -1004,6 +1021,9 @@
     setBillingCycle(yearlyToggle && yearlyToggle.checked);
 
     const resetPlanConfirmState = () => {
+      if (planModalEl) {
+        planModalEl.classList.remove("has-checkout");
+      }
       if (confirmForm) {
         confirmForm.classList.remove("d-none");
       }
@@ -1144,6 +1164,9 @@
           if (planCheckoutShell) {
             planCheckoutShell.classList.remove("d-none");
           }
+          if (planModalEl) {
+            planModalEl.classList.add("has-checkout");
+          }
           if (!stripeReady || !window.MintiEmbeddedCheckout) {
             if (planCheckoutError) {
               planCheckoutError.textContent = "Stripe checkout is not configured right now.";
@@ -1199,6 +1222,9 @@
               }
               if (planCheckoutShell) {
                 planCheckoutShell.classList.add("d-none");
+              }
+              if (planModalEl) {
+                planModalEl.classList.remove("has-checkout");
               }
               if (planConfirmCancel) {
                 planConfirmCancel.disabled = false;
