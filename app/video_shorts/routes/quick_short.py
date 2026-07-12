@@ -932,6 +932,11 @@ def _create_uploaded_video_session_and_enqueue(
             )
         row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
         conn.commit()
+        track_event(
+            current_user["id"],
+            "video_uploaded",
+            video_id=video_id,
+        )
     finally:
         conn.close()
     video_pk = row[0] if row else None
