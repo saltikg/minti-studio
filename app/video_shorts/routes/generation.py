@@ -139,7 +139,6 @@ from app.video_shorts.services.transcript_service import (
     build_transcript_for_range,
 )
 from app.video_shorts.routes.auth import require_admin
-from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
 from src.trends.token_store_db import connect_store, relation_missing
 from app.video_shorts.services.non_speech_rules import load_non_speech_rules, add_non_speech_keyword
 
@@ -5867,12 +5866,6 @@ def _token_table_has_any_rows(table_name: str, owner_user_id: str) -> bool:
 def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     youtube_columns = table_columns(conn, "youtube_videos")
     generated_columns = table_columns(conn, "shorts_generated_videos")
-    if generated_columns:
-        try:
-            ensure_generated_videos_schema(conn)
-        except Exception:
-            pass
-        generated_columns = table_columns(conn, "shorts_generated_videos")
 
     row = conn.execute(
         """
