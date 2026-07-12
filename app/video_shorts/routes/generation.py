@@ -6451,8 +6451,6 @@ def admin_users():
 def admin_user_detail(user_id: str):
     conn = get_db_readonly()
     try:
-        ensure_storage_user_schema(conn)
-        ensure_auth_user_schema(conn)
         detail = _load_admin_user_detail(conn, user_id)
     finally:
         conn.close()
