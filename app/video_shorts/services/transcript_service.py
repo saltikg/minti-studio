@@ -73,37 +73,99 @@ def _detect_primary_audio_language(video_path: Path) -> str:
     """
     if not _openai_client or not video_path.exists():
         return ""
-    probe_path: Optional[Path] = None
     try:
-        # Probe first ~45s; enough for language signal without full run cost.
-        probe_path = _extract_audio_segment(video_path, 0.0, 45.0)
-        with probe_path.open("rb") as f:
-            resp = _openai_client.audio.transcriptions.create(
-                model=WHISPER_MODEL,
-                file=f,
-                response_format="verbose_json",
-                prompt="Detect spoken language and transcribe exactly as spoken. Do not translate.",
+        def _probe_window_language(start_seconds: float, duration_seconds: float) -> str:
+            probe_path: Optional[Path] = None
+            try:
+                end_seconds = start_seconds + duration_seconds
+                probe_path = _extract_audio_segment(video_path, start_seconds, end_seconds)
+                with probe_path.open("rb") as f:
+                    resp = _openai_client.audio.transcriptions.create(
+                        model=WHISPER_MODEL,
+                        file=f,
+                        response_format="verbose_json",
+                        prompt="Detect spoken language and transcribe exactly as spoken. Do not translate.",
+                    )
+                lang = _extract_transcription_language(resp)
+                probe_text, _ = _whisper_response_to_segments(resp)
+                if lang in {"en", "tr"}:
+                    return lang
+                if _looks_english_text(probe_text):
+                    return "en"
+                inferred = infer_lang_from_text(probe_text or "")
+                if inferred == "tr":
+                    return "tr"
+            except Exception as exc:
+                try:
+                    current_app.logger.warning(
+                        "Language probe window failed at %.1fs for %.1fs; ignoring window: %s",
+                        start_seconds,
+                        duration_seconds,
+                        exc,
+                    )
+                except Exception:
+                    pass
+            finally:
+                if probe_path and probe_path.exists():
+                    try:
+                        probe_path.unlink()
+                    except Exception:
+                        pass
+            return ""
+
+        duration_seconds: Optional[float] = None
+        try:
+            ffmpeg_bin = Path(_resolve_ffmpeg())
+            ffprobe_bin = ffmpeg_bin.with_name("ffprobe")
+            ffprobe_cmd = [
+                str(ffprobe_bin if ffprobe_bin.exists() else "ffprobe"),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(video_path),
+            ]
+            proc = subprocess.run(
+                ffprobe_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=max(30, int(FFMPEG_TIMEOUT)),
             )
-        lang = _extract_transcription_language(resp)
-        probe_text, _ = _whisper_response_to_segments(resp)
-        if lang in {"en", "tr"}:
-            return lang
-        if _looks_english_text(probe_text):
+            if proc.returncode == 0:
+                raw_duration = (proc.stdout or "").strip()
+                if raw_duration:
+                    duration_seconds = float(raw_duration)
+        except Exception:
+            duration_seconds = None
+
+        if not duration_seconds or duration_seconds < 90.0:
+            # Short clips keep the original single-window behavior.
+            return _probe_window_language(0.0, 45.0)
+
+        window_duration = 30.0
+        max_start = max(duration_seconds - window_duration, 0.0)
+        votes: List[str] = []
+        for fraction in (0.20, 0.50, 0.80):
+            start_seconds = min(max(duration_seconds * fraction, 0.0), max_start)
+            lang = _probe_window_language(start_seconds, window_duration)
+            if lang in {"en", "tr"}:
+                votes.append(lang)
+
+        en_votes = sum(1 for lang in votes if lang == "en")
+        tr_votes = sum(1 for lang in votes if lang == "tr")
+        if en_votes > tr_votes:
             return "en"
-        inferred = infer_lang_from_text(probe_text or "")
-        if inferred == "tr":
+        if tr_votes > en_votes:
             return "tr"
     except Exception as exc:
         try:
             current_app.logger.warning("Language probe failed; fallback to auto mode: %s", exc)
         except Exception:
             pass
-    finally:
-        if probe_path and probe_path.exists():
-            try:
-                probe_path.unlink()
-            except Exception:
-                pass
     return ""
 
 
