@@ -211,7 +211,7 @@ def _format_transcription_hours(minutes: Any) -> str:
     return f"{hours}h transcription"
 
 
-def load_storage_plan_catalog(conn=None) -> list[dict]:
+def load_storage_plan_catalog(conn=None, plan_ids: Optional[list[str]] = None) -> list[dict]:
     owns_connection = conn is None
     if owns_connection:
         conn = get_db()
@@ -231,8 +231,11 @@ def load_storage_plan_catalog(conn=None) -> list[dict]:
         ORDER BY sort_order, label
         """
     ).fetchall()
+    allowed_plan_ids = [plan_id for plan_id in (plan_ids or []) if plan_id]
     plans: list[dict] = []
     for row in plan_rows:
+        if allowed_plan_ids and row[0] not in allowed_plan_ids:
+            continue
         monthly_price = int(row[3] or 0)
         yearly_price = int(row[4] or (monthly_price * 12))
         monthly_compare = monthly_price * 12
@@ -246,6 +249,7 @@ def load_storage_plan_catalog(conn=None) -> list[dict]:
                 "quota_label": _format_storage_gb(quota_bytes).replace(" storage", ""),
                 "price_monthly": monthly_price,
                 "price_yearly": yearly_price,
+                "yearly_price": yearly_price,
                 "yearly_compare_monthly": monthly_compare,
                 "monthly_export_limit": int(row[5] or 0),
                 "monthly_transcription_minutes": transcription_minutes,
@@ -263,6 +267,9 @@ def load_storage_plan_catalog(conn=None) -> list[dict]:
         )
     if owns_connection and conn is not None:
         conn.close()
+    if allowed_plan_ids:
+        plan_lookup = {plan["plan_id"]: plan for plan in plans}
+        return [plan_lookup[plan_id] for plan_id in allowed_plan_ids if plan_id in plan_lookup]
     return plans
 
 
