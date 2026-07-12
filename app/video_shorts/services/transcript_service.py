@@ -74,6 +74,18 @@ def _detect_primary_audio_language(video_path: Path) -> str:
     if not _openai_client or not video_path.exists():
         return ""
     try:
+        def _log_probe_result(result: str, path_label: str, votes: List[str], duration_seconds: Optional[float]) -> None:
+            try:
+                current_app.logger.info(
+                    "lang_probe result=%s path=%s votes=%s duration=%.1f",
+                    result,
+                    path_label,
+                    votes,
+                    float(duration_seconds) if duration_seconds is not None else -1.0,
+                )
+            except Exception:
+                pass
+
         def _probe_window_language(start_seconds: float, duration_seconds: float) -> str:
             probe_path: Optional[Path] = None
             try:
@@ -144,7 +156,9 @@ def _detect_primary_audio_language(video_path: Path) -> str:
 
         if not duration_seconds or duration_seconds < 90.0:
             # Short clips keep the original single-window behavior.
-            return _probe_window_language(0.0, 45.0)
+            result = _probe_window_language(0.0, 45.0)
+            _log_probe_result(result, "single_window", [result], duration_seconds)
+            return result
 
         window_duration = 30.0
         max_start = max(duration_seconds - window_duration, 0.0)
@@ -158,14 +172,26 @@ def _detect_primary_audio_language(video_path: Path) -> str:
         en_votes = sum(1 for lang in votes if lang == "en")
         tr_votes = sum(1 for lang in votes if lang == "tr")
         if en_votes > tr_votes:
+            _log_probe_result("en", "multi_window", votes, duration_seconds)
             return "en"
         if tr_votes > en_votes:
+            _log_probe_result("tr", "multi_window", votes, duration_seconds)
             return "tr"
     except Exception as exc:
         try:
             current_app.logger.warning("Language probe failed; fallback to auto mode: %s", exc)
         except Exception:
             pass
+    try:
+        current_app.logger.info(
+            "lang_probe result=%s path=%s votes=%s duration=%.1f",
+            "",
+            "multi_window" if 'votes' in locals() else "single_window",
+            votes if 'votes' in locals() else [],
+            float(duration_seconds) if 'duration_seconds' in locals() and duration_seconds is not None else -1.0,
+        )
+    except Exception:
+        pass
     return ""
 
 
