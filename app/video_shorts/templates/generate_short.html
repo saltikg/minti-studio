@@ -1789,6 +1789,23 @@
                             <i class="bi bi-instagram {{ rail_ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                           </span>
                         {% endif %}
+                        {% if row.facebook_label or row.facebook_display %}
+                          {% set rail_fb_tooltip = row.facebook_display or (row.facebook_mode == 'sync' and row.publish_display) or row.facebook_label %}
+                          {% set rail_fb_label_lower = (row.facebook_label or "")|lower %}
+                          {% if "published" in rail_fb_label_lower %}
+                            {% set rail_fb_icon_class = "text-success" %}
+                          {% elif "scheduled" in rail_fb_label_lower or "queued" in rail_fb_label_lower %}
+                            {% set rail_fb_icon_class = "text-warning" %}
+                          {% elif "failed" in rail_fb_label_lower %}
+                            {% set rail_fb_icon_class = "text-danger" %}
+                          {% else %}
+                            {% set rail_fb_icon_class = "text-primary" %}
+                          {% endif %}
+                          {% set rail_fb_tooltip_label = "Published date" if "published" in rail_fb_label_lower else "Schedule date" %}
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_fb_tooltip_label }}: {{ rail_fb_tooltip }}">
+                            <i class="bi bi-facebook {{ rail_fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                          </span>
+                        {% endif %}
                       </span>
                     </span>
                   </button>
@@ -1835,6 +1852,23 @@
                 {% set modal_ig_tooltip_label = "Published date" if "published" in modal_ig_label_lower else "Schedule date" %}
                 {% set modal_ig_tooltip = modal_ig_tooltip_label ~ ": " ~ row.instagram_display %}
               {% endif %}
+              {% set modal_fb_tooltip = '' %}
+              {% set modal_fb_icon_class = '' %}
+              {% if row.facebook_label or row.facebook_display %}
+                {% set modal_fb_tooltip = row.facebook_display or (row.facebook_mode == 'sync' and row.publish_display) or row.facebook_label %}
+                {% set modal_fb_label_lower = (row.facebook_label or "")|lower %}
+                {% if "published" in modal_fb_label_lower %}
+                  {% set modal_fb_icon_class = "text-success" %}
+                {% elif "scheduled" in modal_fb_label_lower or "queued" in modal_fb_label_lower %}
+                  {% set modal_fb_icon_class = "text-warning" %}
+                {% elif "failed" in modal_fb_label_lower %}
+                  {% set modal_fb_icon_class = "text-danger" %}
+                {% else %}
+                  {% set modal_fb_icon_class = "text-primary" %}
+                {% endif %}
+                {% set modal_fb_tooltip_label = "Published date" if "published" in modal_fb_label_lower else "Schedule date" %}
+                {% set modal_fb_tooltip = modal_fb_tooltip_label ~ ": " ~ modal_fb_tooltip %}
+              {% endif %}
             <div class="clip-card"
                  data-plan-index="{{ row.plan_index }}"
                  data-status="{{ row.status }}"
@@ -1846,7 +1880,9 @@
                  data-modal-yt-tooltip="{{ modal_yt_tooltip|e }}"
                  data-modal-yt-icon-class="{{ modal_yt_icon_class }}"
                  data-modal-ig-tooltip="{{ modal_ig_tooltip|e }}"
-                 data-modal-ig-icon-class="{{ modal_ig_icon_class }}">
+                 data-modal-ig-icon-class="{{ modal_ig_icon_class }}"
+                 data-modal-fb-tooltip="{{ modal_fb_tooltip|e }}"
+                 data-modal-fb-icon-class="{{ modal_fb_icon_class }}">
               <div class="clip-card-strip {{ row.status }}"></div>
               <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
                 <div class="clip-card-meta-time">
@@ -4652,12 +4688,17 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
     const ytIconClass = String(activeCard?.dataset.modalYtIconClass || "").trim();
     const igTooltip = String(activeCard?.dataset.modalIgTooltip || "").trim();
     const igIconClass = String(activeCard?.dataset.modalIgIconClass || "").trim();
+    const fbTooltip = String(activeCard?.dataset.modalFbTooltip || "").trim();
+    const fbIconClass = String(activeCard?.dataset.modalFbIconClass || "").trim();
     const parts = [];
     if (ytTooltip && ytIconClass) {
       parts.push(`<span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="${escapeHtml(ytTooltip)}"><i class="bi bi-youtube ${escapeHtml(ytIconClass)} gs-schedule-icon" aria-hidden="true"></i></span>`);
     }
     if (igTooltip && igIconClass) {
       parts.push(`<span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="${escapeHtml(igTooltip)}"><i class="bi bi-instagram ${escapeHtml(igIconClass)} gs-schedule-icon" aria-hidden="true"></i></span>`);
+    }
+    if (fbTooltip && fbIconClass) {
+      parts.push(`<span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="${escapeHtml(fbTooltip)}"><i class="bi bi-facebook ${escapeHtml(fbIconClass)} gs-schedule-icon" aria-hidden="true"></i></span>`);
     }
     modalPlatforms.innerHTML = parts.join("");
     if (typeof bootstrap !== "undefined") {
