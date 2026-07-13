@@ -13,6 +13,7 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
+from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
 
 
@@ -137,6 +138,10 @@ def caption_result():
         owner_user_id = row[1]
         duration_seconds = row[2]
         video_title = row[3]
+        event_video_id, should_emit_transcript_completed = prepare_transcript_completed_transition(
+            conn,
+            video_pk=video_db_id,
+        )
 
         conn.execute(
             """
@@ -158,6 +163,13 @@ def caption_result():
         )
         conn.commit()
         conn.close()
+        if should_emit_transcript_completed and owner_user_id:
+            track_event(
+                str(owner_user_id),
+                "transcript_completed",
+                video_id=event_video_id or video_id,
+                status="completed",
+            )
         if owner_user_id:
             minutes = _duration_minutes(duration_seconds)
             if minutes > 0:

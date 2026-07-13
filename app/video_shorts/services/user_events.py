@@ -16,6 +16,40 @@ def _json_value_sql(conn, param_placeholder: str = "?") -> str:
     return param_placeholder
 
 
+def prepare_transcript_completed_transition(
+    conn,
+    *,
+    video_pk: Optional[int] = None,
+    video_id: Optional[str] = None,
+) -> tuple[Optional[str], bool]:
+    resolved_video_id = str(video_id or "").strip() or None
+    prior_status = ""
+    row = None
+    if video_pk is not None:
+        row = conn.execute(
+            """
+            SELECT video_id, COALESCE(transcript_status, '')
+            FROM youtube_videos
+            WHERE id = ?
+            """,
+            [video_pk],
+        ).fetchone()
+    elif resolved_video_id:
+        row = conn.execute(
+            """
+            SELECT video_id, COALESCE(transcript_status, '')
+            FROM youtube_videos
+            WHERE video_id = ?
+            LIMIT 1
+            """,
+            [resolved_video_id],
+        ).fetchone()
+    if row:
+        resolved_video_id = str(row[0] or "").strip() or resolved_video_id
+        prior_status = str(row[1] or "").strip().lower()
+    return resolved_video_id, prior_status != "done"
+
+
 def track_event(
     user_id: str,
     event_name: str,

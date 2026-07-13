@@ -103,7 +103,7 @@ from app.video_shorts.services.user_preferences import (
     load_user_bool_preference,
     save_user_bool_preference,
 )
-from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     load_billing_user_state,
@@ -2680,7 +2680,7 @@ def _clip_title_example_from_entry(entry: Dict[str, Any]) -> Optional[Dict[str, 
 def _load_user_title_style_examples(
     user_id: Any,
     current_video_id: Optional[str] = None,
-    max_examples: int = 3,
+    max_examples: int = 5,
 ) -> List[Dict[str, str]]:
     if not user_id:
         return []
@@ -2708,6 +2708,11 @@ def _load_user_title_style_examples(
         for entry in _load_plan_entries(video_id):
             example = _clip_title_example_from_entry(entry)
             if not example:
+                continue
+            title_text = str(example.get("title") or "").strip()
+            if len(title_text.split()) <= 1:
+                continue
+            if len(title_text) > 80:
                 continue
             examples.append(example)
             if len(examples) >= max_examples:
@@ -2866,13 +2871,21 @@ def _request_short_title_suggestion(
         "For Q&A clips, surface the core question or claim naturally. "
         "Avoid clickbait, generic filler, quotes, trailing punctuation, hashtags, emojis, ALL CAPS, and summaries. "
         "Output exactly one line containing only the title."
+        "Use ONLY information explicitly present in the transcript. "
+        "Never invent, infer, or add any person, political party, institution, "
+        "organization, place, date, or event name that does not literally appear "
+        "in the transcript text. If the transcript does not name something, do not "
+        "name it in the title. "
+        "The example titles below are the channel owner's own past titles. Match "
+        "their tone, length, and level of curiosity/hook. Write a title that makes "
+        "a viewer want to stop scrolling, but never at the expense of accuracy."
     )
     examples: List[Dict[str, str]] = []
     try:
         examples = _load_user_title_style_examples(
             user_id=user_id,
             current_video_id=current_video_id,
-            max_examples=3,
+            max_examples=5,
         )
     except Exception:
         current_app.logger.exception("Failed to load user title style examples")
@@ -2882,7 +2895,7 @@ def _request_short_title_suggestion(
             example for example in examples
             if _example_matches_language(example, detected_language)
         ]
-    if len(examples) < 2:
+    if not examples:
         examples = _generic_short_title_examples_for_language(detected_language)
 
     prompt_parts: List[str] = []
@@ -2914,7 +2927,7 @@ def _request_short_title_suggestion(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.7,
+        temperature=0.3,
     )
     suggestion = (response.choices[0].message.content or "").strip()
     suggestion = suggestion.strip(" \"'“”‘’")
@@ -2942,16 +2955,22 @@ def _schedule_async_clip_title_suggestion(
     def _worker() -> None:
         with app_obj.app_context():
             try:
+                entries = _load_plan_entries(safe_video_id)
+                plan_entry = _find_plan_entry(entries, plan_index)
+                if not plan_entry:
+                    return
+                suggestion_excerpt = str(
+                    plan_entry.get("transcript_full")
+                    or plan_entry.get("excerpt")
+                    or safe_excerpt
+                    or ""
+                ).strip()
                 new_title = _request_short_title_suggestion(
-                    safe_excerpt,
+                    suggestion_excerpt,
                     user_id=user_id,
                     current_video_id=safe_video_id,
                 )
                 if not new_title:
-                    return
-                entries = _load_plan_entries(safe_video_id)
-                plan_entry = _find_plan_entry(entries, plan_index)
-                if not plan_entry:
                     return
                 existing_title = str(plan_entry.get("title") or "").strip()
                 if existing_title and existing_title != safe_placeholder:
@@ -7162,6 +7181,12 @@ def suggest_clip_title(video_pk):
     if not excerpt:
         excerpt = plan_entry.get("excerpt") or plan_entry.get("transcript_full") or ""
     excerpt = excerpt[:2000]
+    suggestion_excerpt = str(
+        plan_entry.get("transcript_full")
+        or plan_entry.get("excerpt")
+        or excerpt
+        or ""
+    ).strip()
     existing_title = str(plan_entry.get("title") or "").strip()
     if expected_current_title and existing_title != expected_current_title:
         return jsonify(success=True, skipped=True, title=existing_title)
@@ -7180,7 +7205,7 @@ def suggest_clip_title(video_pk):
             )
     try:
         new_title = _request_short_title_suggestion(
-            excerpt,
+            suggestion_excerpt,
             user_id=current_user.get("id") if current_user else None,
             current_video_id=video_id,
             language_hint=language_hint,
@@ -9137,6 +9162,10 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
             conn = get_db()
             _ensure_transcript_schema(conn)
             ensure_postgres_youtube_transcripts_id_default(conn)
+            event_video_id, should_emit_transcript_completed = prepare_transcript_completed_transition(
+                conn,
+                video_pk=video_pk,
+            )
             segments_json = json.dumps(segments, ensure_ascii=False)
             whisper_segments_json = segments_json
             exists = conn.execute(
@@ -9183,6 +9212,13 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
                         )
             except Exception:
                 app_obj.logger.exception("Failed to meter transcription usage for video_pk=%s", video_pk)
+            if should_emit_transcript_completed and owner_user_id:
+                track_event(
+                    str(owner_user_id),
+                    "transcript_completed",
+                    video_id=event_video_id or video_id,
+                    status="completed",
+                )
             elapsed = round(time.monotonic() - start_ts, 1)
             _set_transcribe_job_state(
                 video_pk,
@@ -9394,6 +9430,10 @@ def transcribe_video(video_pk):
 
         conn = get_db()
         _ensure_transcript_schema(conn)
+        event_video_id, should_emit_transcript_completed = prepare_transcript_completed_transition(
+            conn,
+            video_pk=video_pk,
+        )
         segments_json = json.dumps(segments, ensure_ascii=False)
         whisper_segments_json = segments_json
         exists = conn.execute(
@@ -9426,6 +9466,13 @@ def transcribe_video(video_pk):
         conn.commit()
         audio_minutes = _duration_minutes(_probe_media_duration_seconds(source_path))
         current_user = getattr(g, "vs_current_user", None) or {}
+        if should_emit_transcript_completed and current_user.get("id"):
+            track_event(
+                str(current_user["id"]),
+                "transcript_completed",
+                video_id=event_video_id or vid,
+                status="completed",
+            )
         if current_user.get("id") and audio_minutes > 0:
             try:
                 add_transcription_minutes(

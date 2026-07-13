@@ -45,6 +45,7 @@ from app.video_shorts.services.instagram_comment_webhook import process_instagra
 from app.video_shorts.services.storage import get_media_storage, build_storage_reference
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
+from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.youtube_oauth import has_refresh_token, upload_video_with_refresh_token
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
 from app.video_shorts.services.db import (
@@ -226,6 +227,10 @@ def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], own
         _ensure_video_crop_schema(conn)
         _ensure_transcript_schema(conn)
         ensure_postgres_youtube_transcripts_id_default(conn)
+        event_video_id, should_emit_transcript_completed = prepare_transcript_completed_transition(
+            conn,
+            video_id=video_id,
+        )
         existing = conn.execute("SELECT 1 FROM youtube_transcripts WHERE video_id = ?", [video_id]).fetchone()
         if existing:
             conn.execute(
@@ -250,6 +255,13 @@ def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], own
         conn.commit()
     finally:
         conn.close()
+    if should_emit_transcript_completed and owner_user_id:
+        track_event(
+            str(owner_user_id),
+            "transcript_completed",
+            video_id=event_video_id or video_id,
+            status="completed",
+        )
     if owner_user_id:
         minutes = _duration_minutes(duration_seconds)
         if minutes > 0:
