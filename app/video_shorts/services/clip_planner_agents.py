@@ -1,10 +1,67 @@
 import json
+import re
+import unicodedata
 from typing import List, Dict, Any, Tuple, Optional
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_block
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
+_TITLE_TOKEN_RE = re.compile(r"[A-Za-zÇĞİIÖŞÜçğıiöşü]+(?:['’][A-Za-zÇĞİIÖŞÜçğıiöşü]+)?")
+
+
+def _normalize_for_match(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    stripped = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return stripped.casefold()
+
+
+def _is_entity_like_token(token: str) -> bool:
+    cleaned = re.sub(r"['’].*$", "", (token or "").strip())
+    if len(cleaned) < 3:
+        return False
+    if cleaned.isupper():
+        return True
+    first = cleaned[:1]
+    rest = cleaned[1:]
+    return first.isupper() and any(ch.islower() for ch in rest)
+
+
+def _extract_entity_like_title_tokens(title: str) -> List[str]:
+    return [
+        token
+        for token in _TITLE_TOKEN_RE.findall(title or "")
+        if _is_entity_like_token(token)
+    ]
+
+
+def _build_grounded_title_fallback(excerpt: str, default: str = "Bu Klipte Ne Anlatılıyor?") -> str:
+    text = " ".join((excerpt or "").strip().split())
+    if not text:
+        return default
+    first_sentence = re.split(r"[.!?…]+", text, maxsplit=1)[0].strip(" \"'“”‘’")
+    candidate = first_sentence or text
+    if len(candidate) > 80:
+        truncated = candidate[:80].rsplit(" ", 1)[0].strip()
+        candidate = truncated or candidate[:80].strip()
+    return candidate or default
+
+
+def _ground_title_to_transcript(title: str, transcript_text: str, fallback_excerpt: str) -> str:
+    candidate = " ".join((title or "").strip().split())
+    if not candidate:
+        return _build_grounded_title_fallback(fallback_excerpt)
+    transcript_norm = _normalize_for_match(transcript_text)
+    if not transcript_norm:
+        return candidate
+    missing_tokens = [
+        token
+        for token in _extract_entity_like_title_tokens(candidate)
+        if _normalize_for_match(re.sub(r"['’].*$", "", token)) not in transcript_norm
+    ]
+    if not missing_tokens:
+        return candidate
+    return _build_grounded_title_fallback(fallback_excerpt)
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -395,6 +452,16 @@ def run_window_agent(
         clips = _clean_clip_list(data.get("clips"), window["context_end"])
     except Exception:
         clips = []
+    transcript_scope_text = " ".join(
+        (s.get("text") or "").strip() for s in (segments or []) if (s.get("text") or "").strip()
+    )
+    for clip in clips:
+        fallback_excerpt = str(clip.get("excerpt") or excerpt_text or transcript_scope_text or "").strip()
+        clip["title"] = _ground_title_to_transcript(
+            str(clip.get("title") or ""),
+            transcript_scope_text or excerpt_text,
+            fallback_excerpt,
+        )
     return clips, raw, excerpt_text
 
 
