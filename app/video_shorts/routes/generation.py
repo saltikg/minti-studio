@@ -79,7 +79,10 @@ from app.video_shorts.config import (
     _openai_client,
 )
 import duckdb
-from app.video_shorts.services.clip_planner_agents import propose_clips_with_agents
+from app.video_shorts.services.clip_planner_agents import (
+    _ground_title_to_transcript,
+    propose_clips_with_agents,
+)
 from app.video_shorts.services.clip_planner_agents_v2 import propose_clips_with_agents_v2
 from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_agents_v3
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
@@ -11263,6 +11266,14 @@ def autoclip_video(video_pk):
             if subtitle_srt:
                 temp_subs.append(subtitle_srt)
 
+        grounded_clip_title = _ground_title_to_transcript(
+            str(plan_entry.get("title") or ""),
+            clip_text or str(plan_entry.get("transcript_full") or plan_entry.get("excerpt") or ""),
+            clip_text or str(plan_entry.get("excerpt") or ""),
+        )
+        if grounded_clip_title:
+            plan_entry["title"] = grounded_clip_title
+
         final_file = None
         current_app.logger.info(
             "Clip %s video_start=%s video_end=%s audio_start=%s audio_end=%s",
@@ -11513,7 +11524,7 @@ def autoclip_video(video_pk):
                 src_path,
                 clip_trim_start,
                 clip_trim_end,
-                plan_entry.get("title") or video_title,
+                grounded_clip_title or video_title,
                 subtitle_text,
                 bg_out,
                 font_path,
