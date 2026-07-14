@@ -210,15 +210,15 @@ def _fetch_plan_settings(conn, user_id: str) -> Dict[str, Any]:
     }
 
 
-def _count_user_inflight(conn, user_id: str) -> int:
+def _count_user_processing(conn, user_id: str) -> int:
     row = conn.execute(
         f"""
         SELECT COUNT(*)
         FROM {JOBS_TABLE}
         WHERE user_id = ?
-          AND status IN (?, ?)
+          AND status = ?
         """,
-        [user_id, JOB_STATUS_QUEUED, JOB_STATUS_PROCESSING],
+        [user_id, JOB_STATUS_PROCESSING],
     ).fetchone()
     return int((row[0] if row else 0) or 0)
 
@@ -372,13 +372,13 @@ def enqueue_job(
 
         plan = _fetch_plan_settings(conn, user_id)
         if job_type in {JOB_TYPE_RENDER_SHORT, JOB_TYPE_PUBLISH_SHORT}:
-            inflight = _count_user_inflight(conn, user_id)
-            if inflight >= plan["max_concurrent_jobs"]:
+            processing = _count_user_processing(conn, user_id)
+            if processing >= plan["max_concurrent_jobs"]:
                 conn.commit()
                 return {
                     "kind": "concurrency_limit",
                     "limit": plan["max_concurrent_jobs"],
-                    "inflight": inflight,
+                    "inflight": processing,
                     "plan_id": plan["plan_id"],
                 }
 
