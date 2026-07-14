@@ -8,6 +8,15 @@ from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_bl
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
 _TITLE_TOKEN_RE = re.compile(r"[A-Za-zÇĞİIÖŞÜçğıiöşü]+(?:['’][A-Za-zÇĞİIÖŞÜçğıiöşü]+)?")
+_GROUNDING_STOPWORDS = {
+    "acaba", "ama", "ancak", "artik", "asla", "aslinda", "az", "bazi", "belki", "bile",
+    "bir", "biri", "biriyle", "birsey", "bu", "bunu", "burada", "cok", "cunke", "cunku",
+    "daha", "de", "degil", "diye", "en", "gibi", "gore", "hangi", "hani", "hem", "hep",
+    "her", "hic", "icin", "ile", "ise", "iste", "kadar", "karsi", "kim", "mi", "mu",
+    "mü", "midir", "mudur", "muydı", "muymus", "nasil", "ne", "neden", "nerede", "o",
+    "olan", "olarak", "oldu", "olur", "oluyor", "onu", "orada", "oysa", "peki", "sadece",
+    "sanki", "sey", "sizce", "sonra", "su", "şu", "tabii", "ve", "veya", "ya", "yani",
+}
 
 
 def _normalize_for_match(text: str) -> str:
@@ -35,6 +44,19 @@ def _extract_entity_like_title_tokens(title: str) -> List[str]:
     ]
 
 
+def _extract_meaningful_title_tokens(title: str) -> List[str]:
+    tokens: List[str] = []
+    for raw in _TITLE_TOKEN_RE.findall(title or ""):
+        cleaned = re.sub(r"['’].*$", "", (raw or "").strip())
+        normalized = _normalize_for_match(cleaned)
+        if len(normalized) < 4:
+            continue
+        if normalized in _GROUNDING_STOPWORDS:
+            continue
+        tokens.append(normalized)
+    return tokens
+
+
 def _build_grounded_title_fallback(excerpt: str, default: str = "Bu Klipte Ne Anlatılıyor?") -> str:
     text = " ".join((excerpt or "").strip().split())
     if not text:
@@ -59,9 +81,18 @@ def _ground_title_to_transcript(title: str, transcript_text: str, fallback_excer
         for token in _extract_entity_like_title_tokens(candidate)
         if _normalize_for_match(re.sub(r"['’].*$", "", token)) not in transcript_norm
     ]
-    if not missing_tokens:
-        return candidate
-    return _build_grounded_title_fallback(fallback_excerpt)
+    if missing_tokens:
+        return _build_grounded_title_fallback(fallback_excerpt)
+    meaningful_tokens = _extract_meaningful_title_tokens(candidate)
+    if meaningful_tokens:
+        transcript_words = set(_TITLE_TOKEN_RE.findall(transcript_norm))
+        unmatched_meaningful = [
+            token for token in meaningful_tokens
+            if token not in transcript_words
+        ]
+        if unmatched_meaningful:
+            return _build_grounded_title_fallback(fallback_excerpt)
+    return candidate
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
