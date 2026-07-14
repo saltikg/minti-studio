@@ -369,6 +369,11 @@ def run_window_agent(
         "}\n"
         "\n"
         "title: Kısa, Türkçe ve klibin ana mesajını taşıyan bir başlık olsun.\n"
+        "SADECE klibin kendi segmentlerinde AÇIKÇA geçen bilgiyi kullan. "
+        "Metinde geçmeyen hiçbir kişi, siyasi parti, kurum, kuruluş, yer, tarih "
+        "veya olay adını başlığa EKLEME. Metinde bir isim yoksa başlıkta da olmasın. "
+        "Başlık merak uyandırsın ve izleyiciyi durduracak güçte olsun, ama bu asla "
+        "doğruluktan taviz vermek pahasına olmayacak.\n"
         "excerpt: Klip içinden 1-3 cümlelik çarpıcı bir alıntı olsun. "
         "Bu alıntı da tek başına anlaşılır ve izleyiciye ne göreceğini hissettiren türden olmalıdır.\n"
     )
@@ -381,6 +386,7 @@ def run_window_agent(
             {"role": "user", "content": json.dumps(payload)},
         ],
         response_format={"type": "json_object"},
+        temperature=0.3,
         timeout=OPENAI_PLANNER_TIMEOUT_SECONDS,
     )
     raw = resp.choices[0].message.content if resp.choices else ""
