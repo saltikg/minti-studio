@@ -2883,37 +2883,7 @@ def _request_short_title_suggestion(
         "their tone, length, and level of curiosity/hook. Write a title that makes "
         "a viewer want to stop scrolling, but never at the expense of accuracy."
     )
-    examples: List[Dict[str, str]] = []
-    try:
-        examples = _load_user_title_style_examples(
-            user_id=user_id,
-            current_video_id=current_video_id,
-            max_examples=5,
-        )
-    except Exception:
-        current_app.logger.exception("Failed to load user title style examples")
-        examples = []
-    if detected_language:
-        examples = [
-            example for example in examples
-            if _example_matches_language(example, detected_language)
-        ]
-    if not examples:
-        examples = _generic_short_title_examples_for_language(detected_language)
-
     prompt_parts: List[str] = []
-    if examples:
-        example_lines = []
-        for idx, example in enumerate(examples, start=1):
-            example_lines.append(
-                f"Example {idx}\n"
-                f"Transcript excerpt: {example['excerpt']}\n"
-                f"Title: {example['title']}"
-            )
-        prompt_parts.append(
-            "Use these examples only as style anchors for tone, length, and word choice.\n\n"
-            + "\n".join(example_lines)
-        )
     prompt_parts.append(
         (
             f"Transcript language hint: {detected_language}.\n"
@@ -2935,7 +2905,8 @@ def _request_short_title_suggestion(
     suggestion = (response.choices[0].message.content or "").strip()
     suggestion = suggestion.strip(" \"'“”‘’")
     suggestion = re.sub(r"[.!?,:;]+$", "", suggestion).strip()
-    return suggestion[:80].strip()
+    suggestion = suggestion[:80].strip()
+    return _ground_title_to_transcript(suggestion, safe_excerpt, safe_excerpt)
 
 
 def _schedule_async_clip_title_suggestion(
