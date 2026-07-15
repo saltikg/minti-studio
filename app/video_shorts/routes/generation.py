@@ -2764,6 +2764,18 @@ def _normalize_title_prompt_language(raw: Any) -> Optional[str]:
     return None
 
 
+def _resolve_transcript_language(segments: List[Dict[str, Any]]) -> Optional[str]:
+    language_counts: Dict[str, int] = {}
+    for seg in segments or []:
+        lang = _normalize_title_prompt_language(seg.get("lang") or seg.get("language"))
+        if lang not in {"tr", "en"}:
+            continue
+        language_counts[lang] = language_counts.get(lang, 0) + 1
+    if not language_counts:
+        return None
+    return max(language_counts.items(), key=lambda item: item[1])[0]
+
+
 def _infer_clip_language_from_segments(
     segments: List[Dict[str, Any]],
     start: Any,
@@ -2872,6 +2884,7 @@ def _schedule_async_clip_title_suggestion(
     excerpt: str,
     placeholder_title: str,
     user_id: Any = None,
+    language_hint: Optional[str] = None,
     app_obj=None,
 ) -> None:
     if not app_obj or not _openai_client:
@@ -2899,6 +2912,9 @@ def _schedule_async_clip_title_suggestion(
                     suggestion_excerpt or safe_excerpt,
                     user_id=user_id,
                     current_video_id=safe_video_id,
+                    language_hint=language_hint or _normalize_title_prompt_language(
+                        plan_entry.get("language") or plan_entry.get("lang")
+                    ),
                 )
                 if not new_title:
                     return
@@ -3584,6 +3600,7 @@ def generate_short(video_pk):
 
     transcript_text_tr = _joined_transcript_tr(segments) or (transcript_text or "")
     transcript_text_ar = _joined_transcript_ar(segments) or transcript_text_tr
+    transcript_language = _resolve_transcript_language(segments)
 
     non_speech_overrides = load_non_speech_overrides(video["video_id"])
     segments_view = []
@@ -4586,6 +4603,7 @@ def generate_short(video_pk):
         transcript_text=transcript_text,
         transcript_text_tr=transcript_text_tr,
         transcript_text_ar=transcript_text_ar,
+        transcript_language=transcript_language,
         segments=segments,
         segments_view=segments_view,
         short_exists=short_exists,
@@ -6933,6 +6951,12 @@ def add_clip_section(video_pk):
         excerpt=transcript_full,
         placeholder_title=clip_title,
         user_id=current_user.get("id") if current_user else None,
+        language_hint=_infer_clip_language_from_segments(
+            segments,
+            start_time,
+            end_time,
+            excerpt=transcript_full,
+        ),
         app_obj=current_app._get_current_object(),
     )
 

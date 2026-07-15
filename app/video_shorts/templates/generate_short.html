@@ -1636,7 +1636,7 @@
         <div class="col-12 col-xl-6">
           <div class="gs-card h-100">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-              <h5 class="mb-0">Transcript <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
+              <h5 class="mb-0">Transcript{% if transcript_language %} <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle">{{ transcript_language|upper }}</span>{% endif %} <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
             </div>
             <div class="trs-shell"
                  id="transcript-range-selector"

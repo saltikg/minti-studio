@@ -4,6 +4,10 @@ from typing import Any, Optional
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 
 _TURKISH_TITLE_CASE_CONNECTORS = {"ve", "ile", "de", "da", "ki", "mı", "mi", "mu", "mü"}
+_ENGLISH_TITLE_CASE_CONNECTORS = {
+    "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for",
+    "with", "from", "by", "as", "is", "vs",
+}
 
 
 def _turkish_lower(text: str) -> str:
@@ -41,6 +45,33 @@ def _turkish_title_case(text: str) -> str:
             transformed.append(f"{prefix}{lowered_core}{suffix}")
             continue
         titled_core = _turkish_upper_char(lowered_core[:1]) + lowered_core[1:]
+        transformed.append(f"{prefix}{titled_core}{suffix}")
+    return " ".join(transformed)
+
+
+def _english_title_case(text: str) -> str:
+    raw_text = str(text or "")
+    if not raw_text:
+        return raw_text
+
+    transformed = []
+    tokens = raw_text.split()
+    word_re = re.compile(r"^([^A-Za-z]*)([A-Za-z]+)(.*)$")
+
+    for index, token in enumerate(tokens):
+        if len(token) >= 2 and token.isupper():
+            transformed.append(token)
+            continue
+        match = word_re.match(token)
+        if not match:
+            transformed.append(token)
+            continue
+        prefix, core, suffix = match.groups()
+        lowered_core = core.lower()
+        if index > 0 and lowered_core in _ENGLISH_TITLE_CASE_CONNECTORS:
+            transformed.append(f"{prefix}{lowered_core}{suffix}")
+            continue
+        titled_core = lowered_core[:1].upper() + lowered_core[1:]
         transformed.append(f"{prefix}{titled_core}{suffix}")
     return " ".join(transformed)
 
@@ -137,4 +168,6 @@ def generate_clip_title(transcript_text: str, language_hint: str | None = None) 
     suggestion = suggestion[:80].strip()
     if (resolved_language or "").lower() == "tr":
         suggestion = _turkish_title_case(suggestion)
+    elif (resolved_language or "").lower() == "en":
+        suggestion = _english_title_case(suggestion)
     return suggestion
