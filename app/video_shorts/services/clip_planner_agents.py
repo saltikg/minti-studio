@@ -1,56 +1,11 @@
 import json
-import re
 from typing import List, Dict, Any, Tuple, Optional
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_block
+from app.video_shorts.services.clip_title import generate_clip_title
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
-_TURKISH_TITLE_CASE_CONNECTORS = {"ve", "ile", "de", "da", "ki", "mı", "mi", "mu", "mü"}
-
-
-def _turkish_lower(text: str) -> str:
-    return (
-        str(text or "")
-        .replace("I", "ı")
-        .replace("İ", "i")
-        .lower()
-    )
-
-
-def _turkish_upper_char(ch: str) -> str:
-    if ch == "i":
-        return "İ"
-    if ch == "ı":
-        return "I"
-    return ch.upper()
-
-
-def _turkish_title_case(text: str) -> str:
-    raw_text = str(text or "")
-    if not raw_text:
-        return raw_text
-
-    transformed: List[str] = []
-    tokens = raw_text.split()
-    word_re = re.compile(r"^([^A-Za-zÇĞİIÖŞÜçğıöşü]*)([A-Za-zÇĞİIÖŞÜçğıöşü]+)(.*)$")
-
-    for index, token in enumerate(tokens):
-        if len(token) >= 2 and token.isupper():
-            transformed.append(token)
-            continue
-        match = word_re.match(token)
-        if not match:
-            transformed.append(token)
-            continue
-        prefix, core, suffix = match.groups()
-        lowered_core = _turkish_lower(core)
-        if index > 0 and lowered_core in _TURKISH_TITLE_CASE_CONNECTORS:
-            transformed.append(f"{prefix}{lowered_core}{suffix}")
-            continue
-        titled_core = _turkish_upper_char(lowered_core[:1]) + lowered_core[1:]
-        transformed.append(f"{prefix}{titled_core}{suffix}")
-    return " ".join(transformed)
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -209,6 +164,38 @@ def _clean_clip_list(raw_clips: List[Dict[str, Any]], duration_seconds: float) -
     return cleaned
 
 
+def _clip_text_for_range(segments: List[Dict[str, Any]], start: Any, end: Any, excerpt: str = "") -> str:
+    try:
+        clip_start = float(start)
+        clip_end = float(end)
+    except Exception:
+        return str(excerpt or "").strip()
+
+    matched: List[str] = []
+    for seg in segments or []:
+        try:
+            seg_start = float(seg.get("start", 0.0) or 0.0)
+        except Exception:
+            continue
+        seg_end_val = seg.get("end")
+        try:
+            seg_end = float(seg_end_val) if seg_end_val is not None else None
+        except Exception:
+            seg_end = None
+        if seg_end is None:
+            try:
+                seg_end = seg_start + max(float(seg.get("duration") or 0.0), 0.0)
+            except Exception:
+                seg_end = seg_start
+        if seg_end <= clip_start or seg_start >= clip_end:
+            continue
+        text = str(seg.get("text") or "").strip()
+        if text:
+            matched.append(text)
+    joined = " ".join(matched).strip()
+    return joined or str(excerpt or "").strip()
+
+
 def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]], candidate_clip: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not _openai_client:
         return None
@@ -261,11 +248,10 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
         "Sadece geçerli JSON döndür. Ekstra açıklama, yorum veya metin yazma.\n"
         "{\n"
         "  \"clips\": [\n"
-        "    {\"title\": str, \"start\": float, \"end\": float, \"excerpt\": str}\n"
+        "    {\"start\": float, \"end\": float, \"excerpt\": str}\n"
         "  ]\n"
         "}\n"
         "\n"
-        "title: Base klibin ana fikrini yansıtan, kısa ve vurucu bir Türkçe başlık.\n"
         "start, end: Yukarıdaki kurallara uygun zaman değerleri.\n"
         "excerpt: Seçtiğin segmentlerin içinden 1 ile 3 cümle arası çarpıcı bir alıntı.\n"
         "Eğer uygun bir genişletme yapamıyorsan:\n"
@@ -313,11 +299,15 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
     duration = end - start
     if duration < 25:
         return None
+    clip_excerpt = clip_data.get("excerpt") or candidate_clip.get("excerpt") or ""
     return {
-        "title": clip_data.get("title") or candidate_clip.get("title") or "",
+        "title": generate_clip_title(
+            _clip_text_for_range(segments, start, end, excerpt=str(clip_excerpt or "")),
+            language_hint="tr",
+        ),
         "start": round(start, 2),
         "end": round(end, 2),
-        "excerpt": clip_data.get("excerpt") or candidate_clip.get("excerpt") or "",
+        "excerpt": clip_excerpt,
     }
 
 
@@ -409,32 +399,11 @@ def run_window_agent(
         "Sadece geçerli JSON döndür. Şu yapıda üret:\n"
         "{\n"
         '  \"clips\": [\n'
-        '    {\"title\": str, \"start\": float, \"end\": float, \"excerpt\": str},\n'
+        '    {\"start\": float, \"end\": float, \"excerpt\": str},\n'
         "    ...\n"
         "  ]\n"
         "}\n"
         "\n"
-        "title: YouTube Shorts için güçlü, merak uyandıran bir başlık yaz.\n"
-        "\n"
-        "DOĞRULUK (katı):\n"
-        "- Başlıktaki BİLGİ yalnızca bu klibin segmentlerinden gelir.\n"
-        "- Metinde geçmeyen hiçbir kişi, siyasi parti, kurum, kuruluş, yer, tarih veya\n"
-        "  olay adını EKLEME. Metinde bir isim yoksa başlıkta da olmayacak.\n"
-        "- Klibin söylemediği bir iddiayı başlıkta söyletme.\n"
-        "\n"
-        "İFADE (serbest):\n"
-        "- Metnin kelimelerini AYNEN tekrar etmek zorunda DEĞİLSİN.\n"
-        "- Aynı anlamı kendi kelimelerinle, daha çarpıcı biçimde yeniden ifade edebilirsin.\n"
-        "- Başlık bir ÖZET değil, bir KANCA olacak.\n"
-        "\n"
-        "BİÇİM:\n"
-        "- 3-6 kelime. EN FAZLA 45 karakter. Tek satıra sığmalı.\n"
-        "- Fiil kullan, isimleştirme yapma.\n"
-        "  KÖTÜ: 'Boş binalara top atılması ve halkın üzerine gidilmesi senaryosu'\n"
-        "  İYİ:  'Boş Binaları Vurup Halka Saldırdılar'\n"
-        "- Merak boşluğu bırak: her şeyi söyleme, izleyici izlemek istesin.\n"
-        "- Clickbait yapma, abartma, metni çarpıtma. Ciddi ve saygılı bir ton koru.\n"
-        "- Tırnak, sonda nokta/ünlem, hashtag, emoji, TAMAMI BÜYÜK kelime kullanma.\n"
         "excerpt: Klip içinden 1-3 cümlelik çarpıcı bir alıntı olsun. "
         "Bu alıntı da tek başına anlaşılır ve izleyiciye ne göreceğini hissettiren türden olmalıdır.\n"
     )
@@ -457,7 +426,15 @@ def run_window_agent(
     except Exception:
         clips = []
     for clip in clips:
-        clip["title"] = _turkish_title_case(str(clip.get("title") or ""))
+        clip["title"] = generate_clip_title(
+            _clip_text_for_range(
+                segments,
+                clip.get("start"),
+                clip.get("end"),
+                excerpt=str(clip.get("excerpt") or ""),
+            ),
+            language_hint="tr",
+        )
     return clips, raw, excerpt_text
 
 

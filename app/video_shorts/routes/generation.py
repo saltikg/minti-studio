@@ -84,6 +84,7 @@ from app.video_shorts.services.clip_planner_agents_v2 import propose_clips_with_
 from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_agents_v3
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
 from app.video_shorts.services.clip_planning import _fallback_clip_plan, _propose_clips_with_llm
+from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
@@ -2861,51 +2862,7 @@ def _request_short_title_suggestion(
         raise RuntimeError("OPENAI_API_KEY missing")
     safe_excerpt = (excerpt or "").strip()[:2000]
     detected_language = _normalize_title_prompt_language(language_hint) or _detect_title_prompt_language(safe_excerpt)
-    system_prompt = (
-        "You write strong titles for short vertical clips cut from longer talk, educational, and Q&A videos. "
-        "Write the title in the EXACT same language as the transcript. "
-        "Never translate the transcript into Turkish, English, or any other language. "
-        "Make it specific to the single most interesting point, claim, or question in this excerpt. "
-        "Prefer concrete wording over vague summary language. "
-        "For Q&A clips, surface the core question or claim naturally. "
-        "Write a polished short-video title, not a raw transcript fragment. "
-        "Use sentence case, capitalize the first letter, and avoid starting mid-sentence if a cleaner hook is possible. "
-        "Prefer a compact hook that usually lands around 4 to 10 words when natural. "
-        "Avoid clickbait, generic filler, quotes, trailing punctuation, hashtags, emojis, ALL CAPS, and summaries. "
-        "Output exactly one line containing only the title."
-        "Use ONLY information explicitly present in the transcript. "
-        "Never invent, infer, or add any person, political party, institution, "
-        "organization, place, date, or event name that does not literally appear "
-        "in the transcript text. If the transcript does not name something, do not "
-        "name it in the title. Write a title that makes "
-        "a viewer want to stop scrolling, but never at the expense of accuracy."
-    )
-    prompt_parts: List[str] = []
-    prompt_block = (
-        (
-            f"Transcript language hint: {detected_language}.\n"
-            "The output title must stay in that same language.\n\n"
-        ) if detected_language else ""
-    )
-    prompt_block += f"Current clip transcript:\n{safe_excerpt or 'No transcript available.'}\n\n"
-    prompt_block += "Create one short title only."
-    prompt_parts.append(prompt_block)
-    user_content = "\n\n".join(prompt_parts)
-    response = _openai_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.3,
-    )
-    suggestion = (response.choices[0].message.content or "").strip()
-    suggestion = suggestion.strip(" \"'“”‘’")
-    suggestion = re.sub(r"[.!?,:;]+$", "", suggestion).strip()
-    suggestion = suggestion[:80].strip()
-    if suggestion:
-        suggestion = suggestion[0].upper() + suggestion[1:]
-    return suggestion
+    return generate_clip_title(safe_excerpt, language_hint=detected_language)
 
 
 def _schedule_async_clip_title_suggestion(

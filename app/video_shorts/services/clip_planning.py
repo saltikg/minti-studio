@@ -5,6 +5,7 @@ from flask import current_app
 
 from app.video_shorts.config import MAX_CLIP_LEN, OPENAI_MODEL, _openai_client
 from app.video_shorts.services.clip_plan_focus_prompts import get_llm_focus_block
+from app.video_shorts.services.clip_title import generate_clip_title
 
 
 def _fallback_clip_plan(duration_seconds: int):
@@ -28,6 +29,29 @@ def _fallback_clip_plan(duration_seconds: int):
         start = end
         idx += 1
     return clips
+
+
+def _clip_text_for_range(segments: List[Dict[str, Any]], start: Any, end: Any) -> str:
+    try:
+        clip_start = float(start)
+        clip_end = float(end)
+    except Exception:
+        return ""
+
+    matched: List[str] = []
+    for seg in segments or []:
+        try:
+            seg_start = float(seg.get("start", 0.0) or 0.0)
+            seg_duration = float(seg.get("duration", 0.0) or 0.0)
+        except Exception:
+            continue
+        seg_end = seg_start + max(seg_duration, 0.0)
+        if seg_end <= clip_start or seg_start >= clip_end:
+            continue
+        text = str(seg.get("text") or "").strip()
+        if text:
+            matched.append(text)
+    return " ".join(matched).strip()
 
 
 def _propose_clips_with_llm(
@@ -74,20 +98,13 @@ def _propose_clips_with_llm(
             "- If needed, slightly adjust start and end timestamps so the clip begins and ends on a complete sentence.\n"
             "- Keep overlap between clips minimal. Each clip should focus on a distinct idea.\n"
             "- Do not invent, paraphrase, or add new sentences that do not exist in the transcript.\n\n"
-            "TITLES:\n"
-            "- For each clip, create a short, punchy title in English.\n"
-            "- Titles must be respectful in tone and must not distort the meaning of the lecture.\n"
-            "- Titles should spark curiosity or emotion while staying accurate. When natural, prefer question based or thought provoking "
-            "phrases that reflect the core message of the clip.\n"
-            "- Avoid clickbait style, all caps, or excessive emojis.\n"
-            "- Keep each title under 80 characters.\n\n"
             "OUTPUT FORMAT:\n"
             "- Return a single valid JSON object.\n"
             "- Do not include any explanation, comments, or text outside of valid JSON.\n"
             "- The JSON must have this shape:\n"
             "{\n"
             "  \"clips\": [\n"
-            "    {\"title\": string, \"start\": number, \"end\": number},\n"
+            "    {\"start\": number, \"end\": number},\n"
             "    ...\n"
             "  ]\n"
             "}\n"
@@ -120,20 +137,13 @@ def _propose_clips_with_llm(
             "- If needed, slightly adjust start and end timestamps so the clip begins and ends on a complete sentence.\n"
             "- Keep overlap between clips minimal. Each clip should focus on a distinct idea.\n"
             "- Do not invent, paraphrase, or add new sentences that do not exist in the transcript.\n\n"
-            "TITLES:\n"
-            "- For each clip, create a short, punchy title in Turkish.\n"
-            "- Titles must be respectful in tone and must not distort the meaning of the lecture.\n"
-            "- Titles should spark curiosity or emotion while staying accurate. When natural, prefer question based or thought provoking "
-            "phrases that reflect the core message of the clip.\n"
-            "- Avoid clickbait style, all caps, or excessive emojis.\n"
-            "- Keep each title under 80 characters.\n\n"
             "OUTPUT FORMAT:\n"
             "- Return a single valid JSON object.\n"
             "- Do not include any explanation, comments, or text outside of valid JSON.\n"
             "- The JSON must have this shape:\n"
             "{\n"
             "  \"clips\": [\n"
-            "    {\"title\": string, \"start\": number, \"end\": number},\n"
+            "    {\"start\": number, \"end\": number},\n"
             "    ...\n"
             "  ]\n"
             "}\n"
@@ -186,11 +196,16 @@ def _propose_clips_with_llm(
             if clip_len >= 25 and clip_len <= 120:
                 cleaned.append(
                     {
-                        "title": c.get("title") or "",
+                        "title": "",
                         "start": round(start, 2),
                         "end": round(end, 2),
                     }
                 )
+        for clip in cleaned:
+            clip["title"] = generate_clip_title(
+                _clip_text_for_range(segments, clip.get("start"), clip.get("end")),
+                language_hint=lang,
+            )
         return cleaned, raw_message
     except Exception:
         return [], raw_message
