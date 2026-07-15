@@ -1,133 +1,11 @@
 import json
 import re
-import unicodedata
 from typing import List, Dict, Any, Tuple, Optional
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_block
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
-_TITLE_TOKEN_RE = re.compile(r"[A-Za-zÇĞİIÖŞÜçğıiöşü]+(?:['’][A-Za-zÇĞİIÖŞÜçğıiöşü]+)?")
-_GROUNDING_STOPWORDS = {
-    "acaba", "ama", "ancak", "artik", "asla", "aslinda", "az", "bazi", "belki", "bile",
-    "bir", "biri", "biriyle", "birsey", "bu", "bunu", "burada", "cok", "cunke", "cunku",
-    "daha", "de", "degil", "diye", "en", "gibi", "gore", "hangi", "hani", "hem", "hep",
-    "her", "hic", "icin", "ile", "ise", "iste", "kadar", "karsi", "kim", "mi", "mu",
-    "mü", "midir", "mudur", "muydı", "muymus", "nasil", "ne", "neden", "nerede", "o",
-    "olan", "olarak", "oldu", "olur", "oluyor", "onu", "orada", "oysa", "peki", "sadece",
-    "sanki", "sey", "sizce", "sonra", "su", "şu", "tabii", "ve", "veya", "ya", "yani",
-}
-_WEAK_CLAUSE_STARTS = {
-    "ama", "ancak", "artık", "aslında", "belki", "biri", "birileri", "bu", "bunu", "bunun",
-    "burada", "de", "fakat", "hani", "hem", "hiç", "hiçbir", "işte", "o", "onlar", "onu",
-    "orada", "ve", "veya", "ya", "yani",
-}
-
-
-def _normalize_for_match(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text or "")
-    stripped = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    return stripped.casefold()
-
-
-def _is_entity_like_token(token: str) -> bool:
-    cleaned = re.sub(r"['’].*$", "", (token or "").strip())
-    if len(cleaned) < 3:
-        return False
-    if cleaned.isupper():
-        return True
-    first = cleaned[:1]
-    rest = cleaned[1:]
-    return first.isupper() and any(ch.islower() for ch in rest)
-
-
-def _extract_entity_like_title_tokens(title: str) -> List[str]:
-    return [
-        token
-        for token in _TITLE_TOKEN_RE.findall(title or "")
-        if _is_entity_like_token(token)
-    ]
-
-
-def _extract_meaningful_title_tokens(title: str) -> List[str]:
-    tokens: List[str] = []
-    for raw in _TITLE_TOKEN_RE.findall(title or ""):
-        cleaned = re.sub(r"['’].*$", "", (raw or "").strip())
-        normalized = _normalize_for_match(cleaned)
-        if len(normalized) < 4:
-            continue
-        if normalized in _GROUNDING_STOPWORDS:
-            continue
-        tokens.append(normalized)
-    return tokens
-
-
-def _build_grounded_title_fallback(excerpt: str, default: str = "Bu Klipte Ne Anlatılıyor?") -> str:
-    text = " ".join((excerpt or "").strip().split())
-    if not text:
-        return default
-
-    def _candidate_score(value: str) -> tuple[int, int, int]:
-        normalized = _normalize_for_match(value)
-        tokens = [token for token in _TITLE_TOKEN_RE.findall(normalized) if token]
-        meaningful = [token for token in tokens if len(token) >= 4 and token not in _GROUNDING_STOPWORDS]
-        score = len(meaningful) * 5
-        if 4 <= len(tokens) <= 10:
-            score += 6
-        elif len(tokens) > 12:
-            score -= (len(tokens) - 12) * 2
-        if meaningful and meaningful[0] not in _WEAK_CLAUSE_STARTS:
-            score += 4
-        if normalized[:1].isalpha():
-            score += 1
-        return (score, len(meaningful), -len(tokens))
-
-    raw_sentences = [
-        part.strip(" \"'“”‘’")
-        for part in re.split(r"[.!?…]+", text)
-        if part and part.strip(" \"'“”‘’")
-    ]
-    clause_candidates: List[str] = []
-    for sentence in raw_sentences[:4]:
-        clause_candidates.append(sentence)
-        clause_candidates.extend(
-            clause.strip(" \"'“”‘’")
-            for clause in re.split(r"[,;:]+", sentence)
-            if clause and clause.strip(" \"'“”‘’")
-        )
-    candidate_pool = [candidate for candidate in clause_candidates if candidate]
-    candidate = max(candidate_pool, key=_candidate_score) if candidate_pool else text
-    candidate = candidate[:1].upper() + candidate[1:] if candidate else default
-    if len(candidate) > 80:
-        truncated = candidate[:80].rsplit(" ", 1)[0].strip()
-        candidate = truncated or candidate[:80].strip()
-    return candidate or default
-
-
-def _ground_title_to_transcript(title: str, transcript_text: str, fallback_excerpt: str) -> str:
-    candidate = " ".join((title or "").strip().split())
-    if not candidate:
-        return _build_grounded_title_fallback(fallback_excerpt)
-    transcript_norm = _normalize_for_match(transcript_text)
-    if not transcript_norm:
-        return candidate
-    missing_tokens = [
-        token
-        for token in _extract_entity_like_title_tokens(candidate)
-        if _normalize_for_match(re.sub(r"['’].*$", "", token)) not in transcript_norm
-    ]
-    if missing_tokens:
-        return _build_grounded_title_fallback(fallback_excerpt)
-    meaningful_tokens = _extract_meaningful_title_tokens(candidate)
-    if meaningful_tokens:
-        transcript_words = set(_TITLE_TOKEN_RE.findall(transcript_norm))
-        unmatched_meaningful = [
-            token for token in meaningful_tokens
-            if token not in transcript_words
-        ]
-        if unmatched_meaningful:
-            return _build_grounded_title_fallback(fallback_excerpt)
-    return candidate
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -518,16 +396,6 @@ def run_window_agent(
         clips = _clean_clip_list(data.get("clips"), window["context_end"])
     except Exception:
         clips = []
-    transcript_scope_text = " ".join(
-        (s.get("text") or "").strip() for s in (segments or []) if (s.get("text") or "").strip()
-    )
-    for clip in clips:
-        fallback_excerpt = str(clip.get("excerpt") or excerpt_text or transcript_scope_text or "").strip()
-        clip["title"] = _ground_title_to_transcript(
-            str(clip.get("title") or ""),
-            transcript_scope_text or excerpt_text,
-            fallback_excerpt,
-        )
     return clips, raw, excerpt_text
 
 

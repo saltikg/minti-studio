@@ -79,10 +79,7 @@ from app.video_shorts.config import (
     _openai_client,
 )
 import duckdb
-from app.video_shorts.services.clip_planner_agents import (
-    _ground_title_to_transcript,
-    propose_clips_with_agents,
-)
+from app.video_shorts.services.clip_planner_agents import propose_clips_with_agents
 from app.video_shorts.services.clip_planner_agents_v2 import propose_clips_with_agents_v2
 from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_agents_v3
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
@@ -2726,129 +2723,6 @@ def _load_user_title_style_examples(
 def _generic_short_title_examples() -> List[Dict[str, str]]:
     return _generic_short_title_examples_for_language("tr")
 
-
-def _normalize_title_prompt_text(text: Any, *, max_chars: Optional[int] = None) -> str:
-    normalized = " ".join(str(text or "").strip().split())
-    if max_chars is not None and max_chars > 0:
-        normalized = normalized[:max_chars].strip()
-    return normalized
-
-
-def _collect_clip_title_window_text(
-    segments: List[Dict[str, Any]],
-    start: Any,
-    end: Any,
-    *,
-    pad_before: float,
-    pad_after: float,
-    max_chars: int,
-) -> str:
-    try:
-        clip_start = float(start)
-        clip_end = float(end)
-    except Exception:
-        return ""
-
-    window_start = max(0.0, clip_start - max(pad_before, 0.0))
-    window_end = clip_end + max(pad_after, 0.0)
-    collected: List[str] = []
-    current_len = 0
-    for seg in segments or []:
-        try:
-            seg_start = float(seg.get("start", 0.0) or 0.0)
-        except Exception:
-            continue
-        seg_end_val = seg.get("end")
-        seg_dur_val = seg.get("duration")
-        try:
-            seg_end = float(seg_end_val) if seg_end_val is not None else None
-        except Exception:
-            seg_end = None
-        if seg_end is None:
-            try:
-                seg_end = seg_start + max(float(seg_dur_val or 0.0), 0.0)
-            except Exception:
-                seg_end = seg_start
-        if seg_end <= window_start or seg_start >= window_end:
-            continue
-        text = _normalize_title_prompt_text(
-            seg.get("tr_text") or seg.get("text") or "",
-        )
-        if not text:
-            continue
-        collected.append(text)
-        current_len += len(text) + 1
-        if current_len >= max_chars:
-            break
-    return _normalize_title_prompt_text(" ".join(collected), max_chars=max_chars)
-
-
-def _build_clip_title_prompt_context(
-    *,
-    video_id: Optional[str],
-    plan_entry: Optional[Dict[str, Any]],
-    fallback_excerpt: str = "",
-    transcript_text: str = "",
-    segments: Optional[List[Dict[str, Any]]] = None,
-) -> Tuple[str, str]:
-    entry = plan_entry or {}
-    clip_text = _normalize_title_prompt_text(
-        entry.get("transcript_full_custom")
-        or entry.get("transcript_full")
-        or entry.get("excerpt")
-        or fallback_excerpt,
-        max_chars=2000,
-    )
-
-    local_segments = list(segments or [])
-    local_transcript_text = _normalize_title_prompt_text(transcript_text)
-    if video_id and (not local_segments or not local_transcript_text):
-        conn = None
-        try:
-            conn = get_db_readonly()
-            db_transcript_text, db_segments = _fetch_transcript(conn, video_id)
-            if not local_transcript_text:
-                local_transcript_text = _normalize_title_prompt_text(db_transcript_text)
-            if not local_segments:
-                local_segments = list(db_segments or [])
-        except Exception:
-            current_app.logger.exception(
-                "Failed to load transcript context for clip title suggestion: %s",
-                video_id,
-            )
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-    surrounding_text = _collect_clip_title_window_text(
-        local_segments,
-        entry.get("start"),
-        entry.get("end"),
-        pad_before=45.0,
-        pad_after=45.0,
-        max_chars=1200,
-    )
-    broader_text = _normalize_title_prompt_text(
-        local_transcript_text or " ".join(
-            _normalize_title_prompt_text(seg.get("tr_text") or seg.get("text") or "")
-            for seg in local_segments
-        ),
-        max_chars=1400,
-    )
-
-    context_parts: List[str] = []
-    if clip_text:
-        context_parts.append(f"Clip transcript:\n{clip_text}")
-    if surrounding_text and surrounding_text != clip_text:
-        context_parts.append(f"Nearby context from the same video:\n{surrounding_text}")
-    if broader_text and broader_text not in {clip_text, surrounding_text}:
-        context_parts.append(f"Broader video topic context:\n{broader_text}")
-    return clip_text, "\n\n".join(context_parts).strip()
-
-
 def _detect_title_prompt_language(excerpt: str) -> Optional[str]:
     text = " ".join(str(excerpt or "").strip().split())
     if not text:
@@ -2979,7 +2853,6 @@ def _generic_short_title_examples_for_language(language: Optional[str]) -> List[
 def _request_short_title_suggestion(
     excerpt: str,
     *,
-    context_text: Optional[str] = None,
     user_id: Any = None,
     current_video_id: Optional[str] = None,
     language_hint: Optional[str] = None,
@@ -2987,16 +2860,12 @@ def _request_short_title_suggestion(
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     safe_excerpt = (excerpt or "").strip()[:2000]
-    safe_context = (context_text or "").strip()[:4000]
     detected_language = _normalize_title_prompt_language(language_hint) or _detect_title_prompt_language(safe_excerpt)
     system_prompt = (
         "You write strong titles for short vertical clips cut from longer talk, educational, and Q&A videos. "
         "Write the title in the EXACT same language as the transcript. "
         "Never translate the transcript into Turkish, English, or any other language. "
         "Make it specific to the single most interesting point, claim, or question in this excerpt. "
-        "The clip transcript is the primary source. "
-        "Any nearby or broader video context is only there to help you understand the topic, not to introduce new facts. "
-        "If a detail is not explicitly present in the clip transcript itself, do not put it in the title. "
         "Prefer concrete wording over vague summary language. "
         "For Q&A clips, surface the core question or claim naturally. "
         "Write a polished short-video title, not a raw transcript fragment. "
@@ -3008,9 +2877,7 @@ def _request_short_title_suggestion(
         "Never invent, infer, or add any person, political party, institution, "
         "organization, place, date, or event name that does not literally appear "
         "in the transcript text. If the transcript does not name something, do not "
-        "name it in the title. "
-        "The example titles below are the channel owner's own past titles. Match "
-        "their tone, length, and level of curiosity/hook. Write a title that makes "
+        "name it in the title. Write a title that makes "
         "a viewer want to stop scrolling, but never at the expense of accuracy."
     )
     prompt_parts: List[str] = []
@@ -3021,12 +2888,6 @@ def _request_short_title_suggestion(
         ) if detected_language else ""
     )
     prompt_block += f"Current clip transcript:\n{safe_excerpt or 'No transcript available.'}\n\n"
-    if safe_context:
-        prompt_block += (
-            f"Additional context from the same video:\n{safe_context}\n\n"
-            "Use this only to understand the topic around the clip. "
-            "Do not bring any name, topic, or claim from this context into the title unless it is also explicitly present in the clip transcript above.\n\n"
-        )
     prompt_block += "Create one short title only."
     prompt_parts.append(prompt_block)
     user_content = "\n\n".join(prompt_parts)
@@ -3044,7 +2905,7 @@ def _request_short_title_suggestion(
     suggestion = suggestion[:80].strip()
     if suggestion:
         suggestion = suggestion[0].upper() + suggestion[1:]
-    return _ground_title_to_transcript(suggestion, safe_excerpt, safe_excerpt)
+    return suggestion
 
 
 def _schedule_async_clip_title_suggestion(
@@ -3071,14 +2932,14 @@ def _schedule_async_clip_title_suggestion(
                 plan_entry = _find_plan_entry(entries, plan_index)
                 if not plan_entry:
                     return
-                suggestion_excerpt, suggestion_context = _build_clip_title_prompt_context(
-                    video_id=safe_video_id,
-                    plan_entry=plan_entry,
-                    fallback_excerpt=safe_excerpt,
-                )
+                suggestion_excerpt = str(
+                    plan_entry.get("transcript_full")
+                    or plan_entry.get("excerpt")
+                    or safe_excerpt
+                    or ""
+                ).strip()
                 new_title = _request_short_title_suggestion(
                     suggestion_excerpt or safe_excerpt,
-                    context_text=suggestion_context,
                     user_id=user_id,
                     current_video_id=safe_video_id,
                 )
@@ -7092,17 +6953,6 @@ def add_clip_section(video_pk):
                 pass
 
     clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
-    title_excerpt, title_context = _build_clip_title_prompt_context(
-        video_id=video_id,
-        plan_entry={
-            "start": round(start_time, 3),
-            "end": round(end_time, 3),
-            "transcript_full": transcript_full,
-            "excerpt": transcript_full,
-        },
-        fallback_excerpt=transcript_full,
-        segments=segments if 'segments' in locals() else None,
-    )
     new_entry = {
         "plan_index": next_plan_index,
         "title": clip_title,
@@ -7110,9 +6960,8 @@ def add_clip_section(video_pk):
         "end": round(end_time, 3),
         "clip_filename": f"{next_plan_index}_{video_id}.mp4",
         "status": "pending",
-        "transcript_full": title_excerpt or transcript_full,
-        "excerpt": title_excerpt or transcript_full,
-        "title_context": title_context,
+        "transcript_full": transcript_full,
+        "excerpt": transcript_full,
     }
     plan_entries.insert(0, new_entry)
     try:
@@ -7305,25 +7154,21 @@ def suggest_clip_title(video_pk):
     if not excerpt:
         excerpt = plan_entry.get("excerpt") or plan_entry.get("transcript_full") or ""
     excerpt = excerpt[:2000]
-    video_info = _fetch_video_with_transcript(video_pk)
-    segments: List[Dict[str, Any]] = []
-    transcript_text = ""
-    if video_info:
-        _, _, _, transcript_text, segments = video_info
-    suggestion_excerpt, suggestion_context = _build_clip_title_prompt_context(
-        video_id=video_id,
-        plan_entry=plan_entry,
-        fallback_excerpt=excerpt,
-        transcript_text=transcript_text,
-        segments=segments,
-    )
+    suggestion_excerpt = str(
+        plan_entry.get("transcript_full")
+        or plan_entry.get("excerpt")
+        or excerpt
+        or ""
+    ).strip()
     existing_title = str(plan_entry.get("title") or "").strip()
     if expected_current_title and existing_title != expected_current_title:
         return jsonify(success=True, skipped=True, title=existing_title)
     language_hint = _normalize_title_prompt_language(
         plan_entry.get("language") or plan_entry.get("lang")
     )
+    video_info = None
     if not language_hint:
+        video_info = _fetch_video_with_transcript(video_pk)
         if video_info:
             _, _, _, _, segments = video_info
             language_hint = _infer_clip_language_from_segments(
@@ -7335,7 +7180,6 @@ def suggest_clip_title(video_pk):
     try:
         new_title = _request_short_title_suggestion(
             suggestion_excerpt or excerpt,
-            context_text=suggestion_context,
             user_id=current_user.get("id") if current_user else None,
             current_video_id=video_id,
             language_hint=language_hint,
@@ -11393,14 +11237,6 @@ def autoclip_video(video_pk):
             if subtitle_srt:
                 temp_subs.append(subtitle_srt)
 
-        grounded_clip_title = _ground_title_to_transcript(
-            str(plan_entry.get("title") or ""),
-            clip_text or str(plan_entry.get("transcript_full") or plan_entry.get("excerpt") or ""),
-            clip_text or str(plan_entry.get("excerpt") or ""),
-        )
-        if grounded_clip_title:
-            plan_entry["title"] = grounded_clip_title
-
         final_file = None
         current_app.logger.info(
             "Clip %s video_start=%s video_end=%s audio_start=%s audio_end=%s",
@@ -11651,7 +11487,7 @@ def autoclip_video(video_pk):
                 src_path,
                 clip_trim_start,
                 clip_trim_end,
-                grounded_clip_title or video_title,
+                str(plan_entry.get("title") or video_title),
                 subtitle_text,
                 bg_out,
                 font_path,
