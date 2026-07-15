@@ -9915,9 +9915,9 @@ def create_clip_plan_v2(video_pk):
     except Exception:
         title_font_size = DEFAULT_TITLE_FONT_SIZE
     try:
-        sub_font_size = int(request.form.get("sub_font_size") or session.get("vs_sub_font_size") or 10)
+        sub_font_size = int(request.form.get("sub_font_size") or session.get("vs_sub_font_size") or DEFAULT_SUB_FONT_SIZE)
     except Exception:
-        sub_font_size = 10
+        sub_font_size = DEFAULT_SUB_FONT_SIZE
     try:
         sub_margin = int(request.form.get("sub_margin") or session.get("vs_sub_margin") or SUB_MARGIN_DEFAULT)
     except Exception:

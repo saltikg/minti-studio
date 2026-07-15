@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from flask import current_app
 
 from app.video_shorts.config import (
+    DEFAULT_SUB_FONT_SIZE,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
     DEFAULT_SUBTITLE_TEXT_ALPHA,
@@ -158,9 +159,37 @@ def _overlay_y_expr(
             margin = int(subtitle_margin or 0)
         except (TypeError, ValueError):
             margin = 0
-        safe_bottom = max(safe_bottom, margin + font_size * 5)
+        safe_bottom = max(safe_bottom, margin + font_size * 2)
     expr = f"max(0,min({top_offset},H-h-{safe_bottom}))"
     return expr.replace(",", r"\,")
+
+
+def _subtitle_force_style(
+    *,
+    target_width: int,
+    target_height: int,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_font: str,
+    subtitle_text_color: Optional[str],
+    subtitle_text_alpha: Optional[int],
+    subtitle_bg_color: Optional[str],
+    subtitle_bg_alpha: Optional[int],
+) -> str:
+    clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
+    return (
+        f"PlayResX={int(target_width)},"
+        f"PlayResY={int(target_height)},"
+        f"Fontsize={subtitle_font_size},"
+        f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+        f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
+        "BorderStyle=4,"
+        "Outline=1,"
+        "Shadow=0,"
+        f"MarginV={subtitle_margin},"
+        "Alignment=2,"
+        f"FontName={clean_font}"
+    )
 
 
 def _pick_font():
@@ -366,7 +395,7 @@ def _compose_with_background(
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
-    subtitle_font_size: int = 10,
+    subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
@@ -425,17 +454,16 @@ def _compose_with_background(
         final_label = "[ov_title_debug]"
 
     if subtitle_path:
-        clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
-        style = (
-            f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-            "BorderStyle=4,"
-            "Outline=1,"
-            "Shadow=0,"
-            f"MarginV={subtitle_margin},"
-            f"Alignment=2,"
-            f"FontName={clean_font}"
+        style = _subtitle_force_style(
+            target_width=VIDEO_TARGET_WIDTH,
+            target_height=VIDEO_TARGET_HEIGHT,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_margin=subtitle_margin,
+            subtitle_font=subtitle_font,
+            subtitle_text_color=subtitle_text_color,
+            subtitle_text_alpha=subtitle_text_alpha,
+            subtitle_bg_color=subtitle_bg_color,
+            subtitle_bg_alpha=subtitle_bg_alpha,
         )
         filter_parts.append(
             f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -508,7 +536,7 @@ def _compose_trimmed_with_background(
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
-    subtitle_font_size: int = 10,
+    subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
@@ -565,9 +593,9 @@ def _compose_trimmed_with_background(
         except (TypeError, ValueError):
             safe_title_line_spacing = -4
         try:
-            safe_subtitle_font_size = int(subtitle_font_size if subtitle_font_size is not None else 10)
+            safe_subtitle_font_size = int(subtitle_font_size if subtitle_font_size is not None else DEFAULT_SUB_FONT_SIZE)
         except (TypeError, ValueError):
-            safe_subtitle_font_size = 10
+            safe_subtitle_font_size = DEFAULT_SUB_FONT_SIZE
         try:
             safe_subtitle_margin = int(subtitle_margin if subtitle_margin is not None else SUB_MARGIN_DEFAULT)
         except (TypeError, ValueError):
@@ -645,17 +673,16 @@ def _compose_trimmed_with_background(
             )
             final_label = "[ov_title]"
         if subtitle_path:
-            clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
-            style = (
-                f"Fontsize={safe_subtitle_font_size},"
-                f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-                f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-                "BorderStyle=4,"
-                "Outline=1,"
-                "Shadow=0,"
-                f"MarginV={safe_subtitle_margin},"
-                "Alignment=2,"
-                f"FontName={clean_font}"
+            style = _subtitle_force_style(
+                target_width=target_width,
+                target_height=target_height,
+                subtitle_font_size=safe_subtitle_font_size,
+                subtitle_margin=safe_subtitle_margin,
+                subtitle_font=subtitle_font,
+                subtitle_text_color=subtitle_text_color,
+                subtitle_text_alpha=subtitle_text_alpha,
+                subtitle_bg_color=subtitle_bg_color,
+                subtitle_bg_alpha=subtitle_bg_alpha,
             )
             filter_parts.append(
                 f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -1212,17 +1239,16 @@ def _compose_trimmed_with_background(
 
 
     if subtitle_path:
-        clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
-        style = (
-            f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-            "BorderStyle=4,"
-            "Outline=1,"
-            "Shadow=0,"
-            f"MarginV={subtitle_margin},"
-            f"Alignment=2,"
-            f"FontName={clean_font}"
+        style = _subtitle_force_style(
+            target_width=target_width,
+            target_height=target_height,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_margin=subtitle_margin,
+            subtitle_font=subtitle_font,
+            subtitle_text_color=subtitle_text_color,
+            subtitle_text_alpha=subtitle_text_alpha,
+            subtitle_bg_color=subtitle_bg_color,
+            subtitle_bg_alpha=subtitle_bg_alpha,
         )
         filter_parts.append(
             f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -1399,7 +1425,7 @@ def _cut_clip(
     out_path: Path,
     subtitle_path: Path = None,
     subtitle_font: str = "DejaVu Sans",
-    subtitle_font_size: int = 10,
+    subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
@@ -1431,17 +1457,20 @@ def _cut_clip(
         str(out_path),
     ]
     if subtitle_path:
-        clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
-        style = (
-            f"Fontsize={subtitle_font_size},"
-            f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-            f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-            "BorderStyle=4,"
-            "Outline=1,"
-            "Shadow=0,"
-            f"MarginV={subtitle_margin},"
-            f"Alignment=2,"
-            f"FontName={clean_font}"
+        try:
+            source_width, source_height = _probe_video_dimensions(src)
+        except Exception:
+            source_width, source_height = VIDEO_TARGET_WIDTH, VIDEO_TARGET_HEIGHT
+        style = _subtitle_force_style(
+            target_width=source_width,
+            target_height=source_height,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_margin=subtitle_margin,
+            subtitle_font=subtitle_font,
+            subtitle_text_color=subtitle_text_color,
+            subtitle_text_alpha=subtitle_text_alpha,
+            subtitle_bg_color=subtitle_bg_color,
+            subtitle_bg_alpha=subtitle_bg_alpha,
         )
         cmd.extend(["-vf", f"subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'"])
     try:
