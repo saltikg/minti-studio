@@ -17,6 +17,11 @@ _GROUNDING_STOPWORDS = {
     "olan", "olarak", "oldu", "olur", "oluyor", "onu", "orada", "oysa", "peki", "sadece",
     "sanki", "sey", "sizce", "sonra", "su", "şu", "tabii", "ve", "veya", "ya", "yani",
 }
+_WEAK_CLAUSE_STARTS = {
+    "ama", "ancak", "artık", "aslında", "belki", "biri", "birileri", "bu", "bunu", "bunun",
+    "burada", "de", "fakat", "hani", "hem", "hiç", "hiçbir", "işte", "o", "onlar", "onu",
+    "orada", "ve", "veya", "ya", "yani",
+}
 
 
 def _normalize_for_match(text: str) -> str:
@@ -61,8 +66,38 @@ def _build_grounded_title_fallback(excerpt: str, default: str = "Bu Klipte Ne An
     text = " ".join((excerpt or "").strip().split())
     if not text:
         return default
-    first_sentence = re.split(r"[.!?…]+", text, maxsplit=1)[0].strip(" \"'“”‘’")
-    candidate = first_sentence or text
+
+    def _candidate_score(value: str) -> tuple[int, int, int]:
+        normalized = _normalize_for_match(value)
+        tokens = [token for token in _TITLE_TOKEN_RE.findall(normalized) if token]
+        meaningful = [token for token in tokens if len(token) >= 4 and token not in _GROUNDING_STOPWORDS]
+        score = len(meaningful) * 5
+        if 4 <= len(tokens) <= 10:
+            score += 6
+        elif len(tokens) > 12:
+            score -= (len(tokens) - 12) * 2
+        if meaningful and meaningful[0] not in _WEAK_CLAUSE_STARTS:
+            score += 4
+        if normalized[:1].isalpha():
+            score += 1
+        return (score, len(meaningful), -len(tokens))
+
+    raw_sentences = [
+        part.strip(" \"'“”‘’")
+        for part in re.split(r"[.!?…]+", text)
+        if part and part.strip(" \"'“”‘’")
+    ]
+    clause_candidates: List[str] = []
+    for sentence in raw_sentences[:4]:
+        clause_candidates.append(sentence)
+        clause_candidates.extend(
+            clause.strip(" \"'“”‘’")
+            for clause in re.split(r"[,;:]+", sentence)
+            if clause and clause.strip(" \"'“”‘’")
+        )
+    candidate_pool = [candidate for candidate in clause_candidates if candidate]
+    candidate = max(candidate_pool, key=_candidate_score) if candidate_pool else text
+    candidate = candidate[:1].upper() + candidate[1:] if candidate else default
     if len(candidate) > 80:
         truncated = candidate[:80].rsplit(" ", 1)[0].strip()
         candidate = truncated or candidate[:80].strip()
