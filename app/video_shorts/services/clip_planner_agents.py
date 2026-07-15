@@ -6,6 +6,51 @@ from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_block
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
+_TURKISH_TITLE_CASE_CONNECTORS = {"ve", "ile", "de", "da", "ki", "mı", "mi", "mu", "mü"}
+
+
+def _turkish_lower(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("I", "ı")
+        .replace("İ", "i")
+        .lower()
+    )
+
+
+def _turkish_upper_char(ch: str) -> str:
+    if ch == "i":
+        return "İ"
+    if ch == "ı":
+        return "I"
+    return ch.upper()
+
+
+def _turkish_title_case(text: str) -> str:
+    raw_text = str(text or "")
+    if not raw_text:
+        return raw_text
+
+    transformed: List[str] = []
+    tokens = raw_text.split()
+    word_re = re.compile(r"^([^A-Za-zÇĞİIÖŞÜçğıöşü]*)([A-Za-zÇĞİIÖŞÜçğıöşü]+)(.*)$")
+
+    for index, token in enumerate(tokens):
+        if len(token) >= 2 and token.isupper():
+            transformed.append(token)
+            continue
+        match = word_re.match(token)
+        if not match:
+            transformed.append(token)
+            continue
+        prefix, core, suffix = match.groups()
+        lowered_core = _turkish_lower(core)
+        if index > 0 and lowered_core in _TURKISH_TITLE_CASE_CONNECTORS:
+            transformed.append(f"{prefix}{lowered_core}{suffix}")
+            continue
+        titled_core = _turkish_upper_char(lowered_core[:1]) + lowered_core[1:]
+        transformed.append(f"{prefix}{titled_core}{suffix}")
+    return " ".join(transformed)
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -384,9 +429,6 @@ def run_window_agent(
         "\n"
         "BİÇİM:\n"
         "- 3-6 kelime. EN FAZLA 45 karakter. Tek satıra sığmalı.\n"
-        "- Her kelimenin ilk harfi BÜYÜK yazılacak (Türkçe Title Case).\n"
-        "  Ancak bağlaçlar küçük kalır: ve, ile, de, da, mı, mi, mu, mü.\n"
-        "  Türkçe büyük harfe dikkat: i -> İ (örn: 'İçtihat', 'İnsanlar').\n"
         "- Fiil kullan, isimleştirme yapma.\n"
         "  KÖTÜ: 'Boş binalara top atılması ve halkın üzerine gidilmesi senaryosu'\n"
         "  İYİ:  'Boş Binaları Vurup Halka Saldırdılar'\n"
@@ -414,6 +456,8 @@ def run_window_agent(
         clips = _clean_clip_list(data.get("clips"), window["context_end"])
     except Exception:
         clips = []
+    for clip in clips:
+        clip["title"] = _turkish_title_case(str(clip.get("title") or ""))
     return clips, raw, excerpt_text
 
 
