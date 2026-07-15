@@ -4,23 +4,29 @@
 {% set short_bg_url = url_for('video_shorts_bp.static', filename='img/1-short_bg_8.png') %}
 {% set SHORT_BG_WIDTH = 900 %}
 {% set SHORT_BG_HEIGHT = 1600 %}
+{% set OVERLAY_WIDTH = 720 %}
+{% set OVERLAY_HEIGHT = 1280 %}
 {% set PREVIEW_BG_WIDTH = 270 %}
 {% set PREVIEW_SCALE = PREVIEW_BG_WIDTH / SHORT_BG_WIDTH %}
+{% set OVERLAY_SCALE = PREVIEW_BG_WIDTH / OVERLAY_WIDTH %}
 {% set PREVIEW_BG_HEIGHT = (SHORT_BG_HEIGHT * PREVIEW_SCALE) | round(2) %}
-{% set VIDEO_OVERLAY_WIDTH = SHORT_BG_WIDTH %}
+{% set VIDEO_OVERLAY_WIDTH = OVERLAY_WIDTH %}
 {% set VIDEO_OVERLAY_HEIGHT_LANDSCAPE = (VIDEO_OVERLAY_WIDTH * 9 / 16) | round(2) %}
-{% set VIDEO_OVERLAY_HEIGHT_PORTRAIT = SHORT_BG_HEIGHT %}
-{% set VIDEO_OVERLAY_X = (SHORT_BG_WIDTH - VIDEO_OVERLAY_WIDTH) / 2 %}
+{% set VIDEO_OVERLAY_HEIGHT_PORTRAIT = OVERLAY_HEIGHT %}
+{% set VIDEO_OVERLAY_X = 0 %}
 {% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 400) %}
-{% set TITLE_BAND_Y = 250 %}
+{% set TITLE_BAND_Y = 220 %}
 {% set TITLE_BAND_HEIGHT = 70 %}
 {% set SUBTITLE_BAND_HEIGHT = 90 %}
-{% set SUBTITLE_BAND_Y = SHORT_BG_HEIGHT - SUBTITLE_BAND_HEIGHT - 40 %}
+{% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - 80 %}
 {% set PREVIEW_CONFIG = {
   "frameWidth": PREVIEW_BG_WIDTH,
   "frameHeight": PREVIEW_BG_HEIGHT,
   "bgUrl": short_bg_url or '',
-  "scale": PREVIEW_SCALE,
+  "backgroundScale": PREVIEW_SCALE,
+  "overlayScale": OVERLAY_SCALE,
+  "overlayWidth": OVERLAY_WIDTH,
+  "overlayHeight": OVERLAY_HEIGHT,
   "titleY": TITLE_BAND_Y,
   "titleHeight": TITLE_BAND_HEIGHT,
   "videoX": VIDEO_OVERLAY_X,
@@ -1465,6 +1471,9 @@
     touch-action: none;
     transition: box-shadow 0.16s ease;
   }
+  .crop-preview-selectable.is-drag-disabled {
+    cursor: default;
+  }
   .crop-preview-selectable.is-selected {
     box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.72);
   }
@@ -1487,6 +1496,13 @@
   .shorts-preview-video {
     overflow: hidden;
     border-radius: 18px;
+    z-index: 1;
+  }
+  .shorts-preview-title-band {
+    z-index: 2;
+  }
+  .shorts-preview-subtitle-band {
+    z-index: 3;
   }
   .shorts-preview-video canvas {
     display: block;
@@ -1506,6 +1522,7 @@
     color: #fff;
     background: rgba(0, 0, 0, 0.6);
     white-space: nowrap;
+    z-index: 4;
   }
   .shorts-preview-date.is-hidden {
     display: none;
@@ -7220,8 +7237,12 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCanvas.height = dims.height;
   };
   syncPreviewCanvasSize();
-  const renderFrameHeight = previewConfig.scale ? (previewConfig.frameHeight / previewConfig.scale) : 1600;
-  const renderFrameWidth = previewConfig.scale ? (previewConfig.frameWidth / previewConfig.scale) : 900;
+  const overlayScale = previewConfig.overlayScale || (previewConfig.frameWidth ? (previewConfig.frameWidth / 720) : 0.375);
+  const renderFrameHeight = previewConfig.overlayHeight || 1280;
+  const renderFrameWidth = previewConfig.overlayWidth || 720;
+  const overlayManagedFieldNames = ["title_margin", "sub_margin", "video_overlay_offset", "video_date_top"];
+  const loadedOverlayFieldValues = Object.create(null);
+  const dirtyOverlayFields = new Set();
   const clampRenderValue = (value, minimum, maximum) => {
     const numeric = Number.isFinite(Number(value)) ? Number(value) : minimum;
     return Math.max(minimum, Math.min(maximum, numeric));
@@ -7230,6 +7251,34 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!field) return fallback;
     const parsed = Number(field.value);
     return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const rememberLoadedOverlayFieldValues = () => {
+    if (!settingsContainer) {
+      return;
+    }
+    overlayManagedFieldNames.forEach((name) => {
+      const field = settingsContainer.querySelector(`[name="${name}"]`);
+      loadedOverlayFieldValues[name] = field ? String(field.value || "") : "";
+    });
+    dirtyOverlayFields.clear();
+  };
+  const markOverlayFieldDirty = (field) => {
+    const name = field?.name || "";
+    if (name && overlayManagedFieldNames.includes(name)) {
+      dirtyOverlayFields.add(name);
+    }
+  };
+  const getPersistedFieldValue = (field) => {
+    if (!field) {
+      return "";
+    }
+    const name = field.name || "";
+    if (name && overlayManagedFieldNames.includes(name) && !dirtyOverlayFields.has(name)) {
+      return Object.prototype.hasOwnProperty.call(loadedOverlayFieldValues, name)
+        ? loadedOverlayFieldValues[name]
+        : (field.value || "");
+    }
+    return field.value || "";
   };
   const getPreviewElementBounds = (kind) => {
     const dims = getOverlayDims();
@@ -7260,18 +7309,21 @@ document.addEventListener("DOMContentLoaded", () => {
       max: Math.max(0, renderFrameHeight - 52),
     };
   };
+  const isPortraitCropAspect = () => activeCropAspect === "portrait";
+  const isPreviewElementDraggable = (kind) => !(kind === "video" && isPortraitCropAspect());
   const updateFieldValue = (field, value, dispatch = true) => {
     if (!field) return;
     const normalized = Math.round(value);
     if (field.value !== String(normalized)) {
       field.value = String(normalized);
     }
+    markOverlayFieldDirty(field);
     if (dispatch) {
       field.dispatchEvent(new Event("input", { bubbles: true }));
     }
   };
   const setSelectedPreviewElement = (kind) => {
-    selectedPreviewElement = kind || "";
+    selectedPreviewElement = (kind === "video" && !isPreviewElementDraggable("video")) ? "" : (kind || "");
     const isTitle = selectedPreviewElement === "title";
     const isSubtitle = selectedPreviewElement === "subtitle";
     previewToolbar?.classList.toggle("is-hidden", !selectedPreviewElement || (!isTitle && !isSubtitle));
@@ -7370,26 +7422,30 @@ document.addEventListener("DOMContentLoaded", () => {
       previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
     }
     if (previewTitle) {
-      previewTitle.style.top = titleTop * previewConfig.scale + "px";
-      previewTitle.style.height = previewConfig.titleHeight * previewConfig.scale + "px";
-      previewTitle.style.fontSize = titleFontSize * previewConfig.scale + "px";
+      previewTitle.style.top = titleTop * overlayScale + "px";
+      previewTitle.style.height = previewConfig.titleHeight * overlayScale + "px";
+      previewTitle.style.fontSize = titleFontSize * overlayScale + "px";
     }
     if (previewVideo) {
-      previewVideo.style.left = previewConfig.videoX * previewConfig.scale + "px";
-      previewVideo.style.top = videoTop * previewConfig.scale + "px";
-      previewVideo.style.width = dims.width * previewConfig.scale + "px";
-      previewVideo.style.height = dims.height * previewConfig.scale + "px";
+      previewVideo.classList.toggle("is-drag-disabled", !isPreviewElementDraggable("video"));
+      previewVideo.style.left = previewConfig.videoX * overlayScale + "px";
+      previewVideo.style.top = videoTop * overlayScale + "px";
+      previewVideo.style.width = dims.width * overlayScale + "px";
+      previewVideo.style.height = dims.height * overlayScale + "px";
     }
     if (previewDate) {
       previewDate.textContent = dateText || "Date";
-      previewDate.style.top = dateTop * previewConfig.scale + "px";
-      previewDate.style.fontSize = 24 * previewConfig.scale + "px";
+      previewDate.style.top = dateTop * overlayScale + "px";
+      previewDate.style.fontSize = 24 * overlayScale + "px";
       previewDate.classList.toggle("is-hidden", !dateText);
     }
     if (previewSubtitle) {
-      previewSubtitle.style.top = subtitleTop * previewConfig.scale + "px";
-      previewSubtitle.style.height = previewConfig.subtitleHeight * previewConfig.scale + "px";
-      previewSubtitle.style.fontSize = subtitleFontSize * previewConfig.scale + "px";
+      previewSubtitle.style.top = subtitleTop * overlayScale + "px";
+      previewSubtitle.style.height = previewConfig.subtitleHeight * overlayScale + "px";
+      previewSubtitle.style.fontSize = subtitleFontSize * overlayScale + "px";
+    }
+    if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
+      setSelectedPreviewElement("");
     }
   };
   const clearPreviewCanvas = () => {
@@ -7782,6 +7838,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput].forEach((field) => {
     field?.addEventListener("input", () => {
+      markOverlayFieldDirty(field);
       applyPreviewLayout();
     });
   });
@@ -7789,7 +7846,7 @@ document.addEventListener("DOMContentLoaded", () => {
   [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
     element?.addEventListener("pointerdown", (event) => {
       const kind = element.dataset.previewElement || "";
-      if (!kind) {
+      if (!kind || !isPreviewElementDraggable(kind)) {
         return;
       }
       event.preventDefault();
@@ -7806,13 +7863,13 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   previewFrame?.addEventListener("pointermove", (event) => {
-    if (!dragState || !previewConfig.scale) {
+    if (!dragState || !overlayScale) {
       return;
     }
     event.preventDefault();
     const deltaPreviewY = event.clientY - dragState.startClientY;
     dragState.startClientY = event.clientY;
-    const deltaRenderY = deltaPreviewY / previewConfig.scale;
+    const deltaRenderY = deltaPreviewY / overlayScale;
     applyElementDelta(dragState.kind, deltaRenderY);
   });
 
@@ -8001,6 +8058,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       setVisualMode("video");
     }
+    rememberLoadedOverlayFieldValues();
     loadActivePreviewImage();
   });
 
@@ -8017,7 +8075,7 @@ document.addEventListener("DOMContentLoaded", () => {
       (name) => {
         const field = settingsContainer.querySelector(`[name="${name}"]`);
         if (field) {
-          params.set(name, field.value || "");
+          params.set(name, getPersistedFieldValue(field));
         }
       },
     );
@@ -8041,6 +8099,11 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("podcast_overlay_short_ids", "[]");
     }
     params.set("visual_mode", activeVisualMode || "video");
+    console.debug("crop modal save payload", {
+      loadedOverlayFieldValues: { ...loadedOverlayFieldValues },
+      dirtyOverlayFields: Array.from(dirtyOverlayFields),
+      payload: Object.fromEntries(params.entries()),
+    });
     const response = await fetch(settingsSaveUrl, {
       method: "POST",
       credentials: "same-origin",
