@@ -1362,6 +1362,154 @@
     align-items: center;
     gap: 6px;
   }
+  .crop-preview-toolbar {
+    margin-bottom: 14px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .crop-preview-toolbar.is-hidden {
+    display: none;
+  }
+  .crop-preview-toolbar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .crop-preview-toolbar-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.66);
+  }
+  .crop-preview-toolbar-tip {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.54);
+  }
+  .crop-preview-toolbar-section {
+    display: none;
+  }
+  .crop-preview-toolbar-section.is-active {
+    display: block;
+  }
+  .crop-preview-advanced {
+    margin-bottom: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    overflow: hidden;
+  }
+  .crop-preview-advanced > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    color: rgba(255, 255, 255, 0.86);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .crop-preview-advanced > summary::-webkit-details-marker {
+    display: none;
+  }
+  .crop-preview-advanced > summary::after {
+    content: "\25BE";
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.56);
+    transition: transform 0.2s ease;
+  }
+  .crop-preview-advanced[open] > summary::after {
+    transform: rotate(180deg);
+  }
+  .crop-preview-advanced-body {
+    padding: 0 14px 14px;
+  }
+  .crop-preview-advanced-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .crop-preview-toggle-row {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    align-items: center;
+  }
+  .crop-preview-selection-note {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.62);
+    margin-top: 8px;
+  }
+  .shorts-preview-frame {
+    position: relative;
+    overflow: hidden;
+    outline: none;
+    border-radius: 18px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  .shorts-preview-frame:focus-visible {
+    box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.52);
+  }
+  .shorts-preview-frame.is-dragging {
+    user-select: none;
+  }
+  .crop-preview-selectable {
+    position: absolute;
+    cursor: grab;
+    touch-action: none;
+    transition: box-shadow 0.16s ease;
+  }
+  .crop-preview-selectable.is-selected {
+    box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.72);
+  }
+  .crop-preview-selectable.is-dragging {
+    cursor: grabbing;
+  }
+  .shorts-preview-title-band,
+  .shorts-preview-subtitle-band {
+    left: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 12px;
+    font-weight: 700;
+    line-height: 1.1;
+    border-radius: 16px;
+  }
+  .shorts-preview-video {
+    overflow: hidden;
+    border-radius: 18px;
+  }
+  .shorts-preview-video canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .shorts-preview-date {
+    left: 50%;
+    transform: translateX(-50%);
+    min-height: 20px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    line-height: 1;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+  }
+  .shorts-preview-date.is-hidden {
+    display: none;
+  }
   @media (max-width: 991.98px) {
     .trs-coachmark {
       position: relative;
@@ -2638,214 +2786,228 @@
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
-            <div class="short-settings compact-row">
-              <div class="short-settings-section">
-                <div class="short-settings-row single">
-                <div class="preview-control">
-                  <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Title&nbsp;Preview</div>
-                </div>
-                <div class="font-preview-group tight">
-                  {% if title_font_options %}
-                  <select name="font" id="titleFont" class="form-select form-select-sm">
-                    {% for font in title_font_options %}
-                      <option value="{{ font.key }}" data-font-family="{{ font.css_family|e }}" {% if font.key == selected_title_font_key %}selected{% endif %}>{{ font.label }}</option>
-                    {% endfor %}
-                  </select>
-                  {% endif %}
-                </div>
-                <div class="input-group-inline compact">
-                  <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
-                  <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
-                </div>
-                <div class="input-group-inline compact">
-                  <span>Top spacing</span>
-                  <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
-                </div>
-                <div class="input-group-inline compact">
-                  <span class="icon-label" title="Line spacing" aria-label="Line spacing"><i class="bi bi-distribute-vertical"></i></span>
-                  <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
-                </div>
-                <div class="short-bg-trigger" id="titleBgTrigger">
-                  <div class="short-bg-swatch" id="titleBgSwatch"></div>
-                  <div class="short-bg-popover closed" id="titleBgPopover">
-                    {% set palette_groups = [
-                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
-                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
-                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
-                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
-                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
-                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
-                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
-                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
-                    ] %}
-                    {% for row in range(6) %}
-                      {% for group in palette_groups %}
-                        <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
-                      {% endfor %}
-                    {% endfor %}
-                    <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
-                      <label for="titleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                      <input type="text" id="titleBgCustomColor" class="form-control form-control-sm" value="{{ selected_title_bg_color or '#FFD600' }}" placeholder="#RRGGBB">
+            <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden" aria-live="polite">
+              <div class="crop-preview-toolbar-head">
+                <div class="crop-preview-toolbar-label" id="crop-preview-toolbar-label">Selected element</div>
+                <div class="crop-preview-toolbar-tip">Drag in the preview or use arrow keys to nudge.</div>
+              </div>
+              <div id="crop-preview-toolbar-title" class="crop-preview-toolbar-section">
+                <div class="short-settings-section">
+                  <div class="short-settings-row single">
+                    <div class="preview-control">
+                      <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Title&nbsp;Preview</div>
+                    </div>
+                    <div class="font-preview-group tight">
+                      {% if title_font_options %}
+                      <select name="font" id="titleFont" class="form-select form-select-sm">
+                        {% for font in title_font_options %}
+                          <option value="{{ font.key }}" data-font-family="{{ font.css_family|e }}" {% if font.key == selected_title_font_key %}selected{% endif %}>{{ font.label }}</option>
+                        {% endfor %}
+                      </select>
+                      {% endif %}
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
+                      <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span class="icon-label" title="Line spacing" aria-label="Line spacing"><i class="bi bi-distribute-vertical"></i></span>
+                      <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
+                    </div>
+                    <div class="short-bg-trigger" id="titleBgTrigger">
+                      <div class="short-bg-swatch" id="titleBgSwatch"></div>
+                      <div class="short-bg-popover closed" id="titleBgPopover">
+                        {% set palette_groups = [
+                          ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
+                          ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
+                          ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
+                          ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
+                          ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
+                          ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
+                          ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
+                          ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
+                        ] %}
+                        {% for row in range(6) %}
+                          {% for group in palette_groups %}
+                            <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
+                          {% endfor %}
+                        {% endfor %}
+                        <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
+                          <label for="titleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                          <input type="text" id="titleBgCustomColor" class="form-control form-control-sm" value="{{ selected_title_bg_color or '#FFD600' }}" placeholder="#RRGGBB">
+                        </div>
+                      </div>
+                      <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
+                    </div>
+                    <div class="input-group-inline compact short-alpha-control">
+                      <span>BG alpha</span>
+                      <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 92 }}">
+                    </div>
+                    <div class="short-bg-trigger" id="titleTextColorTrigger">
+                      <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
+                      <div class="short-bg-popover closed" id="titleTextColorPopover">
+                        {% set palette_groups = [
+                          ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
+                          ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
+                          ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
+                          ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
+                          ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
+                          ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
+                          ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
+                          ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
+                        ] %}
+                        {% for row in range(6) %}
+                          {% for group in palette_groups %}
+                            <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
+                          {% endfor %}
+                        {% endfor %}
+                        <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
+                          <label for="titleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                          <input type="text" id="titleTextCustomColor" class="form-control form-control-sm" value="{{ selected_title_text_color or '#000000' }}" placeholder="#RRGGBB">
+                        </div>
+                      </div>
+                      <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#000000' }}">
                     </div>
                   </div>
-                  <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
-                </div>
-                <div class="input-group-inline compact short-alpha-control">
-                  <span>BG alpha</span>
-                  <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 92 }}">
-                </div>
-                <div class="short-bg-trigger" id="titleTextColorTrigger">
-                  <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
-                  <div class="short-bg-popover closed" id="titleTextColorPopover">
-                    {% set palette_groups = [
-                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
-                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
-                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
-                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
-                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
-                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
-                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
-                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
-                    ] %}
-                    {% for row in range(6) %}
-                      {% for group in palette_groups %}
-                        <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
-                      {% endfor %}
-                    {% endfor %}
-                    <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
-                      <label for="titleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                      <input type="text" id="titleTextCustomColor" class="form-control form-control-sm" value="{{ selected_title_text_color or '#000000' }}" placeholder="#RRGGBB">
-                    </div>
-                  </div>
-                  <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#000000' }}">
-                </div>
                 </div>
               </div>
-              <div class="short-settings-section">
-                <div class="short-settings-row single">
-                <div class="preview-control">
-                  <div id="subtitlePreview" class="short-font-preview">Sample subtitle line</div>
-                </div>
-                <div class="font-preview-group tight">
-                  <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
-                    {% for f in sub_fonts %}
-                      <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-                <div class="short-bg-trigger" id="subtitleTextColorTrigger">
-                  <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
-                  <div class="short-bg-popover closed" id="subtitleTextColorPopover">
-                    {% set palette_groups = [
-                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
-                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
-                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
-                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
-                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
-                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
-                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
-                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
-                    ] %}
-                    {% for row in range(6) %}
-                      {% for group in palette_groups %}
-                        <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
-                      {% endfor %}
-                    {% endfor %}
-                    <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
-                      <label for="subtitleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                      <input type="text" id="subtitleTextCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_text_color or '#FFFFFF' }}" placeholder="#RRGGBB">
+              <div id="crop-preview-toolbar-subtitle" class="crop-preview-toolbar-section">
+                <div class="short-settings-section">
+                  <div class="short-settings-row single">
+                    <div class="preview-control">
+                      <div id="subtitlePreview" class="short-font-preview">Sample subtitle line</div>
+                    </div>
+                    <div class="font-preview-group tight">
+                      <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
+                        {% for f in sub_fonts %}
+                          <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="short-bg-trigger" id="subtitleTextColorTrigger">
+                      <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
+                      <div class="short-bg-popover closed" id="subtitleTextColorPopover">
+                        {% set palette_groups = [
+                          ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
+                          ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
+                          ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
+                          ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
+                          ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
+                          ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
+                          ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
+                          ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
+                        ] %}
+                        {% for row in range(6) %}
+                          {% for group in palette_groups %}
+                            <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
+                          {% endfor %}
+                        {% endfor %}
+                        <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
+                          <label for="subtitleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                          <input type="text" id="subtitleTextCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_text_color or '#FFFFFF' }}" placeholder="#RRGGBB">
+                        </div>
+                      </div>
+                      <input type="hidden" name="subtitle_text_color" id="subtitleTextColorValue" value="{{ selected_subtitle_text_color or '#FFFFFF' }}">
+                    </div>
+                    <div class="input-group-inline compact short-alpha-control">
+                      <span>Text alpha</span>
+                      <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
+                    </div>
+                    <div class="short-bg-trigger" id="subtitleBgColorTrigger">
+                      <div class="short-bg-swatch" id="subtitleBgColorSwatch"></div>
+                      <div class="short-bg-popover closed" id="subtitleBgColorPopover">
+                        {% set palette_groups = [
+                          ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
+                          ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
+                          ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
+                          ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
+                          ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
+                          ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
+                          ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
+                          ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
+                        ] %}
+                        {% for row in range(6) %}
+                          {% for group in palette_groups %}
+                            <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
+                          {% endfor %}
+                        {% endfor %}
+                        <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
+                          <label for="subtitleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                          <input type="text" id="subtitleBgCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_bg_color or '#000000' }}" placeholder="#RRGGBB">
+                        </div>
+                      </div>
+                      <input type="hidden" name="subtitle_bg_color" id="subtitleBgColorValue" value="{{ selected_subtitle_bg_color or '#000000' }}">
+                    </div>
+                    <div class="input-group-inline compact short-alpha-control">
+                      <span>BG alpha</span>
+                      <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
+                      <input type="number" name="sub_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_sub_font_size or 9 }}" min="1" max="990">
                     </div>
                   </div>
-                  <input type="hidden" name="subtitle_text_color" id="subtitleTextColorValue" value="{{ selected_subtitle_text_color or '#FFFFFF' }}">
-                </div>
-                <div class="input-group-inline compact short-alpha-control">
-                  <span>Text alpha</span>
-                  <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
-                </div>
-                <div class="short-bg-trigger" id="subtitleBgColorTrigger">
-                  <div class="short-bg-swatch" id="subtitleBgColorSwatch"></div>
-                  <div class="short-bg-popover closed" id="subtitleBgColorPopover">
-                    {% set palette_groups = [
-                      ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
-                      ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
-                      ['#FFCDD2','#EF9A9A','#E57373','#F44336','#D32F2F','#B71C1C'],
-                      ['#C8E6C9','#A5D6A7','#81C784','#66BB6A','#43A047','#2E7D32'],
-                      ['#BBDEFB','#90CAF9','#64B5F6','#42A5F5','#1E88E5','#1565C0'],
-                      ['#E1BEE7','#CE93D8','#BA68C8','#AB47BC','#8E24AA','#6A1B9A'],
-                      ['#ECEFF1','#CFD8DC','#B0BEC5','#90A4AE','#607D8B','#455A64'],
-                      ['#FFFFFF','#F5F5F5','#EEEEEE','#BDBDBD','#757575','#000000']
-                    ] %}
-                    {% for row in range(6) %}
-                      {% for group in palette_groups %}
-                        <div class="short-color-swatch" data-color="{{ group[row] }}"></div>
-                      {% endfor %}
-                    {% endfor %}
-                    <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
-                      <label for="subtitleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                      <input type="text" id="subtitleBgCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_bg_color or '#000000' }}" placeholder="#RRGGBB">
-                    </div>
-                  </div>
-                  <input type="hidden" name="subtitle_bg_color" id="subtitleBgColorValue" value="{{ selected_subtitle_bg_color or '#000000' }}">
-                </div>
-                <div class="input-group-inline compact short-alpha-control">
-                  <span>BG alpha</span>
-                  <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
-                </div>
-                <div class="input-group-inline compact">
-                  <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
-                  <input type="number" name="sub_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_sub_font_size or 9 }}" min="1" max="990">
-                </div>
-                <div class="input-group-inline compact">
-                  <span>Bottom spacing</span>
-                  <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
-                </div>
                 </div>
               </div>
-              <div class="short-settings-section short-settings-section-wide">
-                <div class="short-settings-row single">
-                <div class="input-group-inline compact">
-                  <span>Video date</span>
-                  <input type="text"
-                         name="video_date_text"
-                         class="form-control form-control-sm short-input-small short-input-wide"
-                         value="{{ selected_video_date|e }}"
-                         placeholder="Optional date">
-                </div>
-                <div class="input-group-inline compact">
-                  <span>Top</span>
-                  <input type="number"
-                         name="video_date_top"
-                         class="form-control form-control-sm short-input-small"
-                         value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
-                         min="0"
-                         max="1200">
-                </div>
-                <div class="input-group-inline compact">
-                  <span>Video top spacing</span>
-                  <input type="number"
-                         name="video_overlay_offset"
-                         class="form-control form-control-sm short-input-small"
-                         value="{{ selected_video_overlay_offset or 400 }}"
-                         min="0"
-                         max="1200">
-                </div>
-                  <div class="short-toggle-group">
-                  {% if brand_subscribe_overlay_available %}
-                    <div class="form-check form-switch mb-0">
-                      <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                      <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
-                    </div>
-                  {% endif %}
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
-                    <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
+              <div class="crop-preview-selection-note">Select Title, Video, Subtitle, or Date inside Final Preview.</div>
+            </div>
+            <details class="crop-preview-advanced">
+              <summary>Advanced</summary>
+              <div class="crop-preview-advanced-body">
+                <div class="crop-preview-advanced-grid">
+                  <div class="input-group-inline compact">
+                    <span>Top spacing</span>
+                    <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
                   </div>
+                  <div class="input-group-inline compact">
+                    <span>Bottom spacing</span>
+                    <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
                   </div>
-                  {% if not brand_subscribe_overlay_available %}
-                    <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
-                  {% endif %}
+                  <div class="input-group-inline compact">
+                    <span>Video top spacing</span>
+                    <input type="number"
+                           name="video_overlay_offset"
+                           class="form-control form-control-sm short-input-small"
+                           value="{{ selected_video_overlay_offset or 400 }}"
+                           min="0"
+                           max="1200">
+                  </div>
+                  <div class="input-group-inline compact">
+                    <span>Top</span>
+                    <input type="number"
+                           name="video_date_top"
+                           class="form-control form-control-sm short-input-small"
+                           value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
+                           min="0"
+                           max="1200">
+                  </div>
+                  <div class="input-group-inline compact">
+                    <span>Video date</span>
+                    <input type="text"
+                           name="video_date_text"
+                           class="form-control form-control-sm short-input-small short-input-wide"
+                           value="{{ selected_video_date|e }}"
+                           placeholder="Optional date">
+                  </div>
                 </div>
               </div>
+            </details>
+            <div class="crop-preview-toggle-row">
+              <div class="short-toggle-group">
+              {% if brand_subscribe_overlay_available %}
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                  <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
+                </div>
+              {% endif %}
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
+                <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
+              </div>
+              </div>
+              {% if not brand_subscribe_overlay_available %}
+                <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -2860,12 +3022,13 @@
           </div>
           <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
             <div class="small text-muted mb-2">Final Preview</div>
-            <div class="shorts-preview-frame" id="shorts-preview-frame">
-              <div class="shorts-preview-title-band" id="shorts-preview-title-band">Title</div>
-              <div class="shorts-preview-video" id="shorts-preview-video">
+            <div class="shorts-preview-frame" id="shorts-preview-frame" tabindex="0" aria-label="Shorts preview editor">
+              <div class="shorts-preview-title-band crop-preview-selectable" id="shorts-preview-title-band" data-preview-element="title">Title</div>
+              <div class="shorts-preview-video crop-preview-selectable" id="shorts-preview-video" data-preview-element="video">
                 <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
               </div>
-              <div class="shorts-preview-subtitle-band" id="shorts-preview-subtitle-band">Sample subtitle line</div>
+              <div class="shorts-preview-date crop-preview-selectable{% if not selected_video_date %} is-hidden{% endif %}" id="shorts-preview-date" data-preview-element="date">{{ selected_video_date or "Date" }}</div>
+              <div class="shorts-preview-subtitle-band crop-preview-selectable" id="shorts-preview-subtitle-band" data-preview-element="subtitle">Sample subtitle line</div>
             </div>
           </div>
         </div>
@@ -6758,11 +6921,25 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewTitle = modalEl.querySelector("#shorts-preview-title-band");
   const previewVideo = modalEl.querySelector("#shorts-preview-video");
   const previewSubtitle = modalEl.querySelector("#shorts-preview-subtitle-band");
+  const previewDate = modalEl.querySelector("#shorts-preview-date");
   const settingsContainer = modalEl.querySelector(".short-video-body");
+  const previewToolbar = modalEl.querySelector("#crop-preview-toolbar");
+  const previewToolbarLabel = modalEl.querySelector("#crop-preview-toolbar-label");
+  const previewToolbarTitle = modalEl.querySelector("#crop-preview-toolbar-title");
+  const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
   const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
   const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
+  const titleFontSizeInput = settingsContainer?.querySelector('[name="title_font_size"]');
+  const subtitleFontSizeInput = settingsContainer?.querySelector('[name="sub_font_size"]');
+  const titleMarginInput = settingsContainer?.querySelector('[name="title_margin"]');
+  const subtitleMarginInput = settingsContainer?.querySelector('[name="sub_margin"]');
+  const videoOverlayOffsetInput = settingsContainer?.querySelector('[name="video_overlay_offset"]');
+  const videoDateTopInput = settingsContainer?.querySelector('[name="video_date_top"]');
+  const videoDateTextInput = settingsContainer?.querySelector('[name="video_date_text"]');
+  let selectedPreviewElement = "";
+  let dragState = null;
   const podcastAudioState = {
     audios: [],
     selectedId: settingsContainer?.dataset.selectedPodcastAudio || "",
@@ -7043,8 +7220,149 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCanvas.height = dims.height;
   };
   syncPreviewCanvasSize();
+  const renderFrameHeight = previewConfig.scale ? (previewConfig.frameHeight / previewConfig.scale) : 1600;
+  const renderFrameWidth = previewConfig.scale ? (previewConfig.frameWidth / previewConfig.scale) : 900;
+  const clampRenderValue = (value, minimum, maximum) => {
+    const numeric = Number.isFinite(Number(value)) ? Number(value) : minimum;
+    return Math.max(minimum, Math.min(maximum, numeric));
+  };
+  const getNumericFieldValue = (field, fallback) => {
+    if (!field) return fallback;
+    const parsed = Number(field.value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const getPreviewElementBounds = (kind) => {
+    const dims = getOverlayDims();
+    if (kind === "title") {
+      return {
+        size: previewConfig.titleHeight,
+        min: 0,
+        max: Math.max(0, renderFrameHeight - previewConfig.titleHeight),
+      };
+    }
+    if (kind === "subtitle") {
+      return {
+        size: previewConfig.subtitleHeight,
+        min: 0,
+        max: Math.max(0, renderFrameHeight - previewConfig.subtitleHeight),
+      };
+    }
+    if (kind === "video") {
+      return {
+        size: dims.height,
+        min: 0,
+        max: Math.max(0, renderFrameHeight - dims.height),
+      };
+    }
+    return {
+      size: 52,
+      min: 0,
+      max: Math.max(0, renderFrameHeight - 52),
+    };
+  };
+  const updateFieldValue = (field, value, dispatch = true) => {
+    if (!field) return;
+    const normalized = Math.round(value);
+    if (field.value !== String(normalized)) {
+      field.value = String(normalized);
+    }
+    if (dispatch) {
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+  const setSelectedPreviewElement = (kind) => {
+    selectedPreviewElement = kind || "";
+    const isTitle = selectedPreviewElement === "title";
+    const isSubtitle = selectedPreviewElement === "subtitle";
+    previewToolbar?.classList.toggle("is-hidden", !selectedPreviewElement || (!isTitle && !isSubtitle));
+    previewToolbarTitle?.classList.toggle("is-active", isTitle);
+    previewToolbarSubtitle?.classList.toggle("is-active", isSubtitle);
+    if (previewToolbarLabel) {
+      previewToolbarLabel.textContent = isTitle
+        ? "Title selected"
+        : (isSubtitle ? "Subtitle selected" : "Selected element");
+    }
+    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+      if (!element) return;
+      const matches = (element.dataset.previewElement || "") === selectedPreviewElement;
+      element.classList.toggle("is-selected", matches);
+    });
+    if (selectedPreviewElement && previewFrame) {
+      previewFrame.focus({ preventScroll: true });
+    }
+  };
+  const applyElementDelta = (kind, deltaRenderY) => {
+    if (!kind || !Number.isFinite(deltaRenderY)) {
+      return;
+    }
+    if (kind === "title") {
+      const bounds = getPreviewElementBounds("title");
+      const nextValue = clampRenderValue(
+        getNumericFieldValue(titleMarginInput, previewConfig.titleY) + deltaRenderY,
+        bounds.min,
+        bounds.max,
+      );
+      updateFieldValue(titleMarginInput, nextValue);
+      return;
+    }
+    if (kind === "subtitle") {
+      const bounds = getPreviewElementBounds("subtitle");
+      const nextValue = clampRenderValue(
+        getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight) - deltaRenderY,
+        bounds.min,
+        bounds.max,
+      );
+      updateFieldValue(subtitleMarginInput, nextValue);
+      return;
+    }
+    if (kind === "video") {
+      const bounds = getPreviewElementBounds("video");
+      const nextValue = clampRenderValue(
+        getNumericFieldValue(videoOverlayOffsetInput, previewConfig.videoYLandscape) + deltaRenderY,
+        bounds.min,
+        bounds.max,
+      );
+      updateFieldValue(videoOverlayOffsetInput, nextValue);
+      return;
+    }
+    if (kind === "date") {
+      const bounds = getPreviewElementBounds("date");
+      const nextValue = clampRenderValue(
+        getNumericFieldValue(videoDateTopInput, 1006) + deltaRenderY,
+        bounds.min,
+        bounds.max,
+      );
+      updateFieldValue(videoDateTopInput, nextValue);
+    }
+  };
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
+    const titleHeight = previewConfig.titleHeight;
+    const subtitleHeight = previewConfig.subtitleHeight;
+    const titleTop = clampRenderValue(
+      getNumericFieldValue(titleMarginInput, previewConfig.titleY),
+      0,
+      Math.max(0, renderFrameHeight - titleHeight),
+    );
+    const videoTop = clampRenderValue(
+      getNumericFieldValue(videoOverlayOffsetInput, dims.y),
+      0,
+      Math.max(0, renderFrameHeight - dims.height),
+    );
+    const subtitleMargin = clampRenderValue(
+      getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - subtitleHeight),
+      0,
+      Math.max(0, renderFrameHeight - subtitleHeight),
+    );
+    const subtitleTop = renderFrameHeight - subtitleMargin - subtitleHeight;
+    const titleFontSize = Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
+    const subtitleFontSize = Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
+    const dateText = (videoDateTextInput?.value || "").trim();
+    const dateTop = clampRenderValue(
+      getNumericFieldValue(videoDateTopInput, 1006),
+      0,
+      Math.max(0, renderFrameHeight - 52),
+    );
     if (previewFrame) {
       previewFrame.style.width = previewConfig.frameWidth + "px";
       previewFrame.style.height = previewConfig.frameHeight + "px";
@@ -7052,20 +7370,26 @@ document.addEventListener("DOMContentLoaded", () => {
       previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
     }
     if (previewTitle) {
-      previewTitle.style.top = previewConfig.titleY * previewConfig.scale + "px";
+      previewTitle.style.top = titleTop * previewConfig.scale + "px";
       previewTitle.style.height = previewConfig.titleHeight * previewConfig.scale + "px";
-      previewTitle.style.fontSize = previewConfig.titleHeight * previewConfig.scale * 0.75 + "px";
+      previewTitle.style.fontSize = titleFontSize * previewConfig.scale + "px";
     }
     if (previewVideo) {
       previewVideo.style.left = previewConfig.videoX * previewConfig.scale + "px";
-      previewVideo.style.top = dims.y * previewConfig.scale + "px";
+      previewVideo.style.top = videoTop * previewConfig.scale + "px";
       previewVideo.style.width = dims.width * previewConfig.scale + "px";
       previewVideo.style.height = dims.height * previewConfig.scale + "px";
     }
+    if (previewDate) {
+      previewDate.textContent = dateText || "Date";
+      previewDate.style.top = dateTop * previewConfig.scale + "px";
+      previewDate.style.fontSize = 24 * previewConfig.scale + "px";
+      previewDate.classList.toggle("is-hidden", !dateText);
+    }
     if (previewSubtitle) {
-      previewSubtitle.style.top = previewConfig.subtitleY * previewConfig.scale + "px";
+      previewSubtitle.style.top = subtitleTop * previewConfig.scale + "px";
       previewSubtitle.style.height = previewConfig.subtitleHeight * previewConfig.scale + "px";
-      previewSubtitle.style.fontSize = previewConfig.subtitleHeight * previewConfig.scale * 0.75 + "px";
+      previewSubtitle.style.fontSize = subtitleFontSize * previewConfig.scale + "px";
     }
   };
   const clearPreviewCanvas = () => {
@@ -7080,6 +7404,9 @@ document.addEventListener("DOMContentLoaded", () => {
       cropper.destroy();
       cropper = null;
     }
+    dragState = null;
+    setSelectedPreviewElement("");
+    previewFrame?.classList.remove("is-dragging");
     naturalSize = { width: 0, height: 0 };
     if (previewImg) {
       previewImg.removeAttribute("src");
@@ -7452,6 +7779,81 @@ document.addEventListener("DOMContentLoaded", () => {
       drawPreviewFromCropper();
     }
   };
+
+  [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput].forEach((field) => {
+    field?.addEventListener("input", () => {
+      applyPreviewLayout();
+    });
+  });
+
+  [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+    element?.addEventListener("pointerdown", (event) => {
+      const kind = element.dataset.previewElement || "";
+      if (!kind) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedPreviewElement(kind);
+      dragState = {
+        kind,
+        startClientY: event.clientY,
+      };
+      element.classList.add("is-dragging");
+      previewFrame?.classList.add("is-dragging");
+      element.setPointerCapture?.(event.pointerId);
+    });
+  });
+
+  previewFrame?.addEventListener("pointermove", (event) => {
+    if (!dragState || !previewConfig.scale) {
+      return;
+    }
+    event.preventDefault();
+    const deltaPreviewY = event.clientY - dragState.startClientY;
+    dragState.startClientY = event.clientY;
+    const deltaRenderY = deltaPreviewY / previewConfig.scale;
+    applyElementDelta(dragState.kind, deltaRenderY);
+  });
+
+  const endPreviewDrag = (event) => {
+    if (event?.target && event.target.classList?.remove) {
+      event.target.classList.remove("is-dragging");
+    }
+    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+      element?.classList.remove("is-dragging");
+    });
+    previewFrame?.classList.remove("is-dragging");
+    dragState = null;
+  };
+
+  previewFrame?.addEventListener("pointerup", endPreviewDrag);
+  previewFrame?.addEventListener("pointercancel", endPreviewDrag);
+  previewFrame?.addEventListener("pointerleave", (event) => {
+    if (dragState && !(event.buttons & 1)) {
+      endPreviewDrag(event);
+    }
+  });
+  previewFrame?.addEventListener("pointerdown", (event) => {
+    if (event.target === previewFrame) {
+      setSelectedPreviewElement("");
+    }
+  });
+  previewFrame?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      setSelectedPreviewElement("");
+      return;
+    }
+    if (!selectedPreviewElement) {
+      return;
+    }
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+      return;
+    }
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 1;
+    applyElementDelta(selectedPreviewElement, event.key === "ArrowDown" ? step : -step);
+  });
 
   staticVisualButtons.forEach((button) => {
     button.addEventListener("click", () => {
