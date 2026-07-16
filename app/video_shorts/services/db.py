@@ -307,7 +307,8 @@ def _ensure_video_crop_schema(conn) -> set:
     ]
     for column, col_type, default in definitions:
         if column not in cols:
-            ddl = f"ALTER TABLE youtube_videos ADD COLUMN {column} {col_type}"
+            resolved_type = "DOUBLE PRECISION" if _is_postgres_backend() and col_type == "DOUBLE" else col_type
+            ddl = f"ALTER TABLE youtube_videos ADD COLUMN {column} {resolved_type}"
             if default is not None:
                 if isinstance(default, str):
                     ddl += f" DEFAULT '{default}'"
