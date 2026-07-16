@@ -10604,7 +10604,7 @@ def autoclip_video(video_pk):
     conn = get_db_readonly()
     try:
         crop_row = conn.execute(
-            "SELECT crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, "
+            "SELECT split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio, "
             "crop_aspect, "
             "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, video_date_top, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
             "FROM youtube_videos WHERE video_id = ?",
@@ -10612,8 +10612,39 @@ def autoclip_video(video_pk):
         ).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
-            if len(crop_row) >= 30:
+            if len(crop_row) >= 35:
                 query_indexes = {
+                    "split_enabled": 0,
+                    "crop_aspect": 9,
+                    "title_font_key": 10,
+                    "title_font_size": 11,
+                    "subtitle_font_key": 12,
+                    "subtitle_font_size": 13,
+                    "subtitle_margin": 14,
+                    "title_margin": 15,
+                    "title_line_spacing": 16,
+                    "title_bg_color": 17,
+                    "video_date_text": 18,
+                    "video_date_top": 19,
+                    "subscribe_overlay_enabled": 20,
+                    "is_music_only": 21,
+                    "static_visual_key": 22,
+                    "background_visual_key": 23,
+                    "video_overlay_offset": 24,
+                    "podcast_audio_filename": 25,
+                    "visual_mode": 26,
+                    "podcast_overlay_short_ids": 27,
+                    "owner_user_id": 28,
+                    "title_text_color": 29,
+                    "subtitle_text_color": 30,
+                    "title_bg_alpha": 31,
+                    "subtitle_bg_color": 32,
+                    "subtitle_bg_alpha": 33,
+                    "subtitle_text_alpha": 34,
+                }
+            elif len(crop_row) >= 30:
+                query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10643,6 +10674,7 @@ def autoclip_video(video_pk):
                 }
             elif len(crop_row) >= 29:
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10672,6 +10704,7 @@ def autoclip_video(video_pk):
                 }
             elif len(crop_row) >= 23:
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10701,6 +10734,7 @@ def autoclip_video(video_pk):
                 }
             elif len(crop_row) >= 22:
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10731,6 +10765,7 @@ def autoclip_video(video_pk):
             elif len(crop_row) >= 21:
                 # Has title_line_spacing + podcast_audio_filename, but no visual_mode.
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10761,6 +10796,7 @@ def autoclip_video(video_pk):
             elif len(crop_row) >= 20:
                 # Has podcast_audio_filename, but no title_line_spacing/visual_mode.
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10791,6 +10827,7 @@ def autoclip_video(video_pk):
             else:
                 # Legacy: no podcast_audio_filename, no title_line_spacing/visual_mode.
                 query_indexes = {
+                    "split_enabled": None,
                     "crop_aspect": 4,
                     "title_font_key": 5,
                     "title_font_size": 6,
@@ -10819,10 +10856,15 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                 }
             video_crop_ratios = {
-                "crop_x_ratio": crop_row[0],
-                "crop_y_ratio": crop_row[1],
-                "crop_w_ratio": crop_row[2],
-                "crop_h_ratio": crop_row[3],
+                "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
+                "crop_x_ratio": crop_row[1] if len(crop_row) >= 35 else crop_row[0],
+                "crop_y_ratio": crop_row[2] if len(crop_row) >= 35 else crop_row[1],
+                "crop_w_ratio": crop_row[3] if len(crop_row) >= 35 else crop_row[2],
+                "crop_h_ratio": crop_row[4] if len(crop_row) >= 35 else crop_row[3],
+                "crop2_x_ratio": crop_row[5] if len(crop_row) >= 35 else None,
+                "crop2_y_ratio": crop_row[6] if len(crop_row) >= 35 else None,
+                "crop2_w_ratio": crop_row[7] if len(crop_row) >= 35 else None,
+                "crop2_h_ratio": crop_row[8] if len(crop_row) >= 35 else None,
             }
             video_crop_aspect = crop_row[query_indexes["crop_aspect"]] or "landscape"
             video_font_key = crop_row[query_indexes["title_font_key"]]
@@ -11230,7 +11272,17 @@ def autoclip_video(video_pk):
         crop_settings = {
             key: val
             for key, val in video_crop_ratios.items()
-            if key in {"crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio"}
+            if key in {
+                "split_enabled",
+                "crop_x_ratio",
+                "crop_y_ratio",
+                "crop_w_ratio",
+                "crop_h_ratio",
+                "crop2_x_ratio",
+                "crop2_y_ratio",
+                "crop2_w_ratio",
+                "crop2_h_ratio",
+            }
         }
         preferred_bg_key = load_background_preference(video_owner_user_id, current_brand_id()) if video_owner_user_id else None
         bg_visual_key = preferred_bg_key or video_background_visual_key

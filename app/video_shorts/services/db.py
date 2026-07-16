@@ -269,10 +269,15 @@ def _ensure_video_crop_schema(conn) -> set:
         return set()
     changed = False
     definitions = [
+        ("split_enabled", "BOOLEAN", False),
         ("crop_x_ratio", "DOUBLE", None),
         ("crop_y_ratio", "DOUBLE", None),
         ("crop_w_ratio", "DOUBLE", None),
         ("crop_h_ratio", "DOUBLE", None),
+        ("crop2_x_ratio", "DOUBLE", None),
+        ("crop2_y_ratio", "DOUBLE", None),
+        ("crop2_w_ratio", "DOUBLE", None),
+        ("crop2_h_ratio", "DOUBLE", None),
         ("crop_aspect", "VARCHAR", "landscape"),
         ("title_font_key", "VARCHAR", DEFAULT_TITLE_FONT_KEY),
         ("title_font_size", "INTEGER", DEFAULT_TITLE_FONT_SIZE),

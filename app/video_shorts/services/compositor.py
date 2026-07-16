@@ -1157,10 +1157,22 @@ def _compose_trimmed_with_background(
             val = default
         return max(0.0, min(1.0, val))
 
+    def _normalize_crop_box(prefix: str) -> tuple[float, float, float, float]:
+        box_x = _normalize(crop_settings.get(f"{prefix}x_ratio"), 0.0)
+        box_y = _normalize(crop_settings.get(f"{prefix}y_ratio"), 0.0)
+        box_w = max(0.01, min(1.0 - box_x, _normalize(crop_settings.get(f"{prefix}w_ratio"), 1.0)))
+        box_h = max(0.01, min(1.0 - box_y, _normalize(crop_settings.get(f"{prefix}h_ratio"), 1.0)))
+        return box_x, box_y, box_w, box_h
+
     crop_x = _normalize(crop_settings.get("crop_x_ratio"), 0.0)
     crop_y = _normalize(crop_settings.get("crop_y_ratio"), 0.0)
     crop_w = max(0.01, min(1.0 - crop_x, _normalize(crop_settings.get("crop_w_ratio"), 1.0)))
     crop_h = max(0.01, min(1.0 - crop_y, _normalize(crop_settings.get("crop_h_ratio"), 1.0)))
+    split_enabled = bool(crop_settings.get("split_enabled"))
+    has_crop2 = all(
+        crop_settings.get(key) is not None
+        for key in ("crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio")
+    )
 
     def _fmt(v: float) -> str:
         return f"{v:.6f}"
@@ -1175,6 +1187,12 @@ def _compose_trimmed_with_background(
         )
 
     is_default_crop = _is_default_crop()
+    split_stack_enabled = bool(
+        split_enabled
+        and overlay_aspect == "portrait"
+        and has_crop2
+        and not podcast_mode
+    )
     if is_default_crop:
         scale_stage = (
             f"scale={overlay_width}:{overlay_height}:force_original_aspect_ratio=increase,"
@@ -1183,32 +1201,59 @@ def _compose_trimmed_with_background(
     else:
         scale_stage = f"scale={overlay_width}:{overlay_height},"
 
-    crop_filter = (
-        f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
-        f"{scale_stage}"
-        "setsar=1,"
-        "setpts=PTS-STARTPTS[clip_scaled]"
-    )
-    current_app.logger.debug(
-        "clip_scaled target dims=%dx%d default_crop=%s",
-        overlay_width,
-        overlay_height,
-        is_default_crop,
-    )
-    overlay_y_expr = "0" if podcast_mode else _overlay_y_expr(
-        overlay_top_offset,
-        subtitle_path,
-        subtitle_margin,
-        subtitle_font_size,
-    )
     bg_filter = (
         f"[0:v]scale={target_width}:{target_height},setsar=1[bg]"
     )
-    filter_parts = [
-        bg_filter,
-        crop_filter,
-        f"[bg][clip_scaled]overlay=(W-w)/2:{overlay_y_expr}:shortest=1[ov]",
-    ]
+    filter_parts = [bg_filter]
+    if split_stack_enabled:
+        crop2_x, crop2_y, crop2_w, crop2_h = _normalize_crop_box("crop2_")
+        split_tile_width = target_width
+        split_tile_height = max(2, int(target_height / 2))
+        split_tile_height -= split_tile_height % 2
+        filter_parts.extend(
+            [
+                "[1:v]split=2[split_top_src][split_bottom_src]",
+                (
+                    f"[split_top_src]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
+                    f"scale={split_tile_width}:{split_tile_height},"
+                    "setsar=1,"
+                    "setpts=PTS-STARTPTS[top]"
+                ),
+                (
+                    f"[split_bottom_src]crop=iw*{_fmt(crop2_w)}:ih*{_fmt(crop2_h)}:iw*{_fmt(crop2_x)}:ih*{_fmt(crop2_y)},"
+                    f"scale={split_tile_width}:{split_tile_height},"
+                    "setsar=1,"
+                    "setpts=PTS-STARTPTS[bottom]"
+                ),
+                "[top][bottom]vstack=inputs=2[clip_stack]",
+                "[bg][clip_stack]overlay=(W-w)/2:0:shortest=1[ov]",
+            ]
+        )
+    else:
+        crop_filter = (
+            f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
+            f"{scale_stage}"
+            "setsar=1,"
+            "setpts=PTS-STARTPTS[clip_scaled]"
+        )
+        current_app.logger.debug(
+            "clip_scaled target dims=%dx%d default_crop=%s",
+            overlay_width,
+            overlay_height,
+            is_default_crop,
+        )
+        overlay_y_expr = "0" if podcast_mode else _overlay_y_expr(
+            overlay_top_offset,
+            subtitle_path,
+            subtitle_margin,
+            subtitle_font_size,
+        )
+        filter_parts.extend(
+            [
+                crop_filter,
+                f"[bg][clip_scaled]overlay=(W-w)/2:{overlay_y_expr}:shortest=1[ov]",
+            ]
+        )
     final_label = "[ov]"
     overlay_asset_path = subscribe_overlay_path if subscribe_overlay_path and Path(subscribe_overlay_path).exists() else None
     overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
