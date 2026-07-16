@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +10,8 @@ from app.video_shorts.services.storage import get_media_storage
 
 
 logger = logging.getLogger(__name__)
+SOURCE_FASTSTART_TIMEOUT_SECONDS = 120
+_FASTSTART_COMPATIBLE_SUFFIXES = {".mp4", ".mov", ".m4v"}
 
 
 def _format_time_label(seconds: float):
@@ -101,6 +104,108 @@ def _resolve_ffmpeg():
         if Path(resolved).is_file():
             return str(Path(resolved))
     raise FileNotFoundError(f"ffmpeg not found (FFMPEG_BIN={FFMPEG_BIN})")
+
+
+def _top_level_atom_offsets(path: Path) -> dict[str, int]:
+    offsets: dict[str, int] = {}
+    try:
+        total_size = int(path.stat().st_size)
+    except Exception:
+        return offsets
+    try:
+        with path.open("rb") as handle:
+            offset = 0
+            while offset + 8 <= total_size:
+                header = handle.read(8)
+                if len(header) < 8:
+                    break
+                size = int.from_bytes(header[:4], "big", signed=False)
+                atom_type = header[4:8].decode("latin-1", errors="ignore")
+                header_size = 8
+                if size == 1:
+                    extended = handle.read(8)
+                    if len(extended) < 8:
+                        break
+                    size = int.from_bytes(extended, "big", signed=False)
+                    header_size = 16
+                elif size == 0:
+                    size = total_size - offset
+                if size < header_size:
+                    break
+                if atom_type not in offsets:
+                    offsets[atom_type] = offset
+                offset += size
+                if offset >= total_size:
+                    break
+                handle.seek(offset)
+    except Exception:
+        return {}
+    return offsets
+
+
+def source_video_needs_faststart(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
+        return False
+    atoms = _top_level_atom_offsets(path)
+    moov_offset = atoms.get("moov")
+    mdat_offset = atoms.get("mdat")
+    if moov_offset is None or mdat_offset is None:
+        return False
+    return moov_offset > mdat_offset
+
+
+def normalize_source_video_for_streaming(path: Path, *, log: logging.Logger | None = None) -> Path:
+    active_logger = log or logger
+    suffix = path.suffix.lower()
+    if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
+        return path
+    try:
+        if not source_video_needs_faststart(path):
+            active_logger.info("source faststart skip path=%s reason=already_streamable", path)
+            return path
+    except Exception:
+        active_logger.exception("source faststart detection failed path=%s", path)
+        return path
+
+    temp_output = path.with_name(f"{path.stem}.faststart.{os.getpid()}{path.suffix}")
+    resolved_ffmpeg = _resolve_ffmpeg()
+    cmd = [
+        resolved_ffmpeg,
+        "-y",
+        "-i",
+        str(path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(temp_output),
+    ]
+    try:
+        active_logger.info(
+            "source faststart normalize start path=%s timeout=%ss",
+            path,
+            SOURCE_FASTSTART_TIMEOUT_SECONDS,
+        )
+        subprocess.run(
+            cmd,
+            check=True,
+            timeout=SOURCE_FASTSTART_TIMEOUT_SECONDS,
+            capture_output=True,
+            text=True,
+        )
+        if not temp_output.exists() or temp_output.stat().st_size <= 0:
+            raise RuntimeError("faststart output missing or empty")
+        temp_output.replace(path)
+        active_logger.info("source faststart normalize success path=%s", path)
+        return path
+    except Exception as exc:
+        active_logger.warning("source faststart normalize fallback path=%s error=%s", path, exc)
+        try:
+            temp_output.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return path
 
 
 def _extract_audio_segment(src: Path, start: float, end: float) -> Path:

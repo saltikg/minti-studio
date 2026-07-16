@@ -117,6 +117,7 @@ from app.video_shorts.services.media_utils import (
     _format_time_label,
     _resolve_ffmpeg,
     _resolve_source_video,
+    normalize_source_video_for_streaming,
 )
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
@@ -5330,6 +5331,7 @@ def download_video(video_pk):
             candidates = list(out_path.parent.glob(f"{video_id}.*"))
             if candidates:
                 candidates[0].rename(out_path)
+        out_path = normalize_source_video_for_streaming(out_path, log=current_app.logger)
 
         if current_user:
             size_bytes = out_path.stat().st_size if out_path.exists() else 0

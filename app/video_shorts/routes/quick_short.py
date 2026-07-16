@@ -19,7 +19,7 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
     ensure_storage_user_schema,
 )
-from app.video_shorts.services.media_utils import _format_time_label
+from app.video_shorts.services.media_utils import _format_time_label, normalize_source_video_for_streaming
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -1012,7 +1012,8 @@ def quick_short_upload_direct():
         video_id = f"local_{uuid.uuid4().hex}"
         source_key = f"videos/{video_id}{ext}"
         storage = get_media_storage()
-        storage.put_file(temp_path, source_key)
+        upload_source_path = normalize_source_video_for_streaming(temp_path, log=current_app.logger)
+        storage.put_file(upload_source_path, source_key)
         duration_raw = request.form.get("duration_seconds")
         try:
             duration_seconds = float(duration_raw) if duration_raw not in (None, "", "null") else None
