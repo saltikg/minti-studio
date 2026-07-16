@@ -3751,6 +3751,10 @@ def generate_short(video_pk):
         video_date_top = DEFAULT_VIDEO_DATE_TOP
     raw_subscribe = video.get("subscribe_overlay_enabled")
     video_subscribe_overlay = True if raw_subscribe is None else bool(raw_subscribe)
+    raw_show_title = video.get("show_title")
+    video_show_title = True if raw_show_title is None else bool(raw_show_title)
+    raw_show_subtitle = video.get("show_subtitle")
+    video_show_subtitle = True if raw_show_subtitle is None else bool(raw_show_subtitle)
     raw_is_music_only = video.get("is_music_only")
     video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     selected_podcast_audio_filename = (video.get("podcast_audio_filename") or "").strip()
