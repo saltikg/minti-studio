@@ -3515,7 +3515,7 @@ def generate_short(video_pk):
     video_sql = """
         id, channel_id, video_id, title, video_url, thumbnail_url, duration_seconds,
         view_count, like_count, comment_count, published_at,
-        crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio,
+        split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio,
         crop_aspect,
         title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, video_date_text, video_date_top, subscribe_overlay_enabled,
         is_music_only,
@@ -3537,7 +3537,7 @@ def generate_short(video_pk):
     cols = [
         "id", "channel_id", "video_id", "title", "video_url", "thumbnail_url", "duration_seconds",
         "view_count", "like_count", "comment_count", "published_at",
-        "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio",
+        "split_enabled", "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio", "crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio",
         "crop_aspect",
         "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha", "subtitle_text_alpha", "video_date_text", "video_date_top", "subscribe_overlay_enabled",
         "is_music_only",
@@ -5065,6 +5065,16 @@ def save_crop_area(video_pk):
     }
     if any(val is None for val in ratios.values()):
         return jsonify(success=False, message="Invalid crop values."), 400
+    split_enabled = (request.form.get("split_enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
+    crop2_ratios = {
+        "crop2_x_ratio": _parse_ratio("crop2_x_ratio"),
+        "crop2_y_ratio": _parse_ratio("crop2_y_ratio"),
+        "crop2_w_ratio": _parse_ratio("crop2_w_ratio"),
+        "crop2_h_ratio": _parse_ratio("crop2_h_ratio"),
+    }
+    has_crop2_values = any(val is not None for val in crop2_ratios.values())
+    if split_enabled and any(val is None for val in crop2_ratios.values()):
+        return jsonify(success=False, message="Invalid split crop values."), 400
 
     def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
         return max(minimum, min(maximum, value))
@@ -5073,6 +5083,23 @@ def save_crop_area(video_pk):
     y_val = _clamp(ratios["crop_y_ratio"])
     w_val = max(0.01, min(1.0 - x_val, _clamp(ratios["crop_w_ratio"])))
     h_val = max(0.01, min(1.0 - y_val, _clamp(ratios["crop_h_ratio"])))
+    crop2_values = {
+        "crop2_x_ratio": None,
+        "crop2_y_ratio": None,
+        "crop2_w_ratio": None,
+        "crop2_h_ratio": None,
+    }
+    if has_crop2_values:
+        crop2_x = _clamp(crop2_ratios["crop2_x_ratio"] or 0.0)
+        crop2_y = _clamp(crop2_ratios["crop2_y_ratio"] or 0.0)
+        crop2_w = max(0.01, min(1.0 - crop2_x, _clamp(crop2_ratios["crop2_w_ratio"] or 0.0)))
+        crop2_h = max(0.01, min(1.0 - crop2_y, _clamp(crop2_ratios["crop2_h_ratio"] or 0.0)))
+        crop2_values = {
+            "crop2_x_ratio": crop2_x,
+            "crop2_y_ratio": crop2_y,
+            "crop2_w_ratio": crop2_w,
+            "crop2_h_ratio": crop2_h,
+        }
 
     conn = get_db()
     try:
@@ -5098,23 +5125,59 @@ def save_crop_area(video_pk):
                     crop_aspect = "landscape"
             except Exception:
                 pass
-        update_sql = """
-            UPDATE youtube_videos
-            SET crop_x_ratio = ?, crop_y_ratio = ?, crop_w_ratio = ?, crop_h_ratio = ?, static_visual_key = ?, background_visual_key = ?, crop_aspect = ?
-            WHERE id = ?
-              AND owner_user_id = ?
-        """
+        update_set_parts = [
+            "split_enabled = ?",
+            "crop_x_ratio = ?",
+            "crop_y_ratio = ?",
+            "crop_w_ratio = ?",
+            "crop_h_ratio = ?",
+        ]
         update_params: List[Any] = [
+            split_enabled,
             x_val,
             y_val,
             w_val,
             h_val,
-            static_visual_key,
-            background_visual_key,
-            crop_aspect,
-            video_pk,
-            current_user.get("id") if current_user else None,
         ]
+        if has_crop2_values:
+            update_set_parts.extend(
+                [
+                    "crop2_x_ratio = ?",
+                    "crop2_y_ratio = ?",
+                    "crop2_w_ratio = ?",
+                    "crop2_h_ratio = ?",
+                ]
+            )
+            update_params.extend(
+                [
+                    crop2_values["crop2_x_ratio"],
+                    crop2_values["crop2_y_ratio"],
+                    crop2_values["crop2_w_ratio"],
+                    crop2_values["crop2_h_ratio"],
+                ]
+            )
+        update_set_parts.extend(
+            [
+                "static_visual_key = ?",
+                "background_visual_key = ?",
+                "crop_aspect = ?",
+            ]
+        )
+        update_sql = f"""
+            UPDATE youtube_videos
+            SET {", ".join(update_set_parts)}
+            WHERE id = ?
+              AND owner_user_id = ?
+        """
+        update_params.extend(
+            [
+                static_visual_key,
+                background_visual_key,
+                crop_aspect,
+                video_pk,
+                current_user.get("id") if current_user else None,
+            ]
+        )
         if "brand_id" in video_columns:
             if brand_id is None:
                 update_sql += "\n AND brand_id IS NULL"
@@ -5134,10 +5197,15 @@ def save_crop_area(video_pk):
     return jsonify(
         success=True,
         crop={
+            "split_enabled": split_enabled,
             "crop_x_ratio": x_val,
             "crop_y_ratio": y_val,
             "crop_w_ratio": w_val,
             "crop_h_ratio": h_val,
+            "crop2_x_ratio": crop2_values["crop2_x_ratio"],
+            "crop2_y_ratio": crop2_values["crop2_y_ratio"],
+            "crop2_w_ratio": crop2_values["crop2_w_ratio"],
+            "crop2_h_ratio": crop2_values["crop2_h_ratio"],
             "static_visual_key": static_visual_key,
             "background_visual_key": background_visual_key,
             "crop_aspect": crop_aspect,

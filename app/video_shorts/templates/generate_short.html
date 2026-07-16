@@ -1447,6 +1447,45 @@
     gap: 12px 16px;
     align-items: center;
   }
+  .crop-split-toggle-wrap.is-hidden {
+    display: none !important;
+  }
+  .cropper-surfaces {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .cropper-surfaces.is-split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cropper-surface {
+    position: relative;
+    min-height: 220px;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .cropper-surface.is-hidden {
+    display: none;
+  }
+  .cropper-surface-label {
+    padding: 8px 10px 0;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.64);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .cropper-surface-image-wrap {
+    position: relative;
+    padding: 10px;
+  }
+  .cropper-surface-image-wrap img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    border-radius: 12px;
+  }
   .crop-preview-selection-note {
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.62);
@@ -1639,10 +1678,15 @@
         data-bs-target="#crop-area-modal"
         data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
         data-preview-url="{{ preview_url or '' }}"
+        data-split-enabled="{{ '1' if video.split_enabled else '0' }}"
         data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
         data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
         data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
         data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+        data-crop2-x="{{ video.crop2_x_ratio if video.crop2_x_ratio is not none else '' }}"
+        data-crop2-y="{{ video.crop2_y_ratio if video.crop2_y_ratio is not none else '' }}"
+        data-crop2-w="{{ video.crop2_w_ratio if video.crop2_w_ratio is not none else '' }}"
+        data-crop2-h="{{ video.crop2_h_ratio if video.crop2_h_ratio is not none else '' }}"
         data-static-visual-key="{{ video_static_visual_key or '' }}"
         data-background-visual-key="{{ video_background_visual_key or '' }}"
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
@@ -1679,10 +1723,15 @@
       data-bs-target="#crop-area-modal"
       data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
       data-preview-url="{{ preview_url or '' }}"
+      data-split-enabled="{{ '1' if video.split_enabled else '0' }}"
       data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
       data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
       data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
       data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+      data-crop2-x="{{ video.crop2_x_ratio if video.crop2_x_ratio is not none else '' }}"
+      data-crop2-y="{{ video.crop2_y_ratio if video.crop2_y_ratio is not none else '' }}"
+      data-crop2-w="{{ video.crop2_w_ratio if video.crop2_w_ratio is not none else '' }}"
+      data-crop2-h="{{ video.crop2_h_ratio if video.crop2_h_ratio is not none else '' }}"
       data-static-visual-key="{{ video_static_visual_key or '' }}"
       data-background-visual-key="{{ video_background_visual_key or '' }}"
       data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
@@ -3011,6 +3060,10 @@
             </details>
             <div class="crop-preview-toggle-row">
               <div class="short-toggle-group">
+              <div class="form-check form-switch crop-split-toggle-wrap is-hidden" id="split-screen-toggle-wrap">
+                <input class="form-check-input" type="checkbox" id="splitScreenToggle">
+                <label class="form-check-label small" for="splitScreenToggle">Split screen (2 boxes)</label>
+              </div>
               {% if brand_subscribe_overlay_available %}
                 <div class="form-check form-switch mb-0">
                   <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
@@ -3035,7 +3088,20 @@
               <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
               <span>Loading frame…</span>
             </div>
-            <img id="cropper-image" src="" alt="Crop preview" />
+            <div class="cropper-surfaces" id="cropper-surfaces">
+              <div class="cropper-surface" id="cropper-surface-top" data-crop-box="top">
+                <div class="cropper-surface-label" id="cropper-surface-top-label">Crop</div>
+                <div class="cropper-surface-image-wrap">
+                  <img id="cropper-image-top" src="" alt="Crop preview top" />
+                </div>
+              </div>
+              <div class="cropper-surface is-hidden" id="cropper-surface-bottom" data-crop-box="bottom">
+                <div class="cropper-surface-label" id="cropper-surface-bottom-label">Bottom</div>
+                <div class="cropper-surface-image-wrap">
+                  <img id="cropper-image-bottom" src="" alt="Crop preview bottom" />
+                </div>
+              </div>
+            </div>
           </div>
           <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
             <div class="small text-muted mb-2">Final Preview</div>
@@ -6867,7 +6933,13 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
 
-  const previewImg = modalEl.querySelector("#cropper-image");
+  const previewImgTop = modalEl.querySelector("#cropper-image-top");
+  const previewImgBottom = modalEl.querySelector("#cropper-image-bottom");
+  const cropperSurfaces = modalEl.querySelector("#cropper-surfaces");
+  const cropperSurfaceTop = modalEl.querySelector("#cropper-surface-top");
+  const cropperSurfaceBottom = modalEl.querySelector("#cropper-surface-bottom");
+  const splitToggleWrap = modalEl.querySelector("#split-screen-toggle-wrap");
+  const splitToggleInput = modalEl.querySelector("#splitScreenToggle");
   const previewLoader = modalEl.querySelector("#cropper-loader");
   const infoEl = modalEl.querySelector("#cropper-info");
   const saveBtn = modalEl.querySelector("#crop-save-btn");
@@ -6905,7 +6977,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const staticVisualStrip = modalEl.querySelector("#static-visual-grid");
   const createdVisualStrip = modalEl.querySelector("#created-visual-grid");
   const podcastAudioCard = modalEl.querySelector("#podcast-audio-card");
-  let cropper = null;
+  const cropperImages = {
+    top: previewImgTop,
+    bottom: previewImgBottom,
+  };
+  const cropperSurfaceMap = {
+    top: cropperSurfaceTop,
+    bottom: cropperSurfaceBottom,
+  };
+  let cropperInstances = {
+    top: null,
+    bottom: null,
+  };
   let naturalSize = { width: 0, height: 0 };
   let latestTrigger = null;
   let activeStaticVisualKey = "";
@@ -6913,6 +6996,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeCropAspect = "landscape";
   let activeVisualMode = "video";
   let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
+  let currentPresetRatiosBottom = { x: 0, y: 0, w: 1, h: 1 };
+  let lastSinglePresetRatios = { x: 0, y: 0, w: 1, h: 1 };
+  let activeSplitEnabled = false;
+  let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
   const clampRatio = (value) => Math.max(0, Math.min(1, Number(value) || 0));
   const showLoader = () => previewLoader?.classList.remove("d-none");
@@ -7310,6 +7397,88 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
+  const getEffectiveSplitEnabled = () => !!(activeSplitEnabled && isPortraitCropAspect() && activeVisualMode === "video");
+  const getActiveCropperBoxes = () => (getEffectiveSplitEnabled() ? ["top", "bottom"] : ["top"]);
+  const getCropperAspectRatio = () => {
+    const dims = getOverlayDims();
+    if (getEffectiveSplitEnabled()) {
+      return dims.width / Math.max(1, dims.height / 2);
+    }
+    return dims.width / Math.max(1, dims.height);
+  };
+  const normalizePresetRatios = (ratios) => {
+    const normalized = {
+      x: clampRatio(ratios?.x),
+      y: clampRatio(ratios?.y),
+      w: clampRatio(ratios?.w),
+      h: clampRatio(ratios?.h),
+    };
+    if (!normalized.w || !normalized.h) {
+      return { x: 0, y: 0, w: 1, h: 1 };
+    }
+    return normalized;
+  };
+  const destroyCropperInstance = (boxKey) => {
+    const instance = cropperInstances[boxKey];
+    if (instance) {
+      instance.destroy();
+      cropperInstances[boxKey] = null;
+    }
+  };
+  const destroyAllCroppers = () => {
+    destroyCropperInstance("top");
+    destroyCropperInstance("bottom");
+  };
+  const buildDefaultSplitPreset = (position) => {
+    const sourceWidth = naturalSize.width || 0;
+    const sourceHeight = naturalSize.height || 0;
+    if (!sourceWidth || !sourceHeight) {
+      return { x: 0, y: 0, w: 0.5, h: 1 };
+    }
+    const aspectRatio = renderFrameWidth / Math.max(1, renderFrameHeight / 2);
+    let cropWidth = sourceWidth / 2;
+    let cropHeight = cropWidth / aspectRatio;
+    if (cropHeight > sourceHeight) {
+      cropHeight = sourceHeight;
+      cropWidth = cropHeight * aspectRatio;
+    }
+    const cropX = position === "right" ? Math.max(0, sourceWidth - cropWidth) : 0;
+    const cropY = Math.max(0, (sourceHeight - cropHeight) / 2);
+    return {
+      x: clampRatio(cropX / sourceWidth),
+      y: clampRatio(cropY / sourceHeight),
+      w: clampRatio(cropWidth / sourceWidth),
+      h: clampRatio(cropHeight / sourceHeight),
+    };
+  };
+  const maybePrimeSplitDefaults = () => {
+    if (!getEffectiveSplitEnabled() || splitDefaultsPrimed) {
+      return;
+    }
+    lastSinglePresetRatios = { ...currentPresetRatios };
+    currentPresetRatios = buildDefaultSplitPreset("left");
+    currentPresetRatiosBottom = buildDefaultSplitPreset("right");
+    splitDefaultsPrimed = true;
+    if (subtitleMarginInput && !dirtyOverlayFields.has("sub_margin")) {
+      updateFieldValue(subtitleMarginInput, 600);
+    }
+  };
+  const updateSplitUiState = () => {
+    const splitAvailable = isPortraitCropAspect() && activeVisualMode === "video";
+    const effectiveSplit = getEffectiveSplitEnabled();
+    splitToggleWrap?.classList.toggle("is-hidden", !splitAvailable);
+    if (splitToggleInput) {
+      splitToggleInput.checked = !!activeSplitEnabled;
+      splitToggleInput.disabled = !splitAvailable;
+    }
+    cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
+    cropperSurfaceTop?.classList.toggle("is-hidden", false);
+    cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit);
+    const topLabel = modalEl.querySelector("#cropper-surface-top-label");
+    if (topLabel) {
+      topLabel.textContent = effectiveSplit ? "Top" : "Crop";
+    }
+  };
   const isPreviewElementDraggable = (kind) => !(kind === "video" && isPortraitCropAspect());
   const updateFieldValue = (field, value, dispatch = true) => {
     if (!field) return;
@@ -7456,17 +7625,13 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCtx.clearRect(0, 0, dims.width, dims.height);
   };
   const resetState = () => {
-    if (cropper) {
-      cropper.destroy();
-      cropper = null;
-    }
+    destroyAllCroppers();
     dragState = null;
     setSelectedPreviewElement("");
     previewFrame?.classList.remove("is-dragging");
     naturalSize = { width: 0, height: 0 };
-    if (previewImg) {
-      previewImg.removeAttribute("src");
-    }
+    previewImgTop?.removeAttribute("src");
+    previewImgBottom?.removeAttribute("src");
     clearPreviewCanvas();
     if (saveBtn) {
       saveBtn.disabled = true;
@@ -7525,10 +7690,7 @@ document.addEventListener("DOMContentLoaded", () => {
     video.src = cacheBustUrl(videoUrl);
   });
   const prepareForSourceLoad = () => {
-    if (cropper) {
-      cropper.destroy();
-      cropper = null;
-    }
+    destroyAllCroppers();
     naturalSize = { width: 0, height: 0 };
     clearPreviewCanvas();
     if (saveBtn) {
@@ -7582,7 +7744,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const loadPreviewImage = (url) => {
-    if (!previewImg) {
+    if (!previewImgTop) {
       updateInfo("Preview target not found.");
       return;
     }
@@ -7592,20 +7754,42 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     prepareForSourceLoad();
     showLoader();
-    previewImg.onload = () => {
-      naturalSize.width = previewImg.naturalWidth || 0;
-      naturalSize.height = previewImg.naturalHeight || 0;
-      hideLoader();
-      initCropper(currentPresetRatios);
-    };
-    previewImg.onerror = () => {
-      hideLoader();
-      updateInfo("Preview image could not be loaded.");
-      if (saveBtn) {
-        saveBtn.disabled = true;
+    const boxesToLoad = getActiveCropperBoxes();
+    let remaining = boxesToLoad.length;
+    let failed = false;
+    const finalizeLoad = () => {
+      remaining -= 1;
+      if (remaining > 0 || failed) {
+        return;
       }
+      naturalSize.width = previewImgTop.naturalWidth || 0;
+      naturalSize.height = previewImgTop.naturalHeight || 0;
+      maybePrimeSplitDefaults();
+      hideLoader();
+      initCroppers();
     };
-    previewImg.src = cacheBustUrl(url);
+    boxesToLoad.forEach((boxKey) => {
+      const img = cropperImages[boxKey];
+      if (!img) {
+        failed = true;
+        hideLoader();
+        updateInfo("Preview image could not be loaded.");
+        return;
+      }
+      img.onload = finalizeLoad;
+      img.onerror = () => {
+        failed = true;
+        hideLoader();
+        updateInfo("Preview image could not be loaded.");
+        if (saveBtn) {
+          saveBtn.disabled = true;
+        }
+      };
+      img.src = cacheBustUrl(url);
+    });
+    if (!boxesToLoad.includes("bottom")) {
+      previewImgBottom?.removeAttribute("src");
+    }
   };
 
   const loadActivePreviewImage = async () => {
@@ -7661,23 +7845,38 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const updateCropInfo = () => {
     const visual = staticVisualMap.get(activeStaticVisualKey) || createdVisualMap.get(activeStaticVisualKey);
-    if (!cropper || !naturalSize.width || !naturalSize.height) {
-      if (visual && activeVisualMode === "static") {
+    const topCropper = cropperInstances.top;
+    if (!topCropper || !naturalSize.width || !naturalSize.height) {
+      if (visual && (activeVisualMode === "static" || activeVisualMode === "podcast")) {
         drawStaticPreview(visual);
       }
       return;
     }
-    const data = cropper.getData(true);
-    if (!data || !Number.isFinite(data.width) || !Number.isFinite(data.height) || data.width <= 0 || data.height <= 0) {
-      return;
+    const updateRatiosForBox = (boxKey) => {
+      const instance = cropperInstances[boxKey];
+      if (!instance) {
+        return;
+      }
+      const data = instance.getData(true);
+      if (!data || !Number.isFinite(data.width) || !Number.isFinite(data.height) || data.width <= 0 || data.height <= 0) {
+        return;
+      }
+      const nextRatios = {
+        x: clampRatio(data.x / naturalSize.width),
+        y: clampRatio(data.y / naturalSize.height),
+        w: clampRatio(data.width / naturalSize.width),
+        h: clampRatio(data.height / naturalSize.height),
+      };
+      if (boxKey === "bottom") {
+        currentPresetRatiosBottom = nextRatios;
+      } else {
+        currentPresetRatios = nextRatios;
+      }
+    };
+    updateRatiosForBox("top");
+    if (getEffectiveSplitEnabled()) {
+      updateRatiosForBox("bottom");
     }
-    const x = clampRatio(data.x / naturalSize.width);
-    const y = clampRatio(data.y / naturalSize.height);
-    const w = clampRatio(data.width / naturalSize.width);
-    const h = clampRatio(data.height / naturalSize.height);
-    currentPresetRatios = { x, y, w, h };
-    const pxWidth = w * naturalSize.width;
-    const pxHeight = h * naturalSize.height;
     if (infoEl) {
       if (visual && activeVisualMode === "created") {
         updateInfo(`Created video ${visual.label}`);
@@ -7691,24 +7890,39 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const drawPreviewFromCropper = () => {
-    if (!cropper || !previewCanvas || !previewCtx) {
+    const topCropper = cropperInstances.top;
+    if (!topCropper || !previewCanvas || !previewCtx) {
       return;
     }
     const dims = getOverlayDims();
     if (!dims.width || !dims.height) {
       return;
     }
-    const snapshot = cropper.getCroppedCanvas({
-      width: dims.width,
-      height: dims.height,
-    });
-    if (!snapshot || !snapshot.width || !snapshot.height) {
-      return;
-    }
     syncPreviewCanvasSize();
     previewCtx.clearRect(0, 0, dims.width, dims.height);
+    const effectiveSplit = getEffectiveSplitEnabled();
+    const topSnapshot = topCropper.getCroppedCanvas({
+      width: dims.width,
+      height: effectiveSplit ? Math.round(dims.height / 2) : dims.height,
+    });
+    if (!topSnapshot || !topSnapshot.width || !topSnapshot.height) {
+      return;
+    }
     try {
-      previewCtx.drawImage(snapshot, 0, 0, dims.width, dims.height);
+      if (!effectiveSplit) {
+        previewCtx.drawImage(topSnapshot, 0, 0, dims.width, dims.height);
+        return;
+      }
+      const bottomCropper = cropperInstances.bottom;
+      const bottomSnapshot = bottomCropper?.getCroppedCanvas({
+        width: dims.width,
+        height: Math.round(dims.height / 2),
+      });
+      const halfHeight = Math.round(dims.height / 2);
+      previewCtx.drawImage(topSnapshot, 0, 0, dims.width, halfHeight);
+      if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
+        previewCtx.drawImage(bottomSnapshot, 0, halfHeight, dims.width, dims.height - halfHeight);
+      }
     } catch (_) {}
   };
 
@@ -7793,6 +8007,7 @@ document.addEventListener("DOMContentLoaded", () => {
         setActiveStaticVisual(firstCreated.dataset.visualKey || "");
       }
     }
+    updateSplitUiState();
   };
   const setActiveBackground = (key, options = {}) => {
     const { persistPreference = false, closePicker = false } = options;
@@ -7829,8 +8044,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     applyPreviewLayout();
     syncPreviewCanvasSize();
-    if (cropper) {
-      initCropper(currentPresetRatios);
+    updateSplitUiState();
+    if (cropperInstances.top) {
+      if (getEffectiveSplitEnabled()) {
+        maybePrimeSplitDefaults();
+      }
+      initCroppers();
     } else {
       drawPreviewFromCropper();
     }
@@ -7967,17 +8186,14 @@ document.addEventListener("DOMContentLoaded", () => {
   loadPodcastAudios();
   loadPodcastShortClips();
 
-  const initCropper = (presets) => {
+  const initCropperInstance = (boxKey, presets) => {
+    const previewImg = cropperImages[boxKey];
     if (!previewImg || !previewImg.naturalWidth) {
       return;
     }
-    if (cropper) {
-      cropper.destroy();
-    }
-    const dims = getOverlayDims();
-    const overlayAspectRatio = dims.width / dims.height;
-    cropper = new Cropper(previewImg, {
-      aspectRatio: overlayAspectRatio,
+    destroyCropperInstance(boxKey);
+    cropperInstances[boxKey] = new Cropper(previewImg, {
+      aspectRatio: getCropperAspectRatio(),
       viewMode: 1,
       dragMode: "move",
       background: false,
@@ -7986,7 +8202,8 @@ document.addEventListener("DOMContentLoaded", () => {
         naturalSize.width = previewImg.naturalWidth;
         naturalSize.height = previewImg.naturalHeight;
         const applyPreset = (ratio) => {
-          if (!ratio || !cropper) return;
+          const instance = cropperInstances[boxKey];
+          if (!ratio || !instance) return;
           const presetW = clampRatio(ratio.w);
           const presetH = clampRatio(ratio.h);
           if (!presetW || !presetH) {
@@ -7998,7 +8215,7 @@ document.addEventListener("DOMContentLoaded", () => {
             width: presetW * naturalSize.width,
             height: presetH * naturalSize.height,
           };
-          cropper.setData(data);
+          instance.setData(data);
         };
         applyPreset(presets);
         if (saveBtn) {
@@ -8011,6 +8228,33 @@ document.addEventListener("DOMContentLoaded", () => {
       },
     });
   };
+  const initCroppers = () => {
+    const effectiveSplit = getEffectiveSplitEnabled();
+    updateSplitUiState();
+    initCropperInstance("top", currentPresetRatios);
+    if (effectiveSplit) {
+      initCropperInstance("bottom", currentPresetRatiosBottom);
+    } else {
+      destroyCropperInstance("bottom");
+    }
+  };
+
+  splitToggleInput?.addEventListener("change", () => {
+    const wasEnabled = activeSplitEnabled;
+    activeSplitEnabled = !!splitToggleInput.checked;
+    if (activeSplitEnabled && !wasEnabled) {
+      maybePrimeSplitDefaults();
+    }
+    if (!activeSplitEnabled && wasEnabled && lastSinglePresetRatios) {
+      currentPresetRatios = normalizePresetRatios(lastSinglePresetRatios);
+    }
+    updateSplitUiState();
+    if (naturalSize.width && naturalSize.height) {
+      initCroppers();
+    } else {
+      drawPreviewFromCropper();
+    }
+  });
 
   modalEl.addEventListener("show.bs.modal", (event) => {
     const trigger = event?.relatedTarget;
@@ -8034,6 +8278,19 @@ document.addEventListener("DOMContentLoaded", () => {
       presetRatios.h = 1;
     }
     currentPresetRatios = presetRatios;
+    lastSinglePresetRatios = { ...presetRatios };
+    currentPresetRatiosBottom = normalizePresetRatios({
+      x: trigger.dataset.crop2X,
+      y: trigger.dataset.crop2Y,
+      w: trigger.dataset.crop2W,
+      h: trigger.dataset.crop2H,
+    });
+    const hasStoredCrop2 = ["crop2X", "crop2Y", "crop2W", "crop2H"].some(
+      (key) => String(trigger.dataset[key] || "").trim() !== ""
+    );
+    activeSplitEnabled = (trigger.dataset.splitEnabled || "").toLowerCase() === "1"
+      || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
+    splitDefaultsPrimed = hasStoredCrop2;
     resetState();
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
@@ -8059,6 +8316,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setVisualMode("video");
     }
     rememberLoadedOverlayFieldValues();
+    updateSplitUiState();
     loadActivePreviewImage();
   });
 
@@ -8122,7 +8380,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   saveBtn?.addEventListener("click", async () => {
-    if (!cropper || !naturalSize.width || !naturalSize.height) {
+    if (!cropperInstances.top || !naturalSize.width || !naturalSize.height) {
       return;
     }
     setSaveStatus("", "");
@@ -8134,11 +8392,21 @@ document.addEventListener("DOMContentLoaded", () => {
       setSaveStatus(err.message || "Settings save failed", "danger");
       return;
     }
-    const data = cropper.getData(true);
+    const data = cropperInstances.top.getData(true);
     const xRatio = clampRatio(data.x / naturalSize.width);
     const yRatio = clampRatio(data.y / naturalSize.height);
     const wRatio = clampRatio(data.width / naturalSize.width);
     const hRatio = clampRatio(data.height / naturalSize.height);
+    const effectiveSplit = getEffectiveSplitEnabled();
+    const bottomData = effectiveSplit ? cropperInstances.bottom?.getData(true) : null;
+    const crop2Ratios = bottomData && naturalSize.width && naturalSize.height
+      ? {
+          x: clampRatio(bottomData.x / naturalSize.width),
+          y: clampRatio(bottomData.y / naturalSize.height),
+          w: clampRatio(bottomData.width / naturalSize.width),
+          h: clampRatio(bottomData.height / naturalSize.height),
+        }
+      : null;
     const saveUrl = modalEl.dataset.saveUrl || chooseBtn?.dataset.saveUrl;
     if (!saveUrl) {
       updateInfo("Save endpoint not configured.");
@@ -8149,6 +8417,13 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("crop_y_ratio", yRatio.toFixed(6));
     params.append("crop_w_ratio", wRatio.toFixed(6));
     params.append("crop_h_ratio", hRatio.toFixed(6));
+    params.append("split_enabled", effectiveSplit ? "1" : "0");
+    if (effectiveSplit && crop2Ratios) {
+      params.append("crop2_x_ratio", crop2Ratios.x.toFixed(6));
+      params.append("crop2_y_ratio", crop2Ratios.y.toFixed(6));
+      params.append("crop2_w_ratio", crop2Ratios.w.toFixed(6));
+      params.append("crop2_h_ratio", crop2Ratios.h.toFixed(6));
+    }
     params.append("static_visual_key", activeStaticVisualKey || "");
     params.append("background_visual_key", activeBackgroundKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
@@ -8199,11 +8474,21 @@ document.addEventListener("DOMContentLoaded", () => {
         latestTrigger.dataset.cropY = yRatio;
         latestTrigger.dataset.cropW = wRatio;
         latestTrigger.dataset.cropH = hRatio;
+        latestTrigger.dataset.splitEnabled = effectiveSplit ? "1" : "0";
+        latestTrigger.dataset.crop2X = crop2Ratios ? crop2Ratios.x : "";
+        latestTrigger.dataset.crop2Y = crop2Ratios ? crop2Ratios.y : "";
+        latestTrigger.dataset.crop2W = crop2Ratios ? crop2Ratios.w : "";
+        latestTrigger.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
         latestTrigger.dataset.staticVisualKey = activeStaticVisualKey || "";
         latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
         latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
       }
       if (chooseBtn) {
+        chooseBtn.dataset.splitEnabled = effectiveSplit ? "1" : "0";
+        chooseBtn.dataset.crop2X = crop2Ratios ? crop2Ratios.x : "";
+        chooseBtn.dataset.crop2Y = crop2Ratios ? crop2Ratios.y : "";
+        chooseBtn.dataset.crop2W = crop2Ratios ? crop2Ratios.w : "";
+        chooseBtn.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
         chooseBtn.dataset.staticVisualKey = activeStaticVisualKey || "";
         chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
