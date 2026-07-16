@@ -8270,6 +8270,10 @@ document.addEventListener("DOMContentLoaded", () => {
       currentPresetRatios = normalizePresetRatios(lastSinglePresetRatios);
     }
     updateSplitUiState();
+    if (getEffectiveSplitEnabled() && (!previewImgBottom?.getAttribute("src") || !previewImgBottom?.naturalWidth)) {
+      loadActivePreviewImage();
+      return;
+    }
     if (naturalSize.width && naturalSize.height) {
       initCroppers();
     } else {

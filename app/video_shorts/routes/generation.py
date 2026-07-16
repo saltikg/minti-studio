@@ -1009,18 +1009,21 @@ def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
     try:
         video_meta = _build_video_meta_map_for_storage(conn)
         short_meta = _build_short_clip_meta(video_meta)
-        rows = conn.execute(
-            """
+        sql = """
             SELECT file_key, file_path, updated_at
             FROM shorts_storage_assets
             WHERE user_id = ?
               AND file_type = 'short'
-              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
               AND (status = 'active' OR status IS NULL)
-            ORDER BY updated_at DESC
-            """,
-            [user_id, brand_id, brand_id],
-        ).fetchall()
+        """
+        params: List[Any] = [user_id]
+        if brand_id is None:
+            sql += "\n  AND brand_id IS NULL"
+        else:
+            sql += "\n  AND brand_id = ?"
+            params.append(brand_id)
+        sql += "\nORDER BY updated_at DESC"
+        rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
     options: List[Dict[str, Any]] = []
@@ -1061,17 +1064,20 @@ def _resolve_user_short_clip_source_paths(user_id: str, clip_ids: List[str], max
     brand_id = current_brand_id()
     conn = get_db_readonly()
     try:
-        rows = conn.execute(
-            f"""
+        sql = f"""
             SELECT file_key, file_path
             FROM shorts_storage_assets
             WHERE user_id = ?
               AND file_type = 'short'
-              AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
-              AND file_key IN ({placeholders})
-            """,
-            [user_id, brand_id, brand_id, *deduped],
-        ).fetchall()
+        """
+        params: List[Any] = [user_id]
+        if brand_id is None:
+            sql += "\n  AND brand_id IS NULL"
+        else:
+            sql += "\n  AND brand_id = ?"
+            params.append(brand_id)
+        sql += f"\n  AND file_key IN ({placeholders})"
+        rows = conn.execute(sql, [*params, *deduped]).fetchall()
     finally:
         conn.close()
     by_key = {str(file_key): str(file_path or "") for file_key, file_path in rows}
@@ -1142,27 +1148,30 @@ def list_podcast_audios():
                 FROM youtube_videos v
                 WHERE a.brand_id IS NULL
                   AND a.user_id = ?
-                  AND a.file_key LIKE 'podcast_audio:%'
+                  AND a.file_key LIKE ?
                   AND v.owner_user_id = ?
                   AND COALESCE(v.podcast_audio_filename, '') <> ''
                   AND a.file_key = ('podcast_audio:' || CAST(v.owner_user_id AS VARCHAR) || ':' || v.podcast_audio_filename)
                   AND v.brand_id IS NOT NULL
                 """,
-                [user_id, user_id],
+                [user_id, "podcast_audio:%", user_id],
             )
             conn.commit()
         except Exception:
             pass
-        rows = conn.execute(
-            """
+        sql = """
             SELECT file_key, label
             FROM shorts_storage_assets
             WHERE user_id = ?
-              AND (? IS NULL OR brand_id = ?)
-              AND file_key LIKE 'podcast_audio:%'
-            """,
-            [user_id, brand_id, brand_id],
-        ).fetchall()
+              AND file_key LIKE ?
+        """
+        params: List[Any] = [user_id, "podcast_audio:%"]
+        if brand_id is None:
+            sql += "\n  AND brand_id IS NULL"
+        else:
+            sql += "\n  AND brand_id = ?"
+            params.append(brand_id)
+        rows = conn.execute(sql, params).fetchall()
         for file_key, label in rows:
             key = str(file_key or "").strip()
             if not key:
