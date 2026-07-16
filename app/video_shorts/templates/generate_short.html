@@ -7907,18 +7907,20 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     syncPreviewCanvasSize();
-    previewCtx.clearRect(0, 0, dims.width, dims.height);
+    const canvasWidth = previewCanvas.width || dims.width;
+    const canvasHeight = previewCanvas.height || dims.height;
+    previewCtx.clearRect(0, 0, canvasWidth, canvasHeight);
     const effectiveSplit = getEffectiveSplitEnabled();
     const topSnapshot = topCropper.getCroppedCanvas({
-      width: dims.width,
-      height: effectiveSplit ? Math.round(dims.height / 2) : dims.height,
+      width: canvasWidth,
+      height: effectiveSplit ? Math.floor(canvasHeight / 2) : canvasHeight,
     });
     if (!topSnapshot || !topSnapshot.width || !topSnapshot.height) {
       return;
     }
     try {
       if (!effectiveSplit) {
-        previewCtx.drawImage(topSnapshot, 0, 0, dims.width, dims.height);
+        previewCtx.drawImage(topSnapshot, 0, 0, canvasWidth, canvasHeight);
         return;
       }
       const bottomCropper = cropperInstances.bottom;
@@ -7926,16 +7928,22 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const bottomSnapshot = bottomCropper?.getCroppedCanvas({
-        width: dims.width,
-        height: Math.round(dims.height / 2),
+        width: canvasWidth,
+        height: Math.floor(canvasHeight / 2),
       });
-      const halfHeight = Math.round(dims.height / 2);
+      const halfHeight = Math.floor(canvasHeight / 2);
+      const bottomHeight = canvasHeight - halfHeight;
+      previewCtx.save();
+      previewCtx.beginPath();
+      previewCtx.rect(0, 0, canvasWidth, canvasHeight);
+      previewCtx.clip();
       previewCtx.fillStyle = "#1f1f1f";
-      previewCtx.fillRect(0, 0, dims.width, dims.height);
-      previewCtx.drawImage(topSnapshot, 0, 0, dims.width, halfHeight);
+      previewCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+      previewCtx.drawImage(topSnapshot, 0, 0, canvasWidth, halfHeight);
       if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
-        previewCtx.drawImage(bottomSnapshot, 0, halfHeight, dims.width, dims.height - halfHeight);
+        previewCtx.drawImage(bottomSnapshot, 0, halfHeight, canvasWidth, bottomHeight);
       }
+      previewCtx.restore();
     } catch (_) {}
   };
 
