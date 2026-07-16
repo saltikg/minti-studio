@@ -1212,6 +1212,7 @@ def _compose_trimmed_with_background(
         split_tile_height -= split_tile_height % 2
         split_seam_y = int(target_height / 2)
         split_divider_thickness = 6
+        split_divider_outline_thickness = 1
         filter_parts.extend(
             [
                 "[1:v]split=2[split_top_src][split_bottom_src]",
@@ -1230,7 +1231,15 @@ def _compose_trimmed_with_background(
                 "[top][bottom]vstack=inputs=2[clip_stack]",
                 (
                     f"[clip_stack]drawbox=x=0:y={split_seam_y}-{split_divider_thickness}/2:"
-                    f"w={target_width}:h={split_divider_thickness}:color=white@1.0:t=fill[clip_stack_div]"
+                    f"w={target_width}:h={split_divider_thickness}:color=white@1.0:t=fill[clip_stack_div_base]"
+                ),
+                (
+                    f"[clip_stack_div_base]drawbox=x=0:y={split_seam_y}-{split_divider_thickness}/2-{split_divider_outline_thickness}:"
+                    f"w={target_width}:h={split_divider_outline_thickness}:color=black@1.0:t=fill[clip_stack_div_top]"
+                ),
+                (
+                    f"[clip_stack_div_top]drawbox=x=0:y={split_seam_y}+{split_divider_thickness}/2:"
+                    f"w={target_width}:h={split_divider_outline_thickness}:color=black@1.0:t=fill[clip_stack_div]"
                 ),
                 "[bg][clip_stack_div]overlay=(W-w)/2:0:shortest=1[ov]",
             ]

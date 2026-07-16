@@ -8018,6 +8018,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const dividerThickness = 6 * overlayScale;
+      const dividerOutlineThickness = Math.max(1, Math.round(overlayScale));
       const bottomSnapshot = bottomCropper?.getCroppedCanvas({
         width: canvasWidth,
         height: Math.floor(canvasHeight / 2),
@@ -8034,8 +8035,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
         previewCtx.drawImage(bottomSnapshot, 0, halfHeight, canvasWidth, bottomHeight);
       }
+      previewCtx.fillStyle = "#000000";
+      previewCtx.fillRect(0, halfHeight - (dividerThickness / 2) - dividerOutlineThickness, canvasWidth, dividerOutlineThickness);
       previewCtx.fillStyle = "#ffffff";
       previewCtx.fillRect(0, halfHeight - (dividerThickness / 2), canvasWidth, dividerThickness);
+      previewCtx.fillStyle = "#000000";
+      previewCtx.fillRect(0, halfHeight + (dividerThickness / 2), canvasWidth, dividerOutlineThickness);
       previewCtx.restore();
     } catch (_) {}
   };
