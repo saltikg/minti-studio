@@ -1210,6 +1210,8 @@ def _compose_trimmed_with_background(
         split_tile_width = target_width
         split_tile_height = max(2, int(target_height / 2))
         split_tile_height -= split_tile_height % 2
+        split_seam_y = int(target_height / 2)
+        split_divider_thickness = 6
         filter_parts.extend(
             [
                 "[1:v]split=2[split_top_src][split_bottom_src]",
@@ -1226,7 +1228,11 @@ def _compose_trimmed_with_background(
                     "setpts=PTS-STARTPTS[bottom]"
                 ),
                 "[top][bottom]vstack=inputs=2[clip_stack]",
-                "[bg][clip_stack]overlay=(W-w)/2:0:shortest=1[ov]",
+                (
+                    f"[clip_stack]drawbox=x=0:y={split_seam_y}-{split_divider_thickness}/2:"
+                    f"w={target_width}:h={split_divider_thickness}:color=white@1.0:t=fill[clip_stack_div]"
+                ),
+                "[bg][clip_stack_div]overlay=(W-w)/2:0:shortest=1[ov]",
             ]
         )
     else:

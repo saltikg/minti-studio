@@ -1225,6 +1225,18 @@
     color: rgba(255, 255, 255, 0.62);
     font-variant-numeric: tabular-nums;
   }
+  .clip-rail-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 18px;
+    font-size: 0.76rem;
+    line-height: 1.25;
+  }
+  .clip-rail-status .spinner-border {
+    width: 0.8rem;
+    height: 0.8rem;
+  }
   .clip-rail-detail {
     margin-top: 0;
     padding: 2px 8px 10px;
@@ -1973,10 +1985,14 @@
                     <span class="clip-rail-copy">
                       <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
                       <span class="clip-rail-meta">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                      <span class="clip-rail-status d-none text-white-50" aria-live="polite">
+                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        <span class="clip-rail-status-text"></span>
+                      </span>
                       <span class="clip-rail-platforms">
                         {% if row.publish_display %}
                           {% if row.publish_status == "published" %}
-                            {% set rail_yt_icon_class = "text-success" %}
+                          {% set rail_yt_icon_class = "text-success" %}
                           {% elif row.publish_status == "scheduled" %}
                             {% set rail_yt_icon_class = "text-warning" %}
                           {% else %}
@@ -5395,6 +5411,73 @@ const getGenerateUiParts = (card) => {
   };
 };
 
+const getPlanIndexFromCard = (card) => {
+  if (!card) {
+    return "";
+  }
+  return String(
+    card.dataset.planIndex ||
+    card.querySelector("input[name='plan_index']")?.value ||
+    "",
+  ).trim();
+};
+
+const getRailUiParts = (target) => {
+  const planIndex =
+    typeof target === "string" || typeof target === "number"
+      ? String(target || "").trim()
+      : getPlanIndexFromCard(target);
+  if (!planIndex) {
+    return {
+      railItem: null,
+      status: null,
+      statusText: null,
+      spinner: null,
+    };
+  }
+  const railItem = document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(planIndex)}"]`);
+  return {
+    railItem,
+    status: railItem?.querySelector(".clip-rail-status"),
+    statusText: railItem?.querySelector(".clip-rail-status-text"),
+    spinner: railItem?.querySelector(".clip-rail-status .spinner-border"),
+  };
+};
+
+const setRailFeedbackState = (
+  target,
+  {
+    message = "",
+    tone = "text-white-50",
+    busy = false,
+    showSpinner = busy && !prefersReducedMotion,
+    html = false,
+  } = {},
+) => {
+  const { status, statusText, spinner } = getRailUiParts(target);
+  if (!status || !statusText) {
+    return;
+  }
+  const hasMessage = !!String(message || "").trim();
+  status.classList.toggle("d-none", !hasMessage);
+  status.classList.remove(
+    "text-success",
+    "text-danger",
+    "text-warning",
+    "text-white",
+    "text-white-50",
+  );
+  status.classList.add(tone);
+  if (spinner) {
+    spinner.classList.toggle("d-none", !hasMessage || !showSpinner);
+  }
+  if (html) {
+    statusText.innerHTML = hasMessage ? message : "";
+  } else {
+    statusText.textContent = hasMessage ? message : "";
+  }
+};
+
 const clearClipNotice = (card) => {
   card?.querySelectorAll(".clip-card-inline-note").forEach((el) => el.remove());
 };
@@ -5439,6 +5522,13 @@ const setClipFeedbackState = (
   if (spinner) {
     spinner.classList.toggle("d-none", !showSpinner);
   }
+  setRailFeedbackState(card, {
+    message,
+    tone,
+    busy,
+    showSpinner,
+    html,
+  });
   if (!feedback) {
     return;
   }
@@ -7927,6 +8017,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!bottomCropper) {
         return;
       }
+      const dividerThickness = 6 * overlayScale;
       const bottomSnapshot = bottomCropper?.getCroppedCanvas({
         width: canvasWidth,
         height: Math.floor(canvasHeight / 2),
@@ -7943,6 +8034,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
         previewCtx.drawImage(bottomSnapshot, 0, halfHeight, canvasWidth, bottomHeight);
       }
+      previewCtx.fillStyle = "#ffffff";
+      previewCtx.fillRect(0, halfHeight - (dividerThickness / 2), canvasWidth, dividerThickness);
       previewCtx.restore();
     } catch (_) {}
   };
