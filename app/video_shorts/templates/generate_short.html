@@ -7755,38 +7755,46 @@ document.addEventListener("DOMContentLoaded", () => {
     prepareForSourceLoad();
     showLoader();
     const boxesToLoad = getActiveCropperBoxes();
-    let remaining = boxesToLoad.length;
-    let failed = false;
-    const finalizeLoad = () => {
-      remaining -= 1;
-      if (remaining > 0 || failed) {
+    const resolvedUrl = cacheBustUrl(url);
+    const loadImageIntoSurface = (img) => new Promise((resolve, reject) => {
+      if (!img) {
+        reject(new Error("Preview image target not found."));
         return;
+      }
+      img.onload = () => {
+        img.onload = null;
+        img.onerror = null;
+        resolve(img);
+      };
+      img.onerror = () => {
+        img.onload = null;
+        img.onerror = null;
+        reject(new Error("Preview image could not be loaded."));
+      };
+      img.src = resolvedUrl;
+    });
+    Promise.all(boxesToLoad.map((boxKey) => loadImageIntoSurface(cropperImages[boxKey])))
+      .then(() => {
+      const hasAllNaturalSizes = boxesToLoad.every((boxKey) => {
+        const img = cropperImages[boxKey];
+        return !!(img && img.naturalWidth && img.naturalHeight);
+      });
+      if (!hasAllNaturalSizes) {
+        throw new Error("Preview image could not be loaded.");
       }
       naturalSize.width = previewImgTop.naturalWidth || 0;
       naturalSize.height = previewImgTop.naturalHeight || 0;
       maybePrimeSplitDefaults();
       hideLoader();
       initCroppers();
-    };
-    boxesToLoad.forEach((boxKey) => {
-      const img = cropperImages[boxKey];
-      if (!img) {
-        failed = true;
+    })
+      .catch((error) => {
         hideLoader();
-        updateInfo("Preview image could not be loaded.");
-        return;
-      }
-      img.onload = finalizeLoad;
-      img.onerror = () => {
-        failed = true;
-        hideLoader();
-        updateInfo("Preview image could not be loaded.");
+        updateInfo(error.message || "Preview image could not be loaded.");
         if (saveBtn) {
           saveBtn.disabled = true;
         }
-      };
-      img.src = cacheBustUrl(url);
-    });
+      });
     if (!boxesToLoad.includes("bottom")) {
       previewImgBottom?.removeAttribute("src");
     }
@@ -7914,11 +7922,16 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const bottomCropper = cropperInstances.bottom;
+      if (!bottomCropper) {
+        return;
+      }
       const bottomSnapshot = bottomCropper?.getCroppedCanvas({
         width: dims.width,
         height: Math.round(dims.height / 2),
       });
       const halfHeight = Math.round(dims.height / 2);
+      previewCtx.fillStyle = "#1f1f1f";
+      previewCtx.fillRect(0, 0, dims.width, dims.height);
       previewCtx.drawImage(topSnapshot, 0, 0, dims.width, halfHeight);
       if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
         previewCtx.drawImage(bottomSnapshot, 0, halfHeight, dims.width, dims.height - halfHeight);
@@ -8230,6 +8243,14 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const initCroppers = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
+    const activeBoxes = getActiveCropperBoxes();
+    const allImagesReady = activeBoxes.every((boxKey) => {
+      const img = cropperImages[boxKey];
+      return !!(img && img.naturalWidth && img.naturalHeight);
+    });
+    if (!allImagesReady) {
+      return;
+    }
     updateSplitUiState();
     initCropperInstance("top", currentPresetRatios);
     if (effectiveSplit) {
