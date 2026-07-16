@@ -3037,11 +3037,11 @@
               <summary>Advanced</summary>
               <div class="crop-preview-advanced-body">
                 <div class="crop-preview-advanced-grid">
-                  <div class="input-group-inline compact">
+                  <div class="input-group-inline compact" data-preview-control="title">
                     <span>Top spacing</span>
                     <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
                   </div>
-                  <div class="input-group-inline compact">
+                  <div class="input-group-inline compact" data-preview-control="subtitle">
                     <span>Bottom spacing</span>
                     <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
                   </div>
@@ -3086,6 +3086,14 @@
                   <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
                 </div>
               {% endif %}
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
+                <label class="form-check-label small" for="showTitleToggle">Show title</label>
+              </div>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
+                <label class="form-check-label small" for="showSubtitleToggle">Show subtitles</label>
+              </div>
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
                 <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
@@ -7129,9 +7137,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitleFontSizeInput = settingsContainer?.querySelector('[name="sub_font_size"]');
   const titleMarginInput = settingsContainer?.querySelector('[name="title_margin"]');
   const subtitleMarginInput = settingsContainer?.querySelector('[name="sub_margin"]');
+  const showTitleToggle = settingsContainer?.querySelector('[name="show_title"]');
+  const showSubtitleToggle = settingsContainer?.querySelector('[name="show_subtitle"]');
   const videoOverlayOffsetInput = settingsContainer?.querySelector('[name="video_overlay_offset"]');
   const videoDateTopInput = settingsContainer?.querySelector('[name="video_date_top"]');
   const videoDateTextInput = settingsContainer?.querySelector('[name="video_date_text"]');
+  const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
+  const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
   let selectedPreviewElement = "";
   let dragState = null;
   const podcastAudioState = {
@@ -7488,6 +7500,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
   const getEffectiveSplitEnabled = () => !!(activeSplitEnabled && isPortraitCropAspect() && activeVisualMode === "video");
+  const isTitleVisible = () => !!showTitleToggle?.checked;
+  const isSubtitleVisible = () => !!showSubtitleToggle?.checked;
   const getActiveCropperBoxes = () => (getEffectiveSplitEnabled() ? ["top", "bottom"] : ["top"]);
   const getCropperAspectRatio = () => {
     const dims = getOverlayDims();
@@ -7553,6 +7567,19 @@ document.addEventListener("DOMContentLoaded", () => {
       updateFieldValue(subtitleMarginInput, 600);
     }
   };
+  const syncOverlayVisibilityUi = () => {
+    const titleVisible = isTitleVisible();
+    const subtitleVisible = isSubtitleVisible();
+    previewTitle?.classList.toggle("is-hidden", !titleVisible);
+    previewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
+    previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
+    previewToolbarSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
+    titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
+    subtitleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !subtitleVisible));
+    if ((selectedPreviewElement === "title" && !titleVisible) || (selectedPreviewElement === "subtitle" && !subtitleVisible)) {
+      setSelectedPreviewElement("");
+    }
+  };
   const updateSplitUiState = () => {
     const splitAvailable = isPortraitCropAspect() && activeVisualMode === "video";
     const effectiveSplit = getEffectiveSplitEnabled();
@@ -7582,6 +7609,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const setSelectedPreviewElement = (kind) => {
+    if ((kind === "title" && !isTitleVisible()) || (kind === "subtitle" && !isSubtitleVisible())) {
+      kind = "";
+    }
     selectedPreviewElement = (kind === "video" && !isPreviewElementDraggable("video")) ? "" : (kind || "");
     const isTitle = selectedPreviewElement === "title";
     const isSubtitle = selectedPreviewElement === "subtitle";
@@ -7681,6 +7711,7 @@ document.addEventListener("DOMContentLoaded", () => {
       previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
     }
     if (previewTitle) {
+      previewTitle.classList.toggle("is-hidden", !isTitleVisible());
       previewTitle.style.top = titleTop * overlayScale + "px";
       previewTitle.style.height = previewConfig.titleHeight * overlayScale + "px";
       previewTitle.style.fontSize = titleFontSize * overlayScale + "px";
@@ -7699,10 +7730,12 @@ document.addEventListener("DOMContentLoaded", () => {
       previewDate.classList.toggle("is-hidden", !dateText);
     }
     if (previewSubtitle) {
+      previewSubtitle.classList.toggle("is-hidden", !isSubtitleVisible());
       previewSubtitle.style.top = subtitleTop * overlayScale + "px";
       previewSubtitle.style.height = previewConfig.subtitleHeight * overlayScale + "px";
       previewSubtitle.style.fontSize = subtitleFontSize * overlayScale + "px";
     }
+    syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
       setSelectedPreviewElement("");
     }
@@ -8174,8 +8207,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput].forEach((field) => {
+  [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
     field?.addEventListener("input", () => {
+      markOverlayFieldDirty(field);
+      applyPreviewLayout();
+    });
+    field?.addEventListener("change", () => {
       markOverlayFieldDirty(field);
       applyPreviewLayout();
     });
@@ -8471,6 +8508,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const subscribeToggle = settingsContainer.querySelector(`[name="enable_subscribe_overlay"]`);
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
+    }
+    const showTitleField = settingsContainer.querySelector(`[name="show_title"]`);
+    if (showTitleField) {
+      params.set("show_title", showTitleField.checked ? "1" : "0");
+    }
+    const showSubtitleField = settingsContainer.querySelector(`[name="show_subtitle"]`);
+    if (showSubtitleField) {
+      params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
     }
     const musicOnlyToggle = settingsContainer.querySelector(`[name="is_music_only"]`);
     if (musicOnlyToggle) {

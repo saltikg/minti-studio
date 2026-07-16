@@ -546,6 +546,8 @@ def _compose_trimmed_with_background(
     video_date_top: Optional[int] = None,
     subscribe_overlay_enabled: bool = False,
     subscribe_overlay_path: Optional[Path] = None,
+    show_title: bool = True,
+    show_subtitle: bool = True,
     crop_settings: Optional[Dict[str, float]] = None,
     video_override_source: Optional[Path] = None,
     audio_override_source: Optional[Path] = None,
@@ -608,6 +610,7 @@ def _compose_trimmed_with_background(
             target_height = PODCAST_LANDSCAPE_HEIGHT
         title_txt = _sanitize_text_for_overlay(title or "", 140)
         title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
+        effective_subtitle_path = subtitle_path if show_subtitle else None
         final_label = "[base]"
         filter_parts = [
             f"[0:v]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
@@ -653,7 +656,7 @@ def _compose_trimmed_with_background(
                     f"[pod_ov_tmp][pod_ov1]overlay={right_x}:(H-h)/2:shortest=1[pod_ov_out]"
                 )
                 final_label = "[pod_ov_out]"
-        if title_txt:
+        if show_title and title_txt:
             test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
             box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
@@ -672,7 +675,7 @@ def _compose_trimmed_with_background(
                 "[ov_title]"
             )
             final_label = "[ov_title]"
-        if subtitle_path:
+        if effective_subtitle_path:
             style = _subtitle_force_style(
                 target_width=target_width,
                 target_height=target_height,
@@ -685,7 +688,7 @@ def _compose_trimmed_with_background(
                 subtitle_bg_alpha=subtitle_bg_alpha,
             )
             filter_parts.append(
-                f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
+                f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
             )
             final_label = "[subout]"
         if video_date_text:
@@ -1143,6 +1146,7 @@ def _compose_trimmed_with_background(
     # Step 2: overlay trimmed onto background
     title_txt = _sanitize_text_for_overlay(title or "", 140)
     title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
+    effective_subtitle_path = subtitle_path if show_subtitle else None
     try:
         safe_title_line_spacing_main = int(title_line_spacing if title_line_spacing is not None else -4)
     except (TypeError, ValueError):
@@ -1259,7 +1263,7 @@ def _compose_trimmed_with_background(
         )
         overlay_y_expr = "0" if podcast_mode else _overlay_y_expr(
             overlay_top_offset,
-            subtitle_path,
+            effective_subtitle_path,
             subtitle_margin,
             subtitle_font_size,
         )
@@ -1274,7 +1278,7 @@ def _compose_trimmed_with_background(
     overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
     base_filter_len = len(filter_parts)
     base_final_label = final_label
-    if title_txt:
+    if show_title and title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
         title_test_y = _title_visual_y(title_margin, title_font_size)
@@ -1298,7 +1302,7 @@ def _compose_trimmed_with_background(
         final_label = "[ov_title_debug]"
 
 
-    if subtitle_path:
+    if effective_subtitle_path:
         style = _subtitle_force_style(
             target_width=target_width,
             target_height=target_height,
@@ -1311,7 +1315,7 @@ def _compose_trimmed_with_background(
             subtitle_bg_alpha=subtitle_bg_alpha,
         )
         filter_parts.append(
-            f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
+            f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
         )
         final_label = "[subout]"
     current_app.logger.info("video_date_text=%r", video_date_text)

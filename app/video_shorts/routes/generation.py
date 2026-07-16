@@ -2581,6 +2581,8 @@ def _build_render_job_options(
     subtitle_text_alpha: Optional[int],
     date_text: Optional[str],
     date_top: Optional[int],
+    show_title: bool,
+    show_subtitle: bool,
     subscribe_overlay: bool,
     is_music_only: bool,
     static_visual_key: Optional[str],
@@ -2613,6 +2615,8 @@ def _build_render_job_options(
         "subtitle_text_alpha": subtitle_text_alpha,
         "date_text": date_text,
         "date_top": date_top,
+        "show_title": bool(show_title),
+        "show_subtitle": bool(show_subtitle),
         "subscribe_overlay": bool(subscribe_overlay),
         "is_music_only": bool(is_music_only),
         "static_visual_key": static_visual_key,
@@ -3944,6 +3948,8 @@ def generate_short(video_pk):
     session["vs_subscribe_overlay"] = (
         video_subscribe_overlay if video_subscribe_overlay is not None else True
     )
+    session["vs_show_title"] = video_show_title if video_show_title is not None else True
+    session["vs_show_subtitle"] = video_show_subtitle if video_show_subtitle is not None else True
     session["vs_video_overlay_offset"] = video_overlay_offset
 
     selected_sub_font = video_sub_font_key
@@ -3968,6 +3974,8 @@ def generate_short(video_pk):
     selected_video_date = video_date_text
     selected_video_date_top = video_date_top
     selected_subscribe_overlay = video_subscribe_overlay if video_subscribe_overlay is not None else True
+    selected_show_title = video_show_title if video_show_title is not None else True
+    selected_show_subtitle = video_show_subtitle if video_show_subtitle is not None else True
     selected_video_overlay_offset = video_overlay_offset
     try:
         selected_video_overlay_offset = int(selected_video_overlay_offset)
@@ -4641,6 +4649,8 @@ def generate_short(video_pk):
         selected_subtitle_text_alpha=selected_subtitle_text_alpha,
         selected_video_date=selected_video_date,
         selected_video_date_top=selected_video_date_top,
+        selected_show_title=selected_show_title,
+        selected_show_subtitle=selected_show_subtitle,
         selected_subscribe_overlay=selected_subscribe_overlay,
         selected_is_music_only=video_is_music_only,
         selected_podcast_audio_filename=selected_podcast_audio_filename,
@@ -10442,6 +10452,8 @@ def save_short_settings(video_pk):
     subscribe_overlay_enabled = (request.form.get("enable_subscribe_overlay") or "").lower() in {"1", "true", "yes", "on"}
     if not _resolve_brand_subscribe_overlay_path(brand_id):
         subscribe_overlay_enabled = False
+    show_title = (request.form.get("show_title") or "").lower() not in {"0", "false", "no", "off"}
+    show_subtitle = (request.form.get("show_subtitle") or "").lower() not in {"0", "false", "no", "off"}
     is_music_only = (request.form.get("is_music_only") or "").lower() in {"1", "true", "yes", "on"}
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
     if visual_mode not in {"video", "static", "created", "podcast"}:
@@ -10519,6 +10531,8 @@ def save_short_settings(video_pk):
             "subtitle_text_alpha": subtitle_text_alpha,
             "video_date_text": video_date_text,
             "video_date_top": video_date_top,
+            "show_title": show_title,
+            "show_subtitle": show_subtitle,
             "subscribe_overlay_enabled": subscribe_overlay_enabled,
             "is_music_only": is_music_only,
             "video_overlay_offset": video_overlay_offset,
@@ -10574,6 +10588,8 @@ def save_short_settings(video_pk):
     session["vs_subtitle_text_alpha"] = subtitle_text_alpha
     session["vs_video_date_text"] = video_date_text
     session["vs_video_date_top"] = video_date_top
+    session["vs_show_title"] = show_title
+    session["vs_show_subtitle"] = show_subtitle
     session["vs_subscribe_overlay"] = subscribe_overlay_enabled
     session["vs_is_music_only"] = is_music_only
     session["vs_podcast_audio_filename"] = podcast_audio_filename
@@ -10666,6 +10682,8 @@ def autoclip_video(video_pk):
     video_date_text = None
     video_date_top = DEFAULT_VIDEO_DATE_TOP
     video_subscribe_overlay = True
+    video_show_title = True
+    video_show_subtitle = True
     video_is_music_only = False
     video_podcast_audio_filename = ""
     video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
@@ -10683,13 +10701,13 @@ def autoclip_video(video_pk):
         crop_row = conn.execute(
             "SELECT split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio, "
             "crop_aspect, "
-            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, video_date_top, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
+            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, video_date_top, show_title, show_subtitle, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
             "FROM youtube_videos WHERE video_id = ?",
             [vid],
         ).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
-            if len(crop_row) >= 35:
+            if len(crop_row) >= 37:
                 query_indexes = {
                     "split_enabled": 0,
                     "crop_aspect": 9,
@@ -10703,6 +10721,40 @@ def autoclip_video(video_pk):
                     "title_bg_color": 17,
                     "video_date_text": 18,
                     "video_date_top": 19,
+                    "show_title": 20,
+                    "show_subtitle": 21,
+                    "subscribe_overlay_enabled": 22,
+                    "is_music_only": 23,
+                    "static_visual_key": 24,
+                    "background_visual_key": 25,
+                    "video_overlay_offset": 26,
+                    "podcast_audio_filename": 27,
+                    "visual_mode": 28,
+                    "podcast_overlay_short_ids": 29,
+                    "owner_user_id": 30,
+                    "title_text_color": 31,
+                    "subtitle_text_color": 32,
+                    "title_bg_alpha": 33,
+                    "subtitle_bg_color": 34,
+                    "subtitle_bg_alpha": 35,
+                    "subtitle_text_alpha": 36,
+                }
+            elif len(crop_row) >= 35:
+                query_indexes = {
+                    "split_enabled": 0,
+                    "crop_aspect": 9,
+                    "title_font_key": 10,
+                    "title_font_size": 11,
+                    "subtitle_font_key": 12,
+                    "subtitle_font_size": 13,
+                    "subtitle_margin": 14,
+                    "title_margin": 15,
+                    "title_line_spacing": 16,
+                    "title_bg_color": 17,
+                    "video_date_text": 18,
+                    "video_date_top": 19,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 20,
                     "is_music_only": 21,
                     "static_visual_key": 22,
@@ -10733,6 +10785,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 12,
                     "video_date_text": 13,
                     "video_date_top": 14,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 15,
                     "is_music_only": 16,
                     "static_visual_key": 17,
@@ -10763,6 +10817,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 12,
                     "video_date_text": 13,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 14,
                     "is_music_only": 15,
                     "static_visual_key": 16,
@@ -10793,6 +10849,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 12,
                     "video_date_text": 13,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 14,
                     "is_music_only": 15,
                     "static_visual_key": 16,
@@ -10823,6 +10881,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 12,
                     "video_date_text": 13,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 14,
                     "is_music_only": 15,
                     "static_visual_key": 16,
@@ -10854,6 +10914,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 12,
                     "video_date_text": 13,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 14,
                     "is_music_only": 15,
                     "static_visual_key": 16,
@@ -10885,6 +10947,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 11,
                     "video_date_text": 12,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 13,
                     "is_music_only": 14,
                     "static_visual_key": 15,
@@ -10916,6 +10980,8 @@ def autoclip_video(video_pk):
                     "title_bg_color": 11,
                     "video_date_text": 12,
                     "video_date_top": None,
+                    "show_title": None,
+                    "show_subtitle": None,
                     "subscribe_overlay_enabled": 13,
                     "is_music_only": 14,
                     "static_visual_key": 15,
@@ -10932,16 +10998,17 @@ def autoclip_video(video_pk):
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
                 }
+            has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
-                "crop_x_ratio": crop_row[1] if len(crop_row) >= 35 else crop_row[0],
-                "crop_y_ratio": crop_row[2] if len(crop_row) >= 35 else crop_row[1],
-                "crop_w_ratio": crop_row[3] if len(crop_row) >= 35 else crop_row[2],
-                "crop_h_ratio": crop_row[4] if len(crop_row) >= 35 else crop_row[3],
-                "crop2_x_ratio": crop_row[5] if len(crop_row) >= 35 else None,
-                "crop2_y_ratio": crop_row[6] if len(crop_row) >= 35 else None,
-                "crop2_w_ratio": crop_row[7] if len(crop_row) >= 35 else None,
-                "crop2_h_ratio": crop_row[8] if len(crop_row) >= 35 else None,
+                "crop_x_ratio": crop_row[1] if has_split_columns else crop_row[0],
+                "crop_y_ratio": crop_row[2] if has_split_columns else crop_row[1],
+                "crop_w_ratio": crop_row[3] if has_split_columns else crop_row[2],
+                "crop_h_ratio": crop_row[4] if has_split_columns else crop_row[3],
+                "crop2_x_ratio": crop_row[5] if has_split_columns else None,
+                "crop2_y_ratio": crop_row[6] if has_split_columns else None,
+                "crop2_w_ratio": crop_row[7] if has_split_columns else None,
+                "crop2_h_ratio": crop_row[8] if has_split_columns else None,
             }
             video_crop_aspect = crop_row[query_indexes["crop_aspect"]] or "landscape"
             video_font_key = crop_row[query_indexes["title_font_key"]]
@@ -10972,6 +11039,8 @@ def autoclip_video(video_pk):
                 except Exception:
                     video_date_top = DEFAULT_VIDEO_DATE_TOP
             raw_subscribe_overlay = crop_row[query_indexes["subscribe_overlay_enabled"]]
+            raw_show_title = crop_row[query_indexes["show_title"]] if query_indexes["show_title"] is not None else None
+            raw_show_subtitle = crop_row[query_indexes["show_subtitle"]] if query_indexes["show_subtitle"] is not None else None
             raw_is_music_only = crop_row[query_indexes["is_music_only"]]
             video_static_visual_key = crop_row[query_indexes["static_visual_key"]]
             video_background_visual_key = crop_row[query_indexes["background_visual_key"]]
@@ -11000,6 +11069,8 @@ def autoclip_video(video_pk):
                         video_podcast_overlay_short_ids = []
             video_owner_user_id = crop_row[query_indexes["owner_user_id"]]
             video_subscribe_overlay = True if raw_subscribe_overlay is None else bool(raw_subscribe_overlay)
+            video_show_title = True if raw_show_title is None else bool(raw_show_title)
+            video_show_subtitle = True if raw_show_subtitle is None else bool(raw_show_subtitle)
             video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     finally:
         conn.close()
@@ -11119,6 +11190,8 @@ def autoclip_video(video_pk):
                 subtitle_text_alpha=video_subtitle_text_alpha,
                 date_text=video_date_text,
                 date_top=video_date_top,
+                show_title=video_show_title,
+                show_subtitle=video_show_subtitle,
                 subscribe_overlay=video_subscribe_overlay,
                 is_music_only=video_is_music_only,
                 static_visual_key=video_static_visual_key,
@@ -11618,6 +11691,8 @@ def autoclip_video(video_pk):
                 subtitle_text_alpha=subtitle_text_alpha,
                 video_date_text=video_date_text,
                 video_date_top=video_date_top,
+                show_title=video_show_title,
+                show_subtitle=video_show_subtitle,
                 subscribe_overlay_enabled=video_subscribe_overlay,
                 subscribe_overlay_path=brand_subscribe_overlay_path,
                 crop_settings=crop_settings,
@@ -11636,7 +11711,7 @@ def autoclip_video(video_pk):
                 adj_start,
                 adj_end,
                 output_path,
-                subtitle_srt,
+                subtitle_srt if video_show_subtitle else None,
                 sub_font_name,
                 sub_font_size,
                 sub_margin,
