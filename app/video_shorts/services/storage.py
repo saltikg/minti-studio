@@ -32,6 +32,35 @@ _MIGRATED_PREFIXES = ("user_images/", "user_audio/", "user_podcasts/")
 _STORAGE_REFERENCE_PREFIX = "s3://"
 
 
+class ManagedTempPath(os.PathLike[str]):
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def __fspath__(self) -> str:
+        return str(self.path)
+
+    def __str__(self) -> str:
+        return str(self.path)
+
+    def __repr__(self) -> str:
+        return f"ManagedTempPath({self.path!r})"
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.cleanup()
+
+    def __getattr__(self, name: str):
+        return getattr(self.path, name)
+
+    def cleanup(self) -> None:
+        try:
+            self.path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 @dataclass
 class StorageEntry:
     key: str
@@ -227,7 +256,7 @@ class S3Storage(Storage):
         handle.close()
         temp_path = Path(handle.name)
         self.client.download_file(self.bucket_name, key, str(temp_path))
-        return temp_path
+        return ManagedTempPath(temp_path)
 
     def list_prefix(self, prefix: str) -> List[StorageEntry]:
         paginator = self.client.get_paginator("list_objects_v2")

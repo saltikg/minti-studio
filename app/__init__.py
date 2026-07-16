@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from flask import Flask, redirect, url_for
 from dotenv import load_dotenv
+from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir_on_startup
 
 # .env yükle
 load_dotenv()
@@ -49,6 +50,7 @@ def create_app():
         (os.getenv("AWS_REGION", "us-east-1") or "us-east-1").strip(),
         (os.getenv("S3_BUCKET_NAME", "") or "").strip() or "<unset>",
     )
+    cleanup_video_shorts_temp_dir_on_startup()
 
     # Jinja filter
     app.jinja_env.filters['from_json_safe'] = from_json_safe

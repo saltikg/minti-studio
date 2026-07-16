@@ -17,6 +17,7 @@ _STALE_MAX_AGE_SECONDS = 12 * 60 * 60
 _PRUNE_MIN_AGE_SECONDS = 60 * 60
 _MAX_TMP_BYTES = 8 * 1024 ** 3
 _TARGET_TMP_BYTES = 4 * 1024 ** 3
+_STARTUP_STALE_AGE_SECONDS = 60 * 60
 
 
 def ensure_video_shorts_tmp_dir() -> Path:
@@ -118,3 +119,27 @@ def cleanup_video_shorts_temp_dir(force: bool = False) -> None:
                 removed_bytes / (1024 ** 2),
                 tmp_dir,
             )
+
+
+def cleanup_video_shorts_temp_dir_on_startup(max_age_seconds: int = _STARTUP_STALE_AGE_SECONDS) -> None:
+    try:
+        tmp_dir = ensure_video_shorts_tmp_dir()
+        now = time.time()
+        cutoff = now - max(0, int(max_age_seconds or _STARTUP_STALE_AGE_SECONDS))
+        removed_count = 0
+        removed_bytes = 0
+        for entry in _collect_entries(tmp_dir):
+            if float(entry["mtime"]) > cutoff:
+                continue
+            removed_bytes += _safe_remove(entry["path"])
+            removed_count += 1
+        if removed_count:
+            logger.info(
+                "video_shorts startup tmp cleanup removed=%s freed=%.2fMB dir=%s age>%ss",
+                removed_count,
+                removed_bytes / (1024 ** 2),
+                tmp_dir,
+                max_age_seconds,
+            )
+    except Exception:
+        logger.exception("video_shorts startup tmp cleanup failed")

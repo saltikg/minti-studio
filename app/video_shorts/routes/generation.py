@@ -935,6 +935,21 @@ def _resolve_user_podcast_audio_path(user_id: str, audio_filename: str) -> Optio
     return None
 
 
+def _cleanup_video_shorts_temp_path(path: Optional[Path]) -> None:
+    if not path:
+        return
+    try:
+        resolved = Path(path).resolve()
+        tmp_dir = ensure_video_shorts_tmp_dir().resolve()
+        resolved.relative_to(tmp_dir)
+    except Exception:
+        return
+    try:
+        resolved.unlink(missing_ok=True)
+    except Exception:
+        current_app.logger.exception("Failed to cleanup video_shorts temp path: %s", resolved)
+
+
 def _merge_storage_entries(*entry_groups: List[StorageEntry]) -> List[StorageEntry]:
     merged: Dict[str, StorageEntry] = {}
     for group in entry_groups:
@@ -1034,9 +1049,11 @@ def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
             continue
         filename = key.split(":", 1)[1]
         path = Path(file_path or "")
-        if not path.exists():
-            path = _resolve_short_path_for_processing(filename) or path
         if not path.exists() or not path.is_file():
+            if not _short_exists(filename):
+                continue
+            path = Path(filename)
+        if not path:
             continue
         meta = short_meta.get(filename) or short_meta.get(path.stem) or {}
         title = str(meta.get("youtube_title") or "").strip() or filename
@@ -2211,6 +2228,7 @@ def _build_long_compilation_from_published(
     work_dir = Path(tempfile.gettempdir()) / f"long_comp_{secrets.token_hex(6)}"
     work_dir.mkdir(parents=True, exist_ok=True)
     eligible_clips: List[Dict[str, Any]] = []
+    temp_source_paths: List[Path] = []
     for clip in clips:
         clip_name = str(clip.get("clip_filename") or "").strip()
         if not clip_name:
@@ -2226,6 +2244,13 @@ def _build_long_compilation_from_published(
             continue
         prepared = dict(clip)
         prepared["_source_path"] = str(source)
+        try:
+            resolved_source = Path(source).resolve()
+            tmp_dir = ensure_video_shorts_tmp_dir().resolve()
+            resolved_source.relative_to(tmp_dir)
+            temp_source_paths.append(resolved_source)
+        except Exception:
+            pass
         eligible_clips.append(prepared)
     panel_items: List[Tuple[int, str, str]] = []
     for i, clip in enumerate(eligible_clips, start=1):
@@ -2425,6 +2450,8 @@ def _build_long_compilation_from_published(
         current_app.logger.exception("Long compilation failed for %s", video_id)
         return {"ok": False, "message": f"Long compilation failed: {exc}", "skipped": skipped}
     finally:
+        for temp_source in temp_source_paths:
+            _cleanup_video_shorts_temp_path(temp_source)
         for seg in prepared_segments:
             try:
                 seg.unlink()
@@ -11318,6 +11345,9 @@ def autoclip_video(video_pk):
                 },
             )
         finally:
+            _cleanup_video_shorts_temp_path(podcast_audio_path)
+            for overlay_source in podcast_overlay_video_sources:
+                _cleanup_video_shorts_temp_path(overlay_source)
             _cleanup_resolved_source_video(src_path, src_path_is_temp)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
@@ -11908,6 +11938,9 @@ def autoclip_video(video_pk):
                 bg_path.unlink()
             except Exception:
                 pass
+        _cleanup_video_shorts_temp_path(podcast_audio_path)
+        for overlay_source in podcast_overlay_video_sources:
+            _cleanup_video_shorts_temp_path(overlay_source)
         _cleanup_resolved_source_video(src_path, src_path_is_temp)
 
     if missing_outputs:

@@ -2,6 +2,7 @@ import math
 import logging
 import os
 import subprocess
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 import tempfile
@@ -377,153 +378,150 @@ def render_image_to_video_job(job_id: str, user_id: str, payload: dict, brand_id
             conn.close()
 
         lookup = {str(r[0]): r[1] for r in rows}
-        ordered_files = []
-        for img_id in image_ids:
-            filename = lookup.get(str(img_id))
-            if not filename:
-                _safe_fail_job(job_id, user_id, "Missing image in library")
+        with ExitStack() as temp_stack:
+            ordered_files = []
+            for img_id in image_ids:
+                filename = lookup.get(str(img_id))
+                if not filename:
+                    _safe_fail_job(job_id, user_id, "Missing image in library")
+                    return
+                local_path = STATIC_USER_IMAGES_DIR / user_id / filename
+                key = f"user_images/{user_id}/{filename}"
+                resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
+                if not resolved.exists:
+                    _safe_fail_job(job_id, user_id, "Image file missing on disk")
+                    return
+                if resolved.backend == "local" and resolved.local_path:
+                    ordered_files.append(resolved.local_path)
+                else:
+                    ordered_files.append(temp_stack.enter_context(storage.download_to_temp(key)))
+
+            spec = RenderSpec(
+                width=0,
+                height=0,
+                fps=int(payload.get("fps") or 24),
+                duration_mode=payload.get("duration_mode") or "auto",
+                total_duration=float(payload.get("total_duration_seconds") or 0) or None,
+                per_image=float(payload.get("per_image_seconds") or 0) or None,
+                image_duration_sequence=[
+                    _safe_image_duration(value)
+                    for value in (payload.get("image_duration_sequence") or [])
+                ],
+                motion_preset=payload.get("motion_preset") or "",
+                transition_motion_sequence=[
+                    str(value or "").strip()
+                    for value in (payload.get("transition_motion_sequence") or [])
+                ],
+                transition_type_sequence=[
+                    str(value or "").strip()
+                    for value in (payload.get("transition_type_sequence") or [])
+                ],
+                transition_duration_sequence=[
+                    _safe_transition_duration(value)
+                    for value in (payload.get("transition_duration_sequence") or [])
+                ],
+                style_preset=payload.get("style_preset") or "",
+                transition=payload.get("transition") or "cut",
+                overlay=payload.get("overlay") or {},
+                music_filename=str(payload.get("music_filename") or "").strip(),
+                music_volume=_safe_music_volume(payload.get("music_volume")),
+                music_start_seconds=_safe_music_start(payload.get("music_start_seconds")),
+                debug_transitions=bool(payload.get("debug_transitions")),
+            )
+            spec.width, spec.height = _aspect_resolution(
+                payload.get("aspect_ratio") or "9:16",
+                payload.get("resolution") or "720p",
+            )
+
+            durations = _duration_plan(len(ordered_files), spec)
+            if not durations:
+                _safe_fail_job(job_id, user_id, "Invalid durations")
                 return
-            local_path = STATIC_USER_IMAGES_DIR / user_id / filename
-            key = f"user_images/{user_id}/{filename}"
-            resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
-            if not resolved.exists:
-                _safe_fail_job(job_id, user_id, "Image file missing on disk")
-                return
-            if resolved.backend == "local" and resolved.local_path:
-                ordered_files.append(resolved.local_path)
-            else:
-                temp_path = storage.download_to_temp(key)
-                temp_inputs.append(temp_path)
-                ordered_files.append(temp_path)
 
-        spec = RenderSpec(
-            width=0,
-            height=0,
-            fps=int(payload.get("fps") or 24),
-            duration_mode=payload.get("duration_mode") or "auto",
-            total_duration=float(payload.get("total_duration_seconds") or 0) or None,
-            per_image=float(payload.get("per_image_seconds") or 0) or None,
-            image_duration_sequence=[
-                _safe_image_duration(value)
-                for value in (payload.get("image_duration_sequence") or [])
-            ],
-            motion_preset=payload.get("motion_preset") or "",
-            transition_motion_sequence=[
-                str(value or "").strip()
-                for value in (payload.get("transition_motion_sequence") or [])
-            ],
-            transition_type_sequence=[
-                str(value or "").strip()
-                for value in (payload.get("transition_type_sequence") or [])
-            ],
-            transition_duration_sequence=[
-                _safe_transition_duration(value)
-                for value in (payload.get("transition_duration_sequence") or [])
-            ],
-            style_preset=payload.get("style_preset") or "",
-            transition=payload.get("transition") or "cut",
-            overlay=payload.get("overlay") or {},
-            music_filename=str(payload.get("music_filename") or "").strip(),
-            music_volume=_safe_music_volume(payload.get("music_volume")),
-            music_start_seconds=_safe_music_start(payload.get("music_start_seconds")),
-            debug_transitions=bool(payload.get("debug_transitions")),
-        )
-        spec.width, spec.height = _aspect_resolution(
-            payload.get("aspect_ratio") or "9:16",
-            payload.get("resolution") or "720p",
-        )
+            output_dir = VIDEOS_DIR / "image_to_video"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"image_to_video_{job_id}.mp4"
 
-        durations = _duration_plan(len(ordered_files), spec)
-        if not durations:
-            _safe_fail_job(job_id, user_id, "Invalid durations")
-            return
+            _safe_update_job(job_id, user_id, status="rendering", progress=25)
+            total_duration = sum(durations)
+            music_path = None
+            if spec.music_filename:
+                safe_name = Path(spec.music_filename).name
+                if safe_name == spec.music_filename:
+                    candidate = STATIC_USER_AUDIO_DIR / user_id / safe_name
+                    key = f"user_audio/{user_id}/{safe_name}"
+                    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
+                    if resolved.exists:
+                        if resolved.backend == "local" and resolved.local_path:
+                            music_path = resolved.local_path
+                        else:
+                            music_path = temp_stack.enter_context(storage.download_to_temp(key))
+            last_progress = 25.0
+            last_tick = time.monotonic()
 
-        output_dir = VIDEOS_DIR / "image_to_video"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"image_to_video_{job_id}.mp4"
-
-        _safe_update_job(job_id, user_id, status="rendering", progress=25)
-        total_duration = sum(durations)
-        music_path = None
-        if spec.music_filename:
-            safe_name = Path(spec.music_filename).name
-            if safe_name == spec.music_filename:
-                candidate = STATIC_USER_AUDIO_DIR / user_id / safe_name
-                key = f"user_audio/{user_id}/{safe_name}"
-                resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
-                if resolved.exists:
-                    if resolved.backend == "local" and resolved.local_path:
-                        music_path = resolved.local_path
-                    else:
-                        temp_path = storage.download_to_temp(key)
-                        temp_inputs.append(temp_path)
-                        music_path = temp_path
-        last_progress = 25.0
-        last_tick = time.monotonic()
-
-        def progress_cb(pct: float) -> None:
-            nonlocal last_progress, last_tick
-            now = time.monotonic()
-            if pct < last_progress + 2 and now - last_tick < 2:
-                return
-            last_progress = pct
-            last_tick = now
+            def progress_cb(pct: float) -> None:
+                nonlocal last_progress, last_tick
+                now = time.monotonic()
+                if pct < last_progress + 2 and now - last_tick < 2:
+                    return
+                last_progress = pct
+                last_tick = now
+                try:
+                    _safe_update_job(job_id, user_id, status="rendering", progress=int(pct))
+                except Exception:
+                    # Don't crash the render if the DB is temporarily locked.
+                    pass
             try:
-                _safe_update_job(job_id, user_id, status="rendering", progress=int(pct))
-            except Exception:
-                # Don't crash the render if the DB is temporarily locked.
-                pass
-        try:
-            _run_ffmpeg_render(
-                ordered_files,
-                durations,
-                spec,
+                _run_ffmpeg_render(
+                    ordered_files,
+                    durations,
+                    spec,
+                    output_path,
+                    total_duration,
+                    progress_cb,
+                    music_path,
+                )
+            except Exception as exc:
+                logger.exception("image_to_video render failed job_id=%s user_id=%s", job_id, user_id)
+                _safe_fail_job(job_id, user_id, f"Render failed: {exc}")
+                return
+            logger.info(
+                "image_to_video local output ready job_id=%s user_id=%s path=%s exists=%s backend=%s",
+                job_id,
+                user_id,
                 output_path,
-                total_duration,
-                progress_cb,
-                music_path,
+                output_path.exists(),
+                getattr(storage, "backend_name", "unknown"),
             )
-        except Exception as exc:
-            logger.exception("image_to_video render failed job_id=%s user_id=%s", job_id, user_id)
-            _safe_fail_job(job_id, user_id, f"Render failed: {exc}")
-            return
-        logger.info(
-            "image_to_video local output ready job_id=%s user_id=%s path=%s exists=%s backend=%s",
-            job_id,
-            user_id,
-            output_path,
-            output_path.exists(),
-            getattr(storage, "backend_name", "unknown"),
-        )
-        _safe_update_job(job_id, user_id, status="rendering", progress=90)
+            _safe_update_job(job_id, user_id, status="rendering", progress=90)
 
-        if getattr(storage, "backend_name", "local") == "s3":
-            output_key = f"image_to_video/{user_id}/{output_path.name}"
+            if getattr(storage, "backend_name", "local") == "s3":
+                output_key = f"image_to_video/{user_id}/{output_path.name}"
+                logger.info(
+                    "image_to_video s3 upload begin job_id=%s user_id=%s key=%s path=%s",
+                    job_id,
+                    user_id,
+                    output_key,
+                    output_path,
+                )
+                storage.put_file(output_path, output_key)
+                logger.info(
+                    "image_to_video s3 upload success job_id=%s user_id=%s key=%s",
+                    job_id,
+                    user_id,
+                    output_key,
+                )
+                output_url = build_storage_reference(output_key)
+            else:
+                output_url = f"/video_shorts/media/image_to_video/{output_path.name}"
             logger.info(
-                "image_to_video s3 upload begin job_id=%s user_id=%s key=%s path=%s",
+                "image_to_video db update begin job_id=%s user_id=%s output_url=%s",
                 job_id,
                 user_id,
-                output_key,
-                output_path,
+                output_url,
             )
-            storage.put_file(output_path, output_key)
-            logger.info(
-                "image_to_video s3 upload success job_id=%s user_id=%s key=%s",
-                job_id,
-                user_id,
-                output_key,
-            )
-            output_url = build_storage_reference(output_key)
-        else:
-            output_url = f"/video_shorts/media/image_to_video/{output_path.name}"
-        logger.info(
-            "image_to_video db update begin job_id=%s user_id=%s output_url=%s",
-            job_id,
-            user_id,
-            output_url,
-        )
-        _update_job(job_id, user_id, status="done", progress=100, output_url=output_url)
-        logger.info("image_to_video db update success job_id=%s user_id=%s", job_id, user_id)
+            _update_job(job_id, user_id, status="done", progress=100, output_url=output_url)
+            logger.info("image_to_video db update success job_id=%s user_id=%s", job_id, user_id)
     except Exception as exc:
         logger.exception("image_to_video render crashed job_id=%s user_id=%s", job_id, user_id)
         _safe_fail_job(job_id, user_id, f"Render crashed: {exc}")
