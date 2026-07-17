@@ -1852,6 +1852,7 @@
           action="{{ url_for('video_shorts_bp.create_clip_plan', video_pk=video.id) }}"
           data-plan-start-url="{{ url_for('video_shorts_bp.create_clip_plan_start', video_pk=video.id) }}"
           data-plan-status-url="{{ url_for('video_shorts_bp.create_clip_plan_status', video_pk=video.id) }}">
+      <input type="hidden" name="focus_categories" id="ai-focus-categories-input" value="{{ selected_focus_categories|join(',') }}">
     </form>
   </div>
 
@@ -1966,6 +1967,18 @@
                     Add
                   </button>
                 </div>
+              </div>
+              <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                {% for item in focus_category_options %}
+                  <label class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-2 px-2 py-1">
+                    <input
+                      type="checkbox"
+                      class="form-check-input mt-0 ai-focus-category-checkbox"
+                      value="{{ item.key }}"
+                      {% if item.key in selected_focus_categories %}checked{% endif %}>
+                    <span>{{ item.label }}</span>
+                  </label>
+                {% endfor %}
               </div>
               <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
                 <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
@@ -3504,6 +3517,8 @@ document.addEventListener("DOMContentLoaded", () => {
 document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("step2-form");
   const statusBox = document.getElementById("plan-live-status");
+  const focusInput = document.getElementById("ai-focus-categories-input");
+  const focusCheckboxes = Array.from(document.querySelectorAll(".ai-focus-category-checkbox"));
   if (!form || !statusBox) {
     return;
   }
@@ -3519,6 +3534,22 @@ document.addEventListener("DOMContentLoaded", () => {
   let consecutivePollFailures = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 8;
   let activeButton = null;
+
+  const syncFocusCategories = () => {
+    if (!focusInput) {
+      return;
+    }
+    const selected = focusCheckboxes
+      .filter((input) => input.checked)
+      .map((input) => input.value)
+      .filter(Boolean);
+    focusInput.value = selected.join(",");
+  };
+
+  focusCheckboxes.forEach((input) => {
+    input.addEventListener("change", syncFocusCategories);
+  });
+  syncFocusCategories();
 
   const esc = (value) => String(value || "")
     .replace(/&/g, "&amp;")

@@ -150,7 +150,13 @@ from app.video_shorts.services.non_speech_overrides import (
     load_non_speech_overrides,
     save_non_speech_overrides,
 )
-from app.video_shorts.services.clip_plan_focus_prompts import get_plan_focus_label, normalize_plan_focus
+from app.video_shorts.services.clip_plan_focus_prompts import (
+    ALL_FOCUS_CATEGORIES,
+    FOCUS_CATEGORY_OPTIONS,
+    normalize_focus_categories,
+    get_plan_focus_label,
+    normalize_plan_focus,
+)
 from app.video_shorts.services.planner_rules_v4 import load_planner_rules_v4
 from app.video_shorts.services.instagram_api import (
     InstagramActionError,
@@ -2570,6 +2576,19 @@ def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> Li
     return reindexed
 
 
+def _resolve_saved_focus_categories(entries: List[Dict[str, Any]]) -> List[str]:
+    for entry in reversed(entries or []):
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("focus_categories")
+        if raw in (None, "", []):
+            continue
+        resolved = normalize_focus_categories(raw, default_to_all=False)
+        if resolved:
+            return resolved
+    return list(ALL_FOCUS_CATEGORIES)
+
+
 def _write_plan_entries_v2(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path = _plan_path_v2(video_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -4051,6 +4070,7 @@ def generate_short(video_pk):
     except Exception:
         selected_video_overlay_offset = video_overlay_offset
     plan_entries = _load_plan_entries(video["video_id"])
+    selected_focus_categories = _resolve_saved_focus_categories(plan_entries)
     v2_plan_entries = _load_plan_entries_v2(video["video_id"])
     v3_plan_entries = _load_plan_entries_v3(video["video_id"])
     v2_plan_exists = bool(v2_plan_entries)
@@ -4733,6 +4753,8 @@ def generate_short(video_pk):
         debug_info=debug_info,
         clip_rows=clip_rows,
         ai_suggested_clip_count=ai_suggested_clip_count,
+        focus_category_options=FOCUS_CATEGORY_OPTIONS,
+        selected_focus_categories=selected_focus_categories,
         transcript_player_source=transcript_player_source,
         youtube_connected=youtube_connected,
         video_duration_label=video_duration_label,
@@ -9826,6 +9848,7 @@ def _generate_clip_plan_for_video(
 
     plan_language = (form_data.get("language") or "").strip().lower()
     plan_focus = normalize_plan_focus(form_data.get("plan_focus") or "")
+    focus_categories = normalize_focus_categories(form_data.get("focus_categories"), default_to_all=True)
     clip_plan: List[Dict[str, Any]] = []
     debug_info: Dict[str, Any] = {}
     plan_path = SHORTS_DIR / f"{vid}_plan.json"
@@ -9851,6 +9874,7 @@ def _generate_clip_plan_for_video(
                 OPENAI_MODEL,
                 debug=debug_flag,
                 plan_focus=plan_focus,
+                focus_categories=focus_categories,
             )
     except Exception as ag:
         current_app.logger.warning("Agent pipeline failed, falling back. %s", ag)
@@ -9908,6 +9932,7 @@ def _generate_clip_plan_for_video(
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
         plan_entry["origin"] = "ai"
+        plan_entry["focus_categories"] = list(focus_categories)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
