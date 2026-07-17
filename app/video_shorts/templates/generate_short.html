@@ -1867,7 +1867,6 @@
             </div>
             <div class="trs-shell"
                  id="transcript-range-selector"
-                 data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}"
                  data-coachmark-hidden="{{ 'true' if hide_clip_coachmark else 'false' }}"
                  data-coachmark-preference-url="{{ clip_coachmark_preference_url }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
@@ -1957,15 +1956,6 @@
                       </button>
                     </form>
                   {% endif %}
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                    id="add-clip-toggle-btn"
-                    aria-expanded="false"
-                    aria-controls="add-clip-panel">
-                    <i class="bi bi-plus-lg" aria-hidden="true"></i>
-                    Add
-                  </button>
                 </div>
               </div>
               <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -1979,27 +1969,6 @@
                     <span>{{ item.label }}</span>
                   </label>
                 {% endfor %}
-              </div>
-              <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
-                <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">
-                  <div class="col-12 col-md-6 col-xl-12">
-                    <label class="form-label small mb-1">Start</label>
-                    <input type="text" name="start_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
-                  </div>
-                  <div class="col-12 col-md-6 col-xl-12">
-                    <label class="form-label small mb-1">End</label>
-                    <input type="text" name="end_time" class="form-control form-control-sm" placeholder="MM:SS.mmm" required>
-                  </div>
-                  <div class="col-12">
-                    <label class="form-label small mb-1">Title (optional)</label>
-                    <input type="text" name="title" class="form-control form-control-sm" placeholder="Manual clip title">
-                  </div>
-                  <div class="col-12 d-grid">
-                    <button type="submit" class="btn btn-sm btn-primary">
-                      <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Add
-                    </button>
-                  </div>
-                </form>
               </div>
               <div class="clip-rail-list" id="clip-rail-list">
                 {% for row in clip_rows %}
@@ -5100,18 +5069,6 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
   }
 };
 
-const initAddClipToggle = () => {
-  const toggleBtn = document.getElementById("add-clip-toggle-btn");
-  const panel = document.getElementById("add-clip-panel");
-  if (!toggleBtn || !panel || toggleBtn.dataset.addClipToggleBound === "1") {
-    return;
-  }
-  toggleBtn.dataset.addClipToggleBound = "1";
-  toggleBtn.addEventListener("click", () => {
-    const isHidden = panel.classList.toggle("d-none");
-    toggleBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
-  });
-};
 </script>
 <script>
 const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = null) => {
@@ -5150,7 +5107,6 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       clipPanel.replaceWith(newClipPanel);
       loadGenerateUsageSummary();
       initClipDetailModal(activePlanIndex, activeViewMode);
-      initAddClipToggle();
       if (typeof bootstrap !== "undefined") {
         document.querySelectorAll("#clip-management-panel [data-bs-toggle='tooltip']").forEach((el) => {
           new bootstrap.Tooltip(el);
@@ -8896,7 +8852,6 @@ window.addEventListener("unhandledrejection", (event) => {
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   initClipDetailModal();
-  initAddClipToggle();
 });
 </script>
 <script>

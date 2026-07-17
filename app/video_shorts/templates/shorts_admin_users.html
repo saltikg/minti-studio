@@ -58,6 +58,36 @@
       color: rgba(255, 255, 255, 0.62);
       font-size: 0.9rem;
     }
+    .admin-server-stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .admin-server-stat-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 14px 16px;
+    }
+    .admin-server-stat-label {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .admin-server-stat-value {
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .admin-server-stat-meta {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.84rem;
+      margin-top: 4px;
+      word-break: break-word;
+    }
     .admin-users-pagination {
       display: flex;
       justify-content: space-between;
@@ -73,6 +103,9 @@
     }
     @media (max-width: 991.98px) {
       .admin-users-toolbar {
+        grid-template-columns: 1fr;
+      }
+      .admin-server-stats {
         grid-template-columns: 1fr;
       }
     }
@@ -99,6 +132,20 @@
     </form>
 
     <div class="admin-users-meta mb-3">{{ total_users }} users</div>
+
+    {% if server_stats %}
+      <div class="admin-server-stats">
+        <div class="admin-server-stat-card">
+          <div class="admin-server-stat-label">Disk /</div>
+          <div class="admin-server-stat-value">{{ server_stats.disk_used_label }} / {{ server_stats.disk_total_label }} · {{ server_stats.disk_used_pct }}%</div>
+        </div>
+        <div class="admin-server-stat-card">
+          <div class="admin-server-stat-label">video_shorts/tmp</div>
+          <div class="admin-server-stat-value">{{ server_stats.tmp_size_label }}</div>
+          <div class="admin-server-stat-meta">{{ server_stats.tmp_dir }}</div>
+        </div>
+      </div>
+    {% endif %}
 
     <div class="admin-users-table-wrap">
       <table class="admin-users-table">
