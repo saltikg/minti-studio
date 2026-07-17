@@ -1414,12 +1414,44 @@
   .crop-preview-toolbar-section.is-active {
     display: block;
   }
+  .top-controls {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.1fr) minmax(280px, 1.35fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+  .top-controls .control-group {
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .crop-options-card .controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 16px;
+    align-items: start;
+  }
+  .crop-options-card .form-check {
+    min-width: 0;
+  }
+  .crop-options-card .form-check-label {
+    color: rgba(255, 255, 255, 0.82);
+  }
+  .crop-options-card-note {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.52);
+  }
   .crop-preview-advanced {
-    margin-bottom: 14px;
+    margin-bottom: 0;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.03);
     overflow: hidden;
+    display: inline-block;
+    width: fit-content;
+    max-width: 100%;
   }
   .crop-preview-advanced > summary {
     list-style: none;
@@ -1429,7 +1461,7 @@
     font-weight: 600;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 10px;
   }
   .crop-preview-advanced > summary::-webkit-details-marker {
@@ -1437,6 +1469,7 @@
   }
   .crop-preview-advanced > summary::after {
     content: "\25BE";
+    margin-left: auto;
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.56);
     transition: transform 0.2s ease;
@@ -1451,6 +1484,13 @@
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
+  }
+  .crop-settings-inline-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
   }
   .crop-preview-toggle-row {
     margin-top: 12px;
@@ -1492,6 +1532,14 @@
     position: relative;
     padding: 10px;
     overflow: visible;
+  }
+  @media (max-width: 991.98px) {
+    .top-controls {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .crop-options-card .controls {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   .cropper-surface-image-wrap img {
     display: block;
@@ -2772,6 +2820,32 @@
               </div>
             {% endif %}
           </div>
+          <div class="control-group crop-options-card">
+            <label class="text-white-50">Options</label>
+            <div class="controls">
+              {% if brand_subscribe_overlay_available %}
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                  <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
+                </div>
+              {% endif %}
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
+                <label class="form-check-label small" for="showTitleToggle">Show title</label>
+              </div>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
+                <label class="form-check-label small" for="showSubtitleToggle">Show subtitles</label>
+              </div>
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
+                <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
+              </div>
+            </div>
+            {% if not brand_subscribe_overlay_available %}
+              <div class="crop-options-card-note">No brand subscribe animation configured for this workspace.</div>
+            {% endif %}
+          </div>
           <div class="control-group static-visual-selector d-none" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
             <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
             <label class="text-white-50">Visual mode</label>
@@ -3035,75 +3109,52 @@
               </div>
               <div class="crop-preview-selection-note">Select Title, Video, Subtitle, or Date inside Final Preview.</div>
             </div>
-            <details class="crop-preview-advanced">
-              <summary>Advanced</summary>
-              <div class="crop-preview-advanced-body">
-                <div class="crop-preview-advanced-grid">
-                  <div class="input-group-inline compact" data-preview-control="title">
-                    <span>Top spacing</span>
-                    <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
-                  </div>
-                  <div class="input-group-inline compact" data-preview-control="subtitle">
-                    <span>Bottom spacing</span>
-                    <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
-                  </div>
-                  <div class="input-group-inline compact">
-                    <span>Video top spacing</span>
-                    <input type="number"
-                           name="video_overlay_offset"
-                           class="form-control form-control-sm short-input-small"
-                           value="{{ selected_video_overlay_offset or 400 }}"
-                           min="0"
-                           max="1200">
-                  </div>
-                  <div class="input-group-inline compact">
-                    <span>Top</span>
-                    <input type="number"
-                           name="video_date_top"
-                           class="form-control form-control-sm short-input-small"
-                           value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
-                           min="0"
-                           max="1200">
-                  </div>
-                  <div class="input-group-inline compact">
-                    <span>Video date</span>
-                    <input type="text"
-                           name="video_date_text"
-                           class="form-control form-control-sm short-input-small short-input-wide"
-                           value="{{ selected_video_date|e }}"
-                           placeholder="Optional date">
+            <div class="crop-settings-inline-row">
+              <details class="crop-preview-advanced">
+                <summary>Advanced</summary>
+                <div class="crop-preview-advanced-body">
+                  <div class="crop-preview-advanced-grid">
+                    <div class="input-group-inline compact" data-preview-control="title">
+                      <span>Top spacing</span>
+                      <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
+                    </div>
+                    <div class="input-group-inline compact" data-preview-control="subtitle">
+                      <span>Bottom spacing</span>
+                      <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span>Video top spacing</span>
+                      <input type="number"
+                             name="video_overlay_offset"
+                             class="form-control form-control-sm short-input-small"
+                             value="{{ selected_video_overlay_offset or 400 }}"
+                             min="0"
+                             max="1200">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span>Top</span>
+                      <input type="number"
+                             name="video_date_top"
+                             class="form-control form-control-sm short-input-small"
+                             value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
+                             min="0"
+                             max="1200">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span>Video date</span>
+                      <input type="text"
+                             name="video_date_text"
+                             class="form-control form-control-sm short-input-small short-input-wide"
+                             value="{{ selected_video_date|e }}"
+                             placeholder="Optional date">
+                    </div>
                   </div>
                 </div>
-              </div>
-            </details>
-            <div class="crop-preview-toggle-row">
-              <div class="short-toggle-group">
-              <div class="form-check form-switch crop-split-toggle-wrap is-hidden" id="split-screen-toggle-wrap">
+              </details>
+              <div class="form-check form-switch crop-split-toggle-wrap is-hidden mb-0" id="split-screen-toggle-wrap">
                 <input class="form-check-input" type="checkbox" id="splitScreenToggle">
                 <label class="form-check-label small" for="splitScreenToggle">Split screen (2 boxes)</label>
               </div>
-              {% if brand_subscribe_overlay_available %}
-                <div class="form-check form-switch mb-0">
-                  <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                  <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
-                </div>
-              {% endif %}
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
-                <label class="form-check-label small" for="showTitleToggle">Show title</label>
-              </div>
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
-                <label class="form-check-label small" for="showSubtitleToggle">Show subtitles</label>
-              </div>
-              <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
-                <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
-              </div>
-              </div>
-              {% if not brand_subscribe_overlay_available %}
-                <div class="small text-white-50">No brand subscribe animation configured for this workspace.</div>
-              {% endif %}
             </div>
           </div>
         </div>
