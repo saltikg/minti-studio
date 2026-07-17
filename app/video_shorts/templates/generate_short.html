@@ -1936,15 +1936,36 @@
                   <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
                   <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
                 </div>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                  id="add-clip-toggle-btn"
-                  aria-expanded="false"
-                  aria-controls="add-clip-panel">
-                  <i class="bi bi-plus-lg" aria-hidden="true"></i>
-                  Add
-                </button>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                  <button
+                    type="submit"
+                    form="step2-form"
+                    class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                    id="ai-generate-btn"
+                    {% if not has_transcript %}disabled{% endif %}>
+                    <i class="bi bi-stars" aria-hidden="true"></i>
+                    Suggest clips with AI
+                  </button>
+                  {% if ai_suggested_clip_count %}
+                    <form method="post" action="{{ url_for('video_shorts_bp.delete_ai_suggestions', video_pk=video.id) }}" onsubmit="return window.confirm('Remove all AI-suggested clips?');">
+                      <button
+                        type="submit"
+                        class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1">
+                        <i class="bi bi-trash3" aria-hidden="true"></i>
+                        Remove AI suggestions
+                      </button>
+                    </form>
+                  {% endif %}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                    id="add-clip-toggle-btn"
+                    aria-expanded="false"
+                    aria-controls="add-clip-panel">
+                    <i class="bi bi-plus-lg" aria-hidden="true"></i>
+                    Add
+                  </button>
+                </div>
               </div>
               <div id="add-clip-panel" class="card bg-dark border border-secondary-subtle p-2 mb-3 d-none">
                 <form method="post" action="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}" class="row g-2 align-items-end">

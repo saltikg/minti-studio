@@ -2488,7 +2488,18 @@ def _load_plan_entries(video_id: str) -> List[Dict[str, Any]]:
         return []
     try:
         data = json.loads(path.read_text())
-        return data.get("plan") or data.get("clips") or []
+        entries = data.get("plan") or data.get("clips") or []
+        if not isinstance(entries, list):
+            return []
+        normalized: List[Dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            item = dict(entry)
+            origin = str(item.get("origin") or "").strip().lower()
+            item["origin"] = origin if origin in {"manual", "ai"} else "manual"
+            normalized.append(item)
+        return normalized
     except Exception:
         return []
 
@@ -2529,8 +2540,34 @@ def _load_plan_entries_v4(video_id: str) -> List[Dict[str, Any]]:
 def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path = _plan_path(video_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"plan": entries}
+    prepared_entries: List[Dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        item = dict(entry)
+        origin = str(item.get("origin") or "").strip().lower()
+        item["origin"] = origin if origin in {"manual", "ai"} else "manual"
+        prepared_entries.append(item)
+    payload = {"plan": prepared_entries}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    reindexed: List[Dict[str, Any]] = []
+    for idx, entry in enumerate(entries or [], 1):
+        if not isinstance(entry, dict):
+            continue
+        item = dict(entry)
+        origin = str(item.get("origin") or "").strip().lower()
+        origin = origin if origin in {"manual", "ai"} else "manual"
+        item["origin"] = origin
+        item["plan_index"] = idx
+        if origin == "ai" and str(item.get("status") or "").strip().lower() != "created":
+            item["clip_filename"] = f"{idx}_{video_id}.mp4"
+        elif not str(item.get("clip_filename") or "").strip():
+            item["clip_filename"] = f"{idx}_{video_id}.mp4"
+        reindexed.append(item)
+    return reindexed
 
 
 def _write_plan_entries_v2(video_id: str, entries: List[Dict[str, Any]]) -> None:
@@ -4065,6 +4102,9 @@ def generate_short(video_pk):
         plan_by_index[pi] = entry
     plan_exists = bool(plan_by_index)
     plan_clip_count = len(plan_by_index)
+    ai_suggested_clip_count = sum(
+        1 for entry in plan_entries if str(entry.get("origin") or "").strip().lower() == "ai"
+    )
     generated_clip_entries = []
     for entry in plan_entries:
         if entry.get("status") != "created":
@@ -4355,6 +4395,7 @@ def generate_short(video_pk):
 
         clip_rows.append({
             "plan_index": pi,
+            "origin": str(entry.get("origin") or "manual").strip().lower() or "manual",
             "title": entry.get("title") or "",
             "start": start,
             "end": end,
@@ -4691,6 +4732,7 @@ def generate_short(video_pk):
         selected_video_overlay_offset=selected_video_overlay_offset,
         debug_info=debug_info,
         clip_rows=clip_rows,
+        ai_suggested_clip_count=ai_suggested_clip_count,
         transcript_player_source=transcript_player_source,
         youtube_connected=youtube_connected,
         video_duration_label=video_duration_label,
@@ -6750,6 +6792,52 @@ def remove_plan_entry(video_pk):
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/delete_ai_suggestions", methods=["POST"])
+def delete_ai_suggestions(video_pk):
+    video_id = _resolve_video_id_from_pk(video_pk)
+    if not video_id:
+        flash("Video not found.", "danger")
+        return redirect(url_for("video_shorts_bp.channels_page"))
+
+    plan_entries = _load_plan_entries(video_id)
+    if not plan_entries:
+        flash("Plan data not found.", "warning")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+    removed_entries = [entry for entry in plan_entries if str(entry.get("origin") or "").strip().lower() == "ai"]
+    if not removed_entries:
+        flash("No AI suggestions to remove.", "warning")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+    remaining_entries = [entry for entry in plan_entries if str(entry.get("origin") or "").strip().lower() != "ai"]
+    remaining_entries = _reindex_v1_plan_entries(video_id, remaining_entries)
+    try:
+        _write_plan_entries(video_id, remaining_entries)
+    except Exception as exc:
+        current_app.logger.warning("Failed to remove AI suggestions for %s: %s", video_id, exc)
+        flash("Unable to remove AI suggestions.", "danger")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+    clip_names = set()
+    for entry in removed_entries:
+        for key in ("clip_filename", "output_filename"):
+            val = entry.get(key)
+            if isinstance(val, str) and val:
+                clip_names.add(val)
+    if clip_names:
+        shorts_base = SHORTS_DIR.resolve()
+        for clip_name in clip_names:
+            target_path = (SHORTS_DIR / clip_name).resolve()
+            if str(target_path).startswith(str(shorts_base)) and target_path.exists():
+                try:
+                    target_path.unlink()
+                except Exception:
+                    current_app.logger.warning("Failed to delete AI suggestion clip %s", target_path)
+
+    flash(f"Removed {len(removed_entries)} AI-suggested clips.", "success")
+    return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/adjust_clip_timing", methods=["POST"])
 def adjust_clip_timing(video_pk):
     plan_index_raw = request.form.get("plan_index")
@@ -7049,6 +7137,7 @@ def add_clip_section(video_pk):
 
     clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
     new_entry = {
+        "origin": "manual",
         "plan_index": next_plan_index,
         "title": clip_title,
         "start": round(start_time, 3),
@@ -9740,6 +9829,7 @@ def _generate_clip_plan_for_video(
     clip_plan: List[Dict[str, Any]] = []
     debug_info: Dict[str, Any] = {}
     plan_path = SHORTS_DIR / f"{vid}_plan.json"
+    existing_plan_entries = _load_plan_entries(vid)
 
     try:
         _emit("llm_plan", "Generating clip plan with AI.")
@@ -9817,6 +9907,7 @@ def _generate_clip_plan_for_video(
             end,
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
+        plan_entry["origin"] = "ai"
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -9826,20 +9917,31 @@ def _generate_clip_plan_for_video(
         plan_entry.setdefault("audio_end", None)
         timestamped_plan.append(plan_entry)
 
+    combined_plan = _reindex_v1_plan_entries(vid, [*existing_plan_entries, *timestamped_plan])
+
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
-    _emit("save_plan", "Saving plan to disk.", clip_count=len(timestamped_plan))
+    _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
     try:
-        _write_plan_entries(vid, timestamped_plan)
+        _write_plan_entries(vid, combined_plan)
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         raise RuntimeError("Could not save the clip plan.")
+
+    if debug_info:
+        current_app.logger.info(
+            "[CLIP_AGENT] finished windows=%s openai_calls=%s produced=%s kept_after_cap=%s",
+            debug_info.get("window_count") or 0,
+            debug_info.get("openai_call_count") or 0,
+            debug_info.get("produced_clip_count") or 0,
+            debug_info.get("kept_after_cap_count") or len(timestamped_plan),
+        )
 
     focus_name = get_plan_focus_label(plan_focus)
     focus_label = f" ({focus_name})" if focus_name else ""
     return {
         "video_id": vid,
         "clip_count": len(timestamped_plan),
-        "message": f"Clip plan{focus_label} created with {len(timestamped_plan)} clips.",
+        "message": f"Clip plan{focus_label} added {len(timestamped_plan)} AI clips.",
     }
 
 

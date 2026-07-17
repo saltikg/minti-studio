@@ -272,6 +272,7 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
                 {"role": "user", "content": json.dumps(payload)},
             ],
             response_format={"type": "json_object"},
+            temperature=0.3,
             timeout=OPENAI_PLANNER_TIMEOUT_SECONDS,
         )
     except Exception:
@@ -379,7 +380,7 @@ def run_window_agent(
         "   Eğer ilk segment 've', 'ama', 'fakat' gibi bağlaçlarla başlıyorsa, ondan önceki segmenti de mutlaka ekle.\n"
         "5) Aynı mesajı tekrar eden, neredeyse aynı çekirdeği taşıyan klipleri çoğaltma.\n"
         "   Benzer yoğunlukları tek klipte topla.\n"
-        "6) Bu window içinde anlamlı bulduğun kadar klip üretebilirsin.\n"
+        "6) Bu window içinde en fazla 2 klip üretebilirsin.\n"
         "   Çok sayıda kısa klip yerine az sayıda dolu ve derin klip tercih et.\n"
         "\n"
         "KONTROL ADIMI (SÜRE):\n"
@@ -479,6 +480,10 @@ def propose_clips_with_agents(
         "target_clip_count": target_clip_count,
         "plan_focus": plan_focus,
         "normalized_segments_sample": [],
+        "window_count": 0,
+        "openai_call_count": 0,
+        "produced_clip_count": 0,
+        "kept_after_cap_count": 0,
     }
 
     if not client:
@@ -487,6 +492,7 @@ def propose_clips_with_agents(
     sentence_segments = merge_segments_into_sentences(segments)
     windows = build_windows(duration_seconds)
     debug_info["windows"] = windows
+    debug_info["window_count"] = len(windows)
 
     all_candidates = []
     for idx, win in enumerate(windows, 1):
@@ -501,8 +507,9 @@ def propose_clips_with_agents(
             "",
             plan_focus=plan_focus,
         )
-        debug_info["window_raw_responses"].append({"window": win, "raw": raw[:2000], "input": llm_input})
         agent1_clips = clips
+        debug_info["openai_call_count"] += 1 + len(agent1_clips)
+        debug_info["window_raw_responses"].append({"window": win, "raw": raw[:2000], "input": llm_input})
         accepted_clips: List[Dict[str, Any]] = []
         short_candidates: List[Dict[str, Any]] = []
         for clip in agent1_clips:
@@ -518,22 +525,28 @@ def propose_clips_with_agents(
 
         fixed_clips: List[Dict[str, Any]] = []
         for candidate in short_candidates:
+            debug_info["openai_call_count"] += 1
             fixed = _call_agent2_fix_clip(win, normalized_segments, candidate)
             if fixed is not None:
                 fixed_clips.append(fixed)
+                debug_info["openai_call_count"] += 1
 
         final_clips = accepted_clips + fixed_clips
+        debug_info["produced_clip_count"] += len(final_clips)
+        final_clips_capped = final_clips[:2]
+        debug_info["kept_after_cap_count"] += len(final_clips_capped)
         debug_info["window_candidates"].append(
             {
                 "window": win,
                 "seg_count": len(normalized_segments),
                 "agent1_clips": agent1_clips,
-                "final_clips": final_clips,
+                "final_clips": final_clips_capped,
+                "final_clips_pre_cap": final_clips,
                 "sample_text": " ".join((s.get("text") or "") for s in normalized_segments[:3])[:400],
                 "llm_input": llm_input,
             }
         )
-        all_candidates.extend(final_clips)
+        all_candidates.extend(final_clips_capped)
 
     deduped = _dedupe_candidates_by_time(all_candidates)
     debug_info["deduped_candidates"] = deduped
