@@ -363,12 +363,12 @@ def _build_fix_clip_system_prompt(language: str) -> str:
 
 def _build_window_agent_system_prompt(language: str, focus_block: str) -> str:
     prompt = _WINDOW_AGENT_SYSTEM_PROMPTS[normalize_planning_language(language)]
-    return prompt.format(focus_block=focus_block)
+    return prompt.replace("{focus_block}", focus_block)
 
 
 def _build_selector_system_prompt(language: str, focus_block: str) -> str:
     prompt = _SELECTOR_SYSTEM_PROMPTS[normalize_planning_language(language)]
-    return prompt.format(focus_block=focus_block)
+    return prompt.replace("{focus_block}", focus_block)
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
