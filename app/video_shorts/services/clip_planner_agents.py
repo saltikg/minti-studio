@@ -7,6 +7,8 @@ from app.video_shorts.services.clip_plan_focus_prompts import get_agent_focus_bl
 from app.video_shorts.services.clip_title import generate_clip_title
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
+MIN_CLIP_SECONDS = 25.0
+MAX_CLIP_SECONDS = 75.0
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -165,6 +167,13 @@ def _clean_clip_list(raw_clips: List[Dict[str, Any]], duration_seconds: float) -
     return cleaned
 
 
+def _clip_duration(candidate: Dict[str, Any]) -> float:
+    try:
+        return float(candidate.get("end") or 0.0) - float(candidate.get("start") or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _clip_text_for_range(segments: List[Dict[str, Any]], start: Any, end: Any, excerpt: str = "") -> str:
     try:
         clip_start = float(start)
@@ -231,7 +240,8 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
         "4) Süre kuralı:\n"
         "   - Süre = new_end - new_start\n"
         "   - Süre 25 saniyeden KESİNLİKLE az olmamalıdır.\n"
-        "   - İdeal aralık 25 ile 60 saniye arasıdır. 60 a biraz geçmesi kabul edilebilir ama gerekmedikçe uzatma.\n"
+        "   - Süre 75 saniyeyi KESİNLİKLE geçmemelidir.\n"
+        "   - İdeal aralık 40 ile 60 saniye arasıdır.\n"
         "\n"
         "5) Genişletme mantığı:\n"
         "   - Önce base_clip in kapsadığı segment aralığını bul.\n"
@@ -299,7 +309,7 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
     if window_end is not None:
         end = min(end, window_end)
     duration = end - start
-    if duration < 25:
+    if duration < MIN_CLIP_SECONDS or duration > MAX_CLIP_SECONDS:
         return None
     clip_excerpt = clip_data.get("excerpt") or candidate_clip.get("excerpt") or ""
     return {
@@ -360,6 +370,7 @@ def run_window_agent(
         "   - Eğer güçlü bir cümle kısa sürüyorsa, aynı window içindeki ÖNCEKİ ve SONRAKİ segmentleri de ekleyerek\n"
         "     süreyi en az 25 saniyeye çıkaracaksın.\n"
         "   - 25 saniyenin altında kalan klip üretmeyeceksin.\n"
+        "   - Bir klip 75 saniyeyi KESİNLİKLE geçmeyecek. 75 saniyenin üstüne çıkan klip üretmeyeceksin.\n"
         "\n"
         "Süre kuralları:\n"
         "- İdeal klip süresi 40 ile 60 saniye arasındadır.\n"
@@ -367,8 +378,8 @@ def run_window_agent(
         "  * Klipte dahil ettiğin ilk segmentin start değeri klibin start değeri olsun.\n"
         "  * Klipte dahil ettiğin son segmentin end değeri klibin end değeri olsun.\n"
         "  * Klip süresi = end - start.\n"
-        "- Süre 60 saniyenin biraz üstüne çıkarsa bu kabul edilebilir, ama keyfi sabit aralıklar kullanma.\n"
-        "  Her klibin süresi doğal akıştan gelsin.\n"
+        "- Sert üst sınır 75 saniyedir. 75 saniyeyi aşan klip geçersizdir.\n"
+        "  Her klibin süresi doğal akıştan gelsin ama bu sınırı asla aşmasın.\n"
         "\n"
         "Klip üretim adımları:\n"
         "1) Window içindeki segmentlerde tez, ikaz, vecize, hikaye, cozum veya duygu içeren güçlü bir çekirdek cümle bul.\n"
@@ -380,7 +391,7 @@ def run_window_agent(
         "4) Klip cümle ortasında başlamasın. Başlangıç, doğal bir cümlenin başı olsun.\n"
         "   Eğer ilk segment 've', 'ama', 'fakat' gibi bağlaçlarla başlıyorsa, ondan önceki segmenti de mutlaka ekle.\n"
         "   Klip cümle ortasında bitmesin. Son segment tamamlanmamış bir düşünce, virgül veya açık bağlaçla bitiyorsa,\n"
-        "   anlam tamamlanana kadar sonraki segmenti de ekle.\n"
+        "   SADECE o düşünceyi tamamlayan bir sonraki cümleyi ekle; yeni bir konu açacak şekilde art arda ekleme yapma.\n"
         "5) Aynı mesajı tekrar eden, neredeyse aynı çekirdeği taşıyan klipleri çoğaltma.\n"
         "   Benzer yoğunlukları tek klipte topla.\n"
         "6) Bu window içinde en fazla 2 klip üretebilirsin.\n"
@@ -393,6 +404,7 @@ def run_window_agent(
         "- Eğer (e - s) < 25 ise bu klibi KULLANMA. Bu durumda:\n"
         "  * Önce komşu segmentler eklenerek süreyi 25 saniyenin üstüne çıkarmaya çalış.\n"
         "  * Hala 25 saniyenin altında kalıyorsa, o klibi tamamen iptal et.\n"
+        "- Eğer (e - s) > 75 ise bu klibi KULLANMA.\n"
         "\n"
         "KONTROL ADIMI (ÇAKIŞMA):\n"
         "- Aynı 30 saniyelik zaman aralığı içinde neredeyse aynı segmentleri kullanan iki farklı klip oluşturma.\n"
@@ -542,6 +554,73 @@ def _snap_clip_to_sentence_boundaries(candidate: Dict[str, Any], sentence_segmen
     return snapped
 
 
+def _trim_candidate_to_duration_limit(
+    candidate: Dict[str, Any],
+    sentence_segments: List[Dict[str, Any]],
+    *,
+    min_seconds: float = MIN_CLIP_SECONDS,
+    max_seconds: float = MAX_CLIP_SECONDS,
+) -> Optional[Dict[str, Any]]:
+    trimmed = dict(candidate or {})
+    duration = _clip_duration(trimmed)
+    if duration <= 0:
+        return None
+    if duration < min_seconds:
+        return None
+    if duration <= max_seconds:
+        return trimmed
+    if not sentence_segments:
+        return None
+
+    try:
+        raw_start = float(trimmed.get("start"))
+        raw_end = float(trimmed.get("end"))
+    except Exception:
+        return None
+
+    start_seg = _find_sentence_segment_for_time(sentence_segments, raw_start, prefer="start")
+    end_seg = _find_sentence_segment_for_time(sentence_segments, raw_end, prefer="end")
+    if not start_seg or not end_seg:
+        return None
+    try:
+        start_idx = sentence_segments.index(start_seg)
+        end_idx = sentence_segments.index(end_seg)
+    except ValueError:
+        return None
+    if end_idx < start_idx:
+        return None
+
+    best_candidate: Optional[Dict[str, Any]] = None
+    best_duration = -1.0
+
+    # Prefer trimming from the end while keeping the original start/core.
+    for candidate_end_idx in range(end_idx, start_idx - 1, -1):
+        start = float(sentence_segments[start_idx].get("start") or raw_start)
+        end = float(sentence_segments[candidate_end_idx].get("end") or raw_end)
+        candidate_duration = end - start
+        if candidate_duration < min_seconds:
+            break
+        if candidate_duration <= max_seconds and candidate_duration > best_duration:
+            best_duration = candidate_duration
+            best_candidate = dict(trimmed, start=round(start, 2), end=round(end, 2))
+            break
+
+    # If the original start makes every option too long, slide the start forward.
+    if best_candidate is None:
+        for candidate_start_idx in range(start_idx + 1, end_idx + 1):
+            start = float(sentence_segments[candidate_start_idx].get("start") or raw_start)
+            end = float(sentence_segments[end_idx].get("end") or raw_end)
+            candidate_duration = end - start
+            if candidate_duration < min_seconds:
+                continue
+            if candidate_duration <= max_seconds and candidate_duration > best_duration:
+                best_duration = candidate_duration
+                best_candidate = dict(trimmed, start=round(start, 2), end=round(end, 2))
+                break
+
+    return best_candidate
+
+
 def _overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     try:
         a_start = float(a.get("start") or 0.0)
@@ -567,7 +646,7 @@ def _prune_overlapping_selected_clips(candidates: List[Dict[str, Any]]) -> List[
             pruned.append(candidate)
             continue
         last = pruned[-1]
-        if _overlap_ratio(last, candidate) >= 0.6:
+        if _overlap_ratio(last, candidate) >= 0.3:
             try:
                 last_duration = float(last.get("end") or 0.0) - float(last.get("start") or 0.0)
             except Exception:
@@ -613,6 +692,8 @@ def _select_clips_globally_with_llm(
         "\n"
         "GÖREVİN:\n"
         "- En fazla target_clip_count kadar aday seç.\n"
+        f"- {MIN_CLIP_SECONDS:.0f} saniyenin altındaki veya {MAX_CLIP_SECONDS:.0f} saniyenin üstündeki adayları seçme.\n"
+        f"- İdeal klip süresi 40 ile 60 saniyedir; {MAX_CLIP_SECONDS:.0f} saniyeyi kapsamlı olduğu için ödüllendirme.\n"
         "- Yakın kopya veya büyük ölçüde çakışan adaylardan yalnızca BİRİNİ bırak.\n"
         "- Eğer iki aday aynı fikri taşıyorsa, daha tamamlanmış olanı ve cümle akışı daha güçlü olanı tercih et.\n"
         "- Video geneline yayılmış, birbirinden farklı ve en güçlü klipleri seç.\n"
@@ -732,12 +813,8 @@ def propose_clips_with_agents(
         accepted_clips: List[Dict[str, Any]] = []
         short_candidates: List[Dict[str, Any]] = []
         for clip in agent1_clips:
-            dur = None
-            try:
-                dur = float(clip.get("end", 0) or 0) - float(clip.get("start", 0) or 0)
-            except Exception:
-                dur = None
-            if dur is not None and dur >= 25:
+            dur = _clip_duration(clip)
+            if dur >= MIN_CLIP_SECONDS:
                 accepted_clips.append(clip)
             else:
                 short_candidates.append(clip)
@@ -750,7 +827,13 @@ def propose_clips_with_agents(
                 fixed_clips.append(fixed)
                 debug_info["openai_call_count"] += 1
 
-        final_clips = accepted_clips + fixed_clips
+        bounded_clips: List[Dict[str, Any]] = []
+        for clip in accepted_clips + fixed_clips:
+            bounded = _trim_candidate_to_duration_limit(clip, sentence_segments)
+            if bounded is not None:
+                bounded_clips.append(bounded)
+
+        final_clips = bounded_clips
         debug_info["produced_clip_count"] += len(final_clips)
         final_clips_capped = final_clips[:2]
         debug_info["kept_after_cap_count"] += len(final_clips_capped)
@@ -798,6 +881,9 @@ def propose_clips_with_agents(
     aligned_candidates: List[Dict[str, Any]] = []
     for candidate in selected_candidates:
         snapped = _snap_clip_to_sentence_boundaries(candidate, sentence_segments)
+        snapped = _trim_candidate_to_duration_limit(snapped, sentence_segments)
+        if snapped is None:
+            continue
         snapped["title"] = generate_clip_title(
             _clip_text_for_range(
                 sentence_segments,
