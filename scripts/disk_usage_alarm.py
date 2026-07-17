@@ -21,7 +21,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send an email alarm when disk usage exceeds a threshold.")
     parser.add_argument("--path", default="/", help="Filesystem path to check. Default: /")
     parser.add_argument("--threshold", type=int, default=80, help="Usage percentage threshold. Default: 80")
-    parser.add_argument("--recipient", default="hello@mintistudio.com", help="Alarm email recipient.")
+    parser.add_argument("--recipient", default="info@mintistudio.com", help="Alarm email recipient.")
     return parser.parse_args()
 
 
