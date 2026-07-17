@@ -23,6 +23,7 @@ _TR_STOPWORDS = {
     "ve", "bir", "bu", "ile", "için", "ama", "gibi", "çok", "daha", "de",
     "da", "mi", "mı", "mu", "mü", "sen", "ben", "biz", "siz", "onlar",
 }
+_MIN_BOUNDARY_CUE_SECONDS = 0.7
 
 
 def _normalize_whisper_language(raw: Any) -> str:
@@ -277,6 +278,39 @@ def _chunk_text_entries(text: str, rel_start: float, rel_end: float, max_words: 
     return entries
 
 
+def _trim_text_to_segment_overlap(
+    text: str,
+    *,
+    segment_start: float,
+    segment_end: float,
+    overlap_start: float,
+    overlap_end: float,
+) -> str:
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    tokens = re.findall(r"\S+", text)
+    if not tokens:
+        return ""
+    full_duration = max(float(segment_end) - float(segment_start), 0.0)
+    overlap_duration = max(float(overlap_end) - float(overlap_start), 0.0)
+    if full_duration <= 0.0 or overlap_duration <= 0.0:
+        return ""
+    if overlap_start <= segment_start and overlap_end >= segment_end:
+        return text
+
+    token_count = len(tokens)
+    start_ratio = min(max((float(overlap_start) - float(segment_start)) / full_duration, 0.0), 1.0)
+    end_ratio = min(max((float(overlap_end) - float(segment_start)) / full_duration, 0.0), 1.0)
+    start_index = min(token_count - 1, max(0, int(start_ratio * token_count)))
+    end_index = min(token_count, max(start_index + 1, int(round(end_ratio * token_count))))
+    trimmed = tokens[start_index:end_index]
+    if not trimmed:
+        keep_words = max(1, min(token_count, int(round(token_count * (overlap_duration / full_duration)))))
+        trimmed = tokens[-keep_words:] if overlap_start > segment_start else tokens[:keep_words]
+    return " ".join(trimmed).strip()
+
+
 def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_end: float) -> Path | None:
     """
     Build a temp SRT file for segments within [clip_start, clip_end].
@@ -315,13 +349,29 @@ def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_
             d = max(e - s, 0.0)
         if e <= clip_start or s >= clip_end:
             continue
-        rel_start = max(0.0, s - clip_start)
-        rel_end = max(rel_start + 0.1, min(e, clip_end) - clip_start)
+        overlap_start = max(s, clip_start)
+        overlap_end = min(e, clip_end)
+        overlap_duration = max(overlap_end - overlap_start, 0.0)
+        rel_start = max(0.0, overlap_start - clip_start)
+        rel_end = max(rel_start + 0.1, overlap_end - clip_start)
         text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
         if not text:
             continue
+        is_boundary_segment = s < clip_start or e > clip_end
+        if is_boundary_segment:
+            text = _trim_text_to_segment_overlap(
+                text,
+                segment_start=s,
+                segment_end=e,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+            )
+            if not text or overlap_duration < _MIN_BOUNDARY_CUE_SECONDS:
+                continue
         entries = _chunk_text_entries(text, rel_start, rel_end, max_words=10)
         for start, end, chunk_text in entries:
+            if is_boundary_segment and (end - start) < _MIN_BOUNDARY_CUE_SECONDS:
+                continue
             lines.append(f"{idx}")
             lines.append(f"{fmt(start)} --> {fmt(end)}")
             lines.append(chunk_text)
