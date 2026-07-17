@@ -1474,7 +1474,7 @@
     position: relative;
     min-height: 220px;
     border-radius: 16px;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.03);
   }
@@ -1491,6 +1491,7 @@
   .cropper-surface-image-wrap {
     position: relative;
     padding: 10px;
+    overflow: visible;
   }
   .cropper-surface-image-wrap img {
     display: block;
@@ -2715,15 +2716,13 @@
               <button type="button" class="aspect-card" data-crop-aspect="portrait">
                 <span class="aspect-icon"><i class="bi bi-phone"></i></span>
                 <span>
-                  <div class="aspect-title text-white">Vertical</div>
-                  <div class="aspect-sub">9:16 shorts layout</div>
+                  <div class="aspect-title text-white">Fill</div>
                 </span>
               </button>
               <button type="button" class="aspect-card" data-crop-aspect="landscape">
                 <span class="aspect-icon"><i class="bi bi-display"></i></span>
                 <span>
-                  <div class="aspect-title text-white">Horizontal</div>
-                  <div class="aspect-sub">16:9 podcast layout</div>
+                  <div class="aspect-title text-white">Fit</div>
                 </span>
               </button>
             </div>
@@ -2773,7 +2772,7 @@
               </div>
             {% endif %}
           </div>
-          <div class="control-group static-visual-selector" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
+          <div class="control-group static-visual-selector d-none" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
             <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
             <label class="text-white-50">Visual mode</label>
             <div class="controls visual-mode-buttons" id="visual-mode-buttons">
