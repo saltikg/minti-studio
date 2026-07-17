@@ -85,6 +85,7 @@ from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
+from app.video_shorts.services.clip_title import _detect_title_language
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
@@ -2873,6 +2874,20 @@ def _resolve_transcript_language(segments: List[Dict[str, Any]]) -> Optional[str
     return max(language_counts.items(), key=lambda item: item[1])[0]
 
 
+def _resolve_video_language(segments: List[Dict[str, Any]], transcript_text: str = "") -> Optional[str]:
+    segment_language = _resolve_transcript_language(segments)
+    text_language = _detect_title_language((transcript_text or "")[:2000])
+    if segment_language == "en":
+        return "en"
+    if text_language == "en":
+        return "en"
+    if segment_language == "tr":
+        return "tr"
+    if text_language == "tr":
+        return "tr"
+    return segment_language or text_language
+
+
 def _infer_clip_language_from_segments(
     segments: List[Dict[str, Any]],
     start: Any,
@@ -3697,7 +3712,7 @@ def generate_short(video_pk):
 
     transcript_text_tr = _joined_transcript_tr(segments) or (transcript_text or "")
     transcript_text_ar = _joined_transcript_ar(segments) or transcript_text_tr
-    transcript_language = _resolve_transcript_language(segments)
+    transcript_language = _resolve_video_language(segments, transcript_text_tr or transcript_text or "")
 
     non_speech_overrides = load_non_speech_overrides(video["video_id"])
     segments_view = []
@@ -9846,7 +9861,7 @@ def _generate_clip_plan_for_video(
         except Exception:
             computed_duration = 0
 
-    transcript_language = _resolve_transcript_language(segments)
+    transcript_language = _resolve_video_language(segments, transcript_text or "")
     requested_language = _normalize_title_prompt_language(form_data.get("language"))
     plan_language = transcript_language or requested_language or "tr"
     plan_focus = normalize_plan_focus(form_data.get("plan_focus") or "")
