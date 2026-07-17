@@ -9929,11 +9929,11 @@ def _generate_clip_plan_for_video(
 
     if debug_info:
         current_app.logger.info(
-            "[CLIP_AGENT] finished windows=%s openai_calls=%s produced=%s kept_after_cap=%s",
+            "[CLIP_AGENT] finished windows=%s openai_calls=%s candidates_before_selector=%s clips_after_selector=%s",
             debug_info.get("window_count") or 0,
             debug_info.get("openai_call_count") or 0,
             debug_info.get("produced_clip_count") or 0,
-            debug_info.get("kept_after_cap_count") or len(timestamped_plan),
+            debug_info.get("clips_after_selector_count") or len(timestamped_plan),
         )
 
     focus_name = get_plan_focus_label(plan_focus)

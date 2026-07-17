@@ -1,4 +1,5 @@
 import json
+import math
 from typing import List, Dict, Any, Tuple, Optional
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
@@ -378,6 +379,8 @@ def run_window_agent(
         "   - Gerekirse 3-4 segmenti birleştir, doğal bir mini sohbet çıkana kadar segment eklemeye devam et.\n"
         "4) Klip cümle ortasında başlamasın. Başlangıç, doğal bir cümlenin başı olsun.\n"
         "   Eğer ilk segment 've', 'ama', 'fakat' gibi bağlaçlarla başlıyorsa, ondan önceki segmenti de mutlaka ekle.\n"
+        "   Klip cümle ortasında bitmesin. Son segment tamamlanmamış bir düşünce, virgül veya açık bağlaçla bitiyorsa,\n"
+        "   anlam tamamlanana kadar sonraki segmenti de ekle.\n"
         "5) Aynı mesajı tekrar eden, neredeyse aynı çekirdeği taşıyan klipleri çoğaltma.\n"
         "   Benzer yoğunlukları tek klipte topla.\n"
         "6) Bu window içinde en fazla 2 klip üretebilirsin.\n"
@@ -455,6 +458,221 @@ def _dedupe_candidates_by_time(candidates: List[Dict[str, Any]]) -> List[Dict[st
     return deduped
 
 
+def _target_clip_count_for_duration(duration_seconds: float) -> int:
+    if not duration_seconds or duration_seconds <= 0:
+        return 3
+    return max(3, min(12, int(math.ceil(float(duration_seconds) / 150.0))))
+
+
+def _find_sentence_segment_for_time(
+    sentence_segments: List[Dict[str, Any]],
+    timestamp: float,
+    *,
+    prefer: str,
+) -> Optional[Dict[str, Any]]:
+    if not sentence_segments:
+        return None
+    for seg in sentence_segments:
+        try:
+            start = float(seg.get("start") or 0.0)
+            end = float(seg.get("end") or start)
+        except Exception:
+            continue
+        if prefer == "start" and start <= timestamp < end:
+            return seg
+        if prefer == "end" and start < timestamp <= end:
+            return seg
+
+    best_seg: Optional[Dict[str, Any]] = None
+    best_distance: Optional[float] = None
+    for seg in sentence_segments:
+        try:
+            boundary = float(seg.get("start") if prefer == "start" else seg.get("end"))
+        except Exception:
+            continue
+        distance = abs(boundary - timestamp)
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_seg = seg
+    return best_seg
+
+
+def _snap_clip_to_sentence_boundaries(candidate: Dict[str, Any], sentence_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    snapped = dict(candidate or {})
+    try:
+        raw_start = float(candidate.get("start"))
+        raw_end = float(candidate.get("end"))
+    except Exception:
+        return snapped
+    if raw_end <= raw_start or not sentence_segments:
+        return snapped
+
+    start_seg = _find_sentence_segment_for_time(sentence_segments, raw_start, prefer="start")
+    end_seg = _find_sentence_segment_for_time(sentence_segments, raw_end, prefer="end")
+    if not start_seg or not end_seg:
+        return snapped
+
+    try:
+        start = float(start_seg.get("start") or raw_start)
+    except Exception:
+        start = raw_start
+    try:
+        end = float(end_seg.get("end") or raw_end)
+    except Exception:
+        end = raw_end
+
+    if end <= start:
+        try:
+            start_idx = sentence_segments.index(start_seg)
+            end_idx = sentence_segments.index(end_seg)
+        except ValueError:
+            start_idx = -1
+            end_idx = -1
+        if end_idx < start_idx and start_idx >= 0:
+            end_seg = sentence_segments[start_idx]
+            try:
+                end = float(end_seg.get("end") or raw_end)
+            except Exception:
+                end = raw_end
+        if end <= start:
+            return snapped
+
+    snapped["start"] = round(start, 2)
+    snapped["end"] = round(end, 2)
+    return snapped
+
+
+def _overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    try:
+        a_start = float(a.get("start") or 0.0)
+        a_end = float(a.get("end") or a_start)
+        b_start = float(b.get("start") or 0.0)
+        b_end = float(b.get("end") or b_start)
+    except Exception:
+        return 0.0
+    overlap = max(0.0, min(a_end, b_end) - max(a_start, b_start))
+    if overlap <= 0:
+        return 0.0
+    shorter = min(max(a_end - a_start, 0.0), max(b_end - b_start, 0.0))
+    if shorter <= 0:
+        return 0.0
+    return overlap / shorter
+
+
+def _prune_overlapping_selected_clips(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    ordered = sorted(candidates or [], key=lambda item: float(item.get("start") or 0.0))
+    pruned: List[Dict[str, Any]] = []
+    for candidate in ordered:
+        if not pruned:
+            pruned.append(candidate)
+            continue
+        last = pruned[-1]
+        if _overlap_ratio(last, candidate) >= 0.6:
+            try:
+                last_duration = float(last.get("end") or 0.0) - float(last.get("start") or 0.0)
+            except Exception:
+                last_duration = 0.0
+            try:
+                cand_duration = float(candidate.get("end") or 0.0) - float(candidate.get("start") or 0.0)
+            except Exception:
+                cand_duration = 0.0
+            if cand_duration > last_duration:
+                pruned[-1] = candidate
+            continue
+        pruned.append(candidate)
+    return pruned
+
+
+def _select_clips_globally_with_llm(
+    client,
+    model: str,
+    *,
+    candidates: List[Dict[str, Any]],
+    duration_seconds: float,
+    target_clip_count: int,
+) -> Tuple[List[Dict[str, Any]], str]:
+    if not client or not candidates:
+        return [], ""
+
+    payload_candidates: List[Dict[str, Any]] = []
+    for idx, candidate in enumerate(candidates, 1):
+        payload_candidates.append(
+            {
+                "candidate_id": idx,
+                "start": candidate.get("start"),
+                "end": candidate.get("end"),
+                "duration": round(float(candidate.get("end") or 0.0) - float(candidate.get("start") or 0.0), 2),
+                "title": candidate.get("title") or "",
+                "excerpt": candidate.get("excerpt") or "",
+            }
+        )
+
+    system_prompt = (
+        "Sen uzun bir Türkçe videodan seçilmiş klip adayları arasından en iyi Shorts planını kuran son seçici ajansın.\n"
+        "Adaylar farklı pencerelerden geldiği için birbirini tekrar eden, aynı pasajı paylaşan veya sınırları eksik olan klipler olabilir.\n"
+        "\n"
+        "GÖREVİN:\n"
+        "- En fazla target_clip_count kadar aday seç.\n"
+        "- Yakın kopya veya büyük ölçüde çakışan adaylardan yalnızca BİRİNİ bırak.\n"
+        "- Eğer iki aday aynı fikri taşıyorsa, daha tamamlanmış olanı ve cümle akışı daha güçlü olanı tercih et.\n"
+        "- Video geneline yayılmış, birbirinden farklı ve en güçlü klipleri seç.\n"
+        "- Sırf sayıyı doldurmak için zayıf aday seçme; daha az ama daha iyi seçim yap.\n"
+        "\n"
+        "SEÇİM KRİTERLERİ:\n"
+        "- Açık fikir, güçlü tez, ikaz, duygu, vecize, hikaye veya çözüm taşıması\n"
+        "- Tekrar etmemesi\n"
+        "- Kendi içinde daha bütünlüklü olması\n"
+        "- Aynı pasajın daha eksik/kesik versiyonunu elemesi\n"
+        "\n"
+        "ÇIKTI:\n"
+        "Sadece geçerli JSON döndür.\n"
+        "{\n"
+        "  \"selected\": [\n"
+        "    {\"candidate_id\": number, \"reason\": str},\n"
+        "    ...\n"
+        "  ]\n"
+        "}\n"
+        "reason kısa olsun; neden seçildiğini 1 cümlede belirt.\n"
+    )
+    payload = {
+        "duration_seconds": duration_seconds,
+        "target_clip_count": target_clip_count,
+        "candidates": payload_candidates,
+    }
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        timeout=OPENAI_PLANNER_TIMEOUT_SECONDS,
+    )
+    raw = resp.choices[0].message.content if resp.choices else ""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return [], raw
+    selected = data.get("selected") or []
+    chosen: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for row in selected:
+        try:
+            candidate_id = int(row.get("candidate_id"))
+        except Exception:
+            continue
+        if candidate_id in seen_ids or candidate_id < 1 or candidate_id > len(candidates):
+            continue
+        seen_ids.add(candidate_id)
+        base = dict(candidates[candidate_id - 1])
+        base["selector_reason"] = str(row.get("reason") or "").strip()
+        chosen.append(base)
+        if len(chosen) >= target_clip_count:
+            break
+    return chosen, raw
+
+
 def propose_clips_with_agents(
     segments: List[Dict[str, Any]],
     transcript_text: str,
@@ -484,6 +702,7 @@ def propose_clips_with_agents(
         "openai_call_count": 0,
         "produced_clip_count": 0,
         "kept_after_cap_count": 0,
+        "clips_after_selector_count": 0,
     }
 
     if not client:
@@ -525,8 +744,8 @@ def propose_clips_with_agents(
 
         fixed_clips: List[Dict[str, Any]] = []
         for candidate in short_candidates:
-            debug_info["openai_call_count"] += 1
             fixed = _call_agent2_fix_clip(win, normalized_segments, candidate)
+            debug_info["openai_call_count"] += 1
             if fixed is not None:
                 fixed_clips.append(fixed)
                 debug_info["openai_call_count"] += 1
@@ -551,12 +770,48 @@ def propose_clips_with_agents(
     deduped = _dedupe_candidates_by_time(all_candidates)
     debug_info["deduped_candidates"] = deduped
 
+    target_count = target_clip_count or _target_clip_count_for_duration(duration_seconds)
     selector_input = {
         "candidates": deduped,
         "duration_seconds": duration_seconds,
+        "target_clip_count": target_count,
     }
     debug_info["selector_input"] = selector_input
-    final_plan = sorted(deduped, key=lambda c: c.get("start", 0) or 0)
-    debug_info["selector_raw_response"] = ""
+    selected_candidates: List[Dict[str, Any]] = []
+    selector_raw_response = ""
+    if deduped:
+        try:
+            selected_candidates, selector_raw_response = _select_clips_globally_with_llm(
+                client,
+                model,
+                candidates=deduped,
+                duration_seconds=duration_seconds,
+                target_clip_count=target_count,
+            )
+            debug_info["openai_call_count"] += 1
+        except Exception:
+            selected_candidates = []
+            selector_raw_response = ""
+    if not selected_candidates:
+        selected_candidates = list(deduped[:target_count])
+
+    aligned_candidates: List[Dict[str, Any]] = []
+    for candidate in selected_candidates:
+        snapped = _snap_clip_to_sentence_boundaries(candidate, sentence_segments)
+        snapped["title"] = generate_clip_title(
+            _clip_text_for_range(
+                sentence_segments,
+                snapped.get("start"),
+                snapped.get("end"),
+                excerpt=str(snapped.get("excerpt") or ""),
+            ),
+            language_hint="tr",
+        )
+        debug_info["openai_call_count"] += 1
+        aligned_candidates.append(snapped)
+
+    final_plan = _prune_overlapping_selected_clips(aligned_candidates)
+    debug_info["clips_after_selector_count"] = len(final_plan)
+    debug_info["selector_raw_response"] = selector_raw_response
     debug_info["final_plan"] = final_plan
     return final_plan, debug_info
