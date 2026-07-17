@@ -232,7 +232,6 @@
       <!-- Sidebar -->
       <aside class="col-md-3 col-lg-2 mb-4">
         {% set vs_is_first_run = vs_onboarding and not vs_onboarding.core_completed %}
-        {% set locked_label = "Unlocks after your first short." %}
         <div class="list-group shadow-sm vs-sidebar-menu">
           <div class="sidebar-section-label">CREATE</div>
 
@@ -254,77 +253,42 @@
 
           <div class="sidebar-section-label">DISTRIBUTE</div>
 
-          {% if vs_is_first_run %}
-            {% for item in [
-              ("monitoring", "Publishing"),
-              ("comment", "Comments"),
-            ] %}
-              <button
-                type="button"
-                class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link is-locked"
-                aria-disabled="true"
-                aria-label="{{ item[1] }}. {{ locked_label }}"
-                title="{{ locked_label }}"
-                data-bs-toggle="tooltip"
-                data-bs-placement="right">
-                <span class="material-symbols-outlined">{{ item[0] }}</span>
-                <span>{{ item[1] }}</span>
-                <span class="material-symbols-outlined vs-sidebar-lock" aria-hidden="true">lock</span>
-              </button>
-            {% endfor %}
-          {% else %}
-            <a href="{{ url_for('video_shorts_bp.shorts_overview') }}"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                      {% if '/shorts/overview' in request.path %}active{% endif %}">
-              <span class="material-symbols-outlined">monitoring</span>
-              <span>Publishing</span>
-            </a>
+          <a href="{{ url_for('video_shorts_bp.shorts_overview') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/shorts/overview' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">monitoring</span>
+            <span>Publishing</span>
+          </a>
 
-            <a href="{{ url_for('video_shorts_bp.shorts_comments_page') }}"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                      {% if '/shorts/comments' in request.path and '/shorts/comments/' not in request.path %}active{% endif %}">
-              <span class="material-symbols-outlined">comment</span>
-              <span>Comments</span>
-            </a>
-          {% endif %}
+          <a href="{{ url_for('video_shorts_bp.shorts_comments_page') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/shorts/comments' in request.path and '/shorts/comments/' not in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">comment</span>
+            <span>Comments</span>
+          </a>
 
           <div class="sidebar-section-label">MEASURE</div>
 
-          {% if vs_is_first_run %}
-            {% for item in [
-              ("analytics", "Dashboard"),
-              ("insights", "Video Analytics"),
-              ("movie_edit", "Monthly Top Video"),
-            ] %}
-              <button
-                type="button"
-                class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link is-locked"
-                aria-disabled="true"
-                aria-label="{{ item[1] }}. {{ locked_label }}"
-                title="{{ locked_label }}"
-                data-bs-toggle="tooltip"
-                data-bs-placement="right">
-                <span class="material-symbols-outlined">{{ item[0] }}</span>
-                <span>{{ item[1] }}</span>
-                <span class="material-symbols-outlined vs-sidebar-lock" aria-hidden="true">lock</span>
-              </button>
-            {% endfor %}
-          {% else %}
-            <a href="{{ url_for('video_shorts_bp.video_stats_page') }}"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                      {% if '/video_shorts/stats' in request.path %}active{% endif %}">
-              <span class="material-symbols-outlined">analytics</span>
-              <span>Dashboard</span>
-            </a>
+          <a href="{{ url_for('video_shorts_bp.video_stats_page') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/video_shorts/stats' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">analytics</span>
+            <span>Dashboard</span>
+          </a>
 
-            <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
-                      {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">
-              <span class="material-symbols-outlined">insights</span>
-              <span>Video Analytics</span>
-            </a>
+          <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">insights</span>
+            <span>Video Analytics</span>
+          </a>
 
-          {% endif %}
+          <a href="{{ url_for('video_shorts_bp.workflow_monthly_top_video') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/video_shorts/workflow/monthly-top-video' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">movie_edit</span>
+            <span>Monthly Top Video</span>
+          </a>
 
           {% if not vs_is_first_run and vs_current_user and vs_current_user.get('role') == 'admin' %}
           <div class="sidebar-section-label">KNOWLEDGE BASE</div>

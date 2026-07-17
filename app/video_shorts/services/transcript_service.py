@@ -97,7 +97,6 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                         model=WHISPER_MODEL,
                         file=f,
                         response_format="verbose_json",
-                        prompt="Detect spoken language and transcribe exactly as spoken. Do not translate.",
                     )
                 lang = _extract_transcription_language(resp)
                 probe_text, _ = _whisper_response_to_segments(resp)
@@ -1256,7 +1255,6 @@ def _transcribe_with_whisper(
                 "file": f,
                 "response_format": "verbose_json",
                 "timestamp_granularities": ["segment", "word"],  # ensure segment + word timings
-                "prompt": "Transcribe exactly as spoken in the original audio language. Do not translate.",
             }
             if transcription_mode in {"en", "tr"}:
                 request_payload["language"] = transcription_mode
