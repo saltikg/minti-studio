@@ -83,7 +83,7 @@ from app.video_shorts.services.clip_planner_agents import propose_clips_with_age
 from app.video_shorts.services.clip_planner_agents_v2 import propose_clips_with_agents_v2
 from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_agents_v3
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
-from app.video_shorts.services.clip_planning import _fallback_clip_plan, _propose_clips_with_llm
+from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay
 from app.video_shorts.services.db import (
@@ -152,7 +152,7 @@ from app.video_shorts.services.non_speech_overrides import (
 )
 from app.video_shorts.services.clip_plan_focus_prompts import (
     ALL_FOCUS_CATEGORIES,
-    FOCUS_CATEGORY_OPTIONS,
+    get_focus_category_options,
     normalize_focus_categories,
     get_plan_focus_label,
     normalize_plan_focus,
@@ -4753,7 +4753,7 @@ def generate_short(video_pk):
         debug_info=debug_info,
         clip_rows=clip_rows,
         ai_suggested_clip_count=ai_suggested_clip_count,
-        focus_category_options=FOCUS_CATEGORY_OPTIONS,
+        focus_category_options=get_focus_category_options(transcript_language or "tr"),
         selected_focus_categories=selected_focus_categories,
         transcript_player_source=transcript_player_source,
         youtube_connected=youtube_connected,
@@ -9846,7 +9846,9 @@ def _generate_clip_plan_for_video(
         except Exception:
             computed_duration = 0
 
-    plan_language = (form_data.get("language") or "").strip().lower()
+    transcript_language = _resolve_transcript_language(segments)
+    requested_language = _normalize_title_prompt_language(form_data.get("language"))
+    plan_language = transcript_language or requested_language or "tr"
     plan_focus = normalize_plan_focus(form_data.get("plan_focus") or "")
     focus_categories = normalize_focus_categories(form_data.get("focus_categories"), default_to_all=True)
     clip_plan: List[Dict[str, Any]] = []
@@ -9856,26 +9858,17 @@ def _generate_clip_plan_for_video(
 
     try:
         _emit("llm_plan", "Generating clip plan with AI.")
-        if plan_language == "en":
-            clip_plan, debug_raw = _propose_clips_with_llm(
-                segments,
-                transcript_text,
-                computed_duration,
-                language="en",
-                plan_focus=plan_focus,
-            )
-            debug_info = {"llm_raw": (debug_raw or "")[:2000], "language": "en", "plan_focus": plan_focus}
-        else:
-            clip_plan, debug_info = propose_clips_with_agents(
-                segments,
-                transcript_text,
-                computed_duration,
-                _openai_client,
-                OPENAI_MODEL,
-                debug=debug_flag,
-                plan_focus=plan_focus,
-                focus_categories=focus_categories,
-            )
+        clip_plan, debug_info = propose_clips_with_agents(
+            segments,
+            transcript_text,
+            computed_duration,
+            _openai_client,
+            OPENAI_MODEL,
+            debug=debug_flag,
+            plan_focus=plan_focus,
+            focus_categories=focus_categories,
+            language=plan_language,
+        )
     except Exception as ag:
         current_app.logger.warning("Agent pipeline failed, falling back. %s", ag)
         _emit("fallback", "Primary planner failed; using fallback plan.")

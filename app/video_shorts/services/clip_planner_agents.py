@@ -7,12 +7,368 @@ from app.video_shorts.services.clip_plan_focus_prompts import (
     get_agent_focus_block,
     get_focus_categories_agent_block,
     get_focus_categories_selector_block,
+    normalize_planning_language,
 )
 from app.video_shorts.services.clip_title import generate_clip_title
 
 OPENAI_PLANNER_TIMEOUT_SECONDS = 45.0
 MIN_CLIP_SECONDS = 25.0
 MAX_CLIP_SECONDS = 60.0
+
+_FIX_CLIP_SYSTEM_PROMPTS = {
+    "tr": (
+        "Sen bir 'clip fixer' ajansın.\n"
+        "Girdi olarak üç şey alıyorsun:\n"
+        "- window: {\"start\": float, \"end\": float}\n"
+        "- segments: bu window içindeki zaman sıralı cümle blokları listesi. Her segment:\n"
+        "    {\"start\": float, \"end\": float, \"duration\": float, \"text\": str}\n"
+        "- base_clip: Agent 1 tarafından önerilen klip. Şu yapıda:\n"
+        "    {\"title\": str, \"start\": float, \"end\": float, \"excerpt\": str}\n"
+        "\n"
+        "Video dili Türkçe.\n"
+        "Görevin, base_clip ile aynı fikir çekirdeğini koruyarak onu gerekirse öne ve arkaya doğru genişletip\n"
+        "klip süresini en az 25 saniyeye çıkarmaktır.\n"
+        "\n"
+        "KATI KURALLAR:\n"
+        "1) Üreteceğin klip her zaman window.start ile window.end aralığında kalmalıdır.\n"
+        "   - Yeni_start >= window.start\n"
+        "   - Yeni_end   <= window.end\n"
+        "\n"
+        "2) Base klip mutlaka yeni aralığın içinde kalmalıdır.\n"
+        "   - new_start <= base_clip.start\n"
+        "   - new_end   >= base_clip.end\n"
+        "\n"
+        "3) Start ve end sadece segment sınırlarında olabilir.\n"
+        "   - new_start, segments içindeki bir segment.start ile tam aynı olmalı\n"
+        "   - new_end   segments içindeki bir segment.end ile tam aynı olmalı\n"
+        "   - Aradaki tüm segmentler klibin parçası sayılır ve klipte EN AZ 2 segment olmalıdır.\n"
+        "\n"
+        "4) Süre kuralı:\n"
+        "   - Süre = new_end - new_start\n"
+        "   - Süre 25 saniyeden KESİNLİKLE az olmamalıdır.\n"
+        "   - Süre 60 saniyeyi KESİNLİKLE geçmemelidir.\n"
+        "   - İdeal aralık 35 ile 55 saniye arasıdır.\n"
+        "\n"
+        "5) Genişletme mantığı:\n"
+        "   - Önce base_clip in kapsadığı segment aralığını bul.\n"
+        "   - Eğer bu aralığın süresi zaten >= 25 ise, aynı aralığı kullan, sadece excerpt i temizce üret.\n"
+        "   - Eğer süre < 25 ise, önce base_clip ten ÖNCE gelen segmentleri tek tek ekleyerek\n"
+        "     süreyi artırmaya çalış. Yine yetmezse base_clip ten SONRA gelen segmentleri ekle.\n"
+        "   - Genişletirken aynı konu ve fikir bütünlüğünü korumaya dikkat et. Farklı bir konuya sıçrama yapma.\n"
+        "\n"
+        "6) Eğer window içinde base_clip ile aynı fikri bozmadan ve window sınırlarını aşmadan\n"
+        "   25 saniyeye ulaşamıyorsan HİÇ klip üretme.\n"
+        "\n"
+        "7) Sadece TEK bir klip döndüreceksin. Bu çağrı sadece bir base_clip i düzeltmek içindir.\n"
+        "\n"
+        "ÇIKTI FORMAT KURALI:\n"
+        "Sadece geçerli JSON döndür. Ekstra açıklama, yorum veya metin yazma.\n"
+        "{\n"
+        "  \"clips\": [\n"
+        "    {\"start\": float, \"end\": float, \"excerpt\": str}\n"
+        "  ]\n"
+        "}\n"
+        "\n"
+        "start, end: Yukarıdaki kurallara uygun zaman değerleri.\n"
+        "excerpt: Seçtiğin segmentlerin içinden 1 ile 3 cümle arası çarpıcı bir alıntı.\n"
+        "Eğer uygun bir genişletme yapamıyorsan:\n"
+        "{ \"clips\": [] }\n"
+        "dönmelisin.\n"
+    ),
+    "en": (
+        "You are a clip fixer agent.\n"
+        "You receive three inputs:\n"
+        "- window: {\"start\": float, \"end\": float}\n"
+        "- segments: a time-ordered list of sentence blocks inside this window. Each segment:\n"
+        "    {\"start\": float, \"end\": float, \"duration\": float, \"text\": str}\n"
+        "- base_clip: the clip candidate proposed by Agent 1. Shape:\n"
+        "    {\"title\": str, \"start\": float, \"end\": float, \"excerpt\": str}\n"
+        "\n"
+        "Video language is English.\n"
+        "Your job is to preserve the same idea core as base_clip and, when needed, expand it backward or forward\n"
+        "so the clip becomes at least 25 seconds long.\n"
+        "\n"
+        "HARD RULES:\n"
+        "1) The clip must always stay inside window.start and window.end.\n"
+        "   - new_start >= window.start\n"
+        "   - new_end   <= window.end\n"
+        "\n"
+        "2) The base clip must remain inside the new range.\n"
+        "   - new_start <= base_clip.start\n"
+        "   - new_end   >= base_clip.end\n"
+        "\n"
+        "3) Start and end may only sit on segment boundaries.\n"
+        "   - new_start must exactly match one segment.start\n"
+        "   - new_end   must exactly match one segment.end\n"
+        "   - All segments between them belong to the clip, and the clip must contain AT LEAST 2 segments.\n"
+        "\n"
+        "4) Duration rule:\n"
+        "   - Duration = new_end - new_start\n"
+        "   - Duration must NEVER be below 25 seconds.\n"
+        "   - Duration must NEVER exceed 60 seconds.\n"
+        "   - Ideal range is 35 to 55 seconds.\n"
+        "\n"
+        "5) Expansion logic:\n"
+        "   - First find the segment span already covered by base_clip.\n"
+        "   - If that span is already >= 25 seconds, keep it and just produce a clean excerpt.\n"
+        "   - If duration < 25, first add segments BEFORE the base clip one by one.\n"
+        "     If that is still not enough, add segments AFTER the base clip.\n"
+        "   - While expanding, preserve topic and idea continuity. Do not jump to a different subject.\n"
+        "\n"
+        "6) If you cannot reach 25 seconds inside the same idea and within window bounds,\n"
+        "   produce NO clip.\n"
+        "\n"
+        "7) Return only ONE clip. This call exists only to fix one base_clip.\n"
+        "\n"
+        "OUTPUT FORMAT RULE:\n"
+        "Return valid JSON only. No explanations, no commentary.\n"
+        "{\n"
+        "  \"clips\": [\n"
+        "    {\"start\": float, \"end\": float, \"excerpt\": str}\n"
+        "  ]\n"
+        "}\n"
+        "\n"
+        "start, end: timestamps that obey all rules above.\n"
+        "excerpt: a strong quote of 1 to 3 sentences taken from the chosen segments.\n"
+        "If no valid expansion exists, return:\n"
+        "{ \"clips\": [] }\n"
+    ),
+}
+
+_WINDOW_AGENT_SYSTEM_PROMPTS = {
+    "tr": (
+        "Sen bir klipleme ajanısın. Video dili Türkçe. Verilen cümle segmentlerinden, "
+        "YouTube Shorts için anlamlı mini sohbet klipleri öneriyorsun.\n"
+        "\n"
+        "Girdi yapısı:\n"
+        "- 'segments' listesi zaman sıralı cümle bloklarıdır. Her birinde: start, end, duration (saniye), text alanları vardır.\n"
+        "- 'window.start' ve 'window.end' bu ajanın asıl çalıştığı zaman aralığını gösterir. "
+        "Seçeceğin tüm klipler bu aralığın içinde kalmalıdır.\n"
+        "\n"
+        "Aradığın yoğunluk türleri:\n"
+        "- tez: Ana fikri taşıyan, hüküm ve çerçeve cümleleri\n"
+        "- ikaz: Sarsıcı uyarılar, tehlike vurguları, güçlü ikazlar\n"
+        "- vecize: Kısa, duvara asılacak özlü sözler ya da yoğun çıkarımlar\n"
+        "- hikaye: Kişi, yer, olay veya hatıra anlatan bölümler\n"
+        "- cozum: 'Ne yapmalı?' sorusuna cevap veren, yol haritası çizen bölümler\n"
+        "- duygu: Açık duygu içeren, sitem, acı, hayret, öfke veya sevgi taşıyan ifadeler\n"
+        "{focus_block}"
+        "\n"
+        "EN ÖNEMLİ KURALLAR:\n"
+        "1) Klipler TEK CÜMLE olmayacak, küçük bir sohbet/paragraf bloğu olacak.\n"
+        "   Her klip birden fazla segment içermeli (genelde 2 ile 6 segment arası).\n"
+        "2) Kesin kural: Bir klipte (end - start) 25 saniyeden KESİNLİKLE az olmayacak.\n"
+        "   - Eğer güçlü bir cümle kısa sürüyorsa, aynı window içindeki ÖNCEKİ ve SONRAKİ segmentleri de ekleyerek\n"
+        "     süreyi en az 25 saniyeye çıkaracaksın.\n"
+        "   - 25 saniyenin altında kalan klip üretmeyeceksin.\n"
+        "   - Bir klip 60 saniyeyi KESİNLİKLE geçmeyecek. 60 saniyenin üstüne çıkan klip üretmeyeceksin.\n"
+        "\n"
+        "Süre kuralları:\n"
+        "- İdeal klip süresi 35 ile 55 saniye arasındadır.\n"
+        "- Süreyi hesaplarken seçtiğin segmentleri kullan:\n"
+        "  * Klipte dahil ettiğin ilk segmentin start değeri klibin start değeri olsun.\n"
+        "  * Klipte dahil ettiğin son segmentin end değeri klibin end değeri olsun.\n"
+        "  * Klip süresi = end - start.\n"
+        "- Sert üst sınır 60 saniyedir. 60 saniyeyi aşan klip geçersizdir.\n"
+        "  Her klibin süresi doğal akıştan gelsin ama bu sınırı asla aşmasın.\n"
+        "\n"
+        "Klip üretim adımları:\n"
+        "1) Window içindeki segmentlerde tez, ikaz, vecize, hikaye, cozum veya duygu içeren güçlü bir çekirdek cümle bul.\n"
+        "2) Bu çekirdek etrafında bağlam oluştur:\n"
+        "   - Önceki segmentlerden, konuyu hazırlayan cümleleri ekle.\n"
+        "   - Sonraki segmentlerden, anlamı tamamlayan cümleleri ekle.\n"
+        "3) Bu genişletme ile klip süresini en az 25 saniyeye çıkar:\n"
+        "   - Gerekirse 3-4 segmenti birleştir, doğal bir mini sohbet çıkana kadar segment eklemeye devam et.\n"
+        "4) Klip cümle ortasında başlamasın. Başlangıç, doğal bir cümlenin başı olsun.\n"
+        "   Eğer ilk segment 've', 'ama', 'fakat' gibi bağlaçlarla başlıyorsa, ondan önceki segmenti de mutlaka ekle.\n"
+        "   Klip cümle ortasında bitmesin. Son segment tamamlanmamış bir düşünce, virgül veya açık bağlaçla bitiyorsa,\n"
+        "   SADECE o düşünceyi tamamlayan bir sonraki cümleyi ekle; yeni bir konu açacak şekilde art arda ekleme yapma.\n"
+        "5) Aynı mesajı tekrar eden, neredeyse aynı çekirdeği taşıyan klipleri çoğaltma.\n"
+        "   Benzer yoğunlukları tek klipte topla.\n"
+        "6) Bu window içinde en fazla 2 klip üretebilirsin.\n"
+        "   Çok sayıda kısa klip yerine az sayıda dolu ve derin klip tercih et.\n"
+        "\n"
+        "KONTROL ADIMI (SÜRE):\n"
+        "Her klibi döndürmeden önce şu kontrolü zihninde yap:\n"
+        "- Klipte kullandığın ilk segmentin start değeri = s\n"
+        "- Klipte kullandığın son segmentin end değeri = e\n"
+        "- Eğer (e - s) < 25 ise bu klibi KULLANMA. Bu durumda:\n"
+        "  * Önce komşu segmentler eklenerek süreyi 25 saniyenin üstüne çıkarmaya çalış.\n"
+        "  * Hala 25 saniyenin altında kalıyorsa, o klibi tamamen iptal et.\n"
+        "- Eğer (e - s) > 60 ise bu klibi KULLANMA.\n"
+        "\n"
+        "KONTROL ADIMI (ÇAKIŞMA):\n"
+        "- Aynı 30 saniyelik zaman aralığı içinde neredeyse aynı segmentleri kullanan iki farklı klip oluşturma.\n"
+        "- Eğer iki aday klip büyük ölçüde aynı segmentleri veya aynı ana fikri paylaşıyorsa,\n"
+        "  yalnızca en güçlü ve en dolu olan klibi bırak, diğerini tamamen iptal et.\n"
+        "\n"
+        "Çıktı formatı:\n"
+        "Sadece geçerli JSON döndür. Şu yapıda üret:\n"
+        "{\n"
+        '  \"clips\": [\n'
+        '    {\"start\": float, \"end\": float, \"excerpt\": str},\n'
+        "    ...\n"
+        "  ]\n"
+        "}\n"
+        "\n"
+        "excerpt: Klip içinden 1-3 cümlelik çarpıcı bir alıntı olsun. "
+        "Bu alıntı da tek başına anlaşılır ve izleyiciye ne göreceğini hissettiren türden olmalıdır.\n"
+    ),
+    "en": (
+        "You are a clip planning agent. Video language is English. From the given sentence segments, "
+        "you propose meaningful mini-conversation clips for YouTube Shorts.\n"
+        "\n"
+        "Input structure:\n"
+        "- 'segments' is a time-ordered list of sentence blocks. Each item has: start, end, duration (seconds), text.\n"
+        "- 'window.start' and 'window.end' mark the core time range for this agent. "
+        "Every clip you choose must stay inside that range.\n"
+        "\n"
+        "Density types you are looking for:\n"
+        "- tez: core claims, framing lines, and sentences carrying the main idea\n"
+        "- ikaz: sharp warnings, danger signals, and high-stakes caution\n"
+        "- vecize: short, quotable insights or compact takeaways\n"
+        "- hikaye: story beats, anecdotes, scenes, and narrated events\n"
+        "- cozum: answers to 'what should we do?', practical direction, and next steps\n"
+        "- duygu: explicit feeling, grief, awe, anger, love, or longing\n"
+        "{focus_block}"
+        "\n"
+        "MOST IMPORTANT RULES:\n"
+        "1) Clips must NOT be a single sentence. Each one should feel like a small conversation or paragraph block.\n"
+        "   Every clip should contain multiple segments, usually between 2 and 6.\n"
+        "2) Hard rule: a clip's duration (end - start) must NEVER be below 25 seconds.\n"
+        "   - If a strong sentence is too short on its own, extend it by adding nearby PREVIOUS and NEXT segments inside the window.\n"
+        "   - Do not produce any clip below 25 seconds.\n"
+        "   - A clip must NEVER exceed 60 seconds. Do not produce anything above 60 seconds.\n"
+        "\n"
+        "Duration rules:\n"
+        "- Ideal clip length is between 35 and 55 seconds.\n"
+        "- Compute duration from the segments you include:\n"
+        "  * The start of the first included segment becomes the clip start.\n"
+        "  * The end of the last included segment becomes the clip end.\n"
+        "  * Clip duration = end - start.\n"
+        "- The hard upper limit is 60 seconds. Anything above 60 seconds is invalid.\n"
+        "  The clip should feel natural, but it must never cross that limit.\n"
+        "\n"
+        "Clip construction steps:\n"
+        "1) Find a strong core sentence inside the window that carries tez, ikaz, vecize, hikaye, cozum, or duygu.\n"
+        "2) Build context around that core:\n"
+        "   - Add earlier segments that set up the idea.\n"
+        "   - Add later segments that complete the meaning.\n"
+        "3) Use that expansion to reach at least 25 seconds:\n"
+        "   - Combine 3-4 segments when needed, and keep extending until it becomes a natural mini-conversation.\n"
+        "4) The clip must not start mid-sentence. Its opening should be the start of a natural sentence.\n"
+        "   If the first segment begins with a connector like 'and', 'but', or 'so', include the segment before it.\n"
+        "   The clip must not end mid-sentence. If the final segment ends with a comma, unfinished thought, or open connector,\n"
+        "   add ONLY the next sentence that completes that thought; do not keep appending until a new topic starts.\n"
+        "5) Do not multiply clips that repeat the same message or use nearly the same core.\n"
+        "   Merge similar density into one stronger clip.\n"
+        "6) You may produce at most 2 clips in this window.\n"
+        "   Prefer fewer, deeper clips over many short ones.\n"
+        "\n"
+        "CHECK STEP (DURATION):\n"
+        "Before returning a clip, check this mentally:\n"
+        "- The first included segment starts at s\n"
+        "- The last included segment ends at e\n"
+        "- If (e - s) < 25, DO NOT USE that clip. Instead:\n"
+        "  * First try adding neighboring segments until duration goes above 25 seconds.\n"
+        "  * If it still stays under 25, cancel that clip entirely.\n"
+        "- If (e - s) > 60, DO NOT USE that clip.\n"
+        "\n"
+        "CHECK STEP (OVERLAP):\n"
+        "- Do not create two different clips that use nearly the same segments inside the same ~30 second area.\n"
+        "- If two candidate clips share most of the same segments or the same main idea,\n"
+        "  keep only the strongest and fullest one, and cancel the other completely.\n"
+        "\n"
+        "Output format:\n"
+        "Return valid JSON only. Use this shape:\n"
+        "{\n"
+        '  \"clips\": [\n'
+        '    {\"start\": float, \"end\": float, \"excerpt\": str},\n'
+        "    ...\n"
+        "  ]\n"
+        "}\n"
+        "\n"
+        "excerpt: a sharp 1-3 sentence quote from inside the clip. "
+        "It should stand alone and let the viewer feel what they are about to watch.\n"
+    ),
+}
+
+_SELECTOR_SYSTEM_PROMPTS = {
+    "tr": (
+        "Sen uzun bir Türkçe videodan seçilmiş klip adayları arasından en iyi Shorts planını kuran son seçici ajansın.\n"
+        "Adaylar farklı pencerelerden geldiği için birbirini tekrar eden, aynı pasajı paylaşan veya sınırları eksik olan klipler olabilir.\n"
+        "\n"
+        "GÖREVİN:\n"
+        "- En fazla target_clip_count kadar aday seç.\n"
+        f"- {MIN_CLIP_SECONDS:.0f} saniyenin altındaki veya {MAX_CLIP_SECONDS:.0f} saniyenin üstündeki adayları seçme.\n"
+        f"- İdeal klip süresi 35 ile 55 saniyedir; {MAX_CLIP_SECONDS:.0f} saniyeyi geçen hiçbir adayı ödüllendirme.\n"
+        "- Yakın kopya veya büyük ölçüde çakışan adaylardan yalnızca BİRİNİ bırak.\n"
+        "- Eğer iki aday aynı fikri taşıyorsa, daha tamamlanmış olanı ve cümle akışı daha güçlü olanı tercih et.\n"
+        "- Video geneline yayılmış, birbirinden farklı ve en güçlü klipleri seç.\n"
+        "- Sırf sayıyı doldurmak için zayıf aday seçme; daha az ama daha iyi seçim yap.\n"
+        "\n"
+        "{focus_block}"
+        "SEÇİM KRİTERLERİ:\n"
+        "- Açık fikir, güçlü tez, ikaz, duygu, vecize, hikaye veya çözüm taşıması\n"
+        "- Tekrar etmemesi\n"
+        "- Kendi içinde daha bütünlüklü olması\n"
+        "- Aynı pasajın daha eksik/kesik versiyonunu elemesi\n"
+        "\n"
+        "ÇIKTI:\n"
+        "Sadece geçerli JSON döndür.\n"
+        "{\n"
+        "  \"selected\": [\n"
+        "    {\"candidate_id\": number, \"reason\": str},\n"
+        "    ...\n"
+        "  ]\n"
+        "}\n"
+        "reason kısa olsun; neden seçildiğini 1 cümlede belirt.\n"
+    ),
+    "en": (
+        "You are the final selector agent building the best Shorts plan from clip candidates extracted out of a longer English video.\n"
+        "Because candidates come from different windows, some may repeat each other, share the same passage, or have weaker boundaries.\n"
+        "\n"
+        "YOUR JOB:\n"
+        "- Select at most target_clip_count candidates.\n"
+        f"- Do not select anything shorter than {MIN_CLIP_SECONDS:.0f} seconds or longer than {MAX_CLIP_SECONDS:.0f} seconds.\n"
+        f"- Ideal clip length is 35 to 55 seconds; do not reward any candidate above {MAX_CLIP_SECONDS:.0f} seconds.\n"
+        "- If two candidates are near-duplicates or heavily overlap, keep only ONE.\n"
+        "- If two candidates carry the same idea, prefer the more complete one with stronger sentence flow.\n"
+        "- Pick the strongest clips spread across the full video rather than clustering on one passage.\n"
+        "- Do not fill the quota with weak candidates; fewer but better is the right tradeoff.\n"
+        "\n"
+        "{focus_block}"
+        "SELECTION CRITERIA:\n"
+        "- Carries a clear idea, strong thesis, warning, emotion, maxim, story, or solution\n"
+        "- Does not repeat what another selected clip already covers\n"
+        "- Feels more internally complete\n"
+        "- Beats weaker or more truncated versions of the same passage\n"
+        "\n"
+        "OUTPUT:\n"
+        "Return valid JSON only.\n"
+        "{\n"
+        "  \"selected\": [\n"
+        "    {\"candidate_id\": number, \"reason\": str},\n"
+        "    ...\n"
+        "  ]\n"
+        "}\n"
+        "Keep reason short; explain selection in one sentence.\n"
+    ),
+}
+
+
+def _build_fix_clip_system_prompt(language: str) -> str:
+    return _FIX_CLIP_SYSTEM_PROMPTS[normalize_planning_language(language)]
+
+
+def _build_window_agent_system_prompt(language: str, focus_block: str) -> str:
+    prompt = _WINDOW_AGENT_SYSTEM_PROMPTS[normalize_planning_language(language)]
+    return prompt.format(focus_block=focus_block)
+
+
+def _build_selector_system_prompt(language: str, focus_block: str) -> str:
+    prompt = _SELECTOR_SYSTEM_PROMPTS[normalize_planning_language(language)]
+    return prompt.format(focus_block=focus_block)
 
 
 def merge_segments_into_sentences(segments: List[Dict[str, Any]], max_gap: float = 0.8) -> List[Dict[str, Any]]:
@@ -215,69 +571,18 @@ def _clip_text_for_range(segments: List[Dict[str, Any]], start: Any, end: Any, e
     return joined or str(excerpt or "").strip()
 
 
-def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]], candidate_clip: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _call_agent2_fix_clip(
+    window: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    candidate_clip: Dict[str, Any],
+    *,
+    language: str = "tr",
+) -> Optional[Dict[str, Any]]:
     if not _openai_client:
         return None
     
-    system_prompt = (
-        "Sen bir 'clip fixer' ajansın.\n"
-        "Girdi olarak üç şey alıyorsun:\n"
-        "- window: {\"start\": float, \"end\": float}\n"
-        "- segments: bu window içindeki zaman sıralı cümle blokları listesi. Her segment:\n"
-        "    {\"start\": float, \"end\": float, \"duration\": float, \"text\": str}\n"
-        "- base_clip: Agent 1 tarafından önerilen klip. Şu yapıda:\n"
-        "    {\"title\": str, \"start\": float, \"end\": float, \"excerpt\": str}\n"
-        "\n"
-        "Video dili Türkçe.\n"
-        "Görevin, base_clip ile aynı fikir çekirdeğini koruyarak onu gerekirse öne ve arkaya doğru genişletip\n"
-        "klip süresini en az 25 saniyeye çıkarmaktır.\n"
-        "\n"
-        "KATI KURALLAR:\n"
-        "1) Üreteceğin klip her zaman window.start ile window.end aralığında kalmalıdır.\n"
-        "   - Yeni_start >= window.start\n"
-        "   - Yeni_end   <= window.end\n"
-        "\n"
-        "2) Base klip mutlaka yeni aralığın içinde kalmalıdır.\n"
-        "   - new_start <= base_clip.start\n"
-        "   - new_end   >= base_clip.end\n"
-        "\n"
-        "3) Start ve end sadece segment sınırlarında olabilir.\n"
-        "   - new_start, segments içindeki bir segment.start ile tam aynı olmalı\n"
-        "   - new_end   segments içindeki bir segment.end ile tam aynı olmalı\n"
-        "   - Aradaki tüm segmentler klibin parçası sayılır ve klipte EN AZ 2 segment olmalıdır.\n"
-        "\n"
-        "4) Süre kuralı:\n"
-        "   - Süre = new_end - new_start\n"
-        "   - Süre 25 saniyeden KESİNLİKLE az olmamalıdır.\n"
-        "   - Süre 60 saniyeyi KESİNLİKLE geçmemelidir.\n"
-        "   - İdeal aralık 35 ile 55 saniye arasıdır.\n"
-        "\n"
-        "5) Genişletme mantığı:\n"
-        "   - Önce base_clip in kapsadığı segment aralığını bul.\n"
-        "   - Eğer bu aralığın süresi zaten >= 25 ise, aynı aralığı kullan, sadece excerpt i temizce üret.\n"
-        "   - Eğer süre < 25 ise, önce base_clip ten ÖNCE gelen segmentleri tek tek ekleyerek\n"
-        "     süreyi artırmaya çalış. Yine yetmezse base_clip ten SONRA gelen segmentleri ekle.\n"
-        "   - Genişletirken aynı konu ve fikir bütünlüğünü korumaya dikkat et. Farklı bir konuya sıçrama yapma.\n"
-        "\n"
-        "6) Eğer window içinde base_clip ile aynı fikri bozmadan ve window sınırlarını aşmadan\n"
-        "   25 saniyeye ulaşamıyorsan HİÇ klip üretme.\n"
-        "\n"
-        "7) Sadece TEK bir klip döndüreceksin. Bu çağrı sadece bir base_clip i düzeltmek içindir.\n"
-        "\n"
-        "ÇIKTI FORMAT KURALI:\n"
-        "Sadece geçerli JSON döndür. Ekstra açıklama, yorum veya metin yazma.\n"
-        "{\n"
-        "  \"clips\": [\n"
-        "    {\"start\": float, \"end\": float, \"excerpt\": str}\n"
-        "  ]\n"
-        "}\n"
-        "\n"
-        "start, end: Yukarıdaki kurallara uygun zaman değerleri.\n"
-        "excerpt: Seçtiğin segmentlerin içinden 1 ile 3 cümle arası çarpıcı bir alıntı.\n"
-        "Eğer uygun bir genişletme yapamıyorsan:\n"
-        "{ \"clips\": [] }\n"
-        "dönmelisin.\n"
-    )
+    resolved_language = normalize_planning_language(language)
+    system_prompt = _build_fix_clip_system_prompt(resolved_language)
 
     payload = {
         "window": window,
@@ -324,7 +629,7 @@ def _call_agent2_fix_clip(window: Dict[str, Any], segments: List[Dict[str, Any]]
     return {
         "title": generate_clip_title(
             _clip_text_for_range(segments, start, end, excerpt=str(clip_excerpt or "")),
-            language_hint="tr",
+            language_hint=resolved_language,
         ),
         "start": round(start, 2),
         "end": round(end, 2),
@@ -340,7 +645,9 @@ def run_window_agent(
     transcript_excerpt: str = "",
     plan_focus: str = "",
     focus_categories: Optional[List[str]] = None,
+    language: str = "tr",
 ) -> Tuple[List[Dict[str, Any]], str, str]:
+    resolved_language = normalize_planning_language(language)
     excerpt_text = transcript_excerpt
     if not excerpt_text:
         excerpt_text = " ".join(s.get("text", "") for s in segments if s.get("text"))
@@ -354,85 +661,11 @@ def run_window_agent(
         "segments": segments,
         "transcript_excerpt": excerpt_text,
     }
-    focus_block = get_agent_focus_block(plan_focus) + get_focus_categories_agent_block(focus_categories)
-    system_prompt = (
-        "Sen bir klipleme ajanısın. Video dili Türkçe. Verilen cümle segmentlerinden, "
-        "YouTube Shorts için anlamlı mini sohbet klipleri öneriyorsun.\n"
-        "\n"
-        "Girdi yapısı:\n"
-        "- 'segments' listesi zaman sıralı cümle bloklarıdır. Her birinde: start, end, duration (saniye), text alanları vardır.\n"
-        "- 'window.start' ve 'window.end' bu ajanın asıl çalıştığı zaman aralığını gösterir. "
-        "Seçeceğin tüm klipler bu aralığın içinde kalmalıdır.\n"
-        "\n"
-        "Aradığın yoğunluk türleri:\n"
-        "- tez: Ana fikri taşıyan, hüküm ve çerçeve cümleleri\n"
-        "- ikaz: Sarsıcı uyarılar, tehlike vurguları, güçlü ikazlar\n"
-        "- vecize: Kısa, duvara asılacak özlü sözler ya da yoğun çıkarımlar\n"
-        "- hikaye: Kişi, yer, olay veya hatıra anlatan bölümler\n"
-        "- cozum: 'Ne yapmalı?' sorusuna cevap veren, yol haritası çizen bölümler\n"
-        "- duygu: Açık duygu içeren, sitem, acı, hayret, öfke veya sevgi taşıyan ifadeler\n"
-        f"{focus_block}"
-        "\n"
-        "EN ÖNEMLİ KURALLAR:\n"
-        "1) Klipler TEK CÜMLE olmayacak, küçük bir sohbet/paragraf bloğu olacak.\n"
-        "   Her klip birden fazla segment içermeli (genelde 2 ile 6 segment arası).\n"
-        "2) Kesin kural: Bir klipte (end - start) 25 saniyeden KESİNLİKLE az olmayacak.\n"
-        "   - Eğer güçlü bir cümle kısa sürüyorsa, aynı window içindeki ÖNCEKİ ve SONRAKİ segmentleri de ekleyerek\n"
-        "     süreyi en az 25 saniyeye çıkaracaksın.\n"
-        "   - 25 saniyenin altında kalan klip üretmeyeceksin.\n"
-        "   - Bir klip 60 saniyeyi KESİNLİKLE geçmeyecek. 60 saniyenin üstüne çıkan klip üretmeyeceksin.\n"
-        "\n"
-        "Süre kuralları:\n"
-        "- İdeal klip süresi 35 ile 55 saniye arasındadır.\n"
-        "- Süreyi hesaplarken seçtiğin segmentleri kullan:\n"
-        "  * Klipte dahil ettiğin ilk segmentin start değeri klibin start değeri olsun.\n"
-        "  * Klipte dahil ettiğin son segmentin end değeri klibin end değeri olsun.\n"
-        "  * Klip süresi = end - start.\n"
-        "- Sert üst sınır 60 saniyedir. 60 saniyeyi aşan klip geçersizdir.\n"
-        "  Her klibin süresi doğal akıştan gelsin ama bu sınırı asla aşmasın.\n"
-        "\n"
-        "Klip üretim adımları:\n"
-        "1) Window içindeki segmentlerde tez, ikaz, vecize, hikaye, cozum veya duygu içeren güçlü bir çekirdek cümle bul.\n"
-        "2) Bu çekirdek etrafında bağlam oluştur:\n"
-        "   - Önceki segmentlerden, konuyu hazırlayan cümleleri ekle.\n"
-        "   - Sonraki segmentlerden, anlamı tamamlayan cümleleri ekle.\n"
-        "3) Bu genişletme ile klip süresini en az 25 saniyeye çıkar:\n"
-        "   - Gerekirse 3-4 segmenti birleştir, doğal bir mini sohbet çıkana kadar segment eklemeye devam et.\n"
-        "4) Klip cümle ortasında başlamasın. Başlangıç, doğal bir cümlenin başı olsun.\n"
-        "   Eğer ilk segment 've', 'ama', 'fakat' gibi bağlaçlarla başlıyorsa, ondan önceki segmenti de mutlaka ekle.\n"
-        "   Klip cümle ortasında bitmesin. Son segment tamamlanmamış bir düşünce, virgül veya açık bağlaçla bitiyorsa,\n"
-        "   SADECE o düşünceyi tamamlayan bir sonraki cümleyi ekle; yeni bir konu açacak şekilde art arda ekleme yapma.\n"
-        "5) Aynı mesajı tekrar eden, neredeyse aynı çekirdeği taşıyan klipleri çoğaltma.\n"
-        "   Benzer yoğunlukları tek klipte topla.\n"
-        "6) Bu window içinde en fazla 2 klip üretebilirsin.\n"
-        "   Çok sayıda kısa klip yerine az sayıda dolu ve derin klip tercih et.\n"
-        "\n"
-        "KONTROL ADIMI (SÜRE):\n"
-        "Her klibi döndürmeden önce şu kontrolü zihninde yap:\n"
-        "- Klipte kullandığın ilk segmentin start değeri = s\n"
-        "- Klipte kullandığın son segmentin end değeri = e\n"
-        "- Eğer (e - s) < 25 ise bu klibi KULLANMA. Bu durumda:\n"
-        "  * Önce komşu segmentler eklenerek süreyi 25 saniyenin üstüne çıkarmaya çalış.\n"
-        "  * Hala 25 saniyenin altında kalıyorsa, o klibi tamamen iptal et.\n"
-        "- Eğer (e - s) > 60 ise bu klibi KULLANMA.\n"
-        "\n"
-        "KONTROL ADIMI (ÇAKIŞMA):\n"
-        "- Aynı 30 saniyelik zaman aralığı içinde neredeyse aynı segmentleri kullanan iki farklı klip oluşturma.\n"
-        "- Eğer iki aday klip büyük ölçüde aynı segmentleri veya aynı ana fikri paylaşıyorsa,\n"
-        "  yalnızca en güçlü ve en dolu olan klibi bırak, diğerini tamamen iptal et.\n"
-        "\n"
-        "Çıktı formatı:\n"
-        "Sadece geçerli JSON döndür. Şu yapıda üret:\n"
-        "{\n"
-        '  \"clips\": [\n'
-        '    {\"start\": float, \"end\": float, \"excerpt\": str},\n'
-        "    ...\n"
-        "  ]\n"
-        "}\n"
-        "\n"
-        "excerpt: Klip içinden 1-3 cümlelik çarpıcı bir alıntı olsun. "
-        "Bu alıntı da tek başına anlaşılır ve izleyiciye ne göreceğini hissettiren türden olmalıdır.\n"
+    focus_block = get_agent_focus_block(plan_focus) + get_focus_categories_agent_block(
+        focus_categories,
+        resolved_language,
     )
+    system_prompt = _build_window_agent_system_prompt(resolved_language, focus_block)
  
 
     resp = client.chat.completions.create(
@@ -459,7 +692,7 @@ def run_window_agent(
                 clip.get("end"),
                 excerpt=str(clip.get("excerpt") or ""),
             ),
-            language_hint="tr",
+            language_hint=resolved_language,
         )
     return clips, raw, excerpt_text
 
@@ -697,6 +930,7 @@ def _select_clips_globally_with_llm(
     duration_seconds: float,
     target_clip_count: int,
     focus_categories: Optional[List[str]] = None,
+    language: str = "tr",
 ) -> Tuple[List[Dict[str, Any]], str]:
     if not client or not candidates:
         return [], ""
@@ -714,35 +948,10 @@ def _select_clips_globally_with_llm(
             }
         )
 
-    system_prompt = (
-        "Sen uzun bir Türkçe videodan seçilmiş klip adayları arasından en iyi Shorts planını kuran son seçici ajansın.\n"
-        "Adaylar farklı pencerelerden geldiği için birbirini tekrar eden, aynı pasajı paylaşan veya sınırları eksik olan klipler olabilir.\n"
-        "\n"
-        "GÖREVİN:\n"
-        "- En fazla target_clip_count kadar aday seç.\n"
-        f"- {MIN_CLIP_SECONDS:.0f} saniyenin altındaki veya {MAX_CLIP_SECONDS:.0f} saniyenin üstündeki adayları seçme.\n"
-        f"- İdeal klip süresi 35 ile 55 saniyedir; {MAX_CLIP_SECONDS:.0f} saniyeyi geçen hiçbir adayı ödüllendirme.\n"
-        "- Yakın kopya veya büyük ölçüde çakışan adaylardan yalnızca BİRİNİ bırak.\n"
-        "- Eğer iki aday aynı fikri taşıyorsa, daha tamamlanmış olanı ve cümle akışı daha güçlü olanı tercih et.\n"
-        "- Video geneline yayılmış, birbirinden farklı ve en güçlü klipleri seç.\n"
-        "- Sırf sayıyı doldurmak için zayıf aday seçme; daha az ama daha iyi seçim yap.\n"
-        "\n"
-        f"{get_focus_categories_selector_block(focus_categories)}"
-        "SEÇİM KRİTERLERİ:\n"
-        "- Açık fikir, güçlü tez, ikaz, duygu, vecize, hikaye veya çözüm taşıması\n"
-        "- Tekrar etmemesi\n"
-        "- Kendi içinde daha bütünlüklü olması\n"
-        "- Aynı pasajın daha eksik/kesik versiyonunu elemesi\n"
-        "\n"
-        "ÇIKTI:\n"
-        "Sadece geçerli JSON döndür.\n"
-        "{\n"
-        "  \"selected\": [\n"
-        "    {\"candidate_id\": number, \"reason\": str},\n"
-        "    ...\n"
-        "  ]\n"
-        "}\n"
-        "reason kısa olsun; neden seçildiğini 1 cümlede belirt.\n"
+    resolved_language = normalize_planning_language(language)
+    system_prompt = _build_selector_system_prompt(
+        resolved_language,
+        get_focus_categories_selector_block(focus_categories, resolved_language),
     )
     payload = {
         "duration_seconds": duration_seconds,
@@ -793,12 +1002,15 @@ def propose_clips_with_agents(
     target_clip_count: int | None = None,
     plan_focus: str = "",
     focus_categories: Optional[List[str]] = None,
+    language: str = "tr",
 ):
     """
     Returns (final_plan, debug_info)
     """
+    resolved_language = normalize_planning_language(language)
     debug_info: Dict[str, Any] = {
         "duration_seconds": duration_seconds,
+        "language": resolved_language,
         "windows": [],
         "window_raw_responses": [],
         "window_candidates": [],
@@ -838,6 +1050,7 @@ def propose_clips_with_agents(
             "",
             plan_focus=plan_focus,
             focus_categories=focus_categories,
+            language=resolved_language,
         )
         agent1_clips = clips
         debug_info["openai_call_count"] += 1 + len(agent1_clips)
@@ -853,7 +1066,7 @@ def propose_clips_with_agents(
 
         fixed_clips: List[Dict[str, Any]] = []
         for candidate in short_candidates:
-            fixed = _call_agent2_fix_clip(win, normalized_segments, candidate)
+            fixed = _call_agent2_fix_clip(win, normalized_segments, candidate, language=resolved_language)
             debug_info["openai_call_count"] += 1
             if fixed is not None:
                 fixed_clips.append(fixed)
@@ -903,6 +1116,7 @@ def propose_clips_with_agents(
                 duration_seconds=duration_seconds,
                 target_clip_count=target_count,
                 focus_categories=focus_categories,
+                language=resolved_language,
             )
             debug_info["openai_call_count"] += 1
         except Exception:
@@ -924,7 +1138,7 @@ def propose_clips_with_agents(
                 snapped.get("end"),
                 excerpt=str(snapped.get("excerpt") or ""),
             ),
-            language_hint="tr",
+            language_hint=resolved_language,
         )
         debug_info["openai_call_count"] += 1
         aligned_candidates.append(snapped)

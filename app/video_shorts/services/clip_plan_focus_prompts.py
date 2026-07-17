@@ -1,7 +1,7 @@
-import logging
 import json
+import logging
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,47 @@ FOCUS_CATEGORY_OPTIONS: List[Dict[str, str]] = [
 ]
 ALL_FOCUS_CATEGORIES: List[str] = [item["key"] for item in FOCUS_CATEGORY_OPTIONS]
 _FOCUS_CATEGORY_KEYS = set(ALL_FOCUS_CATEGORIES)
+
+_SUPPORTED_PLANNING_LANGUAGES = {"tr", "en"}
+
+_FOCUS_CATEGORY_I18N: Dict[str, Dict[str, Dict[str, str]]] = {
+    "tr": {
+        "tez": {"label": "Tez", "description": "ana fikri taşıyan, hüküm ve çerçeve cümleleri"},
+        "ikaz": {"label": "İkaz", "description": "sarsıcı uyarılar, tehlike vurguları, güçlü ikazlar"},
+        "vecize": {"label": "Vecize", "description": "kısa, duvara asılacak özlü sözler ve yoğun çıkarımlar"},
+        "hikaye": {"label": "Hikaye", "description": "kişi, yer, olay veya hatıra anlatan bölümler"},
+        "cozum": {"label": "Çözüm", "description": "\"Ne yapmalı?\" sorusuna cevap veren, yol haritası çizen bölümler"},
+        "duygu": {"label": "Duygu", "description": "açık duygu içeren, sitem, acı, hayret, öfke veya sevgi taşıyan ifadeler"},
+    },
+    "en": {
+        "tez": {"label": "Thesis", "description": "core claims, framing lines, and the sentences carrying the main idea"},
+        "ikaz": {"label": "Warning", "description": "sharp warnings, danger signals, and high-stakes caution"},
+        "vecize": {"label": "Maxim", "description": "short, quotable insights and compact takeaways"},
+        "hikaye": {"label": "Story", "description": "story beats, anecdotes, scenes, and narrated events"},
+        "cozum": {"label": "Solution", "description": "practical answers, next steps, and what-to-do guidance"},
+        "duygu": {"label": "Emotion", "description": "passages carrying explicit feeling, grief, awe, anger, love, or longing"},
+    },
+}
+
+
+def normalize_planning_language(raw_language: Optional[str], *, fallback: str = "tr") -> str:
+    value = str(raw_language or "").strip().lower()
+    if value in _SUPPORTED_PLANNING_LANGUAGES:
+        return value
+    return fallback
+
+
+def get_focus_category_options(language: Optional[str] = None) -> List[Dict[str, str]]:
+    resolved_language = normalize_planning_language(language)
+    category_map = _FOCUS_CATEGORY_I18N.get(resolved_language) or _FOCUS_CATEGORY_I18N["tr"]
+    return [
+        {
+            "key": key,
+            "label": category_map[key]["label"],
+            "description": category_map[key]["description"],
+        }
+        for key in ALL_FOCUS_CATEGORIES
+    ]
 
 
 def normalize_plan_focus(plan_focus: str) -> str:
@@ -110,20 +151,31 @@ def get_llm_focus_block(plan_focus: str) -> str:
     return get_plan_focus_config(plan_focus).get("llm_block_tr") or ""
 
 
-def get_focus_categories_agent_block(raw_categories) -> str:
+def get_focus_categories_agent_block(raw_categories, language: Optional[str] = None) -> str:
     categories = normalize_focus_categories(raw_categories)
     if categories == ALL_FOCUS_CATEGORIES:
         return ""
+    resolved_language = normalize_planning_language(language)
+    localized_options = get_focus_category_options(resolved_language)
     selected = [
         f"{item['key']}: {item['description']}"
-        for item in FOCUS_CATEGORY_OPTIONS
+        for item in localized_options
         if item["key"] in categories
     ]
     ignored = [
         item["key"]
-        for item in FOCUS_CATEGORY_OPTIONS
+        for item in localized_options
         if item["key"] not in categories
     ]
+    if resolved_language == "en":
+        return (
+            "\n"
+            "FOCUS CATEGORIES:\n"
+            f"- In this run, look ONLY for these density types: {', '.join(categories)}.\n"
+            f"- Meaning of the selected categories: {'; '.join(selected)}.\n"
+            f"- Completely ignore these categories: {', '.join(ignored)}.\n"
+            "- If a strong passage belongs to an unselected category, do not turn it into a clip candidate.\n"
+        )
     return (
         "\n"
         "ODAK KATEGORİLERİ:\n"
@@ -134,15 +186,24 @@ def get_focus_categories_agent_block(raw_categories) -> str:
     )
 
 
-def get_focus_categories_selector_block(raw_categories) -> str:
+def get_focus_categories_selector_block(raw_categories, language: Optional[str] = None) -> str:
     categories = normalize_focus_categories(raw_categories)
     if categories == ALL_FOCUS_CATEGORIES:
         return ""
+    resolved_language = normalize_planning_language(language)
+    localized_options = get_focus_category_options(resolved_language)
     ignored = [
         item["key"]
-        for item in FOCUS_CATEGORY_OPTIONS
+        for item in localized_options
         if item["key"] not in categories
     ]
+    if resolved_language == "en":
+        return (
+            "FOCUS CATEGORIES:\n"
+            f"- In this selection pass, reward only these density types: {', '.join(categories)}.\n"
+            f"- Push down or eliminate candidates carrying these types: {', '.join(ignored)}.\n"
+            "- Even if a candidate is technically strong, do not rank it high if it misses the selected category fit.\n\n"
+        )
     return (
         "ODAK KATEGORİLERİ:\n"
         f"- Bu seçim turunda yalnızca şu yoğunluk türlerini ödüllendir: {', '.join(categories)}.\n"
