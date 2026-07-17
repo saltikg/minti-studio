@@ -1480,10 +1480,27 @@
   .crop-preview-advanced-body {
     padding: 0 14px 14px;
   }
+  .crop-preview-advanced-hint {
+    margin-bottom: 10px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.54);
+  }
   .crop-preview-advanced-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
+  }
+  .advanced-field-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .advanced-field-label-main {
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .advanced-field-label-direction {
+    font-size: 0.74rem;
+    color: rgba(255, 255, 255, 0.5);
   }
   .crop-settings-inline-row {
     display: flex;
@@ -3113,17 +3130,27 @@
               <details class="crop-preview-advanced">
                 <summary>Advanced</summary>
                 <div class="crop-preview-advanced-body">
+                  <div class="crop-preview-advanced-hint">These match dragging elements in the preview, in pixels.</div>
                   <div class="crop-preview-advanced-grid">
                     <div class="input-group-inline compact" data-preview-control="title">
-                      <span>Top spacing</span>
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Title position</span>
+                        <span class="advanced-field-label-direction">from top</span>
+                      </span>
                       <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
                     </div>
                     <div class="input-group-inline compact" data-preview-control="subtitle">
-                      <span>Bottom spacing</span>
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Subtitle position</span>
+                        <span class="advanced-field-label-direction">from bottom</span>
+                      </span>
                       <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
                     </div>
-                    <div class="input-group-inline compact">
-                      <span>Video top spacing</span>
+                    <div class="input-group-inline compact" data-preview-control="video-position">
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Video position</span>
+                        <span class="advanced-field-label-direction">from top</span>
+                      </span>
                       <input type="number"
                              name="video_overlay_offset"
                              class="form-control form-control-sm short-input-small"
@@ -3132,21 +3159,26 @@
                              max="1200">
                     </div>
                     <div class="input-group-inline compact">
-                      <span>Top</span>
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Date text</span>
+                      </span>
+                      <input type="text"
+                             name="video_date_text"
+                             class="form-control form-control-sm short-input-small short-input-wide"
+                             value="{{ selected_video_date|e }}"
+                             placeholder="Optional date">
+                    </div>
+                    <div class="input-group-inline compact">
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Date position</span>
+                        <span class="advanced-field-label-direction">from top</span>
+                      </span>
                       <input type="number"
                              name="video_date_top"
                              class="form-control form-control-sm short-input-small"
                              value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
                              min="0"
                              max="1200">
-                    </div>
-                    <div class="input-group-inline compact">
-                      <span>Video date</span>
-                      <input type="text"
-                             name="video_date_text"
-                             class="form-control form-control-sm short-input-small short-input-wide"
-                             value="{{ selected_video_date|e }}"
-                             placeholder="Optional date">
                     </div>
                   </div>
                 </div>
@@ -7202,6 +7234,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const videoDateTextInput = settingsContainer?.querySelector('[name="video_date_text"]');
   const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
   const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
+  const videoPositionAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="video-position"]') || []);
   let selectedPreviewElement = "";
   let dragState = null;
   const podcastAudioState = {
@@ -7628,12 +7661,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const syncOverlayVisibilityUi = () => {
     const titleVisible = isTitleVisible();
     const subtitleVisible = isSubtitleVisible();
+    const showVideoPositionControl = !isPortraitCropAspect();
     previewTitle?.classList.toggle("is-hidden", !titleVisible);
     previewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
     previewToolbarSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
     subtitleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !subtitleVisible));
+    videoPositionAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !showVideoPositionControl));
     if ((selectedPreviewElement === "title" && !titleVisible) || (selectedPreviewElement === "subtitle" && !subtitleVisible)) {
       setSelectedPreviewElement("");
     }
@@ -8255,6 +8290,7 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout();
     syncPreviewCanvasSize();
     updateSplitUiState();
+    syncOverlayVisibilityUi();
     if (cropperInstances.top) {
       if (getEffectiveSplitEnabled()) {
         maybePrimeSplitDefaults();
