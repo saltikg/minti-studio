@@ -6831,6 +6831,18 @@ def remove_plan_entry(video_pk):
         flash(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
+    target_plan_index = None
+    try:
+        target_plan_index = int(target_entry.get("plan_index")) if target_entry.get("plan_index") is not None else None
+    except Exception:
+        target_plan_index = None
+
+    clip_names = set()
+    for key in ("clip_filename", "output_filename"):
+        val = target_entry.get(key)
+        if isinstance(val, str) and val:
+            clip_names.add(val)
+
     try:
         plan_entries.remove(target_entry)
         _write_plan_entries(video_id, plan_entries)
@@ -6842,20 +6854,22 @@ def remove_plan_entry(video_pk):
         flash(message, "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
-    clip_names = set()
-    for key in ("clip_filename", "output_filename"):
-        val = target_entry.get(key)
-        if isinstance(val, str) and val:
-            clip_names.add(val)
     if clip_names:
-        shorts_base = SHORTS_DIR.resolve()
         for clip_name in clip_names:
-            target_path = (SHORTS_DIR / clip_name).resolve()
-            if str(target_path).startswith(str(shorts_base)) and target_path.exists():
-                try:
-                    target_path.unlink()
-                except Exception:
-                    current_app.logger.warning("Failed to delete orphan clip %s", target_path)
+            try:
+                _delete_short_media(clip_name)
+            except Exception as exc:
+                current_app.logger.warning("Failed to delete clip media %s for %s: %s", clip_name, video_id, exc)
+    try:
+        current_user = getattr(g, "vs_current_user", None) or {}
+        if target_plan_index is not None:
+            clear_done_job_cache_for_plan(
+                user_id=str(current_user.get("id") or ""),
+                source_video_id=str(video_id or ""),
+                plan_index=target_plan_index,
+            )
+    except Exception as exc:
+        current_app.logger.warning("Failed to clear render cache after plan removal: %s", exc)
 
     if ajax_request:
         return jsonify(success=True, plan_index=target_entry.get("plan_index"), message="Plan section removed.")
