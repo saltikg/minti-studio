@@ -4176,32 +4176,38 @@ document.addEventListener("DOMContentLoaded", () => {
       playerSource = {};
     }
 
-    const segments = parsedSegments.map((segment, index) => {
-      const start = Number(segment?.start || 0);
-      const end = Number(segment?.end || start);
-      const text = String(segment?.tr_text || segment?.text || "").trim();
-      return {
+    const segments = parsedSegments
+      .map((segment, sourceIndex) => {
+        const start = Number(segment?.start || 0);
+        const end = Number(segment?.end || start);
+        const text = String(segment?.tr_text || segment?.text || "").trim();
+        return {
+          sourceIndex,
+          start,
+          end,
+          startLabel: segment?.start_label || formatSeconds(start),
+          endLabel: segment?.end_label || formatSeconds(end),
+          text,
+          normalized: normalizeSearchText(text),
+          rowEl: null,
+          textEl: null,
+          badgeEl: null,
+          contentEl: null,
+          viewEl: null,
+          editWrapEl: null,
+          textareaEl: null,
+          saveBtnEl: null,
+          cancelBtnEl: null,
+          feedbackEl: null,
+          timeButtonEl: null,
+          isEditing: false,
+        };
+      })
+      .filter((segment) => segment.text)
+      .map((segment, index) => ({
+        ...segment,
         index,
-        start,
-        end,
-        startLabel: segment?.start_label || formatSeconds(start),
-        endLabel: segment?.end_label || formatSeconds(end),
-        text,
-        normalized: normalizeSearchText(text),
-        rowEl: null,
-        textEl: null,
-        badgeEl: null,
-        contentEl: null,
-        viewEl: null,
-        editWrapEl: null,
-        textareaEl: null,
-        saveBtnEl: null,
-        cancelBtnEl: null,
-        feedbackEl: null,
-        timeButtonEl: null,
-        isEditing: false,
-      };
-    }).filter((segment) => segment.text);
+      }));
 
     const state = {
       query: "",
@@ -4654,7 +4660,7 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ index: segment.index, text: nextText }),
+          body: JSON.stringify({ index: segment.sourceIndex, text: nextText }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) {
