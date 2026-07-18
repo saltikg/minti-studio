@@ -6909,6 +6909,150 @@ def delete_ai_suggestions(video_pk):
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/add_clip_section", methods=["POST"])
+def add_clip_section(video_pk):
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    current_user = getattr(g, "vs_current_user", None)
+
+    def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
+        if is_ajax:
+            payload = {"success": success, "message": message}
+            if extras:
+                payload.update(extras)
+            return jsonify(payload), status
+        flash(message, category)
+        target = redirect_to or url_for("video_shorts_bp.generate_short", video_pk=video_pk)
+        return redirect(target)
+
+    start_time_raw = (request.form.get("start_time") or "").strip()
+    end_time_raw = (request.form.get("end_time") or "").strip()
+    title = (request.form.get("title") or "").strip()
+
+    if not start_time_raw or not end_time_raw:
+        return _respond("Start and End are required.", status=400, category="warning")
+
+    start_time = _parse_time_input(start_time_raw)
+    if start_time is None or start_time < 0:
+        return _respond(
+            "Start format is invalid. Use MM:SS.mmm or seconds.",
+            status=400,
+            category="warning",
+        )
+    end_time = _parse_time_input(end_time_raw)
+    if end_time is None or end_time < 0:
+        return _respond(
+            "End format is invalid. Use MM:SS.mmm or seconds.",
+            status=400,
+            category="warning",
+        )
+    if end_time <= start_time:
+        return _respond("End time must be greater than Start.", status=400, category="warning")
+
+    conn = get_db_readonly()
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id, duration_seconds")
+    conn.close()
+    if not row:
+        return _respond(
+            "Video not found",
+            status=404,
+            category="danger",
+            redirect_to=url_for("video_shorts_bp.channels_page"),
+        )
+    video_id, duration_seconds = row
+    duration = _to_float(duration_seconds) if duration_seconds is not None else None
+    if duration is not None:
+        if start_time > duration:
+            return _respond("Start time exceeds video duration.", status=400, category="warning")
+        if end_time > duration:
+            return _respond("End time exceeds video duration.", status=400, category="warning")
+
+    plan_entries = _load_plan_entries(video_id) or []
+
+    next_plan_index = 1
+    existing_indexes = []
+    for entry in plan_entries:
+        try:
+            existing_indexes.append(int(entry.get("plan_index") or 0))
+        except Exception:
+            continue
+    if existing_indexes:
+        next_plan_index = max(existing_indexes) + 1
+
+    transcript_full = ""
+    segments = []
+    conn_transcript = None
+    try:
+        conn_transcript = get_db_readonly()
+        _, segments = _fetch_transcript(conn_transcript, video_id)
+        if segments:
+            transcript_full = build_transcript_for_range(
+                segments,
+                start_time,
+                end_time,
+                prefer_tr=True,
+            ) or ""
+    except Exception as exc:
+        current_app.logger.warning(
+            "Failed to build transcript for manual clip %s [%.3f, %.3f]: %s",
+            video_id,
+            start_time,
+            end_time,
+            exc,
+        )
+    finally:
+        if conn_transcript:
+            try:
+                conn_transcript.close()
+            except Exception:
+                pass
+
+    clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
+    new_entry = {
+        "origin": "manual",
+        "plan_index": next_plan_index,
+        "title": clip_title,
+        "start": round(start_time, 3),
+        "end": round(end_time, 3),
+        "clip_filename": f"{next_plan_index}_{video_id}.mp4",
+        "status": "pending",
+        "transcript_full": transcript_full,
+        "excerpt": transcript_full,
+    }
+    plan_entries.insert(0, new_entry)
+    try:
+        _write_plan_entries(video_id, plan_entries)
+    except Exception as exc:
+        current_app.logger.warning("Failed to add manual plan entry for %s: %s", video_id, exc)
+        return _respond("The new clip section could not be saved.", status=500, category="danger")
+
+    _schedule_async_clip_title_suggestion(
+        video_id=video_id,
+        plan_index=next_plan_index,
+        excerpt=transcript_full,
+        placeholder_title=clip_title,
+        user_id=current_user.get("id") if current_user else None,
+        language_hint=_infer_clip_language_from_segments(
+            segments,
+            start_time,
+            end_time,
+            excerpt=transcript_full,
+        ),
+        app_obj=current_app._get_current_object(),
+    )
+
+    return _respond(
+        f"Clip section added (#{next_plan_index}).",
+        success=True,
+        category="success",
+        extras={
+            "plan_index": next_plan_index,
+            "title": clip_title,
+            "transcript_full": transcript_full,
+            "excerpt": transcript_full,
+        },
+    )
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/adjust_clip_timing", methods=["POST"])
 def adjust_clip_timing(video_pk):
     plan_index_raw = request.form.get("plan_index")

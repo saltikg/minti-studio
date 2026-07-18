@@ -1944,6 +1944,7 @@
             </div>
             <div class="trs-shell"
                  id="transcript-range-selector"
+                 data-add-clip-url="{{ url_for('video_shorts_bp.add_clip_section', video_pk=video.id) }}"
                  data-coachmark-hidden="{{ 'true' if hide_clip_coachmark else 'false' }}"
                  data-coachmark-preference-url="{{ clip_coachmark_preference_url }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
