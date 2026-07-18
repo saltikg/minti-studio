@@ -6048,6 +6048,10 @@ const initClipTitleRowAjax = () => {
           feedback.classList.add(isSuccess ? "text-success" : "text-danger");
         }
         if (isSuccess) {
+          const savedTitle = card.querySelector(".clip-title-input")?.value?.trim() || payload.title || "";
+          if (savedTitle) {
+            syncClipCardTitleUi(card, savedTitle);
+          }
           const metaTime = card.querySelector(".clip-card-meta-time");
           if (metaTime && payload.start_label && payload.end_label && payload.duration_label) {
             metaTime.textContent = `${payload.start_label} – ${payload.end_label} (${payload.duration_label})`;
