@@ -127,6 +127,18 @@
     color: rgba(255, 255, 255, 0.56);
     font-weight: 500;
   }
+  .ai-plan-inline-status {
+    min-height: 1.25rem;
+    max-width: 24rem;
+    color: rgba(255, 255, 255, 0.72);
+    font-variant-numeric: tabular-nums;
+  }
+  .ai-plan-inline-status.is-error {
+    color: #ff9f9f;
+  }
+  .ai-plan-inline-status.is-success {
+    color: #8fe3c2;
+  }
   .editor-topbar-status-pill {
     display: inline-flex;
     align-items: center;
@@ -1818,7 +1830,6 @@
     </button>
   </div>
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
-  <div id="plan-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
 </div>
 {% endif %}
 
@@ -2002,16 +2013,19 @@
                   <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
                   <div id="generate-usage-summary" class="small text-white-50 mt-1" style="font-variant-numeric: tabular-nums;">Loading usage…</div>
                 </div>
-                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                  <button
-                    type="submit"
-                    form="step2-form"
-                    class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
-                    id="ai-generate-btn"
-                    {% if not has_transcript %}disabled{% endif %}>
-                    <i class="bi bi-stars" aria-hidden="true"></i>
-                    Suggest clips with AI
-                  </button>
+                <div class="d-flex align-items-start gap-2 flex-wrap justify-content-end">
+                  <div class="d-flex flex-column align-items-end">
+                    <button
+                      type="submit"
+                      form="step2-form"
+                      class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                      id="ai-generate-btn"
+                      {% if not has_transcript %}disabled{% endif %}>
+                      <i class="bi bi-stars" aria-hidden="true"></i>
+                      Suggest clips with AI
+                    </button>
+                    <div id="plan-live-status" class="ai-plan-inline-status d-none small mt-2 text-end" role="status" aria-live="polite"></div>
+                  </div>
                   {% if ai_suggested_clip_count %}
                     <form method="post" action="{{ url_for('video_shorts_bp.delete_ai_suggestions', video_pk=video.id) }}" onsubmit="return window.confirm('Remove all AI-suggested clips?');">
                       <button
@@ -2270,18 +2284,6 @@
                         <span class="visually-hidden">Open video</span>
                         <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
                       </a>
-                      <form method="post" action="{{ url_for('video_shorts_bp.delete_clip', video_pk=video.id) }}" class="mb-0">
-                        <input type="hidden" name="filename" value="{{ row.video_filename }}">
-                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                        <button
-                          type="submit"
-                          class="btn btn-outline-danger btn-sm p-2 d-flex align-items-center justify-content-center"
-                          title="Delete video"
-                          data-confirm-message="Are you sure you want to delete this clip file and remove its link from the plan?">
-                          <span class="visually-hidden">Delete video</span>
-                          <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
-                        </button>
-                      </form>
                     </div>
                   {% else %}
                     <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
@@ -2432,15 +2434,13 @@
                           {% endif %}
                         </div>
                     </div>
-                    {% if row.status != "created" %}
-                      <form method="post" action="{{ url_for('video_shorts_bp.remove_plan_entry', video_pk=video.id) }}" class="mb-0 mt-2">
-                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                        <input type="hidden" name="filename" value="{{ row.video_filename or '' }}">
-                        <button type="submit" class="btn btn-outline-danger" data-confirm-message="Are you sure you want to delete this clip?">
-                          <i class="bi bi-trash3 me-1" aria-hidden="true"></i> Delete clip
-                        </button>
-                      </form>
-                    {% endif %}
+                    <form method="post" action="{{ url_for('video_shorts_bp.remove_plan_entry', video_pk=video.id) }}" class="mb-0 mt-2">
+                      <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                      <input type="hidden" name="filename" value="{{ row.video_filename or row.clip_filename or '' }}">
+                      <button type="submit" class="btn btn-outline-danger" data-confirm-message="Are you sure you want to delete this clip?">
+                        <i class="bi bi-trash3 me-1" aria-hidden="true"></i> Delete clip
+                      </button>
+                    </form>
                     <div class="clip-card-progress">
                       <div class="progress-bar"></div>
                     </div>
@@ -3610,8 +3610,10 @@ document.addEventListener("DOMContentLoaded", () => {
     .replace(/'/g, "&#39;");
 
   const showStatus = (text, isError = false, spinning = false) => {
-    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
-    statusBox.classList.add(isError ? "alert-danger" : "alert-secondary");
+    statusBox.classList.remove("d-none", "is-error", "is-success");
+    if (isError) {
+      statusBox.classList.add("is-error");
+    }
     const spinnerHtml = spinning
       ? '<span class="spinner-border spinner-border-sm me-2 align-middle" role="status" aria-hidden="true"></span>'
       : "";
@@ -3619,8 +3621,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const showSuccess = (text) => {
-    statusBox.classList.remove("d-none", "alert-secondary", "alert-danger", "alert-success");
-    statusBox.classList.add("alert-success");
+    statusBox.classList.remove("d-none", "is-error", "is-success");
+    statusBox.classList.add("is-success");
     statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
   };
 
@@ -8830,59 +8832,6 @@ const initRemovePlanEntryAjax = () => {
 
 document.addEventListener("DOMContentLoaded", () => {
   initRemovePlanEntryAjax();
-});
-</script>
-<script>
-const initDeleteClipAjax = () => {
-  document.querySelectorAll("form[action*='delete_clip']").forEach((form) => {
-    if (form.dataset.deleteClipBound === "1") {
-      return;
-    }
-    form.dataset.deleteClipBound = "1";
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (form.dataset.ajaxDeleting === "1") {
-        return;
-      }
-      const confirmMessage = form.querySelector("[data-confirm-message]")?.dataset.confirmMessage || "";
-      if (confirmMessage && !window.confirm(confirmMessage)) {
-        return;
-      }
-      form.dataset.ajaxDeleting = "1";
-      const submitBtn = form.querySelector("button[type='submit']");
-      submitBtn?.setAttribute("disabled", "disabled");
-      const planIndex = String(form.querySelector("input[name='plan_index']")?.value || "").trim();
-      const params = new URLSearchParams(new FormData(form));
-      try {
-        const response = await fetch(form.action, {
-          method: form.method || "POST",
-          body: params,
-          credentials: "same-origin",
-          headers: {
-            "X-Requested-With": "XMLHttpRequest",
-          },
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.success) {
-          throw new Error(payload.message || "Failed to delete clip.");
-        }
-        const refreshed = await refreshClipList(planIndex, "detail");
-        if (!refreshed) {
-          throw new Error("Clip was deleted, but the editor could not refresh automatically.");
-        }
-      } catch (err) {
-        alert(err.message || "Failed to delete clip.");
-      } finally {
-        form.dataset.ajaxDeleting = "";
-        submitBtn?.removeAttribute("disabled");
-      }
-    });
-  });
-};
-
-document.addEventListener("DOMContentLoaded", () => {
-  initDeleteClipAjax();
 });
 </script>
 <script>
