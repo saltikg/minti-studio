@@ -439,25 +439,18 @@
             </li>
             <li><i class="bi bi-check-circle"></i><span>{{ plan.transcription_limit_label }} transcription per month</span></li>
             {% if tier_label == "Free" %}
-              <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Basic scheduling (YouTube + Instagram)</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Watermark on exports</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Clip, caption &amp; edit</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Publish to YouTube &amp; Instagram</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Comment inbox &amp; basic analytics</span></li>
             {% elif tier_label == "Starter" %}
-              <li><i class="bi bi-check-circle"></i><span>Generate and store shorts</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
-              <li><i class="bi bi-check-circle"></i><span>No watermark on exports</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Everything in Free</span></li>
             {% elif tier_label == "Creator" %}
-              <li><i class="bi bi-check-circle"></i><span>Starter + more storage</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Expanded export and transcription capacity</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Everything in Starter</span></li>
             {% elif tier_label == "Studio" %}
-              <li><i class="bi bi-check-circle"></i><span>Creator + more storage</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Schedule to YouTube + Instagram</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Expanded export and transcription capacity</span></li>
-              <li><i class="bi bi-check-circle"></i><span>Auto pause when storage is full</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Priority processing</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Everything in Creator</span></li>
             {% endif %}
           </ul>
           <div class="plan-actions">
@@ -524,6 +517,7 @@
     </div>
   {% endfor %}
         </div>
+        <div class="vs-text-muted vs-text-small mt-2">Every plan includes plenty of storage for your library — fair-use limits apply.</div>
       </div>
     </div>
   </div>
