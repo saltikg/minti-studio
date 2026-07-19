@@ -1524,6 +1524,56 @@ def _merge_youtube_comments(all_comments: List[Dict[str, Any]]) -> List[Dict[str
     return merged
 
 
+def _comment_sort_timestamp(comment: Dict[str, Any]) -> tuple[int, str]:
+    published_at = str(comment.get("published_at") or "")
+    updated_at = str(comment.get("updated_at") or "")
+    return (
+        0 if published_at else 1,
+        published_at or updated_at,
+    )
+
+
+def _thread_youtube_comment_rows(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not comments:
+        return []
+    top_level_comments: List[Dict[str, Any]] = []
+    replies_by_parent: Dict[str, List[Dict[str, Any]]] = {}
+    orphan_replies: List[Dict[str, Any]] = []
+
+    for comment in comments:
+        parent_id = str(comment.get("parent_id") or "").strip()
+        is_reply = bool(comment.get("is_reply")) or bool(parent_id)
+        comment["is_reply"] = is_reply
+        if is_reply and parent_id:
+            replies_by_parent.setdefault(parent_id, []).append(comment)
+        elif is_reply:
+            orphan_replies.append(comment)
+        else:
+            top_level_comments.append(comment)
+
+    for reply_list in replies_by_parent.values():
+        reply_list.sort(key=_comment_sort_timestamp)
+
+    threaded_comments: List[Dict[str, Any]] = []
+    seen_parent_ids = set()
+    for parent in top_level_comments:
+        threaded_comments.append(parent)
+        parent_id = str(parent.get("comment_id") or "").strip()
+        if not parent_id:
+            continue
+        seen_parent_ids.add(parent_id)
+        threaded_comments.extend(replies_by_parent.get(parent_id, []))
+
+    remaining_replies = list(orphan_replies)
+    for parent_id, reply_list in replies_by_parent.items():
+        if parent_id in seen_parent_ids:
+            continue
+        remaining_replies.extend(reply_list)
+    remaining_replies.sort(key=_comment_sort_timestamp)
+    threaded_comments.extend(remaining_replies)
+    return threaded_comments
+
+
 def _sync_youtube_comments_for_user(
     current_user: Dict[str, Any],
     *,
@@ -3976,6 +4026,7 @@ def shorts_comments(video_id):
         )
         title_map = _build_short_title_map()
         _apply_short_title_fallback(comments, title_map)
+        comments = _thread_youtube_comment_rows(comments)
         summary_counts = None
         if requested_status == "all" and comments:
             summary_counts = _summarize_comment_counts_for_entries(comments)
