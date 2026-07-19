@@ -16,7 +16,10 @@ from app.video_shorts.services.instagram_queue import (
 )
 from app.video_shorts.services.storage import get_media_storage
 from src.trends.instagram_tokens import get_instagram_credentials
-from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
+from app.video_shorts.tasks.process_facebook_queue import (
+    _download_video,
+    process_queue as process_facebook_queue,
+)
 
 BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
 
@@ -27,7 +30,7 @@ def _resolve_clip(filename: str):
     return get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
 
 
-def _public_clip_url(filename: str) -> str:
+def _clip_download_url(filename: str) -> str:
     resolved = _resolve_clip(filename)
     if resolved.public_url:
         return resolved.public_url
@@ -61,11 +64,24 @@ def _extract_error_subcode(response: requests.Response) -> Optional[int]:
         return None
 
 
+def _instagram_api_base() -> str:
+    return (IG_API_BASE or IG_GRAPH_API_BASE).rstrip("/")
+
+
+def _instagram_rupload_url(creation_id: str, create_data: dict) -> str:
+    explicit_url = create_data.get("uri") or create_data.get("upload_url")
+    if explicit_url:
+        return str(explicit_url)
+    api_base = _instagram_api_base().rstrip("/")
+    api_version = api_base.rsplit("/", 1)[-1] if "/v" in api_base else "v24.0"
+    return f"https://rupload.facebook.com/ig-api-upload/{api_version}/{creation_id}"
+
+
 def _wait_for_creation_ready(business_id: str, creation_id: str, access_token: str) -> tuple[bool, Optional[str], int]:
     wait_schedule = [0, 5, 10, 20, 30, 30, 30, 30]  # seconds, total ~155s
     total_wait = 0
     last_status = None
-    endpoint = f"{IG_GRAPH_API_BASE.rstrip('/')}/{creation_id}"
+    endpoint = f"{_instagram_api_base()}/{creation_id}"
     for delay in wait_schedule:
         if delay:
             time.sleep(delay)
@@ -106,7 +122,6 @@ def _upload_reel(job: dict) -> Optional[str]:
     business_id = creds.get("instagram_business_account_id")
     if not access_token or not business_id:
         raise RuntimeError("Instagram token veya Business ID eksik.")
-    video_url = _public_clip_url(clip_filename)
     caption = (job.get("caption_text") or "").strip()
     media_type = (job.get("media_type") or "reel").lower()
     if media_type not in {"reel", "feed"}:
@@ -114,17 +129,16 @@ def _upload_reel(job: dict) -> Optional[str]:
 
     payload = {
         "media_type": "REELS",
-        "video_url": video_url,
+        "upload_type": "resumable",
         "caption": caption,
         "access_token": access_token,
     }
     if media_type == "feed":
         payload["share_to_feed"] = "true"
-        payload["is_feed"] = "true"
 
     print(f"   ↳ IG media create payload={_payload_for_log(payload)}")
     create_resp = requests.post(
-        f"{IG_GRAPH_API_BASE.rstrip('/')}/{business_id}/media",
+        f"{_instagram_api_base()}/{business_id}/media",
         data=payload,
         timeout=30,
     )
@@ -134,10 +148,41 @@ def _upload_reel(job: dict) -> Optional[str]:
             f"media create failed: {create_resp.text}",
             error_subcode=_extract_error_subcode(create_resp),
         )
-    creation_id = (create_resp.json() or {}).get("id")
+    create_data = create_resp.json() or {}
+    creation_id = create_data.get("id")
     if not creation_id:
         raise InstagramMediaError("Instagram creation_id alınamadı.")
     print(f"   ↳ creation_id={creation_id}")
+    temp_path = None
+    try:
+        temp_path, file_size, _content_type = _download_video(_clip_download_url(clip_filename))
+        upload_resp = None
+        with open(temp_path, "rb") as handle:
+            upload_headers = {
+                "Authorization": f"OAuth {access_token}",
+                "offset": "0",
+                "file_size": str(file_size),
+                "Content-Type": "application/octet-stream",
+            }
+            upload_url = _instagram_rupload_url(creation_id, create_data)
+            upload_resp = requests.post(
+                upload_url,
+                headers=upload_headers,
+                data=handle,
+                timeout=120,
+            )
+        if upload_resp.status_code not in {200, 201}:
+            print(f"   ↳ rupload error ({upload_resp.status_code}): {upload_resp.text}")
+            raise InstagramMediaError(
+                f"media upload failed: {upload_resp.text}",
+                error_subcode=_extract_error_subcode(upload_resp),
+            )
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
     ready, last_status, waited = _wait_for_creation_ready(business_id, creation_id, access_token)
     if not ready:
         print(f"   ↳ creation not ready (status={last_status}, waited={waited}s)")
@@ -148,7 +193,7 @@ def _upload_reel(job: dict) -> Optional[str]:
     print(f"   ↳ creation ready after {waited}s")
     publish_payload = {"creation_id": creation_id, "access_token": access_token}
     publish_resp = requests.post(
-        f"{IG_GRAPH_API_BASE.rstrip('/')}/{business_id}/media_publish",
+        f"{_instagram_api_base()}/{business_id}/media_publish",
         data=publish_payload,
         timeout=30,
     )
@@ -163,7 +208,7 @@ def _upload_reel(job: dict) -> Optional[str]:
         raise InstagramMediaError("Instagram media_id alınamadı.")
     print(f"   ↳ publish_id={media_id}")
     details_resp = requests.get(
-        f"{IG_GRAPH_API_BASE.rstrip('/')}/{media_id}",
+        f"{_instagram_api_base()}/{media_id}",
         params={"fields": "permalink,like_count,comments_count", "access_token": access_token},
         timeout=15,
     )
