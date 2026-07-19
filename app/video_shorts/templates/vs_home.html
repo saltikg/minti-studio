@@ -1805,11 +1805,21 @@
 
     <div class="pricing-grid">
       {% for plan in pricing_plans %}
+        {% set transcription_hours = (plan.monthly_transcription_minutes / 60)|round|int %}
         <article class="pricing-card{% if plan.is_featured %} pricing-card-featured{% endif %}">
           {% if plan.is_featured %}
             <div class="pricing-badge">MOST POPULAR</div>
           {% endif %}
           <h3 class="pricing-plan-name">{{ plan.label }}</h3>
+          {% if plan.plan_id == "plan_free" %}
+            <p class="pricing-price-note"><em>Try the full workflow — no card needed.</em></p>
+          {% elif plan.plan_id == "plan_2gb" %}
+            <p class="pricing-price-note"><em>For your first steady stream of clips.</em></p>
+          {% elif plan.plan_id == "plan_10gb" %}
+            <p class="pricing-price-note"><em>For running a real short-form funnel.</em></p>
+          {% elif plan.plan_id == "plan_100gb" %}
+            <p class="pricing-price-note"><em>For publishing at volume.</em></p>
+          {% endif %}
           <div
             class="pricing-price-block"
             data-monthly-price="{{ plan.monthly_price }}"
@@ -1828,9 +1838,24 @@
           </div>
 
           <ul class="pricing-lines">
-            {% for line in plan.lines %}
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ line }}</span></li>
-            {% endfor %}
+            {% if plan.plan_id == "plan_free" %}
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Clip, caption &amp; edit</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Publish to YouTube &amp; Instagram</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Basic performance stats</span></li>
+            {% elif plan.plan_id == "plan_2gb" %}
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Free</span></li>
+            {% elif plan.plan_id == "plan_10gb" %}
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Starter</span></li>
+            {% elif plan.plan_id == "plan_100gb" %}
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Priority processing</span></li>
+              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Creator</span></li>
+            {% endif %}
           </ul>
 
           <div class="pricing-actions">
@@ -1843,6 +1868,7 @@
         </article>
       {% endfor %}
     </div>
+    <p class="pricing-price-note"><small>Every plan includes plenty of storage for your library — fair-use limits apply.</small></p>
   </section>
 
   <section class="faq-section" id="faq">
