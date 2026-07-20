@@ -200,6 +200,20 @@ def _resolve_source_video_public_url(video_id: str) -> str:
     return ""
 
 
+def _cached_preview_frame_url(video_id: str) -> str:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return ""
+    preview_path = SHORTS_DIR / "preview_frames" / f"{clean_video_id}.jpg"
+    if not preview_path.exists():
+        return ""
+    try:
+        rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
+    except Exception:
+        return ""
+    return url_for("video_shorts_bp.static", filename=str(rel_preview))
+
+
 def _delete_source_video_media(video_id: str) -> None:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
@@ -344,7 +358,7 @@ def my_videos_page():
             "video_id": row[1],
             "title": row[2] or "Untitled video",
             "thumbnail_url": row[3] or "",
-            "source_preview_url": _resolve_source_video_public_url(row[1]),
+            "preview_image_url": _cached_preview_frame_url(row[1]),
             "duration_label": _format_duration_label(row[4]),
             "download_status": row[5] or "",
             "transcript_status": row[6] or "",
