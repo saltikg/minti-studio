@@ -101,7 +101,7 @@ def _wait_for_creation_ready(business_id: str, creation_id: str, access_token: s
 
 
 def _proxy_video_url(job: dict) -> str:
-    base_url = str((os.getenv("BASE_URL") or "https://mintiproduct.com")).rstrip("/")
+    base_url = str((os.getenv("BASE_URL") or "https://mintistudio.com")).rstrip("/")
     token = issue_instagram_media_proxy_token(str(job.get("id") or "").strip(), expires_in_seconds=3600)
     return f"{base_url}/video_shorts/ig-media/{token}"
 
