@@ -52,7 +52,7 @@ EPN_TOOL_ID  = int(os.getenv("EPN_TOOL_ID", "10001"))
 EPN_CH_ID    = int(os.getenv("EPN_CHANNEL_ID", "1"))
 EPN_ROT_US   = os.getenv("EPN_ROTATION_ID_US", "711-53200-19255-0")
 
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 bp = Blueprint("bp", __name__) 
 
 @bp.route("/web")

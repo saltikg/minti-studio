@@ -10,7 +10,7 @@ if not IG_ID or not PAGE_TOKEN:
     sys.exit("ENV eksik: INSTAGRAM_ACCOUNT_ID ve INSTAGRAM_PAGE_TOKEN zorunlu.")
 
 IMAGE_URL = os.getenv("IMAGE_URL") or "https://your-cdn.com/test.jpg"
-CAPTION   = os.getenv("CAPTION")   or "🚀 Blog Factory test — mintiproduct.com"
+CAPTION   = os.getenv("CAPTION")   or "🚀 Blog Factory test — mintistudio.com"
 
 def post_image(image_url: str, caption: str):
     # 1) container

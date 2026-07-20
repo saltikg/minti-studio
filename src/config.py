@@ -13,7 +13,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL_GPT = os.getenv("OPENAI_MODEL_GPT", "gpt-4.1-mini")
 MAX_OUT_TOKENS = int(os.getenv("MAX_OUT_TOKENS", "4000"))
 # === Site Ayarları ===
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com")
 
 # === Dizinler ===
 ROOT = Path(__file__).resolve().parents[1]

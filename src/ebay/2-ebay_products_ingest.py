@@ -225,7 +225,7 @@ MARKETPLACE = os.getenv("EBAY_MARKETPLACE", "EBAY_US")
 OAUTH = os.getenv("EBAY_OAUTH_TOKEN")
 
 WEB_ROOT = "/var/www/html"
-BASE_URL = "https://mintiproduct.com"
+BASE_URL = "https://mintistudio.com"
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 

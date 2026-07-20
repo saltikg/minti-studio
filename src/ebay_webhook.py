@@ -6,7 +6,7 @@ load_dotenv()
 
 app = FastAPI()
 VERIFICATION_TOKEN = os.getenv("EBAY_VERIFICATION_TOKEN")
-ENDPOINT = "https://mintiproduct.com/ebay/webhook"
+ENDPOINT = "https://mintistudio.com/ebay/webhook"
 
 @app.get("/ebay/webhook")
 async def ebay_webhook_validate(challenge_code: str = None):

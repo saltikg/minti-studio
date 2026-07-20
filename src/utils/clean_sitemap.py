@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
 
-SITEMAP_URL = "https://mintiproduct.com/sitemap.xml"
+SITEMAP_URL = "https://mintistudio.com/sitemap.xml"
 OUTPUT_FILE = Path("/home/ubuntu/blog-factory/sitemap_clean.xml")
 
 def check_url_status(url):
@@ -16,7 +16,7 @@ def check_url_status(url):
         # redirect (301/302) varsa, hedefe ulaştıysa yine kabul edelim
         if status in (301, 302) and 'Location' in r.headers:
             redirected = r.headers['Location']
-            if redirected.startswith("https://mintiproduct.com"):
+            if redirected.startswith("https://mintistudio.com"):
                 return True
         return False
     except requests.RequestException:

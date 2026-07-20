@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 
 trend_bp = Blueprint("trend_bp", __name__, url_prefix="")
 from app.db import connect_ro

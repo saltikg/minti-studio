@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()  # .env okuyalım (cron/daily_job ortamında da)
 
 WEB_ROOT = os.getenv("WEB_ROOT", "/var/www/html")
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com")
 OPENAI_MODEL_IMAGE = os.getenv("OPENAI_MODEL_IMAGE", "dall-e-3")
 
 SIZES_OUT = {

@@ -3,7 +3,7 @@ Local caption worker for Video Shorts.
 Run on your laptop; it pulls pending tasks and posts transcripts back.
 
 Usage:
-  MINTI_API_BASE=https://mintiproduct.com/video_shorts \
+  MINTI_API_BASE=https://mintistudio.com/video_shorts \
   CAPTION_API_TOKEN=... \
   python scripts/video_shorts_caption_worker.py
 """
@@ -13,7 +13,7 @@ import time
 import requests
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 
-API_BASE = os.getenv("MINTI_API_BASE", "https://mintiproduct.com/video_shorts")
+API_BASE = os.getenv("MINTI_API_BASE", "https://mintistudio.com/video_shorts")
 CAPTION_API_TOKEN = os.getenv("CAPTION_API_TOKEN", "minti_caption_8273f4ac0b")
 
 

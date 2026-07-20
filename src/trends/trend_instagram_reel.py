@@ -23,7 +23,7 @@ from src.trends.instagram_tokens import get_instagram_credentials
 load_dotenv("/home/ubuntu/blog-factory/.env")
 
 DB_PATH        = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
-BASE_URL       = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL       = os.getenv("BASE_URL", "https://mintistudio.com")
 IG_API_BASE    = os.getenv("IG_API_BASE", "https://graph.facebook.com/v21.0")
 IG_BUSINESS_ID = os.getenv("IG_BUSINESS_ACCOUNT_ID")
 IG_TOKEN       = os.getenv("IG_ACCESS_TOKEN")

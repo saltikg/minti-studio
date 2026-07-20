@@ -10,7 +10,7 @@ load_dotenv("/home/ubuntu/blog-factory/.env")
 
 # config
 DB_PATH   = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
-BASE_URL  = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+BASE_URL  = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 WEB_ROOT  = os.getenv("WEB_ROOT", "/var/www/html").rstrip("/")
 
 SITEMAP_PATH = os.path.join(WEB_ROOT, "sitemap.xml")

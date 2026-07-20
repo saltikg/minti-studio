@@ -18,7 +18,7 @@ def now_ms() -> int:
 load_dotenv("/home/ubuntu/blog-factory/.env")
 
 DB_PATH        = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
-BASE_URL       = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL       = os.getenv("BASE_URL", "https://mintistudio.com")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL_GPT", "gpt-4o-mini")
 
@@ -750,7 +750,7 @@ def pick_bg_variant() -> dict:
 
 def local_path_to_public_url(local_path: str) -> str:
     fname = os.path.basename(local_path)
-    return f"https://mintiproduct.com/instagram_out/{fname}"
+    return f"https://mintistudio.com/instagram_out/{fname}"
 
 
 # =====================

@@ -18,7 +18,7 @@ DB_PATH = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = "gpt-4o-mini"
 
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 
 client = OpenAI(api_key=OPENAI_KEY)
 

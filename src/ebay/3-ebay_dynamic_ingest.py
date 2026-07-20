@@ -27,7 +27,7 @@ load_dotenv("/home/ubuntu/blog-factory/.env")
 
 DB_PATH = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
 WEB_ROOT = "/var/www/html"
-BASE_URL = "https://mintiproduct.com"
+BASE_URL = "https://mintistudio.com"
 TRENDING_CATEGORY_SLUG = os.getenv("TRENDING_CATEGORY_SLUG", "trending-now")
 
 # --- Affiliate Settings ---
@@ -365,7 +365,7 @@ def main():
     if row:
         _iid, _slug, _cat = row
         print(f"📝 Blog Created → {title}")
-        print(f"🌐 URL: https://mintiproduct.com/{_cat}/{_slug}/")
+        print(f"🌐 URL: https://mintistudio.com/{_cat}/{_slug}/")
         # --- Yayınlandı olarak işaretle + son çalışma zamanı / sayaç ---
     
     try:

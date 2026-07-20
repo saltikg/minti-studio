@@ -42,7 +42,7 @@ DB_PATH = os.path.join(BASE_DIR, "warehouse", "blog_factory.duckdb")
 
 
 WEB_ROOT = os.getenv("WEB_ROOT", "/var/www/html")   # Nginx kökün neresi ise
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com")
 
 def _ensure_dir(path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)

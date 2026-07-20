@@ -12,7 +12,7 @@ import time, contextlib
 # --- ENV / Paths ---
 load_dotenv("/home/ubuntu/blog-factory/.env")  # gerekirse yolunu değiştirin
 
-BASE_URL    = os.getenv("BASE_URL", "https://mintiproduct.com")
+BASE_URL    = os.getenv("BASE_URL", "https://mintistudio.com")
 PYTHON_BIN  = os.getenv("PYTHON_BIN", sys.executable) # Use the current python interpreter by default
 INGEST_PATH = os.getenv("INGEST_PATH", "/home/ubuntu/blog-factory/src/ebay/2-ebay_products_ingest.py")
 TRENDING_CATEGORY_SLUG = os.getenv("TRENDING_CATEGORY_SLUG", "trending-now")

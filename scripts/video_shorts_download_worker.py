@@ -4,7 +4,7 @@ Run on your laptop/server; it pulls pending tasks, downloads the video,
 optionally uploads it to S3, then posts status back to the central API.
 
 Usage:
-  MINTI_API_BASE=https://mintiproduct.com/video_shorts \
+  MINTI_API_BASE=https://mintistudio.com/video_shorts \
   CAPTION_API_TOKEN=... \
   S3_BUCKET_NAME=... \
   AWS_ACCESS_KEY_ID=... \
@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover
     yt_dlp = None
 
 
-API_BASE = os.getenv("MINTI_API_BASE", "https://mintiproduct.com/video_shorts").rstrip("/")
+API_BASE = os.getenv("MINTI_API_BASE", "https://mintistudio.com/video_shorts").rstrip("/")
 CAPTION_API_TOKEN = os.getenv("CAPTION_API_TOKEN", "minti_caption_8273f4ac0b")
 DOWNLOAD_DIR = Path(os.getenv("VIDEO_SHORTS_DOWNLOAD_DIR", "/tmp/video_shorts_downloads"))
 KEEP_LOCAL = (os.getenv("VIDEO_SHORTS_KEEP_LOCAL", "0") or "0").strip().lower() in {"1", "true", "yes"}
