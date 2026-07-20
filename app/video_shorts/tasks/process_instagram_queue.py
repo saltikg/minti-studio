@@ -6,8 +6,9 @@ from typing import Optional
 
 import requests
 
-from app.video_shorts.config import IG_API_BASE, IG_GRAPH_API_BASE, SHORTS_DIR
+from app.video_shorts.config import IG_GRAPH_API_BASE, SHORTS_DIR
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.instagram_media_proxy import issue_instagram_media_proxy_token
 from app.video_shorts.services.instagram_queue import (
     fetch_due_instagram_jobs,
     mark_job_retry,
@@ -16,25 +17,13 @@ from app.video_shorts.services.instagram_queue import (
 )
 from app.video_shorts.services.storage import get_media_storage
 from src.trends.instagram_tokens import get_instagram_credentials
-from app.video_shorts.tasks.process_facebook_queue import (
-    _download_video,
-    process_queue as process_facebook_queue,
-)
-
-BASE_URL = os.getenv("BASE_URL", "https://mintiproduct.com").rstrip("/")
+from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
 
 
 def _resolve_clip(filename: str):
     key = f"shorts/{filename}"
     local_path = SHORTS_DIR / filename
     return get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
-
-
-def _clip_download_url(filename: str) -> str:
-    resolved = _resolve_clip(filename)
-    if resolved.public_url:
-        return resolved.public_url
-    return f"{BASE_URL}/video_shorts/static/shorts/{filename}"
 
 
 def _now_iso() -> str:
@@ -65,10 +54,12 @@ def _extract_error_subcode(response: requests.Response) -> Optional[int]:
 
 
 def _instagram_api_base() -> str:
-    return (IG_API_BASE or IG_GRAPH_API_BASE).rstrip("/")
+    return IG_GRAPH_API_BASE.rstrip("/")
 
 
 def _instagram_rupload_url(creation_id: str, create_data: dict) -> str:
+    # Kept as reference: older direct-byte-upload experiments used the returned
+    # rupload URL here. Instagram Login publishing now uses video_url instead.
     explicit_url = create_data.get("uri") or create_data.get("upload_url")
     if explicit_url:
         return str(explicit_url)
@@ -109,6 +100,12 @@ def _wait_for_creation_ready(business_id: str, creation_id: str, access_token: s
     return False, last_status, total_wait
 
 
+def _proxy_video_url(job: dict) -> str:
+    base_url = str((os.getenv("BASE_URL") or "https://mintiproduct.com")).rstrip("/")
+    token = issue_instagram_media_proxy_token(str(job.get("id") or "").strip(), expires_in_seconds=3600)
+    return f"{base_url}/video_shorts/ig-media/{token}"
+
+
 def _upload_reel(job: dict) -> Optional[str]:
     clip_filename = job.get("clip_filename") or ""
     resolved = _resolve_clip(clip_filename)
@@ -131,6 +128,7 @@ def _upload_reel(job: dict) -> Optional[str]:
         "media_type": "REELS",
         "upload_type": "resumable",
         "caption": caption,
+        "video_url": _proxy_video_url(job),
         "access_token": access_token,
     }
     if media_type == "feed":
@@ -153,36 +151,6 @@ def _upload_reel(job: dict) -> Optional[str]:
     if not creation_id:
         raise InstagramMediaError("Instagram creation_id alınamadı.")
     print(f"   ↳ creation_id={creation_id}")
-    temp_path = None
-    try:
-        temp_path, file_size, _content_type = _download_video(_clip_download_url(clip_filename))
-        upload_resp = None
-        with open(temp_path, "rb") as handle:
-            upload_headers = {
-                "Authorization": f"OAuth {access_token}",
-                "offset": "0",
-                "file_size": str(file_size),
-                "Content-Type": "application/octet-stream",
-            }
-            upload_url = _instagram_rupload_url(creation_id, create_data)
-            upload_resp = requests.post(
-                upload_url,
-                headers=upload_headers,
-                data=handle,
-                timeout=120,
-            )
-        if upload_resp.status_code not in {200, 201}:
-            print(f"   ↳ rupload error ({upload_resp.status_code}): {upload_resp.text}")
-            raise InstagramMediaError(
-                f"media upload failed: {upload_resp.text}",
-                error_subcode=_extract_error_subcode(upload_resp),
-            )
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
     ready, last_status, waited = _wait_for_creation_ready(business_id, creation_id, access_token)
     if not ready:
         print(f"   ↳ creation not ready (status={last_status}, waited={waited}s)")
