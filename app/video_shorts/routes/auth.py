@@ -28,6 +28,7 @@ from app.video_shorts.config import (
 from app.video_shorts.services.db import (
     ensure_auth_user_schema,
     ensure_storage_user_schema,
+    ensure_user_events_schema,
     get_db,
     get_db_readonly,
     table_columns,
@@ -487,6 +488,93 @@ def require_admin(view_func):
         return view_func(*args, **kwargs)
 
     return wrapped
+
+
+def _count_unseen_signup_events_for_admin(admin_user_id: str) -> int:
+    user_id = str(admin_user_id or "").strip()
+    if not user_id:
+        return 0
+    conn = None
+    try:
+        conn = get_db()
+        ensure_auth_user_schema(conn)
+        ensure_user_events_schema(conn)
+        last_seen_row = conn.execute(
+            """
+            SELECT admin_users_last_seen_at
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [user_id],
+        ).fetchone()
+        last_seen_at = last_seen_row[0] if last_seen_row else None
+        # Less noisy on first visit: don't surface the full historical signup backlog.
+        if last_seen_at is None:
+            return 0
+        row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM user_events
+            WHERE event_name = 'signup'
+              AND created_at > ?
+            """,
+            [last_seen_at],
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _mark_admin_users_seen(admin_user_id: str) -> None:
+    user_id = str(admin_user_id or "").strip()
+    if not user_id:
+        return
+    conn = None
+    try:
+        conn = get_db()
+        ensure_auth_user_schema(conn)
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET admin_users_last_seen_at = now()
+            WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [user_id],
+        )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _build_admin_nav_context() -> dict:
+    current_user = getattr(g, "vs_current_user", None) or _current_user()
+    if not current_user or (current_user.get("role") or "").strip().lower() != "admin":
+        return {
+            "vs_admin_new_users_badge_count": 0,
+        }
+    current_user_id = str(current_user.get("id") or "").strip()
+    if request.endpoint == "video_shorts_bp.admin_users":
+        _mark_admin_users_seen(current_user_id)
+    return {
+        "vs_admin_new_users_badge_count": _count_unseen_signup_events_for_admin(current_user_id),
+    }
 
 
 def _ensure_onboarding_flag_column(conn) -> None:
@@ -1243,6 +1331,7 @@ def inject_current_user():
         "vs_youtube_reauth_required": _youtube_reauth_required(),
         "vs_overview_quota": _load_overview_quota_context(),
         "vs_onboarding": _build_onboarding_context(),
+        **_build_admin_nav_context(),
     }
 
 

@@ -130,6 +130,25 @@
     .vs-admin-muted {
       color: rgba(255, 255, 255, 0.62);
     }
+    .vs-admin-nav-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    .vs-admin-nav-badge {
+      min-width: 1.3rem;
+      height: 1.3rem;
+      padding: 0 0.35rem;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #ff6b6b;
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+    }
     @media (max-width: 991.98px) {
       .vs-admin-shell {
         grid-template-columns: 1fr;
@@ -158,7 +177,12 @@
           href="{{ url_for('video_shorts_bp.admin_users') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>
-          <span>Users</span>
+          <span class="vs-admin-nav-label">
+            <span>Users</span>
+            {% if vs_admin_new_users_badge_count|int > 0 %}
+              <span class="vs-admin-nav-badge">{{ vs_admin_new_users_badge_count }}</span>
+            {% endif %}
+          </span>
         </a>
       </nav>
     </aside>

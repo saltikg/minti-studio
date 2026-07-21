@@ -529,6 +529,7 @@ def ensure_auth_user_schema(conn) -> None:
         ("password_reset_expires_at", "TIMESTAMP"),
         ("password_reset_sent_at", "TIMESTAMP"),
         ("onboarding_dismissed", "BOOLEAN DEFAULT FALSE"),
+        ("admin_users_last_seen_at", "TIMESTAMP"),
     ]
     changed = False
     for col_name, definition in column_defs:
