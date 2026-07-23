@@ -16,6 +16,7 @@ from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.media_utils import _resolve_source_video, _cleanup_resolved_source_video
+from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -176,6 +177,29 @@ def _set_quick_session_state(session_id: Optional[str], **updates: Any) -> None:
         update_session(session_id, **updates)
     except Exception:
         pass
+
+
+def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
+    if job.get("type") == JOB_TYPE_RENDER_SHORT:
+        _mark_plan_failure(job, message)
+    mark_job_failed(
+        job["id"],
+        message,
+        release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT,
+    )
+    quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
+    if quick_session_id:
+        quick_session = get_session(quick_session_id, user_id=job.get("user_id")) or {}
+        existing_result = quick_session.get("result") or {}
+        _set_quick_session_state(
+            quick_session_id,
+            status=STATUS_DONE if job.get("type") == JOB_TYPE_PUBLISH_SHORT else STATUS_FAILED,
+            result=(
+                {**existing_result, "publish": {"status": "failed", "message": message}}
+                if job.get("type") == JOB_TYPE_PUBLISH_SHORT
+                else {"message": message}
+            ),
+        )
 
 
 def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> None:
@@ -602,42 +626,15 @@ def process_next_job(app, worker_id: str) -> bool:
                 )
         return True
     except PermanentRenderJobError as exc:
-        if job.get("type") == JOB_TYPE_RENDER_SHORT:
-            _mark_plan_failure(job, str(exc))
-        mark_job_failed(job["id"], str(exc), release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT)
-        quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
-        if quick_session_id:
-            quick_session = get_session(quick_session_id, user_id=job.get("user_id")) or {}
-            existing_result = quick_session.get("result") or {}
-            _set_quick_session_state(
-                quick_session_id,
-                status=STATUS_DONE if job.get("type") == JOB_TYPE_PUBLISH_SHORT else STATUS_FAILED,
-                result=(
-                    {**existing_result, "publish": {"status": "failed", "message": str(exc)}}
-                    if job.get("type") == JOB_TYPE_PUBLISH_SHORT
-                    else {"message": str(exc)}
-                ),
-            )
+        _mark_job_terminal_failure(job, str(exc))
+        return True
+    except MediaSubprocessTimeoutError as exc:
+        _mark_job_terminal_failure(job, str(exc))
         return True
     except Exception as exc:
         latest = get_job(job["id"]) or job
         if int(latest.get("attempts") or 0) >= int(latest.get("max_attempts") or 1):
-            if latest.get("type") == JOB_TYPE_RENDER_SHORT:
-                _mark_plan_failure(latest, str(exc))
-            mark_job_failed(job["id"], str(exc), release_reservation=latest.get("type") == JOB_TYPE_RENDER_SHORT)
-            quick_session_id = str((latest.get("payload") or {}).get("quick_session_id") or "").strip()
-            if quick_session_id:
-                quick_session = get_session(quick_session_id, user_id=latest.get("user_id")) or {}
-                existing_result = quick_session.get("result") or {}
-                _set_quick_session_state(
-                    quick_session_id,
-                    status=STATUS_DONE if latest.get("type") == JOB_TYPE_PUBLISH_SHORT else STATUS_FAILED,
-                    result=(
-                        {**existing_result, "publish": {"status": "failed", "message": str(exc)}}
-                        if latest.get("type") == JOB_TYPE_PUBLISH_SHORT
-                        else {"message": str(exc)}
-                    ),
-                )
+            _mark_job_terminal_failure(latest, str(exc))
         else:
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 _update_plan_status(latest, "queued")

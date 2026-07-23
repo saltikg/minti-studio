@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import VIDEOS_DIR
+from app.video_shorts.config import FFPROBE_TIMEOUT, VIDEOS_DIR
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
@@ -19,7 +19,11 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
     ensure_storage_user_schema,
 )
-from app.video_shorts.services.media_utils import _format_time_label, normalize_source_video_for_streaming
+from app.video_shorts.services.media_utils import (
+    _format_time_label,
+    normalize_source_video_for_streaming,
+    run_media_subprocess,
+)
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -208,7 +212,7 @@ def _probe_duration_seconds(path: Path) -> Optional[int]:
     if not ffprobe:
         return None
     try:
-        result = subprocess.run(
+        result = run_media_subprocess(
             [
                 ffprobe,
                 "-v",
@@ -219,10 +223,12 @@ def _probe_duration_seconds(path: Path) -> Optional[int]:
                 "default=nw=1:nk=1",
                 str(path),
             ],
+            operation="quick_short_probe_duration",
+            context=f"path={path.name}",
             capture_output=True,
             text=True,
             check=True,
-            timeout=15,
+            timeout=FFPROBE_TIMEOUT,
         )
     except Exception:
         return None

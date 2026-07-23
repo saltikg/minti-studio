@@ -13,13 +13,17 @@ import sys
 import argparse
 
 from app.video_shorts.config import (
-    FFMPEG_TIMEOUT,
+    FFMPEG_RENDER_TIMEOUT,
     STATIC_USER_AUDIO_DIR,
     STATIC_USER_IMAGES_DIR,
     VIDEOS_DIR,
 )
 from app.video_shorts.services.db import get_db, ensure_image_to_video_jobs_schema, table_columns
-from app.video_shorts.services.media_utils import _resolve_ffmpeg
+from app.video_shorts.services.media_utils import (
+    MediaSubprocessTimeoutError,
+    _resolve_ffmpeg,
+    run_media_subprocess,
+)
 from app.video_shorts.services.storage import build_storage_reference, get_media_storage
 
 TRANSITIONS_DIR = Path(__file__).resolve().parent.parent / "static" / "transitions"
@@ -809,15 +813,11 @@ def _run_ffmpeg_render(
         ]
     )
 
-    if FFMPEG_TIMEOUT and FFMPEG_TIMEOUT > 0:
-        timeout = FFMPEG_TIMEOUT
-    else:
-        # Adaptive timeout for heavy slideshow renders with many xfade steps.
-        transition_count = max(len(files) - 1, 0)
-        complexity = 1.0 + (transition_count * 0.35)
-        if music_path:
-            complexity += 0.15
-        timeout = int(max(900, total_duration * 25.0 * complexity))
+    transition_count = max(len(files) - 1, 0)
+    complexity = 1.0 + (transition_count * 0.35)
+    if music_path:
+        complexity += 0.15
+    timeout = int(max(FFMPEG_RENDER_TIMEOUT, total_duration * 25.0 * complexity))
     try:
         ffmpeg_log_enabled = os.getenv("IMAGE_TO_VIDEO_LOG_FFMPEG") == "1"
         proc = subprocess.Popen(
@@ -834,7 +834,23 @@ def _run_ffmpeg_render(
                 progress_cb(25 + ratio * 60)
             if elapsed > timeout:
                 proc.kill()
-                raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+                logger.error(
+                    "Media subprocess timeout binary=ffmpeg timeout=%ss operation=image_to_video_render context=job_output=%s",
+                    timeout,
+                    output_path.name,
+                )
+                raise MediaSubprocessTimeoutError(
+                    binary="ffmpeg",
+                    timeout_seconds=timeout,
+                    operation="image_to_video_render",
+                    context=f"output={output_path.name}",
+                )
             time.sleep(1.0)
         ret = proc.wait(timeout=5)
         if ret != 0:
@@ -972,7 +988,16 @@ def _dump_watercolor_debug_artifacts(
         "yuv420p",
         str(merge_path),
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_media_subprocess(
+        cmd,
+        operation="dump_watercolor_debug_artifacts",
+        context=f"output={output_path.name}",
+        output_paths=[a_tail_path, matte_path, b_masked_path, merge_path],
+        check=True,
+        timeout=FFMPEG_RENDER_TIMEOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _update_job(job_id: str, user_id: str, status: str, progress: int, output_url: Optional[str] = None) -> None:

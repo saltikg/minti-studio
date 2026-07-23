@@ -4,14 +4,104 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Iterable, Optional
 
-from app.video_shorts.config import FFMPEG_BIN, FFMPEG_TIMEOUT, S3_BUCKET_NAME, SHORTS_DIR, VIDEOS_DIR
+from app.video_shorts.config import (
+    FFMPEG_BIN,
+    FFMPEG_SHORT_TIMEOUT,
+    S3_BUCKET_NAME,
+    SHORTS_DIR,
+    VIDEOS_DIR,
+)
 from app.video_shorts.services.storage import get_media_storage
 
 
 logger = logging.getLogger(__name__)
 SOURCE_FASTSTART_TIMEOUT_SECONDS = 120
 _FASTSTART_COMPATIBLE_SUFFIXES = {".mp4", ".mov", ".m4v"}
+
+
+class MediaSubprocessTimeoutError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        binary: str,
+        timeout_seconds: int,
+        operation: str = "",
+        context: str = "",
+    ) -> None:
+        self.binary = binary
+        self.timeout_seconds = int(timeout_seconds)
+        self.operation = str(operation or "").strip()
+        self.context = str(context or "").strip()
+        details = [f"{binary} timed out after {self.timeout_seconds}s"]
+        if self.operation:
+            details.append(f"operation={self.operation}")
+        if self.context:
+            details.append(f"context={self.context}")
+        super().__init__("; ".join(details))
+
+
+def scale_media_timeout(
+    base_timeout: int,
+    *,
+    duration_seconds: Optional[float] = None,
+    multiplier: float = 2.0,
+    extra_seconds: int = 0,
+) -> int:
+    timeout = max(1, int(base_timeout))
+    if duration_seconds is None:
+        return timeout
+    try:
+        scaled = int(max(1.0, float(duration_seconds)) * float(multiplier)) + int(extra_seconds)
+    except (TypeError, ValueError):
+        return timeout
+    return max(timeout, scaled)
+
+
+def _cleanup_partial_outputs(paths: Optional[Iterable[os.PathLike | str]]) -> None:
+    for raw_path in paths or []:
+        if not raw_path:
+            continue
+        try:
+            path = Path(raw_path)
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def run_media_subprocess(
+    cmd,
+    *,
+    timeout: int,
+    operation: str,
+    context: str = "",
+    output_paths: Optional[Iterable[os.PathLike | str]] = None,
+    log: Optional[logging.Logger] = None,
+    **kwargs,
+):
+    active_logger = log or logger
+    binary = Path(str(cmd[0])).name if cmd else "subprocess"
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        _cleanup_partial_outputs(output_paths)
+        active_logger.error(
+            "Media subprocess timeout binary=%s timeout=%ss operation=%s context=%s",
+            binary,
+            timeout,
+            operation,
+            context or "-",
+        )
+        raise MediaSubprocessTimeoutError(
+            binary=binary,
+            timeout_seconds=timeout,
+            operation=operation,
+            context=context,
+        ) from exc
 
 
 def _format_time_label(seconds: float):
@@ -187,10 +277,14 @@ def normalize_source_video_for_streaming(path: Path, *, log: logging.Logger | No
             path,
             SOURCE_FASTSTART_TIMEOUT_SECONDS,
         )
-        subprocess.run(
+        run_media_subprocess(
             cmd,
+            operation="faststart_normalize",
+            context=f"path={path}",
+            output_paths=[temp_output],
+            log=active_logger,
             check=True,
-            timeout=SOURCE_FASTSTART_TIMEOUT_SECONDS,
+            timeout=max(SOURCE_FASTSTART_TIMEOUT_SECONDS, FFMPEG_SHORT_TIMEOUT),
             capture_output=True,
             text=True,
         )
@@ -233,5 +327,17 @@ def _extract_audio_segment(src: Path, start: float, end: float) -> Path:
         "64k",
         str(tmp_path),
     ]
-    subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT)
+    run_media_subprocess(
+        cmd,
+        operation="extract_audio_segment",
+        context=f"src={src.name} start={start:.3f} end={end:.3f}",
+        output_paths=[tmp_path],
+        check=True,
+        timeout=scale_media_timeout(
+            FFMPEG_SHORT_TIMEOUT,
+            duration_seconds=duration,
+            multiplier=4.0,
+            extra_seconds=60,
+        ),
+    )
     return tmp_path

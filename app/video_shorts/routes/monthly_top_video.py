@@ -13,7 +13,7 @@ from flask import current_app, flash, g, jsonify, render_template, request, url_
 from zoneinfo import ZoneInfo
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import FFMPEG_TIMEOUT, SHORTS_DIR, YT_DLP_COOKIES
+from app.video_shorts.config import FFMPEG_RENDER_TIMEOUT, FFPROBE_TIMEOUT, SHORTS_DIR, YT_DLP_COOKIES
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip
 from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
@@ -23,6 +23,8 @@ from app.video_shorts.services.media_utils import (
     _find_source_video,
     _resolve_ffmpeg,
     _resolve_source_video,
+    run_media_subprocess,
+    scale_media_timeout,
 )
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip
@@ -555,11 +557,14 @@ def _has_audio_stream(source: Path) -> bool:
         str(source),
     ]
     try:
-        res = subprocess.run(
+        res = run_media_subprocess(
             cmd,
+            operation="monthly_has_audio_stream",
+            context=f"source={source.name}",
             check=False,
             capture_output=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT,
         )
         return bool((res.stdout or "").strip())
     except Exception:
@@ -580,11 +585,14 @@ def _probe_duration_seconds(source: Path) -> float:
         str(source),
     ]
     try:
-        res = subprocess.run(
+        res = run_media_subprocess(
             cmd,
+            operation="monthly_probe_duration",
+            context=f"source={source.name}",
             check=False,
             capture_output=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT,
         )
         val = float((res.stdout or "").strip() or 0.0)
         return max(0.0, val)
@@ -783,10 +791,13 @@ def _build_monthly_compilation(
                 ]
             )
             try:
-                subprocess.run(
+                run_media_subprocess(
                     cmd,
+                    operation="build_monthly_compilation_segment",
+                    context=f"video_id={video_id} output={segment_out.name}",
+                    output_paths=[segment_out],
                     check=True,
-                    timeout=FFMPEG_TIMEOUT,
+                    timeout=FFMPEG_RENDER_TIMEOUT,
                     capture_output=True,
                     text=True,
                 )
@@ -915,10 +926,18 @@ def _build_monthly_compilation(
                 ]
             )
         try:
-            subprocess.run(
+            run_media_subprocess(
                 cmd_concat,
+                operation="build_monthly_compilation_concat",
+                context=f"month={month_value} channel={channel_type} output={output_path.name}",
+                output_paths=[output_path],
                 check=True,
-                timeout=FFMPEG_TIMEOUT,
+                timeout=scale_media_timeout(
+                    FFMPEG_RENDER_TIMEOUT,
+                    duration_seconds=sum(d for d in durations if d > 0) if 'durations' in locals() else None,
+                    multiplier=2.0,
+                    extra_seconds=120,
+                ),
                 capture_output=True,
                 text=True,
             )

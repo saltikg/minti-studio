@@ -15,12 +15,18 @@ from app.video_shorts.config import (
     DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_TITLE_MARGIN,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
-    FFMPEG_TIMEOUT,
+    FFMPEG_RENDER_TIMEOUT,
+    FFMPEG_SHORT_TIMEOUT,
+    FFPROBE_TIMEOUT,
     STATIC_VISUAL_PRESETS,
     SUB_MARGIN_DEFAULT,
 )
 
-from app.video_shorts.services.media_utils import _resolve_ffmpeg
+from app.video_shorts.services.media_utils import (
+    _resolve_ffmpeg,
+    run_media_subprocess,
+    scale_media_timeout,
+)
 
 SUBSCRIBE_OVERLAY_WIDTH = 260
 SUBSCRIBE_OVERLAY_PADDING = 40
@@ -248,7 +254,16 @@ def _build_static_visual_clip(
     ]
     current_app.logger.info("Building static visual clip %s -> %s", key, out_path)
     current_app.logger.debug("Static ffmpeg command: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT, capture_output=True, text=True)
+    run_media_subprocess(
+        cmd,
+        operation="build_static_visual_clip",
+        context=f"key={key} output={out_path.name}",
+        output_paths=[out_path],
+        check=True,
+        timeout=FFMPEG_SHORT_TIMEOUT,
+        capture_output=True,
+        text=True,
+    )
     if not out_path.exists():
         raise FileNotFoundError(f"Static clip not produced for {key}")
     size = out_path.stat().st_size
@@ -279,11 +294,14 @@ def _has_audio_stream(source: Path) -> bool:
         str(source),
     ]
     try:
-        result = subprocess.run(
+        result = run_media_subprocess(
             ffprobe_cmd,
+            operation="has_audio_stream",
+            context=f"source={source.name}",
             check=False,
             capture_output=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT,
         )
         return bool(result.stdout.strip())
     except Exception as exc:
@@ -305,11 +323,14 @@ def _has_video_stream(source: Path) -> bool:
         str(source),
     ]
     try:
-        result = subprocess.run(
+        result = run_media_subprocess(
             ffprobe_cmd,
+            operation="has_video_stream",
+            context=f"source={source.name}",
             check=False,
             capture_output=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT,
         )
         return bool(result.stdout.strip())
     except Exception as exc:
@@ -330,11 +351,14 @@ def _probe_video_dimensions(path: Path) -> Tuple[int, int]:
         "csv=p=0:s=x",
         str(path),
     ]
-    result = subprocess.run(
+    result = run_media_subprocess(
         cmd,
+        operation="probe_video_dimensions",
+        context=f"path={path.name}",
         check=True,
         capture_output=True,
         text=True,
+        timeout=FFPROBE_TIMEOUT,
     )
     dims = result.stdout.strip()
     if "x" in dims:
@@ -355,11 +379,14 @@ def _probe_media_duration_seconds(path: Path) -> Optional[float]:
         str(path),
     ]
     try:
-        result = subprocess.run(
+        result = run_media_subprocess(
             cmd,
+            operation="probe_media_duration",
+            context=f"path={path.name}",
             check=True,
             capture_output=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT,
         )
         raw = (result.stdout or "").strip()
         if not raw:
@@ -502,7 +529,14 @@ def _compose_with_background(
         str(out_path),
     ]
     try:
-        subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT)
+        run_media_subprocess(
+            cmd,
+            operation="compose_with_background",
+            context=f"output={out_path.name}",
+            output_paths=[out_path],
+            check=True,
+            timeout=FFMPEG_RENDER_TIMEOUT,
+        )
     except subprocess.CalledProcessError:
         if title_txt:
             # Drawtext patlarsa başlıksız fallback
@@ -513,7 +547,14 @@ def _compose_with_background(
                 "Drawtext failed; retrying without title overlay for %s",
                 out_path.name,
             )
-            subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT)
+            run_media_subprocess(
+                cmd,
+                operation="compose_with_background_fallback",
+                context=f"output={out_path.name}",
+                output_paths=[out_path],
+                check=True,
+                timeout=FFMPEG_RENDER_TIMEOUT,
+            )
 
 
 
@@ -765,33 +806,29 @@ def _compose_trimmed_with_background(
                 str(out_path),
             ]
         )
-        try:
-            base_ffmpeg_timeout = int(FFMPEG_TIMEOUT) if FFMPEG_TIMEOUT is not None else 0
-        except (TypeError, ValueError):
-            base_ffmpeg_timeout = 0
-        fast_path_timeout = max(base_ffmpeg_timeout, int(max(1.0, float(duration)) * 2.0) + 120)
+        base_ffmpeg_timeout = int(FFMPEG_RENDER_TIMEOUT)
+        fast_path_timeout = scale_media_timeout(
+            base_ffmpeg_timeout,
+            duration_seconds=duration,
+            multiplier=2.0,
+            extra_seconds=120,
+        )
         current_app.logger.info(
             "Podcast fast-path ffmpeg command (timeout=%ss): %s",
             fast_path_timeout,
             " ".join(cmd),
         )
         try:
-            subprocess.run(
+            run_media_subprocess(
                 cmd,
+                operation="podcast_fast_path_render",
+                context=f"output={out_path.name}",
+                output_paths=[out_path],
                 check=True,
                 timeout=fast_path_timeout,
                 capture_output=True,
                 text=True,
             )
-        except subprocess.TimeoutExpired as err:
-            current_app.logger.error(
-                "Podcast fast-path timeout after %ss for %s",
-                fast_path_timeout,
-                out_path,
-            )
-            raise RuntimeError(
-                f"FFmpeg podcast fast-path timeout after {fast_path_timeout}s"
-            ) from err
         except subprocess.CalledProcessError as err:
             current_app.logger.error("Podcast fast-path failed stdout=%s stderr=%s", err.stdout, err.stderr)
             raise RuntimeError(
@@ -907,10 +944,18 @@ def _compose_trimmed_with_background(
         )
         current_app.logger.debug("Trim ffmpeg command: %s", " ".join(trim_cmd))
         try:
-            trim_result = subprocess.run(
+            trim_result = run_media_subprocess(
                 trim_cmd,
+                operation="trim_clip",
+                context=f"src={src_path.name} output={trimmed.name}",
+                output_paths=[trimmed],
                 check=True,
-                timeout=FFMPEG_TIMEOUT,
+                timeout=scale_media_timeout(
+                    FFMPEG_RENDER_TIMEOUT,
+                    duration_seconds=duration,
+                    multiplier=2.0,
+                    extra_seconds=120,
+                ),
                 capture_output=True,
                 text=True,
             )
@@ -1024,10 +1069,18 @@ def _compose_trimmed_with_background(
         merge_cmd.append(str(merged_override))
         current_app.logger.debug("Merge visual override command: %s", " ".join(merge_cmd))
         try:
-            merge_result = subprocess.run(
+            merge_result = run_media_subprocess(
                 merge_cmd,
+                operation="merge_visual_override",
+                context=f"output={merged_override.name}",
+                output_paths=[merged_override],
                 check=True,
-                timeout=FFMPEG_TIMEOUT,
+                timeout=scale_media_timeout(
+                    FFMPEG_RENDER_TIMEOUT,
+                    duration_seconds=target_duration,
+                    multiplier=2.0,
+                    extra_seconds=120,
+                ),
                 capture_output=True,
                 text=True,
             )
@@ -1090,10 +1143,18 @@ def _compose_trimmed_with_background(
                 audio_override_source,
             )
             try:
-                subprocess.run(
+                run_media_subprocess(
                     audio_merge_cmd,
+                    operation="merge_audio_override",
+                    context=f"output={merged_audio_override.name}",
+                    output_paths=[merged_audio_override],
                     check=True,
-                    timeout=FFMPEG_TIMEOUT,
+                    timeout=scale_media_timeout(
+                        FFMPEG_RENDER_TIMEOUT,
+                        duration_seconds=duration,
+                        multiplier=2.0,
+                        extra_seconds=120,
+                    ),
                     capture_output=True,
                     text=True,
                 )
@@ -1465,7 +1526,21 @@ def _compose_trimmed_with_background(
     current_app.logger.info("Compose ffmpeg command: %s", " ".join(cmd))
     current_app.logger.debug("Compose ffmpeg command (debug): %s", " ".join(cmd))
     try:
-        result = subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT, capture_output=True, text=True)
+        result = run_media_subprocess(
+            cmd,
+            operation="compose_trimmed_with_background",
+            context=f"output={out_path.name}",
+            output_paths=[out_path],
+            check=True,
+            timeout=scale_media_timeout(
+                FFMPEG_RENDER_TIMEOUT,
+                duration_seconds=duration,
+                multiplier=2.0,
+                extra_seconds=120,
+            ),
+            capture_output=True,
+            text=True,
+        )
         current_app.logger.debug("Compose stdout: %s", result.stdout)
         current_app.logger.debug("Compose stderr: %s", result.stderr)
     except subprocess.CalledProcessError as err:
@@ -1537,7 +1612,16 @@ def _cut_clip(
             subtitle_bg_alpha=subtitle_bg_alpha,
         )
         cmd.extend(["-vf", f"subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'"])
-    try:
-        subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT)
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError("ffmpeg timed out") from e
+    run_media_subprocess(
+        cmd,
+        operation="cut_clip",
+        context=f"src={src.name} output={out_path.name}",
+        output_paths=[out_path],
+        check=True,
+        timeout=scale_media_timeout(
+            FFMPEG_RENDER_TIMEOUT,
+            duration_seconds=duration,
+            multiplier=2.0,
+            extra_seconds=120,
+        ),
+    )

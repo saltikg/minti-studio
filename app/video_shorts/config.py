@@ -38,6 +38,21 @@ VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 VIDEO_SHORTS_TMP_DIR = Path(os.getenv("VIDEO_SHORTS_TMP_DIR") or (Path(__file__).resolve().parent / "tmp"))
 BGCOVER_PATH = VIDEOS_DIR / "1-short_bg_8.png"
 FFMPEG_BIN = os.getenv("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 DEFAULT_STORAGE_PLANS = [
     {
         "plan_id": "plan_free",
@@ -131,10 +146,12 @@ else:
         "Kardeslik birlik uhuvvet",
     ]
 
-# Max duration for ffmpeg calls (can override via env). Raised to handle longer clips.
-# Leave timeout unset (None) unless explicitly provided
-_timeout_env = os.getenv("FFMPEG_TIMEOUT")
-FFMPEG_TIMEOUT = int(_timeout_env) if (_timeout_env and _timeout_env.isdigit()) else None
+# Media subprocess timeouts. Keep a backwards-compatible FFMPEG_TIMEOUT for
+# older call sites, but never allow a None/empty env value to leak into int().
+FFPROBE_TIMEOUT = max(1, _env_int("FFPROBE_TIMEOUT", 60))
+FFMPEG_SHORT_TIMEOUT = max(1, _env_int("FFMPEG_SHORT_TIMEOUT", 300))
+FFMPEG_RENDER_TIMEOUT = max(1, _env_int("FFMPEG_RENDER_TIMEOUT", 3600))
+FFMPEG_TIMEOUT = max(1, _env_int("FFMPEG_TIMEOUT", FFMPEG_RENDER_TIMEOUT))
 MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip duration
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))

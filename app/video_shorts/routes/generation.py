@@ -38,7 +38,9 @@ from app.video_shorts.config import (
     DEFAULT_SUBTITLE_TEXT_COLOR,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
-    FFMPEG_TIMEOUT,
+    FFMPEG_RENDER_TIMEOUT,
+    FFMPEG_SHORT_TIMEOUT,
+    FFPROBE_TIMEOUT,
     FB_API_BASE,
     FB_APP_ID,
     FB_APP_SECRET,
@@ -120,6 +122,8 @@ from app.video_shorts.services.media_utils import (
     _resolve_ffmpeg,
     _resolve_source_video,
     normalize_source_video_for_streaming,
+    run_media_subprocess,
+    scale_media_timeout,
 )
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
@@ -1920,7 +1924,14 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
         str(preview_path),
     ]
     try:
-        subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT)
+        run_media_subprocess(
+            cmd,
+            operation="generate_preview_frame",
+            context=f"video_id={video_id} output={preview_path.name}",
+            output_paths=[preview_path],
+            check=True,
+            timeout=FFMPEG_SHORT_TIMEOUT,
+        )
     except Exception:
         current_app.logger.exception("Preview capture failed for %s", video_id)
         try:
@@ -1947,7 +1958,15 @@ def _probe_media_duration_seconds(path: Path) -> Optional[int]:
         str(path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=FFMPEG_TIMEOUT)
+        result = run_media_subprocess(
+            cmd,
+            operation="probe_media_duration",
+            context=f"path={path.name}",
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
         raw = (result.stdout or "").strip()
         if not raw:
             return None
@@ -2152,7 +2171,15 @@ def _has_audio_stream_local(source: Path) -> bool:
         str(source),
     ]
     try:
-        res = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        res = run_media_subprocess(
+            cmd,
+            operation="has_audio_stream_local",
+            context=f"source={source.name}",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
         return bool((res.stdout or "").strip())
     except Exception:
         return False
@@ -2172,7 +2199,15 @@ def _probe_duration_seconds_local(source: Path) -> float:
         str(source),
     ]
     try:
-        res = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        res = run_media_subprocess(
+            cmd,
+            operation="probe_duration_seconds_local",
+            context=f"source={source.name}",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
         val = float((res.stdout or "").strip() or 0.0)
         return max(0.0, val)
     except Exception:
@@ -2332,7 +2367,16 @@ def _build_long_compilation_from_published(
                 ]
             )
             try:
-                subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT, capture_output=True, text=True)
+                run_media_subprocess(
+                    cmd,
+                    operation="build_long_compilation_segment",
+                    context=f"clip={clip_name} output={segment_out.name}",
+                    output_paths=[segment_out],
+                    check=True,
+                    timeout=FFMPEG_RENDER_TIMEOUT,
+                    capture_output=True,
+                    text=True,
+                )
             except Exception:
                 skipped.append({"clip_filename": clip_name, "reason": "segment_failed"})
                 continue
@@ -2416,7 +2460,21 @@ def _build_long_compilation_from_published(
                     str(output_path),
                 ]
             )
-        subprocess.run(cmd_concat, check=True, timeout=FFMPEG_TIMEOUT, capture_output=True, text=True)
+        run_media_subprocess(
+            cmd_concat,
+            operation="build_long_compilation_concat",
+            context=f"video_id={video_id} output={output_path.name}",
+            output_paths=[output_path],
+            check=True,
+            timeout=scale_media_timeout(
+                FFMPEG_RENDER_TIMEOUT,
+                duration_seconds=sum(d for d in durations_for_chapters if d > 0) if 'durations_for_chapters' in locals() else None,
+                multiplier=2.0,
+                extra_seconds=120,
+            ),
+            capture_output=True,
+            text=True,
+        )
         durations_for_chapters = [_probe_duration_seconds_local(seg) for seg in prepared_segments]
         chapter_cursor = 0.0
         source_chapters: List[Dict[str, Any]] = []
@@ -2560,21 +2618,88 @@ def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _coerce_positive_plan_index(value: Any) -> Optional[int]:
+    try:
+        resolved = int(value)
+    except Exception:
+        return None
+    return resolved if resolved > 0 else None
+
+
+def _extract_plan_index_from_filename(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    match = re.match(r"^(\d+)_", Path(raw).name)
+    if not match:
+        return None
+    return _coerce_positive_plan_index(match.group(1))
+
+
+def _plan_entry_has_stable_identity(entry: Dict[str, Any]) -> bool:
+    origin = str(entry.get("origin") or "").strip().lower()
+    status = str(entry.get("status") or "").strip().lower()
+    publish_status = str(entry.get("publish_status") or "").strip().lower()
+    if origin == "manual":
+        return True
+    if status == "created":
+        return True
+    if str(entry.get("output_filename") or "").strip():
+        return True
+    if str(entry.get("yt_video_id") or "").strip():
+        return True
+    if str(entry.get("publish_at") or "").strip() or str(entry.get("publish_at_iso") or "").strip():
+        return True
+    return publish_status in {"scheduled", "published"}
+
+
+def _choose_plan_index(preferred: Optional[int], used: set[int], next_candidate: int) -> Tuple[int, int]:
+    if preferred is not None and preferred > 0 and preferred not in used:
+        used.add(preferred)
+        return preferred, next_candidate
+
+    candidate = max(next_candidate, 1)
+    while candidate in used:
+        candidate += 1
+    used.add(candidate)
+    return candidate, candidate + 1
+
+
 def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     reindexed: List[Dict[str, Any]] = []
-    for idx, entry in enumerate(entries or [], 1):
+    mutable_positions: List[int] = []
+    used_indexes: set[int] = set()
+    next_candidate = 1
+
+    for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         item = dict(entry)
         origin = str(item.get("origin") or "").strip().lower()
         origin = origin if origin in {"manual", "ai"} else "manual"
         item["origin"] = origin
-        item["plan_index"] = idx
-        if origin == "ai" and str(item.get("status") or "").strip().lower() != "created":
-            item["clip_filename"] = f"{idx}_{video_id}.mp4"
-        elif not str(item.get("clip_filename") or "").strip():
-            item["clip_filename"] = f"{idx}_{video_id}.mp4"
+        stable_identity = _plan_entry_has_stable_identity(item)
+        if stable_identity:
+            preferred_index = (
+                _extract_plan_index_from_filename(item.get("output_filename"))
+                or _extract_plan_index_from_filename(item.get("clip_filename"))
+                or _coerce_positive_plan_index(item.get("plan_index"))
+            )
+            assigned_index, next_candidate = _choose_plan_index(preferred_index, used_indexes, next_candidate)
+            item["plan_index"] = assigned_index
+            if not str(item.get("clip_filename") or "").strip():
+                item["clip_filename"] = f"{assigned_index}_{video_id}.mp4"
+        else:
+            mutable_positions.append(len(reindexed))
         reindexed.append(item)
+
+    for position in mutable_positions:
+        item = reindexed[position]
+        preferred_index = _coerce_positive_plan_index(item.get("plan_index"))
+        assigned_index, next_candidate = _choose_plan_index(preferred_index, used_indexes, next_candidate)
+        item["plan_index"] = assigned_index
+        item["clip_filename"] = f"{assigned_index}_{video_id}.mp4"
+
     return reindexed
 
 
@@ -6644,6 +6769,17 @@ def admin_users():
         requested_page = 1
     page = max(1, requested_page)
     per_page = 50
+    current_admin_id = str(current_user.get("id") or "").strip()
+    if current_admin_id:
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET admin_users_last_seen_at = now()
+            WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [current_admin_id],
+        )
+        conn.commit()
     total_users = _load_admin_auth_users(
         conn,
         search_text=search_text,

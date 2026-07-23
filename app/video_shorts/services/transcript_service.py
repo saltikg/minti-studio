@@ -7,9 +7,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from flask import current_app
 
-from app.video_shorts.config import FFMPEG_TIMEOUT, OPENAI_MODEL, WHISPER_MODEL, _openai_client
+from app.video_shorts.config import FFMPEG_RENDER_TIMEOUT, FFPROBE_TIMEOUT, OPENAI_MODEL, WHISPER_MODEL, _openai_client
 from app.video_shorts.services.db import _ensure_transcript_schema
-from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg
+from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg, run_media_subprocess
 from app.video_shorts.services.transcript_lang_tagging import infer_lang_from_text, tag_segments_with_language
 import re
 
@@ -152,13 +152,15 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                 current_app.logger.info("lang_probe ffprobe_cmd=%s", ffprobe_cmd)
             except Exception:
                 pass
-            proc = subprocess.run(
+            proc = run_media_subprocess(
                 ffprobe_cmd,
+                operation="language_probe_duration",
+                context=f"path={video_path.name}",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
-                timeout=max(30, int(FFMPEG_TIMEOUT) if FFMPEG_TIMEOUT else 30),
+                timeout=FFPROBE_TIMEOUT,
             )
             try:
                 current_app.logger.info(
@@ -486,7 +488,14 @@ def _prepare_audio_for_whisper(src: Path, size_limit_mb: int = 23) -> Path:
         "48k",
         str(tmp_path),
     ]
-    subprocess.run(cmd, check=True)
+    run_media_subprocess(
+        cmd,
+        operation="prepare_audio_for_whisper",
+        context=f"src={src.name}",
+        output_paths=[tmp_path],
+        check=True,
+        timeout=FFMPEG_RENDER_TIMEOUT,
+    )
     new_size_mb = tmp_path.stat().st_size / (1024 * 1024)
     if new_size_mb > size_limit_mb:
         tmp_path.unlink(missing_ok=True)
@@ -526,7 +535,14 @@ def _prepare_audio_chunks_for_whisper(
         "1",
         pattern,
     ]
-    subprocess.run(cmd, check=True)
+    run_media_subprocess(
+        cmd,
+        operation="prepare_audio_chunks_for_whisper",
+        context=f"src={src.name}",
+        output_paths=[tmp_dir],
+        check=True,
+        timeout=FFMPEG_RENDER_TIMEOUT,
+    )
     chunks = sorted(tmp_dir.glob("chunk_*.mp3"))
     if not chunks:
         shutil.rmtree(tmp_dir, ignore_errors=True)

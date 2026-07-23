@@ -10,8 +10,9 @@ from zoneinfo import ZoneInfo
 from flask import Response, flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import WHISPER_MODEL, _openai_client
+from app.video_shorts.config import FFMPEG_SHORT_TIMEOUT, WHISPER_MODEL, _openai_client
 from app.video_shorts.services.db import ensure_interview_practice_schema, get_db, get_db_readonly
+from app.video_shorts.services.media_utils import run_media_subprocess
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -149,7 +150,16 @@ def _transcode_audio_to_mp3(audio_bytes: bytes, source_mime: str = "") -> tuple[
             "128k",
             dst_path,
         ]
-        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+        proc = run_media_subprocess(
+            cmd,
+            operation="interview_convert_audio",
+            context="interview_practice_upload",
+            output_paths=[dst_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=FFMPEG_SHORT_TIMEOUT,
+        )
         if proc.returncode != 0:
             return b"", ""
         out_bytes = Path(dst_path).read_bytes()
