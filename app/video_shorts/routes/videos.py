@@ -20,6 +20,7 @@ from app.video_shorts.config import (
     SHORTS_OVERVIEW_STATS_MAX_VIDEOS,
     SHORTS_OVERVIEW_QUOTA_COOLDOWN_HOURS,
     SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS,
+    COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS,
     FB_API_BASE,
 )
 from app.video_shorts.services.db import (
@@ -956,27 +957,30 @@ def _build_instagram_media_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
                     top_level_by_id.setdefault(comment_id, item)
                     override = authoritative_by_id.get(comment_id)
                     if override:
-                        if override.get("author"):
-                            item["author"] = override.get("author")
-                            item["username"] = override.get("author")
-                        if override.get("text") and not item.get("text"):
+                        author_value = override.get("author") or override.get("username")
+                        if author_value:
+                            item["author"] = author_value
+                            item["username"] = author_value
+                        if "text" in override:
                             item["text"] = override.get("text")
-                        if override.get("timestamp") and not item.get("timestamp"):
+                        if "timestamp" in override:
                             item["timestamp"] = override.get("timestamp")
+                        if override.get("parent_id") is not None:
+                            item["parent_id"] = override.get("parent_id")
                         if override.get("like_count") is not None:
                             item["like_count"] = override.get("like_count")
-                        if override.get("status"):
+                        if "status" in override and override.get("status") is not None:
                             item["status"] = override.get("status")
-                        if override.get("moderation_flagged") is not None:
+                        if "moderation_flagged" in override:
                             item["moderation_flagged"] = override.get("moderation_flagged")
-                        if override.get("moderation_reason"):
+                        if "moderation_reason" in override:
                             item["moderation_reason"] = override.get("moderation_reason")
-                        if override.get("moderation_checked_at"):
+                        if "moderation_checked_at" in override:
                             item["moderation_checked_at"] = override.get("moderation_checked_at")
-                        if override.get("is_hidden"):
-                            item["is_hidden"] = True
-                        if override.get("is_deleted"):
-                            item["is_deleted"] = True
+                        if "is_hidden" in override:
+                            item["is_hidden"] = bool(override.get("is_hidden"))
+                        if "is_deleted" in override:
+                            item["is_deleted"] = bool(override.get("is_deleted"))
                 replies = item.get("replies")
                 if not isinstance(replies, dict):
                     replies = {"data": []}
@@ -1750,7 +1754,7 @@ def _sync_youtube_comments_for_video(
         any_success = True
     except YoutubeApiError:
         pass
-    if not any_success or not comments:
+    if not any_success:
         return 0
     comments = _merge_youtube_comments(comments)
     moderation_entries = [
@@ -1793,7 +1797,124 @@ def _sync_youtube_comments_for_video(
         )
     if records:
         upsert_comment_records(records)
+    _update_short_comment_sync_state(
+        short_video_id,
+        last_comment_count=len(comments),
+    )
     return len(records)
+
+
+def _parse_refresh_mode(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"1", "true", "yes", "on", "force", "manual"}:
+        return "force"
+    if raw == "auto":
+        return "auto"
+    return "cache"
+
+
+def _load_short_comment_sync_state_entry(short_video_id: str) -> Dict[str, Any]:
+    short_id = str(short_video_id or "").strip()
+    if not short_id:
+        return {}
+    conn = get_db_readonly()
+    try:
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS short_comment_sync_state (
+                    short_video_id VARCHAR PRIMARY KEY,
+                    last_synced_at TIMESTAMP,
+                    last_comment_count INTEGER
+                )
+                """
+            )
+        except Exception as exc:
+            if "read-only" not in str(exc).lower():
+                raise
+        cols = table_columns(conn, "short_comment_sync_state")
+        has_count_column = "last_comment_count" in cols
+        select_comment_count = ", last_comment_count" if has_count_column else ""
+        row = conn.execute(
+            f"""
+            SELECT short_video_id, last_synced_at{select_comment_count}
+            FROM short_comment_sync_state
+            WHERE short_video_id = ?
+            LIMIT 1
+            """,
+            [short_id],
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "short_video_id": row[0],
+            "last_synced_at": _parse_comments_synced_at(row[1]),
+            "last_comment_count": row[2] if has_count_column and len(row) > 2 else None,
+        }
+    except Exception as exc:
+        if "short_comment_sync_state" in str(exc).lower():
+            return {}
+        raise
+    finally:
+        conn.close()
+
+
+def _update_short_comment_sync_state(short_video_id: str, *, last_comment_count: Optional[int] = None) -> None:
+    short_id = str(short_video_id or "").strip()
+    if not short_id:
+        return
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS short_comment_sync_state (
+                short_video_id VARCHAR PRIMARY KEY,
+                last_synced_at TIMESTAMP,
+                last_comment_count INTEGER
+            )
+            """
+        )
+        cols = table_columns(conn, "short_comment_sync_state")
+        if "last_comment_count" in cols:
+            conn.execute(
+                """
+                INSERT INTO short_comment_sync_state (short_video_id, last_synced_at, last_comment_count)
+                VALUES (?, ?, ?)
+                ON CONFLICT (short_video_id)
+                DO UPDATE SET
+                    last_synced_at = excluded.last_synced_at,
+                    last_comment_count = excluded.last_comment_count
+                """,
+                [short_id, datetime.now(timezone.utc), last_comment_count],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO short_comment_sync_state (short_video_id, last_synced_at)
+                VALUES (?, ?)
+                ON CONFLICT (short_video_id)
+                DO UPDATE SET last_synced_at = excluded.last_synced_at
+                """,
+                [short_id, datetime.now(timezone.utc)],
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _should_allow_live_comment_fetch(last_synced_at: Optional[datetime]) -> bool:
+    if not last_synced_at:
+        return True
+    return (
+        datetime.now(timezone.utc) - last_synced_at
+    ).total_seconds() >= COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS
+
+
+def _load_instagram_comment_cache_sync_timestamp(media_id: Optional[str]) -> Optional[datetime]:
+    cache = get_instagram_comment_cache(media_id)
+    if not cache:
+        return None
+    return _parse_comments_synced_at(cache.get("last_synced"))
 
 
 def _require_instagram_media_entry(queue_id: str):
@@ -1995,14 +2116,45 @@ def instagram_media_comments(queue_id):
     entry, error = _require_instagram_media_entry(queue_id)
     if error:
         return error
-    refresh_flag = _parse_bool(request.args.get("refresh"), False)
+    refresh_mode = _parse_refresh_mode(request.args.get("refresh"))
     limit_value = _normalize_instagram_limit(request.args.get("limit"), 25)
-    if refresh_flag:
+    live_fetch_attempted = False
+    live_fetch_skipped = False
+    live_fetch_failed = False
+    note = None
+    should_refresh = False
+    if refresh_mode == "force":
+        should_refresh = True
+    elif refresh_mode == "auto":
+        last_synced_at = _load_instagram_comment_cache_sync_timestamp(entry.get("instagram_media_id"))
+        should_refresh = _should_allow_live_comment_fetch(last_synced_at)
+        live_fetch_skipped = not should_refresh
+    if should_refresh:
+        live_fetch_attempted = True
         try:
+            current_app.logger.info(
+                "Instagram comment live fetch queue_id=%s mode=%s",
+                queue_id,
+                refresh_mode,
+            )
             refresh_instagram_media(queue_id, comments_limit=limit_value)
             entry = get_instagram_queue_entry(queue_id) or entry
         except InstagramActionError as exc:
-            return jsonify(success=False, message=str(exc)), 400
+            live_fetch_failed = True
+            note = "Latest Instagram comments could not be fetched. Showing cached comments."
+            current_app.logger.warning(
+                "Instagram comment live fetch failed queue_id=%s mode=%s: %s",
+                queue_id,
+                refresh_mode,
+                exc,
+            )
+    elif live_fetch_skipped:
+        current_app.logger.info(
+            "Instagram comment live fetch skipped queue_id=%s mode=%s interval=%ss",
+            queue_id,
+            refresh_mode,
+            COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS,
+        )
     payload = _build_instagram_media_payload(entry)
     current_count = payload.get("comment_count")
     if not isinstance(current_count, int):
@@ -2013,6 +2165,11 @@ def instagram_media_comments(queue_id):
             current_count = len(payload.get("comments") or [])
     update_instagram_last_seen_comment_count(queue_id, current_count)
     payload["last_seen_comment_count"] = current_count
+    payload["live_fetch_attempted"] = live_fetch_attempted
+    payload["live_fetch_skipped"] = live_fetch_skipped
+    payload["live_fetch_failed"] = live_fetch_failed
+    if note:
+        payload["note"] = note
     return jsonify(success=True, **payload)
 
 
@@ -4004,16 +4161,42 @@ def shorts_comments(video_id):
     if not is_admin and not owner_user_id:
         return jsonify(success=False, message="Forbidden"), 403
     requested_status = (request.args.get("status") or "all").strip() or "all"
-    refresh = _parse_bool(request.args.get("refresh"), default=False)
-    if refresh and owner_user_id:
+    refresh_mode = _parse_refresh_mode(request.args.get("refresh"))
+    live_fetch_attempted = False
+    live_fetch_skipped = False
+    live_fetch_failed = False
+    note = None
+    should_refresh = False
+    if owner_user_id and refresh_mode == "force":
+        should_refresh = True
+    elif owner_user_id and refresh_mode == "auto":
+        sync_state = _load_short_comment_sync_state_entry(video_id)
+        should_refresh = _should_allow_live_comment_fetch(sync_state.get("last_synced_at"))
+        live_fetch_skipped = not should_refresh
+    if should_refresh and owner_user_id:
+        live_fetch_attempted = True
         try:
+            current_app.logger.info(
+                "YouTube comment live fetch video_id=%s mode=%s",
+                video_id,
+                refresh_mode,
+            )
             _sync_youtube_comments_for_video(
                 owner_user_id,
                 video_id,
                 video_title=video_title,
             )
         except Exception:
+            live_fetch_failed = True
+            note = "Latest YouTube comments could not be fetched. Showing cached comments."
             current_app.logger.exception("Failed to refresh comments for %s", video_id)
+    elif live_fetch_skipped:
+        current_app.logger.info(
+            "YouTube comment live fetch skipped video_id=%s mode=%s interval=%ss",
+            video_id,
+            refresh_mode,
+            COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS,
+        )
     try:
         comments = fetch_comment_records_for_video(
             owner_user_id,
@@ -4036,6 +4219,10 @@ def shorts_comments(video_id):
             comments=comments,
             status=requested_status,
             counts=summary_counts,
+            note=note,
+            live_fetch_attempted=live_fetch_attempted,
+            live_fetch_skipped=live_fetch_skipped,
+            live_fetch_failed=live_fetch_failed,
         )
     except Exception:
         current_app.logger.exception("Failed to load comments for %s", video_id)

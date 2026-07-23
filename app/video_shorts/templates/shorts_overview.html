@@ -967,7 +967,6 @@
     let currentComments = [];
     let currentCounts = { all: 0, heldForReview: 0, published: 0, rejected: 0 };
     let currentFetchUrl = null;
-    let refreshNextFetch = false;
     let currentVideoId = null;
 
     function setStatus(message, isError = false) {
@@ -1020,26 +1019,30 @@
       const baseUrl = new URL(url, window.location.origin);
       baseUrl.searchParams.set("status", "all");
       currentFetchUrl = baseUrl.href;
-      refreshNextFetch = false;
       modalTitle.textContent = title;
       updateMeta(videoId, currentFilter);
       modal.show();
-      fetchComments();
+      fetchComments("cache");
     }
 
-    function fetchComments() {
+    function fetchComments(mode = "cache") {
       if (!currentFetchUrl) {
         return;
       }
       const requestUrl = new URL(currentFetchUrl, window.location.origin);
-      const isManualRefresh = refreshNextFetch;
-      if (isManualRefresh) {
-        requestUrl.searchParams.set("refresh", "1");
-        refreshNextFetch = false;
+      const fetchMode = mode === "force" ? "force" : mode === "auto" ? "auto" : "cache";
+      const isManualRefresh = fetchMode === "force";
+      const isAutoRefresh = fetchMode === "auto";
+      if (fetchMode !== "cache") {
+        requestUrl.searchParams.set("refresh", fetchMode);
       }
-      listEl.innerHTML = "";
-      setStatus("");
-      loadingEl.classList.remove("d-none");
+      if (fetchMode === "cache") {
+        listEl.innerHTML = "";
+        setStatus("");
+        loadingEl.classList.remove("d-none");
+      } else {
+        setStatus("Updating...", false);
+      }
       fetch(requestUrl.href)
         .then((resp) => {
           if (!resp.ok) {
@@ -1051,31 +1054,54 @@
           return resp.json();
         })
         .then((data) => {
-          loadingEl.classList.add("d-none");
+          if (fetchMode === "cache") {
+            loadingEl.classList.add("d-none");
+          }
           if (!data.success) {
-            setStatus(data.message || "Unable to load comments", true);
+            if (fetchMode === "cache") {
+              setStatus(data.message || "Unable to load comments", true);
+            } else {
+              setStatus("Latest comments could not be fetched. Showing cached comments.", false);
+            }
             return;
           }
           currentComments = data.comments || [];
           updateCounts(currentComments);
           buildFilters();
           applyFilter(currentFilter);
-          persistCounts(currentVideoId, {
-            pending: currentCounts.heldForReview || 0,
-            published: currentCounts.published || 0,
-            rejected: currentCounts.rejected || 0,
-          });
-          if (!currentComments.length && !isManualRefresh) {
-            setStatus("Showing cached comments. Press Refresh to fetch the latest.", false);
+          if (fetchMode === "cache") {
+            persistCounts(currentVideoId, {
+              pending: currentCounts.heldForReview || 0,
+              published: currentCounts.published || 0,
+              rejected: currentCounts.rejected || 0,
+            });
+          }
+          if (fetchMode === "cache" && !isManualRefresh) {
+            fetchComments("auto");
+            if (!currentComments.length) {
+              setStatus("Updating...", false);
+              return;
+            }
+          }
+          if (data.live_fetch_failed) {
+            setStatus(data.note || "Latest comments could not be fetched. Showing cached comments.", false);
           } else if (data.note) {
             setStatus(data.note, false);
+          } else if (!currentComments.length) {
+            setStatus("No comments yet.", false);
+          } else if (isAutoRefresh && data.live_fetch_skipped) {
+            setStatus("");
           } else {
             setStatus("");
           }
         })
         .catch((err) => {
-          loadingEl.classList.add("d-none");
-          setStatus(err.message || "Unable to load comments", true);
+          if (fetchMode === "cache") {
+            loadingEl.classList.add("d-none");
+            setStatus(err.message || "Unable to load comments", true);
+            return;
+          }
+          setStatus("Latest comments could not be fetched. Showing cached comments.", false);
         });
     }
 
@@ -1602,8 +1628,7 @@
 
     document.querySelectorAll(".short-comments-btn").forEach(attachHandlers);
     refreshBtn.addEventListener("click", () => {
-      refreshNextFetch = true;
-      fetchComments();
+      fetchComments("force");
     });
 
     const socialOverviewMeta = document.getElementById("socialOverviewMeta");
@@ -1910,21 +1935,26 @@
         });
       }
 
-      function fetchInstagramComments(refresh = false) {
+      function fetchInstagramComments(mode = "cache") {
         if (!currentInstagramQueueId) {
           return;
         }
-        if (instagramList) {
+        const fetchMode = mode === "force" ? "force" : mode === "auto" ? "auto" : "cache";
+        if (instagramList && fetchMode === "cache") {
           instagramList.innerHTML = "";
         }
-        setInstagramStatus("");
-        instagramLoading?.classList.remove("d-none");
+        if (fetchMode === "cache") {
+          setInstagramStatus("");
+          instagramLoading?.classList.remove("d-none");
+        } else {
+          setInstagramStatus("Updating...", false);
+        }
         const url = new URL(
           `/video_shorts/instagram/media/${currentInstagramQueueId}/comments`,
           window.location.origin
         );
-        if (refresh) {
-          url.searchParams.set("refresh", "1");
+        if (fetchMode !== "cache") {
+          url.searchParams.set("refresh", fetchMode);
         }
         fetch(url.toString())
           .then((resp) => {
@@ -1937,36 +1967,48 @@
             return resp.json();
           })
           .then((data) => {
-            instagramLoading?.classList.add("d-none");
+            if (fetchMode === "cache") {
+              instagramLoading?.classList.add("d-none");
+            }
             if (!data.success) {
-              setInstagramStatus(data.message || "Unable to load comments", true);
+              if (fetchMode === "cache") {
+                setInstagramStatus(data.message || "Unable to load comments", true);
+              } else {
+                setInstagramStatus("Latest Instagram comments could not be fetched. Showing cached comments.", false);
+              }
               return;
             }
             updateInstagramMeta(data);
             const comments = data.comments || [];
-            const suspiciousEmptyLoad =
-              currentInstagramExpectedTotal > 0 && comments.length === 0;
-            if (suspiciousEmptyLoad) {
-              setInstagramStatus(
-                `Instagram reports ${currentInstagramExpectedTotal} comment${currentInstagramExpectedTotal === 1 ? "" : "s"}, but the cached comment list is empty. Please press Refresh.`,
-                true
-              );
-              return;
-            }
             instagramEmptyLoadRetryCount = 0;
             if (comments.length > 0 && currentInstagramTrigger) {
               currentInstagramTrigger.classList.remove("instagram-comments-new");
             }
             renderInstagramComments(comments);
-            if (!comments.length) {
+            if (fetchMode === "cache") {
+              fetchInstagramComments("auto");
+              if (!comments.length) {
+                setInstagramStatus("Updating...", false);
+                return;
+              }
+            }
+            if (data.live_fetch_failed) {
+              setInstagramStatus(data.note || "Latest Instagram comments could not be fetched. Showing cached comments.", false);
+            } else if (!comments.length) {
               setInstagramStatus("No Instagram comments yet.", false);
+            } else if (data.note) {
+              setInstagramStatus(data.note, false);
             } else {
               setInstagramStatus("");
             }
           })
           .catch((err) => {
-            instagramLoading?.classList.add("d-none");
-            setInstagramStatus(err.message || "Unable to load comments", true);
+            if (fetchMode === "cache") {
+              instagramLoading?.classList.add("d-none");
+              setInstagramStatus(err.message || "Unable to load comments", true);
+              return;
+            }
+            setInstagramStatus("Latest Instagram comments could not be fetched. Showing cached comments.", false);
           });
       }
 
@@ -1988,7 +2030,7 @@
         }
         updateInstagramMeta(null);
         instagramModal.show();
-        fetchInstagramComments(false);
+        fetchInstagramComments("cache");
       }
 
       function attachInstagramHandlers(el) {
@@ -2007,7 +2049,7 @@
       }
 
       document.querySelectorAll(".instagram-comments-btn").forEach(attachInstagramHandlers);
-      instagramRefreshBtn?.addEventListener("click", () => fetchInstagramComments(true));
+      instagramRefreshBtn?.addEventListener("click", () => fetchInstagramComments("force"));
     }
 
     const facebookModalEl = document.getElementById("facebookCommentsModal");

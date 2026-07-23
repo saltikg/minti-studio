@@ -151,6 +151,9 @@ SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS = int(
     os.getenv("SHORTS_OVERVIEW_FIRST_FILL_MAX_VIDEOS", "5")
 )
 COMMENT_FETCH_MAX_PAGES = max(1, int(os.getenv("COMMENT_FETCH_MAX_PAGES", "10") or "10"))
+COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS = max(
+    0, int(os.getenv("COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS", "60") or "60")
+)
 _comment_auto_moderation_mode = (os.getenv("COMMENT_AUTO_MODERATION_MODE", "shadow") or "shadow").strip().lower()
 if _comment_auto_moderation_mode not in {"off", "shadow", "enforce"}:
     _comment_auto_moderation_mode = "shadow"
