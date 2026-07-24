@@ -266,10 +266,12 @@
                       {{ entry.short_like_count if entry.short_like_count is not none else '-' }}
                     </span>
                     {% set pending_count = entry.pending_comment_count or 0 %}
-                    {% set published_count = entry.published_comment_count or 0 %}
-                    {% set total_comments = pending_count + published_count %}
-                    {% if total_comments == 0 and entry.short_comment_count is not none %}
+                    {% set total_comments = entry.platform_comment_count %}
+                    {% if total_comments is none and entry.short_comment_count is not none %}
                       {% set total_comments = entry.short_comment_count %}
+                    {% endif %}
+                    {% if total_comments is none %}
+                      {% set total_comments = 0 %}
                     {% endif %}
                     <span class="d-flex align-items-center gap-1 text-muted position-relative">
                       {% if entry.comments_url %}
@@ -283,7 +285,7 @@
                           data-video-id="{{ (entry.short_video_id or '')|e }}"
                           {% if entry.short_video_id %}data-comments-trigger="{{ entry.short_video_id }}"{% endif %}
                           data-pending-count="{{ pending_count }}"
-                          data-published-count="{{ published_count }}"
+                          data-platform-comment-count="{{ total_comments }}"
                           title="View comments">
                           <i class="bi bi-chat-dots"></i>
                           <span class="fw-semibold" data-role="comment-count">({{ total_comments }})</span>
@@ -1163,11 +1165,27 @@
       return { pending, published, rejected };
     }
 
+    function normalizePlatformCount(counts, normalizedCounts) {
+      const explicitTotal =
+        Number(
+          counts?.platform_comment_count ??
+            counts?.platformCommentCount ??
+            counts?.total_comment_count ??
+            counts?.totalCommentCount
+        );
+      if (Number.isFinite(explicitTotal) && explicitTotal >= 0) {
+        return explicitTotal;
+      }
+      const normalized = normalizedCounts || normalizeCounts(counts);
+      return normalized.pending + normalized.published;
+    }
+
     function applyCountsToRow(videoId, counts) {
       if (!videoId) {
         return;
       }
       const normalized = normalizeCounts(counts);
+      const totalCount = normalizePlatformCount(counts, normalized);
       const lastSeenCount =
         Number(counts?.last_seen_comment_count ?? counts?.lastSeenCommentCount ?? 0) || 0;
       const row = document.querySelector(`[data-short-row=\"${videoId}\"]`);
@@ -1185,7 +1203,6 @@
         pendingBadge.textContent = `Pending ${normalized.pending}`;
         pendingBadge.classList.toggle("zero", normalized.pending <= 0);
       }
-      const totalCount = normalized.pending + normalized.published;
       const totalBadge = document.querySelector(
         `[data-comment-badge=\"total\"][data-video-id=\"${videoId}\"]`
       );
@@ -1197,6 +1214,7 @@
       if (triggerBtn) {
         triggerBtn.dataset.pendingCount = normalized.pending;
         triggerBtn.dataset.publishedCount = normalized.published;
+        triggerBtn.dataset.platformCommentCount = totalCount;
         triggerBtn.classList.add("short-comments-btn");
         triggerBtn.classList.remove(
           "short-comments-btn-pending",

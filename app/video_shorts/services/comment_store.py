@@ -501,6 +501,44 @@ def fetch_latest_comment_timestamps(
         conn.close()
 
 
+def fetch_top_level_comment_counts(
+    video_ids: Sequence[str],
+    *,
+    platform: str,
+) -> Dict[str, int]:
+    normalized_video_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
+    if not normalized_video_ids:
+        return {}
+    conn = get_db_readonly()
+    try:
+        ensure_comment_cache_schema(conn)
+        placeholders = ", ".join(["?"] * len(normalized_video_ids))
+        params: List[object] = [platform, *normalized_video_ids]
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT video_id, COUNT(*) AS top_level_count
+                FROM social_comment_cache
+                WHERE platform = ?
+                  AND video_id IN ({placeholders})
+                  AND (parent_id IS NULL OR parent_id = '')
+                GROUP BY video_id
+                """,
+                params,
+            ).fetchall()
+        except Exception as exc:
+            if "social_comment_cache" in str(exc).lower():
+                return {}
+            raise
+        return {
+            str(row[0]): int(row[1] or 0)
+            for row in rows
+            if row and row[0]
+        }
+    finally:
+        conn.close()
+
+
 def fetch_comments_missing_moderation(
     owner_user_id: str,
     *,

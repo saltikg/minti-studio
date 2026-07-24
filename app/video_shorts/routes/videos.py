@@ -168,8 +168,6 @@ FACEBOOK_STATUS_META = {
 
 
 def _ensure_short_comment_cache_table(conn):
-    if getattr(conn, "backend_name", "") == "postgres":
-        return
     try:
         conn.execute(
             """
@@ -178,29 +176,38 @@ def _ensure_short_comment_cache_table(conn):
                 pending_comment_count INTEGER DEFAULT 0,
                 published_comment_count INTEGER DEFAULT 0,
                 rejected_comment_count INTEGER DEFAULT 0,
+                platform_comment_count INTEGER,
                 last_seen_comment_count INTEGER DEFAULT 0,
                 comments_last_synced_at TIMESTAMP
             )
             """
         )
     except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         if "read-only" in str(exc).lower():
             return
         raise
-    try:
-        cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info('short_comment_cache')").fetchall()
-        }
-    except Exception:
-        return
-    if "last_seen_comment_count" not in cols:
+    cols = table_columns(conn, "short_comment_cache")
+    for column_name, column_sql in (
+        ("platform_comment_count", "INTEGER"),
+        ("last_seen_comment_count", "INTEGER DEFAULT 0"),
+    ):
+        if column_name in cols:
+            continue
         try:
-            conn.execute(
-                "ALTER TABLE short_comment_cache ADD COLUMN last_seen_comment_count INTEGER DEFAULT 0"
-            )
-        except Exception:
-            pass
+            conn.execute(f"ALTER TABLE short_comment_cache ADD COLUMN {column_name} {column_sql}")
+        except Exception as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            message = str(exc).lower()
+            if "duplicate column" in message or "already exists" in message or "read-only" in message:
+                continue
+            raise
 
 
 def _ensure_shorts_overview_stats_cache(conn) -> None:
@@ -530,6 +537,7 @@ def _fetch_short_comment_counts(conn, short_video_ids: List[str]) -> Dict[str, D
     placeholders = ", ".join("?" for _ in short_video_ids)
     cols = table_columns(conn, "short_comment_cache")
     last_seen_expr = "last_seen_comment_count" if "last_seen_comment_count" in cols else "0"
+    platform_expr = "platform_comment_count" if "platform_comment_count" in cols else "NULL"
     try:
         rows = conn.execute(
             f"""
@@ -538,6 +546,7 @@ def _fetch_short_comment_counts(conn, short_video_ids: List[str]) -> Dict[str, D
               COALESCE(pending_comment_count, 0) AS pending_comment_count,
               COALESCE(published_comment_count, 0) AS published_comment_count,
               COALESCE(rejected_comment_count, 0) AS rejected_comment_count,
+              {platform_expr} AS platform_comment_count,
               COALESCE({last_seen_expr}, 0) AS last_seen_comment_count,
               comments_last_synced_at
             FROM short_comment_cache
@@ -555,8 +564,9 @@ def _fetch_short_comment_counts(conn, short_video_ids: List[str]) -> Dict[str, D
             "pending_comment_count": row[1] or 0,
             "published_comment_count": row[2] or 0,
             "rejected_comment_count": row[3] or 0,
-            "last_seen_comment_count": row[4] or 0,
-            "comments_last_synced_at": row[5],
+            "platform_comment_count": row[4],
+            "last_seen_comment_count": row[5] or 0,
+            "comments_last_synced_at": row[6],
         }
     return result
 
@@ -645,6 +655,7 @@ def _hydrate_missing_short_comment_counts(
             "pending_comment_count": summary.get("pending", 0),
             "published_comment_count": summary.get("published", 0),
             "rejected_comment_count": summary.get("rejected", 0),
+            "platform_comment_count": cache_entry.get("platform_comment_count"),
             "last_seen_comment_count": cache_entry.get("last_seen_comment_count", 0),
             "comments_last_synced_at": datetime.now(timezone.utc),
         }
@@ -716,6 +727,65 @@ def _upsert_short_comment_counts(short_video_id: str, summary: Dict[str, int]):
                 now,
             ],
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _upsert_short_comment_platform_total(
+    short_video_id: str,
+    platform_comment_count: int,
+    *,
+    pending_comment_count: int | None = None,
+) -> None:
+    if not short_video_id:
+        return
+    try:
+        platform_total = max(0, int(platform_comment_count))
+    except (TypeError, ValueError):
+        return
+    pending_total = None
+    if pending_comment_count is not None:
+        try:
+            pending_total = max(0, int(pending_comment_count))
+        except (TypeError, ValueError):
+            pending_total = None
+    conn = get_db()
+    _ensure_video_crop_schema(conn)
+    try:
+        _ensure_short_comment_cache_table(conn)
+        if pending_total is None:
+            conn.execute(
+                """
+                INSERT INTO short_comment_cache (
+                    short_video_id,
+                    platform_comment_count,
+                    comments_last_synced_at
+                ) VALUES (?, ?, ?)
+                ON CONFLICT (short_video_id)
+                DO UPDATE SET
+                    platform_comment_count = excluded.platform_comment_count,
+                    comments_last_synced_at = excluded.comments_last_synced_at
+                """,
+                [short_video_id, platform_total, datetime.now(timezone.utc)],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO short_comment_cache (
+                    short_video_id,
+                    pending_comment_count,
+                    platform_comment_count,
+                    comments_last_synced_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT (short_video_id)
+                DO UPDATE SET
+                    pending_comment_count = excluded.pending_comment_count,
+                    platform_comment_count = excluded.platform_comment_count,
+                    comments_last_synced_at = excluded.comments_last_synced_at
+                """,
+                [short_video_id, pending_total, platform_total, datetime.now(timezone.utc)],
+            )
         conn.commit()
     finally:
         conn.close()
@@ -3752,6 +3822,7 @@ def shorts_overview():
         entry["pending_comment_count"] = counts.get("pending_comment_count", 0)
         entry["published_comment_count"] = counts.get("published_comment_count", 0)
         entry["rejected_comment_count"] = counts.get("rejected_comment_count", 0)
+        entry["platform_comment_count"] = counts.get("platform_comment_count")
         entry["last_seen_comment_count"] = counts.get("last_seen_comment_count", 0)
         entry["comments_last_synced_at"] = counts.get("comments_last_synced_at")
     last_comment_check = None
@@ -3842,11 +3913,11 @@ def shorts_overview():
             if stats or comment_activity > 0:
                 entry["publish_status"] = "published"
                 entry["publish_status_label"] = "Published"
-        total_comments = (entry.get("pending_comment_count") or 0) + (
-            entry.get("published_comment_count") or 0
-        )
-        if total_comments == 0 and entry.get("short_comment_count") is not None:
+        total_comments = entry.get("platform_comment_count")
+        if total_comments is None and entry.get("short_comment_count") is not None:
             total_comments = entry.get("short_comment_count") or 0
+        if total_comments is None:
+            total_comments = 0
         last_seen = entry.get("last_seen_comment_count") or 0
         entry["has_unread_comments"] = total_comments > last_seen
         entry["has_any_unread_comments"] = bool(entry.get("has_unread_comments")) or any(

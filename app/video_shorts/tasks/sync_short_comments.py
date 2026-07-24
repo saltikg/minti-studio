@@ -25,8 +25,12 @@ from app.video_shorts.routes.videos import (
     _collect_short_broadcast_entries,
     _merge_youtube_comments,
     _upsert_short_comment_counts,
+    _upsert_short_comment_platform_total,
 )
-from app.video_shorts.services.comment_store import fetch_latest_comment_timestamps
+from app.video_shorts.services.comment_store import (
+    fetch_latest_comment_timestamps,
+    fetch_top_level_comment_counts,
+)
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.db import (
@@ -50,6 +54,7 @@ from src.trends.facebook_page_tokens import get_facebook_page_data
 logger = logging.getLogger(__name__)
 
 COMMENT_COUNT_SYNC_RECENT_SIZE = int(os.getenv("SHORT_COMMENT_COUNT_SYNC_LIMIT", "100"))
+YOUTUBE_COMMENT_FETCH_MAX_RESULTS = 50
 
 
 def _unique_short_ids(entries: List[Dict[str, object]]) -> List[str]:
@@ -110,28 +115,62 @@ def _should_fetch_youtube_comments(
             short_id,
         )
         return True
-    previous_count = None
+    synced_count = None
     if sync_state_entry:
-        previous_count = _normalize_comment_count(sync_state_entry.get("last_comment_count"))
-    if previous_count is None:
+        synced_count = _normalize_comment_count(sync_state_entry.get("last_comment_count"))
+    if synced_count is None:
         logger.info(
-            "Fetching YouTube comments for %s because no prior comment count is stored (current=%s).",
+            "Fetching YouTube comments for %s because no body-synced comment count is stored (observed=%s).",
             short_id,
             current_comment_count,
         )
         return True
-    if previous_count != current_comment_count:
+    if synced_count != current_comment_count:
         logger.info(
-            "Fetching YouTube comments for %s because comment_count changed %s -> %s.",
+            "Fetching YouTube comments for %s because observed comment_count differs from body-synced count %s -> %s.",
             short_id,
-            previous_count,
+            synced_count,
             current_comment_count,
         )
         return True
     logger.info(
-        "Skipping YouTube comment fetch for %s because comment_count is unchanged at %s.",
+        "Skipping YouTube comment fetch for %s because observed comment_count matches body-synced count at %s.",
         short_id,
         current_comment_count,
+    )
+    return False
+
+
+def _youtube_comment_body_target(current_comment_count: Optional[int]) -> Optional[int]:
+    normalized = _normalize_comment_count(current_comment_count)
+    if normalized is None:
+        return None
+    return min(normalized, YOUTUBE_COMMENT_FETCH_MAX_RESULTS)
+
+
+def _should_fetch_youtube_comment_bodies(
+    short_id: str,
+    current_comment_count: Optional[int],
+    sync_state_entry: Optional[Dict[str, object]],
+    cached_top_level_count: Optional[int],
+) -> bool:
+    if _should_fetch_youtube_comments(short_id, current_comment_count, sync_state_entry):
+        return True
+    target_count = _youtube_comment_body_target(current_comment_count)
+    cached_count = _normalize_comment_count(cached_top_level_count) or 0
+    if target_count is not None and cached_count < target_count:
+        logger.info(
+            "Fetching YouTube comments for %s because cached top-level bodies are incomplete (%s/%s target rows).",
+            short_id,
+            cached_count,
+            target_count,
+        )
+        return True
+    logger.info(
+        "Skipping YouTube comment fetch for %s because cached top-level bodies are complete (%s/%s target rows).",
+        short_id,
+        cached_count,
+        target_count if target_count is not None else "unknown",
     )
     return False
 
@@ -162,46 +201,24 @@ def _resolve_short_oauth_user_ids(
 
 def _sync_youtube_comment_totals(
     short_ids: List[str],
-    short_oauth_user_ids: Dict[str, Optional[str]],
-    sync_state: Dict[str, Dict[str, object]],
+    comment_count_map: Dict[str, Optional[int]],
     sync_updates: Dict[str, Dict[str, object]],
 ) -> int:
     if not short_ids:
         return 0
-    stats = fetch_video_stats(short_ids)
     refreshed = 0
+    observed_at = datetime.now(timezone.utc)
     for short_id in short_ids:
-        stats_entry = stats.get(short_id) or {}
-        total = _normalize_comment_count(stats_entry.get("comment_count"))
+        total = _normalize_comment_count(comment_count_map.get(short_id))
         if total is None:
             continue
-        pending_count = 0
-        if _should_fetch_youtube_comments(short_id, total, sync_state.get(short_id)):
-            try:
-                pending_comments = fetch_video_comments(
-                    short_id,
-                    max_results=50,
-                    moderation_status="heldForReview",
-                    user_id=short_oauth_user_ids.get(short_id),
-                )
-                pending_count = sum(
-                    1 for comment in pending_comments if not comment.get("is_reply")
-                )
-            except YoutubeApiError:
-                pending_count = 0
-            except Exception:
-                logger.exception(
-                    "Failed to fetch heldForReview comments for %s",
-                    short_id,
-                )
-        _upsert_short_comment_counts(
-            short_id,
-            {"pending": pending_count, "published": total, "rejected": 0},
+        _upsert_short_comment_platform_total(short_id, total)
+        sync_updates.setdefault(short_id, {}).update(
+            {
+                "observed_comment_count": total,
+                "observed_comment_count_at": observed_at,
+            }
         )
-        sync_updates[short_id] = {
-            "last_synced_at": datetime.now(timezone.utc),
-            "last_comment_count": total,
-        }
         refreshed += 1
     return refreshed
 
@@ -368,23 +385,88 @@ def _ensure_sync_state_table(conn) -> None:
             CREATE TABLE IF NOT EXISTS short_comment_sync_state (
                 short_video_id VARCHAR PRIMARY KEY,
                 last_synced_at TIMESTAMP,
-                last_comment_count INTEGER
+                last_comment_count INTEGER,
+                observed_comment_count INTEGER,
+                observed_comment_count_at TIMESTAMP
             )
             """
         )
         cols = table_columns(conn, "short_comment_sync_state")
-        if "last_comment_count" not in cols:
+        for column_name, column_sql in (
+            ("last_comment_count", "INTEGER"),
+            ("observed_comment_count", "INTEGER"),
+            ("observed_comment_count_at", "TIMESTAMP"),
+        ):
+            if column_name in cols:
+                continue
             try:
                 conn.execute(
-                    "ALTER TABLE short_comment_sync_state ADD COLUMN last_comment_count INTEGER"
+                    f"ALTER TABLE short_comment_sync_state ADD COLUMN {column_name} {column_sql}"
                 )
                 if hasattr(conn, "commit"):
                     conn.commit()
             except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 message = str(exc).lower()
-                if "duplicate column" not in message and "already exists" not in message:
+                if (
+                    "duplicate column" not in message
+                    and "already exists" not in message
+                    and "read-only" not in message
+                ):
+                    raise
+        cols = table_columns(conn, "short_comment_sync_state")
+        if "observed_comment_count" in cols:
+            try:
+                conn.execute(
+                    """
+                    UPDATE short_comment_sync_state
+                    SET observed_comment_count = last_comment_count
+                    WHERE observed_comment_count IS NULL
+                      AND last_comment_count IS NOT NULL
+                    """
+                )
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if "read-only" not in str(exc).lower():
+                    raise
+        if "observed_comment_count_at" in cols:
+            try:
+                conn.execute(
+                    """
+                    UPDATE short_comment_sync_state
+                    SET observed_comment_count_at = last_synced_at
+                    WHERE observed_comment_count_at IS NULL
+                      AND last_synced_at IS NOT NULL
+                    """
+                )
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if "read-only" not in str(exc).lower():
+                    raise
+        if hasattr(conn, "commit"):
+            try:
+                conn.commit()
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if "read-only" not in str(exc).lower():
                     raise
     except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         if "read-only" in str(exc).lower():
             return
         raise
@@ -399,11 +481,15 @@ def _load_sync_state(short_video_ids: List[str]) -> Dict[str, Dict[str, object]]
         placeholders = ", ".join("?" for _ in short_video_ids)
         cols = table_columns(conn, "short_comment_sync_state")
         has_count_column = "last_comment_count" in cols
+        has_observed_column = "observed_comment_count" in cols
+        has_observed_at_column = "observed_comment_count_at" in cols
         select_comment_count = ", last_comment_count" if has_count_column else ""
+        select_observed_count = ", observed_comment_count" if has_observed_column else ""
+        select_observed_at = ", observed_comment_count_at" if has_observed_at_column else ""
         try:
             rows = conn.execute(
                 f"""
-                SELECT short_video_id, last_synced_at{select_comment_count}
+                SELECT short_video_id, last_synced_at{select_comment_count}{select_observed_count}{select_observed_at}
                 FROM short_comment_sync_state
                 WHERE short_video_id IN ({placeholders})
                 """,
@@ -417,9 +503,23 @@ def _load_sync_state(short_video_ids: List[str]) -> Dict[str, Dict[str, object]]
         for row in rows:
             if not row or not row[0]:
                 continue
+            row_index = 2
+            last_comment_count = None
+            if has_count_column:
+                last_comment_count = _normalize_comment_count(row[row_index])
+                row_index += 1
+            observed_comment_count = None
+            if has_observed_column:
+                observed_comment_count = _normalize_comment_count(row[row_index])
+                row_index += 1
+            observed_comment_count_at = None
+            if has_observed_at_column:
+                observed_comment_count_at = _parse_sync_ts(row[row_index])
             result[row[0]] = {
                 "last_synced_at": _parse_sync_ts(row[1]),
-                "last_comment_count": _normalize_comment_count(row[2]) if has_count_column else None,
+                "last_comment_count": last_comment_count,
+                "observed_comment_count": observed_comment_count,
+                "observed_comment_count_at": observed_comment_count_at,
             }
         return result
     finally:
@@ -432,33 +532,36 @@ def _update_sync_state(sync_updates: Dict[str, Dict[str, object]]) -> None:
     conn = get_db()
     try:
         _ensure_sync_state_table(conn)
-        cols = table_columns(conn, "short_comment_sync_state")
-        has_count_column = "last_comment_count" in cols
         for short_id, state in sync_updates.items():
-            last_synced_at = state.get("last_synced_at") or datetime.now(timezone.utc)
+            last_synced_at = state.get("last_synced_at")
             last_comment_count = _normalize_comment_count(state.get("last_comment_count"))
-            if has_count_column:
-                conn.execute(
-                    """
-                    INSERT INTO short_comment_sync_state (short_video_id, last_synced_at, last_comment_count)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT (short_video_id)
-                    DO UPDATE SET
-                        last_synced_at = excluded.last_synced_at,
-                        last_comment_count = excluded.last_comment_count
-                    """,
-                    [short_id, last_synced_at, last_comment_count],
+            observed_comment_count = _normalize_comment_count(state.get("observed_comment_count"))
+            observed_comment_count_at = state.get("observed_comment_count_at")
+            conn.execute(
+                """
+                INSERT INTO short_comment_sync_state (
+                    short_video_id,
+                    last_synced_at,
+                    last_comment_count,
+                    observed_comment_count,
+                    observed_comment_count_at
                 )
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO short_comment_sync_state (short_video_id, last_synced_at)
-                    VALUES (?, ?)
-                    ON CONFLICT (short_video_id)
-                    DO UPDATE SET last_synced_at = excluded.last_synced_at
-                    """,
-                    [short_id, last_synced_at],
-                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (short_video_id)
+                DO UPDATE SET
+                    last_synced_at = COALESCE(excluded.last_synced_at, short_comment_sync_state.last_synced_at),
+                    last_comment_count = COALESCE(excluded.last_comment_count, short_comment_sync_state.last_comment_count),
+                    observed_comment_count = COALESCE(excluded.observed_comment_count, short_comment_sync_state.observed_comment_count),
+                    observed_comment_count_at = COALESCE(excluded.observed_comment_count_at, short_comment_sync_state.observed_comment_count_at)
+                """,
+                [
+                    short_id,
+                    last_synced_at,
+                    last_comment_count,
+                    observed_comment_count,
+                    observed_comment_count_at,
+                ],
+            )
         conn.commit()
     finally:
         conn.close()
@@ -524,17 +627,20 @@ def _sync_youtube_comments_for_videos(
     title_map: Dict[str, str],
     sync_state: Dict[str, Dict[str, object]],
     comment_counts: Dict[str, Optional[int]],
+    cached_top_level_counts: Dict[str, int],
     sync_updates: Dict[str, Dict[str, object]],
     short_oauth_user_ids: Dict[str, Optional[str]],
 ) -> int:
     updated_count = 0
     for short_id in short_ids:
         current_comment_count = _normalize_comment_count(comment_counts.get(short_id))
-        if not _should_fetch_youtube_comments(short_id, current_comment_count, sync_state.get(short_id)):
-            sync_updates[short_id] = {
-                "last_synced_at": datetime.now(timezone.utc),
-                "last_comment_count": current_comment_count,
-            }
+        cached_top_level_count = cached_top_level_counts.get(short_id, 0)
+        if not _should_fetch_youtube_comment_bodies(
+            short_id,
+            current_comment_count,
+            sync_state.get(short_id),
+            cached_top_level_count,
+        ):
             continue
         comments: List[Dict[str, object]] = []
         any_success = False
@@ -550,7 +656,7 @@ def _sync_youtube_comments_for_videos(
             comments.extend(
                 fetch_video_comments(
                     short_id,
-                    max_results=50,
+                    max_results=YOUTUBE_COMMENT_FETCH_MAX_RESULTS,
                     moderation_status="heldForReview",
                     user_id=oauth_user_id,
                 )
@@ -562,7 +668,7 @@ def _sync_youtube_comments_for_videos(
             comments.extend(
                 fetch_video_comments(
                     short_id,
-                    max_results=50,
+                    max_results=YOUTUBE_COMMENT_FETCH_MAX_RESULTS,
                     moderation_status=None,
                     user_id=oauth_user_id,
                     prefer_user_oauth=True,
@@ -574,10 +680,12 @@ def _sync_youtube_comments_for_videos(
             pass
         if not any_success:
             continue
-        sync_updates[short_id] = {
-            "last_synced_at": datetime.now(timezone.utc),
-            "last_comment_count": current_comment_count,
-        }
+        sync_updates.setdefault(short_id, {}).update(
+            {
+                "last_synced_at": datetime.now(timezone.utc),
+                "last_comment_count": current_comment_count,
+            }
+        )
         if not comments:
             updated_count += 1
             continue
@@ -679,15 +787,21 @@ def main() -> int:
                 short_owner_context = _load_short_owner_context(entries) if entries else {}
                 owner_short_ids = _group_short_ids_by_owner(short_owner_context)
                 short_oauth_user_ids = _resolve_short_oauth_user_ids(short_owner_context)
+                comment_count_map = (
+                    {
+                        short_id: _normalize_comment_count((stats or {}).get("comment_count"))
+                        for short_id, stats in fetch_video_stats(all_short_video_ids).items()
+                    }
+                    if all_short_video_ids
+                    else {}
+                )
                 recent_entries = _select_recent_entries(entries, COMMENT_COUNT_SYNC_RECENT_SIZE)
-                short_video_ids = _unique_short_ids(recent_entries)
-                if not short_video_ids:
-                    logger.info("No recent short videos found for comment count sync.")
+                if not all_short_video_ids:
+                    logger.info("No short videos found for comment count sync.")
                 else:
                     refreshed = _sync_youtube_comment_totals(
-                        short_video_ids,
-                        short_oauth_user_ids,
-                        sync_state,
+                        all_short_video_ids,
+                        comment_count_map,
                         sync_updates,
                     )
                     logger.info(
@@ -707,10 +821,6 @@ def main() -> int:
                     owner_user_ids = _load_owner_user_ids()
                     publish_map = _build_publish_sort_map(entries)
                     title_map = _build_title_map(entries)
-                    comment_count_map = {
-                        short_id: _normalize_comment_count((stats or {}).get("comment_count"))
-                        for short_id, stats in fetch_video_stats(all_short_video_ids).items()
-                    } if all_short_video_ids else {}
                     conn = get_db()
                     try:
                         _ensure_sync_state_table(conn)
@@ -735,6 +845,10 @@ def main() -> int:
                                 owner_user_id,
                                 platform="youtube",
                             )
+                            cached_top_level_counts = fetch_top_level_comment_counts(
+                                selected_ids,
+                                platform="youtube",
+                            )
                             try:
                                 updated_count = _sync_youtube_comments_for_videos(
                                     owner_user_id,
@@ -743,6 +857,7 @@ def main() -> int:
                                     title_map,
                                     sync_state,
                                     comment_count_map,
+                                    cached_top_level_counts,
                                     sync_updates,
                                     short_oauth_user_ids,
                                 )
