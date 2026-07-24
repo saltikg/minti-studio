@@ -202,6 +202,12 @@ def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
         )
 
 
+def _user_facing_timeout_message(job: Dict[str, Any]) -> str:
+    if job.get("type") == JOB_TYPE_RENDER_SHORT:
+        return "This video took too long to process. Please try again. If it keeps happening, contact support."
+    return "This job took too long to finish. Please try again. If it keeps happening, contact support."
+
+
 def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> None:
     payload = {"stage": stage, "message": message}
     if status:
@@ -629,7 +635,7 @@ def process_next_job(app, worker_id: str) -> bool:
         _mark_job_terminal_failure(job, str(exc))
         return True
     except MediaSubprocessTimeoutError as exc:
-        _mark_job_terminal_failure(job, str(exc))
+        _mark_job_terminal_failure(job, _user_facing_timeout_message(job))
         return True
     except Exception as exc:
         latest = get_job(job["id"]) or job

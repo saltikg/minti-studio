@@ -1,12 +1,104 @@
 from __future__ import annotations
 
+import json
+import logging
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from threading import Lock, Thread
+from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
+def _ensure_module(name: str) -> ModuleType:
+    module = sys.modules.get(name)
+    if isinstance(module, ModuleType):
+        return module
+    module = ModuleType(name)
+    sys.modules[name] = module
+    return module
+
+
+dotenv_module = _ensure_module("dotenv")
+dotenv_module.load_dotenv = lambda *args, **kwargs: None
+
+google_auth_oauthlib_module = _ensure_module("google_auth_oauthlib")
+google_auth_oauthlib_flow_module = _ensure_module("google_auth_oauthlib.flow")
+google_auth_oauthlib_flow_module.Flow = type("Flow", (), {})
+google_auth_oauthlib_module.flow = google_auth_oauthlib_flow_module
+
+google_oauth2_module = _ensure_module("google.oauth2")
+google_oauth2_id_token_module = _ensure_module("google.oauth2.id_token")
+google_oauth2_id_token_module.verify_oauth2_token = lambda *args, **kwargs: {}
+google_oauth2_credentials_module = _ensure_module("google.oauth2.credentials")
+google_oauth2_credentials_module.Credentials = type("Credentials", (), {})
+google_oauth2_module.id_token = google_oauth2_id_token_module
+google_oauth2_module.credentials = google_oauth2_credentials_module
+
+google_auth_module = _ensure_module("google.auth")
+google_auth_exceptions_module = _ensure_module("google.auth.exceptions")
+google_auth_exceptions_module.RefreshError = type("RefreshError", (Exception,), {})
+google_auth_transport_module = _ensure_module("google.auth.transport")
+google_auth_transport_requests_module = _ensure_module("google.auth.transport.requests")
+google_auth_transport_requests_module.Request = type("Request", (), {})
+google_auth_module.exceptions = google_auth_exceptions_module
+google_auth_module.transport = google_auth_transport_module
+google_auth_transport_module.requests = google_auth_transport_requests_module
+
+googleapiclient_module = _ensure_module("googleapiclient")
+googleapiclient_discovery_module = _ensure_module("googleapiclient.discovery")
+googleapiclient_discovery_module.build = lambda *args, **kwargs: None
+googleapiclient_http_module = _ensure_module("googleapiclient.http")
+googleapiclient_http_module.MediaFileUpload = type("MediaFileUpload", (), {})
+googleapiclient_module.discovery = googleapiclient_discovery_module
+googleapiclient_module.http = googleapiclient_http_module
+
+stripe_module = _ensure_module("stripe")
+stripe_module.Customer = type("Customer", (), {"create": staticmethod(lambda *args, **kwargs: None)})
+stripe_module.Subscription = type(
+    "Subscription",
+    (),
+    {
+        "retrieve": staticmethod(lambda *args, **kwargs: None),
+        "modify": staticmethod(lambda *args, **kwargs: None),
+    },
+)
+stripe_module.checkout = SimpleNamespace(
+    Session=type(
+        "Session",
+        (),
+        {
+            "create": staticmethod(lambda *args, **kwargs: None),
+            "retrieve": staticmethod(lambda *args, **kwargs: None),
+        },
+    )
+)
+stripe_module.billing_portal = SimpleNamespace(
+    Session=type("Session", (), {"create": staticmethod(lambda *args, **kwargs: None)})
+)
+
+requests_module = _ensure_module("requests")
+requests_module.Response = type("Response", (), {})
+requests_module.get = lambda *args, **kwargs: None
+requests_module.post = lambda *args, **kwargs: None
+requests_module.delete = lambda *args, **kwargs: None
+requests_module.request = lambda *args, **kwargs: None
+
+boto3_module = _ensure_module("boto3")
+boto3_module.client = lambda *args, **kwargs: None
+boto3_module.resource = lambda *args, **kwargs: None
+
+botocore_module = _ensure_module("botocore")
+botocore_exceptions_module = _ensure_module("botocore.exceptions")
+botocore_exceptions_module.ClientError = type("ClientError", (Exception,), {})
+botocore_module.exceptions = botocore_exceptions_module
+
 from app import create_app
+from app.video_shorts.routes import generation
 from app.video_shorts.services import db as db_service
+from app.video_shorts.services import compositor
 from app.video_shorts.services import render_jobs, usage_metering
+from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
+from app.video_shorts.worker import process_next_job
 
 
 def _configure_duckdb(monkeypatch, tmp_path, filename: str) -> None:
@@ -29,6 +121,74 @@ def _insert_user(user_id: str, plan_id: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> None:
+    conn = db_service.get_db()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS youtube_videos (
+                id BIGINT PRIMARY KEY,
+                video_id VARCHAR,
+                title VARCHAR,
+                duration_seconds DOUBLE,
+                owner_user_id VARCHAR,
+                brand_id VARCHAR,
+                transcript_status VARCHAR,
+                published_at TIMESTAMP,
+                downloaded_at TIMESTAMP,
+                last_checked_at TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO youtube_videos (
+                id,
+                video_id,
+                title,
+                duration_seconds,
+                owner_user_id,
+                brand_id,
+                transcript_status,
+                published_at,
+                downloaded_at,
+                last_checked_at
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, '', NULL, NULL, NULL)
+            """,
+            [video_pk, source_video_id, f"Video {source_video_id}", 180.0, owner_user_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _write_plan(shorts_dir: Path, source_video_id: str, *, plan_index: int = 1) -> None:
+    shorts_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = shorts_dir / f"{source_video_id}_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "plan": [
+                    {
+                        "origin": "ai",
+                        "plan_index": plan_index,
+                        "clip_filename": f"{plan_index}_{source_video_id}.mp4",
+                        "title": f"Clip {plan_index}",
+                        "start": 10.0,
+                        "end": 20.0,
+                        "status": "queued",
+                        "publish_status": "not_ready",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _payload(video_pk: int, source_video_id: str, plan_index: int = 1) -> dict:
@@ -248,3 +408,94 @@ def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
     assert owner_payload["status"] == "queued"
     assert owner_payload["queue_position"] == 0
     assert other_response.status_code == 404
+
+
+def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, tmp_path, caplog):
+    _configure_duckdb(monkeypatch, tmp_path, "worker_timeout_failure.duckdb")
+    user_id = str(uuid4())
+    video_pk = 101
+    source_video_id = "timeout-video"
+    plan_index = 1
+    shorts_dir = tmp_path / "shorts"
+    source_path = tmp_path / "timeout-video.mp4"
+    source_path.write_bytes(b"not-a-real-video")
+
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    _write_plan(shorts_dir, source_video_id, plan_index=plan_index)
+
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    monkeypatch.setattr(generation, "_get_user_storage_usage", lambda conn, current_user_id: {"used_bytes": 0, "limit_bytes": 10 * 1024**3})
+    monkeypatch.setattr(generation, "_fetch_video_with_transcript", lambda current_video_pk: (source_video_id, "Timeout Video", 180.0, "", []))
+    monkeypatch.setattr(generation, "_resolve_source_video", lambda current_video_id: (source_path, False))
+    monkeypatch.setattr(generation, "_cleanup_resolved_source_video", lambda path, is_temp: None)
+    monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
+    monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
+    monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(compositor, "_resolve_ffprobe", lambda: "ffprobe")
+
+    def _raise_timeout(cmd, *, timeout, operation, context="", **kwargs):
+        binary = Path(str(cmd[0])).name if cmd else "subprocess"
+        if operation in {"has_audio_stream", "has_video_stream"}:
+            return SimpleNamespace(stdout="0\n", stderr="")
+        logging.getLogger("app.video_shorts.services.media_utils").error(
+            "Media subprocess timeout binary=%s timeout=%ss operation=%s context=%s",
+            binary,
+            timeout,
+            operation,
+            context or "-",
+        )
+        raise MediaSubprocessTimeoutError(
+            binary=binary,
+            timeout_seconds=int(timeout),
+            operation=operation,
+            context=context,
+        )
+
+    monkeypatch.setattr(compositor, "run_media_subprocess", _raise_timeout)
+
+    payload = _payload(video_pk, source_video_id, plan_index)
+    payload["brand_id"] = None
+    payload["options"]["brand_id"] = None
+
+    queued = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=_input_hash(source_video_id, plan_index),
+    )
+    job_id = queued["job"]["id"]
+
+    before_snapshot = usage_metering.get_usage_snapshot(user_id)
+    reserve_result = usage_metering.reserve_export(user_id)
+    assert reserve_result["allowed"] is True
+    reserved_snapshot = usage_metering.get_usage_snapshot(user_id)
+    assert reserved_snapshot["exports"]["used"] == before_snapshot["exports"]["used"] + 1
+
+    app = create_app()
+    app.secret_key = "test-secret"
+
+    with caplog.at_level(logging.ERROR):
+        processed = process_next_job(app, "worker-timeout-test")
+
+    assert processed is True
+
+    failed_job = render_jobs.get_job(job_id, user_id=user_id)
+    after_snapshot = usage_metering.get_usage_snapshot(user_id)
+    plan_entries = generation._load_plan_entries(source_video_id)
+    expected_error = (
+        "This video took too long to process. Please try again. "
+        "If it keeps happening, contact support."
+    )
+
+    assert failed_job["status"] == "failed"
+    assert failed_job["error"] == expected_error
+    assert failed_job["attempts"] == 1
+    assert after_snapshot["exports"]["used"] == before_snapshot["exports"]["used"]
+    assert plan_entries[0]["status"] == "failed"
+    assert plan_entries[0]["render_error"] == expected_error
+    assert any(
+        record.levelno == logging.ERROR
+        and "Media subprocess timeout" in record.getMessage()
+        and "binary=ffmpeg" in record.getMessage()
+        for record in caplog.records
+    )

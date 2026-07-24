@@ -121,6 +121,7 @@ from app.video_shorts.services.media_utils import (
     _format_time_label,
     _resolve_ffmpeg,
     _resolve_source_video,
+    MediaSubprocessTimeoutError,
     normalize_source_video_for_streaming,
     run_media_subprocess,
     scale_media_timeout,
@@ -12201,6 +12202,32 @@ def autoclip_video(video_pk):
                     status="completed",
                 )
             made += 1
+    except MediaSubprocessTimeoutError as e:
+        current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
+        try:
+            _sync_generated_video_from_plan_entry(
+                source_video_id=vid,
+                clip_filename=clip_filename,
+                plan_entry=plan_entry,
+                generation_status="failed",
+            )
+        except Exception as exc:
+            current_app.logger.warning(
+                "Failed to sync failed lifecycle row for %s clip=%s: %s",
+                vid,
+                clip_filename,
+                exc,
+            )
+        owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
+        if owner_event_user_id:
+            track_event(
+                owner_event_user_id,
+                "short_generated",
+                video_id=vid,
+                short_id=clip_filename,
+                status="failed",
+            )
+        raise
     except Exception as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
         try:
