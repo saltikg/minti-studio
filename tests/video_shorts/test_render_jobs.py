@@ -354,6 +354,32 @@ def test_global_processing_cap_keeps_next_job_queued_without_attempt(monkeypatch
     assert queued_job["attempts"] == 0
 
 
+def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(worker_module, "STALE_JOB_TIMEOUT_SECONDS", 5400)
+    monkeypatch.setattr(worker_module, "WORKER_CONCURRENCY", 1)
+    monkeypatch.setattr(worker_module, "create_app", lambda: create_app())
+    monkeypatch.setattr(
+        worker_module,
+        "requeue_timed_out_jobs",
+        lambda *, timeout_seconds: calls.append(timeout_seconds),
+    )
+    monkeypatch.setattr(worker_module, "process_next_job", lambda app, worker_id: False)
+
+    def _stop(_seconds):
+        raise RuntimeError("stop-loop")
+
+    monkeypatch.setattr(worker_module.time, "sleep", _stop)
+
+    try:
+        worker_module.run_worker_loop()
+    except RuntimeError as exc:
+        assert str(exc) == "stop-loop"
+
+    assert calls == [5400]
+
+
 def test_timed_out_processing_job_requeues_then_fails_and_releases_quota(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "timeout_requeue.duckdb")
     user_id = str(uuid4())

@@ -15,8 +15,8 @@ from app import create_app
 from app.video_shorts.config import (
     DISK_GUARD_PCT,
     JOB_POLL_INTERVAL_SECONDS,
-    JOB_TIMEOUT_SECONDS,
     MAX_GLOBAL_CONCURRENT_JOBS,
+    STALE_JOB_TIMEOUT_SECONDS,
     WORKER_CONCURRENCY,
 )
 from app.video_shorts.routes import generation
@@ -709,7 +709,7 @@ def run_worker_loop() -> None:
     app = create_app()
     with app.app_context():
         while True:
-            requeue_timed_out_jobs(timeout_seconds=JOB_TIMEOUT_SECONDS)
+            requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
                 if process_next_job(app, worker_id):
