@@ -3,9 +3,20 @@ set -euo pipefail
 
 ROOT="/home/ubuntu/apps/minti_studio"
 LOG_DIR="$ROOT/logs"
+ENV_FILE="$ROOT/.env"
 MODE="${1:-publish}"
 
 mkdir -p "$LOG_DIR"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Missing env file: $ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
 pick_log_file() {
   local target="$1"
