@@ -1,4 +1,5 @@
 import json
+import errno
 import re
 import shutil
 import string
@@ -125,6 +126,10 @@ from app.video_shorts.services.media_utils import (
     normalize_source_video_for_streaming,
     run_media_subprocess,
     scale_media_timeout,
+)
+from app.video_shorts.services.disk_guard import (
+    USER_FACING_DISK_GUARD_MESSAGE,
+    disk_guard_triggered,
 )
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
@@ -9744,6 +9749,8 @@ def transcribe_video_start(video_pk):
                 }
             )
 
+        if disk_guard_triggered(operation="transcribe_video_start", log=current_app.logger):
+            return jsonify({"ok": False, "message": USER_FACING_DISK_GUARD_MESSAGE}), 503
         source_path, source_path_is_temp = _resolve_source_video(video_id)
         if not source_path or not source_path.exists():
             return (
@@ -9803,6 +9810,9 @@ def transcribe_video(video_pk):
 
     vid = row[0]
     video_title = row[1]
+    if disk_guard_triggered(operation="transcribe_video_sync", log=current_app.logger):
+        flash(USER_FACING_DISK_GUARD_MESSAGE, "warning")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     source_path, source_path_is_temp = _resolve_source_video(vid)
     if not source_path or not source_path.exists():
         conn.close()
@@ -11485,6 +11495,13 @@ def autoclip_video(video_pk):
             status=400,
             category="warning",
         )
+    if disk_guard_triggered(operation="render_enqueue", log=current_app.logger):
+        return _respond(
+            USER_FACING_DISK_GUARD_MESSAGE,
+            success=False,
+            status=503,
+            category="warning",
+        )
     podcast_audio_path = None
     podcast_audio_duration = None
     podcast_overlay_video_sources: List[Path] = []
@@ -12228,6 +12245,60 @@ def autoclip_video(video_pk):
                 status="failed",
             )
         raise
+    except FileNotFoundError:
+        current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
+        try:
+            _sync_generated_video_from_plan_entry(
+                source_video_id=vid,
+                clip_filename=clip_filename,
+                plan_entry=plan_entry,
+                generation_status="failed",
+            )
+        except Exception as exc:
+            current_app.logger.warning(
+                "Failed to sync failed lifecycle row for %s clip=%s: %s",
+                vid,
+                clip_filename,
+                exc,
+            )
+        owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
+        if owner_event_user_id:
+            track_event(
+                owner_event_user_id,
+                "short_generated",
+                video_id=vid,
+                short_id=clip_filename,
+                status="failed",
+            )
+        raise
+    except OSError as e:
+        current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
+        try:
+            _sync_generated_video_from_plan_entry(
+                source_video_id=vid,
+                clip_filename=clip_filename,
+                plan_entry=plan_entry,
+                generation_status="failed",
+            )
+        except Exception as exc:
+            current_app.logger.warning(
+                "Failed to sync failed lifecycle row for %s clip=%s: %s",
+                vid,
+                clip_filename,
+                exc,
+            )
+        owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
+        if owner_event_user_id:
+            track_event(
+                owner_event_user_id,
+                "short_generated",
+                video_id=vid,
+                short_id=clip_filename,
+                status="failed",
+            )
+        if getattr(e, "errno", None) == errno.ENOSPC:
+            raise
+        error_message = "This video could not be processed right now. Please try again. If it keeps happening, contact support."
     except Exception as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
         try:
@@ -12253,7 +12324,7 @@ def autoclip_video(video_pk):
                 short_id=clip_filename,
                 status="failed",
             )
-        error_message = f"Clip {plan_index} failed: {e}"
+        error_message = "This video could not be processed right now. Please try again. If it keeps happening, contact support."
     finally:
         if export_reserved and not made and current_user:
             try:

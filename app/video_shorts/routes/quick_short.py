@@ -24,6 +24,10 @@ from app.video_shorts.services.media_utils import (
     normalize_source_video_for_streaming,
     run_media_subprocess,
 )
+from app.video_shorts.services.disk_guard import (
+    USER_FACING_DISK_GUARD_MESSAGE,
+    disk_guard_triggered,
+)
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -663,6 +667,8 @@ def quick_short_upload_presign():
         return _json_error("Unsupported file format.")
     if size_bytes <= 0 or size_bytes > MAX_UPLOAD_BYTES:
         return _json_error("The file must be 500MB or smaller.")
+    if disk_guard_triggered(operation="quick_short_upload_presign", log=current_app.logger):
+        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     conn_ro = get_db_readonly()
     try:
         usage = _get_user_storage_usage(conn_ro, current_user["id"])
@@ -729,6 +735,8 @@ def quick_short_upload_complete():
     source_key = str(upload_payload.get("source_key") or "").strip()
     if not video_id or not filename or not source_key:
         return _json_error("Upload payload is incomplete.")
+    if disk_guard_triggered(operation="quick_short_upload_complete", log=current_app.logger):
+        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     conn = get_db()
     try:
         ensure_brand_schema(conn)
@@ -997,6 +1005,8 @@ def quick_short_upload_direct():
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXTS:
         return _json_error("Unsupported file format.")
+    if disk_guard_triggered(operation="quick_short_upload_direct", log=current_app.logger):
+        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     temp_dir = VIDEOS_DIR.parent / "tmp_uploads"
     temp_dir.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=str(temp_dir))

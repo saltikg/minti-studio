@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import time
@@ -206,6 +207,18 @@ def _user_facing_timeout_message(job: Dict[str, Any]) -> str:
     if job.get("type") == JOB_TYPE_RENDER_SHORT:
         return "This video took too long to process. Please try again. If it keeps happening, contact support."
     return "This job took too long to finish. Please try again. If it keeps happening, contact support."
+
+
+def _user_facing_terminal_media_message(job: Dict[str, Any], exc: Exception) -> str:
+    if isinstance(exc, FileNotFoundError):
+        if job.get("type") == JOB_TYPE_RENDER_SHORT:
+            return "This source video could not be found. Please upload or download it again, then try again."
+        return "This source file could not be found. Please try again."
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC:
+        return "The system is busy right now. Please try again in a few minutes."
+    if job.get("type") == JOB_TYPE_RENDER_SHORT:
+        return "This video could not be processed right now. Please try again. If it keeps happening, contact support."
+    return "This job could not be completed right now. Please try again. If it keeps happening, contact support."
 
 
 def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> None:
@@ -638,9 +651,24 @@ def process_next_job(app, worker_id: str) -> bool:
         _mark_job_terminal_failure(job, _user_facing_timeout_message(job))
         return True
     except Exception as exc:
+        if isinstance(exc, FileNotFoundError) or (isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC):
+            app.logger.exception(
+                "Job failed without retry job_id=%s type=%s error=%s",
+                job.get("id"),
+                job.get("type"),
+                exc,
+            )
+            _mark_job_terminal_failure(job, _user_facing_terminal_media_message(job, exc))
+            return True
         latest = get_job(job["id"]) or job
         if int(latest.get("attempts") or 0) >= int(latest.get("max_attempts") or 1):
-            _mark_job_terminal_failure(latest, str(exc))
+            app.logger.exception(
+                "Job failed after max attempts job_id=%s type=%s error=%s",
+                latest.get("id"),
+                latest.get("type"),
+                exc,
+            )
+            _mark_job_terminal_failure(latest, _user_facing_terminal_media_message(latest, exc))
         else:
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 _update_plan_status(latest, "queued")

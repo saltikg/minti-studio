@@ -1,5 +1,6 @@
 # Env & secrets
 .env
+.env.bak.*
 
 # Virtual env / caches / IDE
 .venv/
@@ -43,6 +44,8 @@ build/
 app/video_shorts/static/shorts/
 app/video_shorts/videos/
 app/video_shorts/templates/cookies.txt
+app/video_shorts/generation.py
+app/video_shorts/quick_short.py
 
 
 # User-generated & static media (should live in S3, not git)
@@ -53,3 +56,5 @@ app/video_shorts/static/transitions/
 *.mov
 
 venv/
+=
+minti-studio/

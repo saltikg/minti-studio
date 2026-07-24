@@ -117,6 +117,7 @@ DEFAULT_SUBTITLE_TEXT_ALPHA = 100
 WORKER_CONCURRENCY = max(1, int(os.getenv("WORKER_CONCURRENCY", "1") or "1"))
 JOB_TIMEOUT_SECONDS = max(60, int(os.getenv("JOB_TIMEOUT_SECONDS", "600") or "600"))
 JOB_POLL_INTERVAL_SECONDS = max(1.0, float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "2") or "2"))
+DISK_GUARD_PCT = max(1, min(100, _env_int("DISK_GUARD_PCT", 85)))
 _default_plan_id = next((plan["plan_id"] for plan in DEFAULT_STORAGE_PLANS if plan["plan_id"] == "plan_free"), DEFAULT_STORAGE_PLANS[0]["plan_id"])
 DEFAULT_USER_PLAN_ID = os.getenv("DEFAULT_USER_PLAN_ID", _default_plan_id)
 _categories_env = os.getenv("SHORTS_CATEGORY_OPTIONS", "").strip()
