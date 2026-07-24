@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -431,28 +432,23 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
     monkeypatch.setattr(generation, "_cleanup_resolved_source_video", lambda path, is_temp: None)
     monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
     monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
+    monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
     monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(compositor, "_resolve_ffprobe", lambda: "ffprobe")
 
-    def _raise_timeout(cmd, *, timeout, operation, context="", **kwargs):
-        binary = Path(str(cmd[0])).name if cmd else "subprocess"
-        if operation in {"has_audio_stream", "has_video_stream"}:
-            return SimpleNamespace(stdout="0\n", stderr="")
+    def _raise_timeout(*args, **kwargs):
         logging.getLogger("app.video_shorts.services.media_utils").error(
-            "Media subprocess timeout binary=%s timeout=%ss operation=%s context=%s",
-            binary,
-            timeout,
-            operation,
-            context or "-",
+            "Media subprocess timeout binary=ffmpeg timeout=3600s operation=compose_with_background context=output=1_timeout-video.mp4"
         )
         raise MediaSubprocessTimeoutError(
-            binary=binary,
-            timeout_seconds=int(timeout),
-            operation=operation,
-            context=context,
+            binary="ffmpeg",
+            timeout_seconds=3600,
+            operation="compose_with_background",
+            context="output=1_timeout-video.mp4",
         )
 
-    monkeypatch.setattr(compositor, "run_media_subprocess", _raise_timeout)
+    monkeypatch.setattr(generation, "_compose_trimmed_with_background", _raise_timeout)
+    monkeypatch.setattr(generation, "_cut_clip", _raise_timeout)
 
     payload = _payload(video_pk, source_video_id, plan_index)
     payload["brand_id"] = None
@@ -497,5 +493,77 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
         record.levelno == logging.ERROR
         and "Media subprocess timeout" in record.getMessage()
         and "binary=ffmpeg" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypatch, tmp_path, caplog):
+    _configure_duckdb(monkeypatch, tmp_path, "worker_enospc_failure.duckdb")
+    user_id = str(uuid4())
+    video_pk = 202
+    source_video_id = "disk-full-video"
+    plan_index = 1
+    shorts_dir = tmp_path / "shorts"
+    source_path = tmp_path / "disk-full-video.mp4"
+    source_path.write_bytes(b"not-a-real-video")
+
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    _write_plan(shorts_dir, source_video_id, plan_index=plan_index)
+
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    monkeypatch.setattr(generation, "_get_user_storage_usage", lambda conn, current_user_id: {"used_bytes": 0, "limit_bytes": 10 * 1024**3})
+    monkeypatch.setattr(generation, "_fetch_video_with_transcript", lambda current_video_pk: (source_video_id, "Disk Full Video", 180.0, "", []))
+    monkeypatch.setattr(generation, "_resolve_source_video", lambda current_video_id: (source_path, False))
+    monkeypatch.setattr(generation, "_cleanup_resolved_source_video", lambda path, is_temp: None)
+    monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
+    monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
+    monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(compositor, "_resolve_ffprobe", lambda: "ffprobe")
+
+    def _raise_enospc(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(generation, "_compose_trimmed_with_background", _raise_enospc)
+    monkeypatch.setattr(generation, "_cut_clip", _raise_enospc)
+
+    payload = _payload(video_pk, source_video_id, plan_index)
+    payload["brand_id"] = None
+    payload["options"]["brand_id"] = None
+
+    queued = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=_input_hash(source_video_id, plan_index),
+    )
+    job_id = queued["job"]["id"]
+
+    before_snapshot = usage_metering.get_usage_snapshot(user_id)
+    reserve_result = usage_metering.reserve_export(user_id)
+    assert reserve_result["allowed"] is True
+
+    app = create_app()
+    app.secret_key = "test-secret"
+
+    with caplog.at_level(logging.ERROR):
+        processed = process_next_job(app, "worker-enospc-test")
+
+    assert processed is True
+
+    failed_job = render_jobs.get_job(job_id, user_id=user_id)
+    after_snapshot = usage_metering.get_usage_snapshot(user_id)
+    plan_entries = generation._load_plan_entries(source_video_id)
+    expected_error = "The system is busy right now. Please try again in a few minutes."
+
+    assert failed_job["status"] == "failed"
+    assert failed_job["error"] == expected_error
+    assert failed_job["attempts"] == 1
+    assert after_snapshot["exports"]["used"] == before_snapshot["exports"]["used"]
+    assert plan_entries[0]["status"] == "failed"
+    assert plan_entries[0]["render_error"] == expected_error
+    assert any(
+        record.levelno == logging.ERROR
+        and "Job failed without retry" in record.getMessage()
         for record in caplog.records
     )
