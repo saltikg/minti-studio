@@ -223,6 +223,24 @@ def _count_user_processing(conn, user_id: str) -> int:
     return int((row[0] if row else 0) or 0)
 
 
+def count_processing_jobs() -> int:
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM {JOBS_TABLE}
+            WHERE status = ?
+            """,
+            [JOB_STATUS_PROCESSING],
+        ).fetchone()
+        conn.commit()
+        return int((row[0] if row else 0) or 0)
+    finally:
+        conn.close()
+
+
 def _find_job_by_hash(conn, *, user_id: str, input_hash: str, statuses: tuple[str, ...]) -> Optional[Dict[str, Any]]:
     if not input_hash:
         return None

@@ -12,7 +12,13 @@ from pathlib import Path
 from flask import g
 
 from app import create_app
-from app.video_shorts.config import JOB_POLL_INTERVAL_SECONDS, JOB_TIMEOUT_SECONDS, WORKER_CONCURRENCY
+from app.video_shorts.config import (
+    DISK_GUARD_PCT,
+    JOB_POLL_INTERVAL_SECONDS,
+    JOB_TIMEOUT_SECONDS,
+    MAX_GLOBAL_CONCURRENT_JOBS,
+    WORKER_CONCURRENCY,
+)
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
@@ -35,6 +41,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     claim_next_job,
+    count_processing_jobs,
     finalize_job_success,
     get_job,
     mark_job_done,
@@ -44,6 +51,7 @@ from app.video_shorts.services.render_jobs import (
     update_job_result,
 )
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
+from app.video_shorts.services.disk_guard import disk_guard_triggered
 from app.video_shorts.services.storage import get_media_storage, build_storage_reference
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
@@ -228,6 +236,24 @@ def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional
     if extra:
         payload.update(extra)
     update_job_result(job_id, payload)
+
+
+def _worker_should_wait_before_claim(app) -> bool:
+    processing_jobs = count_processing_jobs()
+    if processing_jobs >= int(MAX_GLOBAL_CONCURRENT_JOBS):
+        app.logger.debug(
+            "Worker claim paused by global concurrency cap processing_jobs=%s cap=%s",
+            processing_jobs,
+            MAX_GLOBAL_CONCURRENT_JOBS,
+        )
+        return True
+    if disk_guard_triggered(operation="worker_claim", log=app.logger):
+        app.logger.warning(
+            "Worker claim paused by disk guard threshold_pct=%s",
+            DISK_GUARD_PCT,
+        )
+        return True
+    return False
 
 
 def _duration_minutes(duration_seconds: Any) -> float:
@@ -605,6 +631,8 @@ def _execute_instagram_comment_webhook_job(app, job: Dict[str, Any]) -> Dict[str
 
 
 def process_next_job(app, worker_id: str) -> bool:
+    if _worker_should_wait_before_claim(app):
+        return False
     job = claim_next_job(worker_id)
     if not job:
         return False

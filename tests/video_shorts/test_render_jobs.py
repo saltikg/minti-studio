@@ -99,6 +99,7 @@ from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
 from app.video_shorts.services import render_jobs, usage_metering
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
+from app.video_shorts import worker as worker_module
 from app.video_shorts.worker import process_next_job
 
 
@@ -112,6 +113,22 @@ def _insert_user(user_id: str, plan_id: str) -> None:
     conn = db_service.get_db()
     try:
         render_jobs.ensure_render_jobs_schema(conn)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS youtube_videos (
+                id BIGINT PRIMARY KEY,
+                video_id VARCHAR,
+                title VARCHAR,
+                duration_seconds DOUBLE,
+                owner_user_id VARCHAR,
+                brand_id VARCHAR,
+                transcript_status VARCHAR,
+                published_at TIMESTAMP,
+                downloaded_at TIMESTAMP,
+                last_checked_at TIMESTAMP
+            )
+            """
+        )
         conn.execute(
             """
             INSERT INTO shorts_users (id, name, email, username, role, plan_id)
@@ -276,7 +293,7 @@ def test_claim_is_atomic_under_concurrency(monkeypatch, tmp_path):
     assert len(set(non_null)) == 1
 
 
-def test_free_plan_inflight_cap_blocks_second_job(monkeypatch, tmp_path):
+def test_free_plan_processing_cap_blocks_second_claim(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "free_cap.duckdb")
     user_id = str(uuid4())
     _insert_user(user_id, "plan_free")
@@ -291,10 +308,50 @@ def test_free_plan_inflight_cap_blocks_second_job(monkeypatch, tmp_path):
         payload=_payload(2, "video-b", 2),
         input_hash=_input_hash("video-b", 2),
     )
+    claimed = render_jobs.claim_next_job("worker-free-cap")
+    blocked = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=_payload(3, "video-c", 3),
+        input_hash=_input_hash("video-c", 3),
+    )
 
     assert first["kind"] == "queued"
-    assert second["kind"] == "concurrency_limit"
-    assert second["limit"] == 1
+    assert second["kind"] == "queued"
+    assert claimed["id"] == first["job"]["id"]
+    assert blocked["kind"] == "concurrency_limit"
+    assert blocked["limit"] == 1
+
+
+def test_global_processing_cap_keeps_next_job_queued_without_attempt(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "global_processing_cap.duckdb")
+    user_a = str(uuid4())
+    user_b = str(uuid4())
+    _insert_user(user_a, "plan_free")
+    _insert_user(user_b, "plan_free")
+    monkeypatch.setattr(worker_module, "MAX_GLOBAL_CONCURRENT_JOBS", 1)
+    monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
+
+    first = render_jobs.enqueue_render_job(
+        user_id=user_a,
+        payload=_payload(1, "global-a", 1),
+        input_hash=_input_hash("global-a", 1),
+    )
+    second = render_jobs.enqueue_render_job(
+        user_id=user_b,
+        payload=_payload(2, "global-b", 1),
+        input_hash=_input_hash("global-b", 1),
+    )
+    claimed = render_jobs.claim_next_job("worker-global-cap")
+    assert claimed["id"] == first["job"]["id"]
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    processed = process_next_job(app, "worker-global-cap")
+    queued_job = render_jobs.get_job(second["job"]["id"], user_id=user_b)
+
+    assert processed is False
+    assert queued_job["status"] == "queued"
+    assert queued_job["attempts"] == 0
 
 
 def test_timed_out_processing_job_requeues_then_fails_and_releases_quota(monkeypatch, tmp_path):
@@ -433,6 +490,7 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
     monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
     monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
     monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
     monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(compositor, "_resolve_ffprobe", lambda: "ffprobe")
 
@@ -519,6 +577,7 @@ def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypa
     monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
     monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
     monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
     monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(compositor, "_resolve_ffprobe", lambda: "ffprobe")
 
