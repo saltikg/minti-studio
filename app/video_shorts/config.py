@@ -53,6 +53,23 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool, *, warn_invalid: bool = False, logger=None) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip()
+    if not value:
+        return default
+    normalized = value.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    if warn_invalid and logger is not None:
+        logger.warning("Invalid boolean env var %s=%r; treating as disabled.", name, raw)
+    return False
+
+
 DEFAULT_STORAGE_PLANS = [
     {
         "plan_id": "plan_free",
@@ -64,6 +81,8 @@ DEFAULT_STORAGE_PLANS = [
         "monthly_transcription_minutes": 60,
         "render_priority": 0,
         "max_concurrent_jobs": 1,
+        "max_upload_duration_seconds": _env_int("MAX_UPLOAD_DURATION_SECONDS_FREE", 3600),
+        "max_upload_size_bytes": _env_int("MAX_UPLOAD_SIZE_BYTES_FREE", 2147483648),
         "is_active": True,
         "sort_order": 0,
     },
@@ -77,6 +96,8 @@ DEFAULT_STORAGE_PLANS = [
         "monthly_transcription_minutes": 180,
         "render_priority": 10,
         "max_concurrent_jobs": 2,
+        "max_upload_duration_seconds": _env_int("MAX_UPLOAD_DURATION_SECONDS_PAID", 10800),
+        "max_upload_size_bytes": _env_int("MAX_UPLOAD_SIZE_BYTES_PAID", 5368709120),
         "is_active": True,
         "sort_order": 1,
     },
@@ -90,6 +111,8 @@ DEFAULT_STORAGE_PLANS = [
         "monthly_transcription_minutes": 540,
         "render_priority": 20,
         "max_concurrent_jobs": 2,
+        "max_upload_duration_seconds": _env_int("MAX_UPLOAD_DURATION_SECONDS_PAID", 10800),
+        "max_upload_size_bytes": _env_int("MAX_UPLOAD_SIZE_BYTES_PAID", 5368709120),
         "is_active": True,
         "sort_order": 2,
     },
@@ -103,6 +126,8 @@ DEFAULT_STORAGE_PLANS = [
         "monthly_transcription_minutes": 1620,
         "render_priority": 30,
         "max_concurrent_jobs": 3,
+        "max_upload_duration_seconds": _env_int("MAX_UPLOAD_DURATION_SECONDS_PAID", 10800),
+        "max_upload_size_bytes": _env_int("MAX_UPLOAD_SIZE_BYTES_PAID", 5368709120),
         "is_active": True,
         "sort_order": 3,
     },
@@ -119,6 +144,7 @@ JOB_TIMEOUT_SECONDS = max(60, int(os.getenv("JOB_TIMEOUT_SECONDS", "600") or "60
 JOB_POLL_INTERVAL_SECONDS = max(1.0, float(os.getenv("JOB_POLL_INTERVAL_SECONDS", "2") or "2"))
 DISK_GUARD_PCT = max(1, min(100, _env_int("DISK_GUARD_PCT", 85)))
 MAX_GLOBAL_CONCURRENT_JOBS = max(1, _env_int("MAX_GLOBAL_CONCURRENT_JOBS", 2))
+SIGNUPS_ENABLED = _env_bool("SIGNUPS_ENABLED", True)
 _default_plan_id = next((plan["plan_id"] for plan in DEFAULT_STORAGE_PLANS if plan["plan_id"] == "plan_free"), DEFAULT_STORAGE_PLANS[0]["plan_id"])
 DEFAULT_USER_PLAN_ID = os.getenv("DEFAULT_USER_PLAN_ID", _default_plan_id)
 _categories_env = os.getenv("SHORTS_CATEGORY_OPTIONS", "").strip()

@@ -58,7 +58,6 @@ from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata,
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
 MAX_QUICK_SHORT_SECONDS = 25 * 60
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 ALLOWED_UPLOAD_EXTS = {".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 LOCAL_CHANNEL_NAME = "Local uploads"
 MUSIC_CHANNEL_NAME = "Music channel"
@@ -211,7 +210,7 @@ def _resolve_ffprobe() -> Optional[str]:
     return None
 
 
-def _probe_duration_seconds(path: Path) -> Optional[int]:
+def _probe_duration_seconds(target: Path | str, *, context: str = "") -> Optional[int]:
     ffprobe = _resolve_ffprobe()
     if not ffprobe:
         return None
@@ -225,10 +224,10 @@ def _probe_duration_seconds(path: Path) -> Optional[int]:
                 "format=duration",
                 "-of",
                 "default=nw=1:nk=1",
-                str(path),
+                str(target),
             ],
             operation="quick_short_probe_duration",
-            context=f"path={path.name}",
+            context=context or f"target={Path(str(target)).name}",
             capture_output=True,
             text=True,
             check=True,
@@ -264,6 +263,118 @@ def _get_user_storage_usage(conn, user_id: str) -> Dict[str, int]:
     limit_bytes = row[0] or row[1] or 0
     used_bytes = int(row[2] or 0)
     return {"used_bytes": used_bytes, "limit_bytes": limit_bytes}
+
+
+def _get_user_upload_limits(conn, user_id: str) -> Dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT
+            COALESCE(p.max_upload_duration_seconds, 0) AS max_upload_duration_seconds,
+            COALESCE(p.max_upload_size_bytes, 0) AS max_upload_size_bytes,
+            COALESCE(p.label, 'Current plan') AS plan_label
+        FROM shorts_users u
+        LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
+        WHERE u.id = ?
+        LIMIT 1
+        """,
+        [user_id],
+    ).fetchone()
+    if not row:
+        return {"max_upload_duration_seconds": 0, "max_upload_size_bytes": 0, "plan_label": "Current plan"}
+    return {
+        "max_upload_duration_seconds": int(row[0] or 0),
+        "max_upload_size_bytes": int(row[1] or 0),
+        "plan_label": str(row[2] or "Current plan"),
+    }
+
+
+def _format_duration_limit(seconds: int) -> str:
+    total_seconds = max(0, int(seconds or 0))
+    total_minutes = total_seconds // 60
+    if total_minutes and total_minutes <= 60:
+        return f"{total_minutes} minutes"
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours} hour" if hours == 1 else f"{hours} hours"
+    return f"{total_minutes} minutes"
+
+
+def _format_duration_observed(seconds: int) -> str:
+    total_seconds = max(0, int(seconds or 0))
+    total_minutes = total_seconds // 60
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{total_minutes}m"
+
+
+def _format_size_limit(bytes_count: int) -> str:
+    size = max(0, int(bytes_count or 0))
+    gb = size / float(1024 ** 3)
+    if gb >= 1:
+        rounded = round(gb, 1)
+        label = int(rounded) if float(rounded).is_integer() else rounded
+        return f"{label} GB"
+    mb = round(size / float(1024 ** 2))
+    return f"{int(mb)} MB"
+
+
+def _declared_upload_size_bytes(upload_file) -> int:
+    raw_length = request.content_length
+    if raw_length is None:
+        raw_length = getattr(upload_file, "content_length", None)
+    try:
+        return int(raw_length or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _size_limit_message(*, size_bytes: int, plan_label: str, limit_bytes: int) -> str:
+    return (
+        f"This file is {_format_size_limit(size_bytes)}. "
+        f"Your {plan_label} plan allows up to {_format_size_limit(limit_bytes)} per video."
+    )
+
+
+def _duration_limit_message(*, duration_seconds: int, plan_label: str, limit_seconds: int) -> str:
+    return (
+        f"This video is {_format_duration_observed(duration_seconds)}. "
+        f"Your {plan_label} plan allows up to {_format_duration_limit(limit_seconds)} per video."
+    )
+
+
+def _validate_upload_size(*, size_bytes: int, limits: Dict[str, Any]):
+    if size_bytes < 0:
+        return "Choose a file first."
+    if size_bytes == 0:
+        return None
+    if size_bytes <= 0:
+        return "Choose a file first."
+    limit_bytes = int(limits.get("max_upload_size_bytes") or 0)
+    if limit_bytes and size_bytes > limit_bytes:
+        return _size_limit_message(
+            size_bytes=size_bytes,
+            plan_label=str(limits.get("plan_label") or "Current"),
+            limit_bytes=limit_bytes,
+        )
+    return None
+
+
+def _validate_upload_duration(*, duration_seconds: Optional[int], limits: Dict[str, Any]):
+    limit_seconds = int(limits.get("max_upload_duration_seconds") or 0)
+    if not limit_seconds or not duration_seconds:
+        return None
+    if int(duration_seconds) > limit_seconds:
+        return _duration_limit_message(
+            duration_seconds=int(duration_seconds),
+            plan_label=str(limits.get("plan_label") or "Current"),
+            limit_seconds=limit_seconds,
+        )
+    return None
 
 
 def _ensure_postgres_youtube_videos_id_default(conn) -> None:
@@ -665,15 +776,17 @@ def quick_short_upload_presign():
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXTS:
         return _json_error("Unsupported file format.")
-    if size_bytes <= 0 or size_bytes > MAX_UPLOAD_BYTES:
-        return _json_error("The file must be 500MB or smaller.")
-    if disk_guard_triggered(operation="quick_short_upload_presign", log=current_app.logger):
-        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     conn_ro = get_db_readonly()
     try:
+        limits = _get_user_upload_limits(conn_ro, current_user["id"])
         usage = _get_user_storage_usage(conn_ro, current_user["id"])
     finally:
         conn_ro.close()
+    size_error = _validate_upload_size(size_bytes=size_bytes, limits=limits)
+    if size_error:
+        return _json_error(size_error, 413, code="upload_too_large")
+    if disk_guard_triggered(operation="quick_short_upload_presign", log=current_app.logger):
+        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     limit_bytes = usage.get("limit_bytes") or 0
     if limit_bytes and usage["used_bytes"] + size_bytes > limit_bytes:
         return _json_error("Storage limit is full. Free up space or upgrade first.", 403, code="storage_full")
@@ -737,6 +850,30 @@ def quick_short_upload_complete():
         return _json_error("Upload payload is incomplete.")
     if disk_guard_triggered(operation="quick_short_upload_complete", log=current_app.logger):
         return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
+    storage = get_media_storage()
+    try:
+        probe_target = storage.public_url(source_key) if getattr(storage, "backend_name", "local") == "s3" else source_key
+        probed_duration_seconds = _probe_duration_seconds(
+            probe_target,
+            context=f"source_key={source_key}",
+        )
+    except Exception:
+        current_app.logger.exception("Failed to probe uploaded media duration source_key=%s", source_key)
+        probed_duration_seconds = None
+    conn_ro = get_db_readonly()
+    try:
+        limits = _get_user_upload_limits(conn_ro, current_user["id"])
+    finally:
+        conn_ro.close()
+    duration_error = _validate_upload_duration(duration_seconds=probed_duration_seconds, limits=limits)
+    if duration_error:
+        try:
+            storage.delete(source_key)
+        except Exception:
+            current_app.logger.exception("Failed to delete rejected upload source_key=%s", source_key)
+        return _json_error(duration_error, 413, code="upload_too_long")
+    if probed_duration_seconds:
+        duration_seconds = probed_duration_seconds
     conn = get_db()
     try:
         ensure_brand_schema(conn)
@@ -1005,6 +1142,16 @@ def quick_short_upload_direct():
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXTS:
         return _json_error("Unsupported file format.")
+    conn_ro = get_db_readonly()
+    try:
+        limits = _get_user_upload_limits(conn_ro, current_user["id"])
+        usage = _get_user_storage_usage(conn_ro, current_user["id"])
+    finally:
+        conn_ro.close()
+    declared_size_bytes = _declared_upload_size_bytes(file)
+    size_error = _validate_upload_size(size_bytes=declared_size_bytes, limits=limits)
+    if size_error:
+        return _json_error(size_error, 413, code="upload_too_large")
     if disk_guard_triggered(operation="quick_short_upload_direct", log=current_app.logger):
         return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
     temp_dir = VIDEOS_DIR.parent / "tmp_uploads"
@@ -1015,13 +1162,13 @@ def quick_short_upload_direct():
     try:
         file.save(temp_path)
         size_bytes = temp_path.stat().st_size if temp_path.exists() else 0
-        if size_bytes <= 0 or size_bytes > MAX_UPLOAD_BYTES:
-            return _json_error("The file must be 500MB or smaller.")
-        conn_ro = get_db_readonly()
-        try:
-            usage = _get_user_storage_usage(conn_ro, current_user["id"])
-        finally:
-            conn_ro.close()
+        size_error = _validate_upload_size(size_bytes=size_bytes, limits=limits)
+        if size_error:
+            return _json_error(size_error, 413, code="upload_too_large")
+        duration_seconds = _probe_duration_seconds(temp_path)
+        duration_error = _validate_upload_duration(duration_seconds=duration_seconds, limits=limits)
+        if duration_error:
+            return _json_error(duration_error, 413, code="upload_too_long")
         limit_bytes = usage.get("limit_bytes") or 0
         if limit_bytes and usage["used_bytes"] + size_bytes > limit_bytes:
             return _json_error("Storage limit is full. Free up space or upgrade first.", 403, code="storage_full")
@@ -1030,11 +1177,6 @@ def quick_short_upload_direct():
         storage = get_media_storage()
         upload_source_path = normalize_source_video_for_streaming(temp_path, log=current_app.logger)
         storage.put_file(upload_source_path, source_key)
-        duration_raw = request.form.get("duration_seconds")
-        try:
-            duration_seconds = float(duration_raw) if duration_raw not in (None, "", "null") else None
-        except Exception:
-            duration_seconds = None
         session, job = _create_uploaded_video_session_and_enqueue(
             current_user=current_user,
             brand_id=brand_id,
@@ -1043,7 +1185,7 @@ def quick_short_upload_direct():
             video_id=video_id,
             source_key=source_key,
             size_bytes=size_bytes,
-            duration_seconds=duration_seconds,
+            duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
         )
         return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id")})
     finally:

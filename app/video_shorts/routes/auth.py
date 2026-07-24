@@ -21,9 +21,11 @@ from app.video_shorts.config import (
     GOOGLE_OAUTH_CLIENT_SECRET,
     GOOGLE_OAUTH_REDIRECT_URI,
     GOOGLE_OAUTH_SCOPES,
+    SIGNUPS_ENABLED,
     SHORTS_OVERVIEW_STATS_TTL_MINUTES,
     SHORTS_OVERVIEW_STATS_MAX_VIDEOS,
     SHORTS_OVERVIEW_QUOTA_COOLDOWN_HOURS,
+    _env_bool,
 )
 from app.video_shorts.services.db import (
     ensure_auth_user_schema,
@@ -419,7 +421,32 @@ def _render_login_page(*, resend_email: str = "", prefill_email: str = "", statu
 
 
 def _render_register_page(*, pending_email: str = "", status_code: int = 200):
-    return render_template("vs_register.html", pending_email=pending_email), status_code
+    return (
+        render_template(
+            "vs_register.html",
+            pending_email=pending_email,
+            signups_enabled=_signups_enabled(),
+            signup_disabled_message=_signup_disabled_message(),
+        ),
+        status_code,
+    )
+
+
+def _signups_enabled() -> bool:
+    return _env_bool("SIGNUPS_ENABLED", SIGNUPS_ENABLED, warn_invalid=True, logger=current_app.logger)
+
+
+def _signup_disabled_message() -> str:
+    return "We're at capacity right now — leave your email and we'll let you know when a spot opens."
+
+
+def _log_signup_refusal(*, method: str, email: str = "", source: str = "") -> None:
+    current_app.logger.warning(
+        "Signup refused because signups are disabled method=%s source=%s email=%s",
+        method,
+        source or "unknown",
+        (email or "").strip().lower(),
+    )
 
 
 def _render_forgot_password_page(*, prefill_email: str = "", sent: bool = False, status_code: int = 200):
@@ -897,11 +924,16 @@ def register():
         return redirect(url_for("video_shorts_bp.channels_page"))
     error = None
     pending_email = ""
+    signups_enabled = _signups_enabled()
     if request.method == "POST":
         email = _normalize_auth_email(request.form.get("email") or "")
         password = request.form.get("password") or ""
         password_confirm = request.form.get("password_confirm") or ""
         pending_email = email
+        if not signups_enabled:
+            _log_signup_refusal(method="password", email=email, source="register_post")
+            flash(_signup_disabled_message(), "warning")
+            return _render_register_page(pending_email=pending_email, status_code=403)
         allowed, _retry_after = check_rate_limits("auth-register", _rate_limit_key(email), REGISTER_RATE_LIMITS)
         if not allowed:
             flash("Too many attempts. Please try again later.", "danger")
@@ -993,7 +1025,7 @@ def register():
                 return redirect(url_for("video_shorts_bp.register_check_email", email=email))
     if error:
         flash(error, "danger")
-    return render_template("vs_register.html", pending_email=pending_email)
+    return _render_register_page(pending_email=pending_email)
 
 
 @video_shorts_bp.route("/register/check-email", methods=["GET"])
@@ -1538,6 +1570,11 @@ def google_oauth_callback():
         )
         conn.commit()
     else:
+        if not _signups_enabled():
+            conn.close()
+            _log_signup_refusal(method="google_oauth", email=email, source="google_callback_create")
+            flash(_signup_disabled_message(), "warning")
+            return redirect(url_for("video_shorts_bp.register"))
         user_id = str(uuid4())
         created_new_user = True
         conn.execute(

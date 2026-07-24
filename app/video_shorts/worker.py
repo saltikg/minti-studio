@@ -55,6 +55,7 @@ from app.video_shorts.services.disk_guard import disk_guard_triggered
 from app.video_shorts.services.storage import get_media_storage, build_storage_reference
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
+from app.video_shorts.services.usage_metering import check_transcription_quota
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.youtube_oauth import has_refresh_token, upload_video_with_refresh_token
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
@@ -266,6 +267,24 @@ def _duration_minutes(duration_seconds: Any) -> float:
     return round(seconds / 60.0, 2)
 
 
+def _format_transcription_minutes_label(minutes: Any) -> str:
+    try:
+        rounded = int(round(float(minutes or 0)))
+    except Exception:
+        rounded = 0
+    if rounded == 1:
+        return "1 minute"
+    return f"{rounded} minutes"
+
+
+def _transcription_quota_message(duration_seconds: Any, remaining_minutes: Any) -> str:
+    needed_minutes = _duration_minutes(duration_seconds)
+    return (
+        f"This video is {_format_transcription_minutes_label(needed_minutes)}, "
+        f"but you have {_format_transcription_minutes_label(remaining_minutes)} of transcription left this month."
+    )
+
+
 def _download_youtube_video(video_url: str, video_id: str) -> Path:
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
@@ -444,6 +463,13 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     video_pk = int(payload.get("video_pk"))
     owner_user_id = str(job["user_id"])
     duration_seconds = payload.get("duration_seconds")
+    needed_minutes = _duration_minutes(duration_seconds)
+    if needed_minutes > 0:
+        quota = check_transcription_quota(owner_user_id, needed_minutes)
+        if not quota.get("allowed", False):
+            raise PermanentRenderJobError(
+                _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
+            )
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
     _set_job_progress(job["id"], stage="uploaded", message="Upload complete. Preparing transcription.", status="processing")
     source_path, is_temp = _resolve_source_video(video_id)

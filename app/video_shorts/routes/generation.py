@@ -199,6 +199,7 @@ from app.video_shorts.services.render_jobs import (
 )
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
+    check_transcription_quota,
     load_storage_plan_catalog as load_usage_storage_plan_catalog,
     release_export,
     reserve_export,
@@ -552,6 +553,34 @@ def _duration_minutes(duration_seconds: Any) -> float:
     if seconds <= 0:
         return 0.0
     return round(seconds / 60.0, 2)
+
+
+def _format_transcription_minutes_label(minutes: Any) -> str:
+    try:
+        rounded = int(round(float(minutes or 0)))
+    except Exception:
+        rounded = 0
+    if rounded == 1:
+        return "1 minute"
+    return f"{rounded} minutes"
+
+
+def _transcription_quota_message(duration_seconds: Any, remaining_minutes: Any) -> str:
+    needed_minutes = _duration_minutes(duration_seconds)
+    return (
+        f"This video is {_format_transcription_minutes_label(needed_minutes)}, "
+        f"but you have {_format_transcription_minutes_label(remaining_minutes)} of transcription left this month."
+    )
+
+
+def _transcription_quota_error_for_user(user_id: str, duration_seconds: Any) -> str | None:
+    needed_minutes = _duration_minutes(duration_seconds)
+    if needed_minutes <= 0:
+        return None
+    quota = check_transcription_quota(user_id, needed_minutes)
+    if quota.get("allowed", False):
+        return None
+    return _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
 
 
 def _upsert_storage_asset(
@@ -9656,6 +9685,7 @@ def transcribe_video_start(video_pk):
                 video_pk,
                 """
                 video_id,
+                duration_seconds,
                 COALESCE(transcript_status, ''),
                 COALESCE(fetch_transcript, FALSE)
                 """,
@@ -9685,7 +9715,8 @@ def transcribe_video_start(video_pk):
             return jsonify({"ok": False, "message": "Video not found."}), 404
 
         video_id = row[0]
-        transcript_status = (row[1] or "").strip().lower()
+        duration_seconds = row[1]
+        transcript_status = (row[2] or "").strip().lower()
 
         existing = _load_transcribe_job_state(video_pk)
         if not existing:
@@ -9749,6 +9780,9 @@ def transcribe_video_start(video_pk):
                 }
             )
 
+        quota_error = _transcription_quota_error_for_user(getattr(g, "vs_current_user", {}).get("id"), duration_seconds)
+        if quota_error:
+            return jsonify({"ok": False, "message": quota_error}), 403
         if disk_guard_triggered(operation="transcribe_video_start", log=current_app.logger):
             return jsonify({"ok": False, "message": USER_FACING_DISK_GUARD_MESSAGE}), 503
         source_path, source_path_is_temp = _resolve_source_video(video_id)
@@ -9802,7 +9836,7 @@ def transcribe_video_status(video_pk):
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()
     conn = get_db_readonly()
-    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title")
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds")
     conn.close()
     if not row:
         flash("Video not found", "danger")
@@ -9810,6 +9844,11 @@ def transcribe_video(video_pk):
 
     vid = row[0]
     video_title = row[1]
+    duration_seconds = row[2] if len(row) > 2 else None
+    quota_error = _transcription_quota_error_for_user(getattr(g, "vs_current_user", {}).get("id"), duration_seconds)
+    if quota_error:
+        flash(quota_error, "warning")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     if disk_guard_triggered(operation="transcribe_video_sync", log=current_app.logger):
         flash(USER_FACING_DISK_GUARD_MESSAGE, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -11530,13 +11569,8 @@ def autoclip_video(video_pk):
             status=400,
             category="warning",
         )
-    src_path, src_path_is_temp = _resolve_source_video(vid)
-    if not src_path or not src_path.exists():
-        return _respond(
-            "Source video file not found on server. Upload or download it first.",
-            status=404,
-            category="danger",
-        )
+    src_path = None
+    src_path_is_temp = False
     if not queued_job:
         try:
             job_options = _build_render_job_options(
@@ -11686,7 +11720,13 @@ def autoclip_video(video_pk):
             _cleanup_video_shorts_temp_path(podcast_audio_path)
             for overlay_source in podcast_overlay_video_sources:
                 _cleanup_video_shorts_temp_path(overlay_source)
-            _cleanup_resolved_source_video(src_path, src_path_is_temp)
+    src_path, src_path_is_temp = _resolve_source_video(vid)
+    if not src_path or not src_path.exists():
+        return _respond(
+            "Source video file not found on server. Upload or download it first.",
+            status=404,
+            category="danger",
+        )
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
         video_font_key=video_font_key,

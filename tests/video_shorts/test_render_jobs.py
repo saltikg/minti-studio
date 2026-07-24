@@ -123,6 +123,7 @@ def _insert_user(user_id: str, plan_id: str) -> None:
                 owner_user_id VARCHAR,
                 brand_id VARCHAR,
                 transcript_status VARCHAR,
+                fetch_transcript BOOLEAN,
                 published_at TIMESTAMP,
                 downloaded_at TIMESTAMP,
                 last_checked_at TIMESTAMP
@@ -154,6 +155,7 @@ def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> No
                 owner_user_id VARCHAR,
                 brand_id VARCHAR,
                 transcript_status VARCHAR,
+                fetch_transcript BOOLEAN,
                 published_at TIMESTAMP,
                 downloaded_at TIMESTAMP,
                 last_checked_at TIMESTAMP
@@ -170,11 +172,12 @@ def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> No
                 owner_user_id,
                 brand_id,
                 transcript_status,
+                fetch_transcript,
                 published_at,
                 downloaded_at,
                 last_checked_at
             )
-            VALUES (?, ?, ?, ?, ?, NULL, '', NULL, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, NULL, '', FALSE, NULL, NULL, NULL)
             """,
             [video_pk, source_video_id, f"Video {source_video_id}", 180.0, owner_user_id],
         )
@@ -492,6 +495,103 @@ def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
     assert owner_payload["status"] == "queued"
     assert owner_payload["queue_position"] == 0
     assert other_response.status_code == 404
+
+
+def test_transcribe_start_refuses_over_quota_before_source_resolution(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "transcribe_quota_guard.duckdb")
+    user_id = str(uuid4())
+    video_pk = 303
+    source_video_id = "transcribe-quota-video"
+
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    usage_metering.add_transcription_minutes(user_id, 45, video_id=source_video_id, video_title="Quota Video")
+
+    conn = db_service.get_db()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS youtube_transcripts (
+                id BIGINT,
+                video_id VARCHAR,
+                full_text VARCHAR,
+                segments_json VARCHAR,
+                whisper_segments_json VARCHAR
+            )
+            """
+        )
+        conn.execute(
+            "UPDATE youtube_videos SET duration_seconds = ? WHERE id = ?",
+            [42 * 60, video_pk],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(
+        generation,
+        "_resolve_source_video",
+        lambda current_video_id: (_ for _ in ()).throw(AssertionError("source resolution should not run when transcription quota is exhausted")),
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = user_id
+
+    response = client.post(f"/video_shorts/generate/{video_pk}/transcribe/start")
+    payload = response.get_json()
+
+    assert response.status_code == 403
+    assert payload["ok"] is False
+    assert payload["message"] == "This video is 42 minutes, but you have 15 minutes of transcription left this month."
+
+
+def test_autoclip_refuses_over_export_quota_before_source_resolution(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "render_quota_guard.duckdb")
+    user_id = str(uuid4())
+    video_pk = 404
+    source_video_id = "render-quota-video"
+    shorts_dir = tmp_path / "shorts"
+
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    _write_plan(shorts_dir, source_video_id, plan_index=1)
+    for _ in range(10):
+        result = usage_metering.reserve_export(user_id)
+        assert result["allowed"] is True
+
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    monkeypatch.setattr(generation, "_get_user_storage_usage", lambda conn, current_user_id: {"used_bytes": 0, "limit_bytes": 10 * 1024**3})
+    monkeypatch.setattr(generation, "_fetch_video_with_transcript", lambda current_video_pk: (source_video_id, "Render Quota Video", 180.0, "", []))
+    monkeypatch.setattr(generation, "_resolve_brand_subscribe_overlay_path", lambda brand_id: None)
+    monkeypatch.setattr(generation, "load_background_preference", lambda owner_user_id, brand_id=None: None)
+    monkeypatch.setattr(generation, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(
+        generation,
+        "_resolve_source_video",
+        lambda current_video_id: (_ for _ in ()).throw(AssertionError("source resolution should not run when export quota is exhausted")),
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = user_id
+
+    response = client.post(
+        f"/video_shorts/generate/{video_pk}/autoclip",
+        data={"plan_index": "1", "title": "Clip 1"},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 403
+    assert payload["success"] is False
+    assert payload["code"] == "export_limit_reached"
+    assert payload["message"] == "Monthly export limit reached for your plan."
 
 
 def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, tmp_path, caplog):

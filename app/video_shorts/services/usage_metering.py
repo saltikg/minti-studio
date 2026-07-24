@@ -92,6 +92,8 @@ def ensure_usage_metering_schema(conn) -> None:
         ("monthly_transcription_minutes", "NUMERIC"),
         ("render_priority", "INTEGER DEFAULT 0"),
         ("max_concurrent_jobs", "INTEGER DEFAULT 1"),
+        ("max_upload_duration_seconds", "INTEGER"),
+        ("max_upload_size_bytes", "BIGINT"),
         ("is_active", "BOOLEAN DEFAULT TRUE"),
     ]
     for column_name, definition in extra_plan_columns:
@@ -164,9 +166,11 @@ def ensure_usage_metering_schema(conn) -> None:
                 monthly_transcription_minutes,
                 render_priority,
                 max_concurrent_jobs,
+                max_upload_duration_seconds,
+                max_upload_size_bytes,
                 is_active
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(plan_id)
             DO UPDATE SET
                 label = excluded.label,
@@ -180,6 +184,8 @@ def ensure_usage_metering_schema(conn) -> None:
                 monthly_transcription_minutes = excluded.monthly_transcription_minutes,
                 render_priority = excluded.render_priority,
                 max_concurrent_jobs = excluded.max_concurrent_jobs,
+                max_upload_duration_seconds = excluded.max_upload_duration_seconds,
+                max_upload_size_bytes = excluded.max_upload_size_bytes,
                 is_active = excluded.is_active
             """,
             [
@@ -195,6 +201,8 @@ def ensure_usage_metering_schema(conn) -> None:
                 plan.get("monthly_transcription_minutes"),
                 int(plan.get("render_priority", 0) or 0),
                 int(plan.get("max_concurrent_jobs", 1) or 1),
+                int(plan.get("max_upload_duration_seconds", 0) or 0),
+                int(plan.get("max_upload_size_bytes", 0) or 0),
                 bool(plan.get("is_active", True)),
             ],
         )
@@ -575,6 +583,40 @@ def add_transcription_minutes(
         return snapshot
     finally:
         conn.close()
+
+
+def check_transcription_quota(user_id: str, requested_minutes: float | int | Decimal) -> Dict[str, Any]:
+    conn = get_db()
+    period_start = _month_start()
+    try:
+        ensure_usage_metering_schema(conn)
+        _ensure_usage_row(conn, user_id, period_start)
+        snapshot = _fetch_plan_and_usage(conn, user_id, period_start)
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        requested = round(float(requested_minutes or 0), 2)
+    except Exception:
+        requested = 0.0
+    used = float(_decimal_to_number(snapshot["transcription_minutes_used"]) or 0)
+    limit = snapshot["monthly_transcription_minutes"]
+    if limit is None:
+        return {
+            "allowed": True,
+            "requested_minutes": requested,
+            "used_minutes": used,
+            "limit_minutes": None,
+            "remaining_minutes": None,
+        }
+    remaining = max(0.0, round(float(limit) - used, 2))
+    return {
+        "allowed": requested <= remaining,
+        "requested_minutes": requested,
+        "used_minutes": used,
+        "limit_minutes": float(limit),
+        "remaining_minutes": remaining,
+    }
 
 
 def check_export_allowed(user_id: str) -> Dict[str, Any]:
