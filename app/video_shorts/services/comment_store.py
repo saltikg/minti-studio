@@ -342,7 +342,6 @@ def fetch_comment_records_for_video_ids(
     sort_dir: str = "desc",
     owner_user_id: Optional[str] = None,
     cursor_sort_value: Optional[str] = None,
-    cursor_updated_at: Optional[str] = None,
     cursor_platform: Optional[str] = None,
     cursor_comment_id: Optional[str] = None,
 ) -> List[Dict[str, object]]:
@@ -365,38 +364,31 @@ def fetch_comment_records_for_video_ids(
             else updated_expr
         )
         cursor_sort_text = str(cursor_sort_value or "")
-        cursor_updated_text = str(cursor_updated_at or "")
         cursor_platform_text = str(cursor_platform or "")
         cursor_comment_text = str(cursor_comment_id or "")
-        if cursor_sort_text and cursor_updated_text and cursor_platform_text and cursor_comment_text:
+        if cursor_sort_text and cursor_platform_text and cursor_comment_text:
             if (sort_dir or "").lower() == "asc":
                 where.append(
                     "("
                     f"{sort_expr} > ? "
-                    f"OR ({sort_expr} = ? AND {updated_expr} > ?) "
-                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform > ?) "
-                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform = ? AND comment_id > ?)"
+                    f"OR ({sort_expr} = ? AND platform > ?) "
+                    f"OR ({sort_expr} = ? AND platform = ? AND comment_id > ?)"
                     ")"
                 )
             else:
                 where.append(
                     "("
                     f"{sort_expr} < ? "
-                    f"OR ({sort_expr} = ? AND {updated_expr} < ?) "
-                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform > ?) "
-                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform = ? AND comment_id > ?)"
+                    f"OR ({sort_expr} = ? AND platform > ?) "
+                    f"OR ({sort_expr} = ? AND platform = ? AND comment_id > ?)"
                     ")"
                 )
             params.extend(
                 [
                     cursor_sort_text,
                     cursor_sort_text,
-                    cursor_updated_text,
-                    cursor_sort_text,
-                    cursor_updated_text,
                     cursor_platform_text,
                     cursor_sort_text,
-                    cursor_updated_text,
                     cursor_platform_text,
                     cursor_comment_text,
                 ]

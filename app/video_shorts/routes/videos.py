@@ -4113,7 +4113,6 @@ COMMENTS_PAGE_BATCH_SIZE = 100
 def _encode_comments_page_cursor(comment: Dict[str, Any]) -> Optional[str]:
     payload = {
         "sort_value": str(comment.get("_cursor_sort_value") or ""),
-        "updated_at": str(comment.get("updated_at") or ""),
         "platform": str(comment.get("platform") or ""),
         "comment_id": str(comment.get("comment_id") or ""),
     }
@@ -4137,7 +4136,6 @@ def _decode_comments_page_cursor(value: Optional[str]) -> Dict[str, str]:
         return {}
     return {
         "sort_value": str(payload.get("sort_value") or "").strip(),
-        "updated_at": str(payload.get("updated_at") or "").strip(),
         "platform": str(payload.get("platform") or "").strip(),
         "comment_id": str(payload.get("comment_id") or "").strip(),
     }
@@ -4174,7 +4172,6 @@ def _fetch_comments_page_batch(
         sort_dir=sort_dir,
         owner_user_id=owner_scope_user_id,
         cursor_sort_value=(cursor or {}).get("sort_value"),
-        cursor_updated_at=(cursor or {}).get("updated_at"),
         cursor_platform=(cursor or {}).get("platform"),
         cursor_comment_id=(cursor or {}).get("comment_id"),
     )
