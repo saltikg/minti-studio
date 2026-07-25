@@ -358,12 +358,12 @@ def fetch_comment_records_for_video_ids(
         _append_owner_user_filter(where, params, owner_user_id)
         _append_status_filter(where, params, status)
         _append_platform_filter(where, params, platform)
+        updated_expr = "COALESCE(updated_at::text, '')"
         sort_expr = (
-            "COALESCE(NULLIF(published_at, ''), NULLIF(updated_at, ''), '')"
+            f"COALESCE(NULLIF(published_at, ''), {updated_expr}, '')"
             if (sort_key or "").lower() == "date"
-            else "COALESCE(NULLIF(updated_at, ''), '')"
+            else updated_expr
         )
-        updated_expr = "COALESCE(NULLIF(updated_at, ''), '')"
         cursor_sort_text = str(cursor_sort_value or "")
         cursor_updated_text = str(cursor_updated_at or "")
         cursor_platform_text = str(cursor_platform or "")
