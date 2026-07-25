@@ -523,6 +523,7 @@
       </div>
       <div class="modal-body vs-modal-body">
         <p class="text-muted small mb-3 vs-modal-meta" id="shortCommentsVideoMeta"></p>
+        <div id="shortCommentsSyncNotice" class="text-muted small mb-2 d-none" aria-live="polite"></div>
         <div id="shortCommentsLoading" class="text-center py-4 d-none">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -551,6 +552,7 @@
       </div>
       <div class="modal-body vs-modal-body">
         <p class="text-muted small mb-3 vs-modal-meta" id="instagramCommentsMeta"></p>
+        <div id="instagramCommentsSyncNotice" class="text-muted small mb-2 d-none" aria-live="polite"></div>
         <div id="instagramCommentsLoading" class="text-center py-4 d-none">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -925,6 +927,7 @@
     const videoMeta = modalEl.querySelector("#shortCommentsVideoMeta");
     const loadingEl = modalEl.querySelector("#shortCommentsLoading");
     const statusEl = modalEl.querySelector("#shortCommentsStatus");
+    const syncNoticeEl = modalEl.querySelector("#shortCommentsSyncNotice");
     const listEl = modalEl.querySelector("#shortCommentsList");
     const filterBarEl = modalEl.querySelector("#shortCommentsFilters");
     const refreshBtn = modalEl.querySelector("#shortCommentsRefreshBtn");
@@ -970,12 +973,37 @@
     let currentCounts = { all: 0, heldForReview: 0, published: 0, rejected: 0 };
     let currentFetchUrl = null;
     let currentVideoId = null;
+    let syncNoticeTimer = null;
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message || "";
       statusEl.classList.toggle("d-none", !message);
       statusEl.classList.toggle("alert-danger", !!isError);
       statusEl.classList.toggle("alert-warning", !isError);
+    }
+
+    function setSyncNotice(message, tone = "muted", autoHideMs = 0) {
+      if (!syncNoticeEl) {
+        return;
+      }
+      if (syncNoticeTimer) {
+        clearTimeout(syncNoticeTimer);
+        syncNoticeTimer = null;
+      }
+      if (!message) {
+        syncNoticeEl.textContent = "";
+        syncNoticeEl.classList.add("d-none");
+        syncNoticeEl.classList.remove("text-muted", "text-success", "text-warning");
+        return;
+      }
+      syncNoticeEl.textContent = message;
+      syncNoticeEl.classList.remove("d-none", "text-muted", "text-success", "text-warning");
+      syncNoticeEl.classList.add(
+        tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-muted"
+      );
+      if (autoHideMs > 0) {
+        syncNoticeTimer = window.setTimeout(() => setSyncNotice(""), autoHideMs);
+      }
     }
 
     function updateMeta(videoId, activeStatus) {
@@ -1024,6 +1052,7 @@
       modalTitle.textContent = title;
       updateMeta(videoId, currentFilter);
       modal.show();
+      setSyncNotice("");
       fetchComments("cache");
     }
 
@@ -1041,9 +1070,10 @@
       if (fetchMode === "cache") {
         listEl.innerHTML = "";
         setStatus("");
+        setSyncNotice("");
         loadingEl.classList.remove("d-none");
       } else {
-        setStatus("Updating...", false);
+        setSyncNotice("Checking for new comments…");
       }
       fetch(requestUrl.href)
         .then((resp) => {
@@ -1071,27 +1101,35 @@
           updateCounts(currentComments);
           buildFilters();
           applyFilter(currentFilter);
-          if (fetchMode === "cache") {
+          if (fetchMode === "cache" && !isManualRefresh) {
+            fetchComments("auto");
+            if (!currentComments.length) {
+              return;
+            }
+          }
+          if (
+            fetchMode !== "cache" &&
+            data.live_fetch_attempted &&
+            !data.live_fetch_failed &&
+            !data.live_fetch_skipped
+          ) {
             persistCounts(currentVideoId, {
               pending: currentCounts.heldForReview || 0,
               published: currentCounts.published || 0,
               rejected: currentCounts.rejected || 0,
+              platform_comment_count: data.platform_comment_count,
             });
-          }
-          if (fetchMode === "cache" && !isManualRefresh) {
-            fetchComments("auto");
-            if (!currentComments.length) {
-              setStatus("Updating...", false);
-              return;
-            }
+            setSyncNotice("Updated just now", "success", 3000);
           }
           if (data.live_fetch_failed) {
+            setSyncNotice("Couldn't fetch the latest — showing saved comments", "warning", 4000);
             setStatus(data.note || "Latest comments could not be fetched. Showing cached comments.", false);
           } else if (data.note) {
             setStatus(data.note, false);
           } else if (!currentComments.length) {
             setStatus("No comments yet.", false);
           } else if (isAutoRefresh && data.live_fetch_skipped) {
+            setSyncNotice("");
             setStatus("");
           } else {
             setStatus("");
@@ -1103,6 +1141,7 @@
             setStatus(err.message || "Unable to load comments", true);
             return;
           }
+          setSyncNotice("Couldn't fetch the latest — showing saved comments", "warning", 4000);
           setStatus("Latest comments could not be fetched. Showing cached comments.", false);
         });
     }
@@ -1249,14 +1288,17 @@
       if (!videoId) {
         return;
       }
+      if (!modalEl.classList.contains("show") || currentVideoId !== videoId) {
+        return;
+      }
+      const platformCount = normalizePlatformCount(counts);
       const payload = {
         pending: Number(counts.pending ?? counts.heldForReview ?? 0) || 0,
         published: Number(counts.published ?? counts.published_comment_count ?? 0) || 0,
         rejected: Number(counts.rejected ?? counts.rejected_comment_count ?? 0) || 0,
         mark_seen: true,
+        platform_comment_count: platformCount,
       };
-      payload.last_seen_comment_count = payload.pending + payload.published;
-      applyCountsToRow(videoId, payload);
       fetch(`/video_shorts/shorts/comments/${videoId}/cache_counts`, {
         method: "POST",
         headers: {
@@ -1275,6 +1317,7 @@
           if (data && data.success && data.counts) {
             const merged = {
               ...data.counts,
+              platform_comment_count: data.platform_comment_count ?? platformCount,
               last_seen_comment_count: data.last_seen_comment_count,
             };
             applyCountsToRow(videoId, merged);
@@ -1674,6 +1717,7 @@
       const instagramModal = new bootstrap.Modal(instagramModalEl);
       const instagramTitle = instagramModalEl.querySelector(".instagram-comments-modal-title");
       const instagramMeta = instagramModalEl.querySelector("#instagramCommentsMeta");
+      const instagramSyncNotice = instagramModalEl.querySelector("#instagramCommentsSyncNotice");
       const instagramLoading = instagramModalEl.querySelector("#instagramCommentsLoading");
       const instagramStatus = instagramModalEl.querySelector("#instagramCommentsStatus");
       const instagramList = instagramModalEl.querySelector("#instagramCommentsList");
@@ -1682,6 +1726,7 @@
       let currentInstagramTrigger = null;
       let currentInstagramExpectedTotal = 0;
       let instagramEmptyLoadRetryCount = 0;
+      let instagramSyncNoticeTimer = null;
 
       function setInstagramStatus(message, isError) {
         if (!instagramStatus) {
@@ -1697,6 +1742,61 @@
         instagramStatus.classList.remove("d-none");
         instagramStatus.classList.toggle("alert-danger", Boolean(isError));
         instagramStatus.classList.toggle("alert-warning", !isError);
+      }
+
+      function setInstagramSyncNotice(message, tone = "muted", autoHideMs = 0) {
+        if (!instagramSyncNotice) {
+          return;
+        }
+        if (instagramSyncNoticeTimer) {
+          clearTimeout(instagramSyncNoticeTimer);
+          instagramSyncNoticeTimer = null;
+        }
+        if (!message) {
+          instagramSyncNotice.textContent = "";
+          instagramSyncNotice.classList.add("d-none");
+          instagramSyncNotice.classList.remove("text-muted", "text-success", "text-warning");
+          return;
+        }
+        instagramSyncNotice.textContent = message;
+        instagramSyncNotice.classList.remove("d-none", "text-muted", "text-success", "text-warning");
+        instagramSyncNotice.classList.add(
+          tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-muted"
+        );
+        if (autoHideMs > 0) {
+          instagramSyncNoticeTimer = window.setTimeout(() => setInstagramSyncNotice(""), autoHideMs);
+        }
+      }
+
+      function persistInstagramSeen(queueId, platformCommentCount) {
+        if (!queueId) {
+          return;
+        }
+        if (!instagramModalEl.classList.contains("show") || currentInstagramQueueId !== queueId) {
+          return;
+        }
+        const normalizedCount = Number(platformCommentCount);
+        if (!Number.isFinite(normalizedCount) || normalizedCount < 0) {
+          return;
+        }
+        fetch(`/video_shorts/instagram/media/${queueId}/last_seen`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({ platform_comment_count: normalizedCount }),
+        })
+          .then((resp) => (resp.ok ? resp.json() : null))
+          .then((data) => {
+            if (!data || !data.success || !currentInstagramTrigger) {
+              return;
+            }
+            currentInstagramTrigger.classList.remove("instagram-comments-new");
+          })
+          .catch(() => {
+            /* ignore seen-sync errors */
+          });
       }
 
       function updateInstagramMeta(data) {
@@ -1963,9 +2063,10 @@
         }
         if (fetchMode === "cache") {
           setInstagramStatus("");
+          setInstagramSyncNotice("");
           instagramLoading?.classList.remove("d-none");
         } else {
-          setInstagramStatus("Updating...", false);
+          setInstagramSyncNotice("Checking for new comments…");
         }
         const url = new URL(
           `/video_shorts/instagram/media/${currentInstagramQueueId}/comments`,
@@ -1999,23 +2100,35 @@
             updateInstagramMeta(data);
             const comments = data.comments || [];
             instagramEmptyLoadRetryCount = 0;
-            if (comments.length > 0 && currentInstagramTrigger) {
-              currentInstagramTrigger.classList.remove("instagram-comments-new");
-            }
             renderInstagramComments(comments);
             if (fetchMode === "cache") {
               fetchInstagramComments("auto");
               if (!comments.length) {
-                setInstagramStatus("Updating...", false);
                 return;
               }
             }
+            if (
+              fetchMode !== "cache" &&
+              data.live_fetch_attempted &&
+              !data.live_fetch_failed &&
+              !data.live_fetch_skipped
+            ) {
+              persistInstagramSeen(
+                currentInstagramQueueId,
+                data.platform_comment_count ?? data.comment_count
+              );
+              setInstagramSyncNotice("Updated just now", "success", 3000);
+            }
             if (data.live_fetch_failed) {
+              setInstagramSyncNotice("Couldn't fetch the latest — showing saved comments", "warning", 4000);
               setInstagramStatus(data.note || "Latest Instagram comments could not be fetched. Showing cached comments.", false);
             } else if (!comments.length) {
               setInstagramStatus("No Instagram comments yet.", false);
             } else if (data.note) {
               setInstagramStatus(data.note, false);
+            } else if (fetchMode !== "cache" && data.live_fetch_skipped) {
+              setInstagramSyncNotice("");
+              setInstagramStatus("");
             } else {
               setInstagramStatus("");
             }
@@ -2026,6 +2139,7 @@
               setInstagramStatus(err.message || "Unable to load comments", true);
               return;
             }
+            setInstagramSyncNotice("Couldn't fetch the latest — showing saved comments", "warning", 4000);
             setInstagramStatus("Latest Instagram comments could not be fetched. Showing cached comments.", false);
           });
       }
@@ -2048,6 +2162,7 @@
         }
         updateInstagramMeta(null);
         instagramModal.show();
+        setInstagramSyncNotice("");
         fetchInstagramComments("cache");
       }
 

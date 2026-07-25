@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import ast
+import copy
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 
 def _load_sync_helpers():
@@ -55,11 +56,35 @@ def _load_sync_function(function_names: set[str], *, extra_namespace: Optional[D
             selected.append(node)
     isolated_module = ast.Module(body=selected, type_ignores=[])
     namespace = {
+        "Any": Any,
         "Dict": Dict,
         "Optional": Optional,
         "List": list,
         "Tuple": tuple,
         "logger": logging.getLogger("test_youtube_comment_sync"),
+    }
+    if extra_namespace:
+        namespace.update(extra_namespace)
+    exec(compile(isolated_module, filename=str(source_path), mode="exec"), namespace)
+    return namespace
+
+
+def _load_videos_function(function_names: set[str], *, extra_namespace: Optional[Dict[str, object]] = None):
+    source_path = Path("app/video_shorts/routes/videos.py")
+    module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    selected = []
+    for node in module.body:
+        if isinstance(node, ast.FunctionDef) and node.name in function_names:
+            cloned = copy.deepcopy(node)
+            cloned.decorator_list = []
+            selected.append(cloned)
+    isolated_module = ast.Module(body=selected, type_ignores=[])
+    namespace = {
+        "Any": Any,
+        "Dict": Dict,
+        "Optional": Optional,
+        "List": list,
+        "Tuple": tuple,
     }
     if extra_namespace:
         namespace.update(extra_namespace)
@@ -181,3 +206,166 @@ def test_youtube_body_skip_does_not_advance_body_synced_count():
             "observed_comment_count_at": "2026-07-23T19:00:00Z",
         }
     }
+
+
+def test_youtube_live_fetch_persists_platform_total_for_badge():
+    captured_totals = []
+    captured_summaries = []
+
+    class _Args(dict):
+        def get(self, key, default=None):
+            return super().get(key, default)
+
+    namespace = _load_videos_function(
+        {
+            "shorts_comments",
+        },
+        extra_namespace={
+            "g": type("_G", (), {"vs_current_user": {"role": "member", "id": "owner-1"}})(),
+            "request": type("_Req", (), {"args": _Args({"status": "all", "refresh": "auto"})})(),
+            "jsonify": lambda **kwargs: kwargs,
+            "current_brand_id": lambda: None,
+            "_load_brand_scope_context": lambda active_brand_id: (None, None),
+            "_load_video_scope": lambda video_id: ("Clip title", "owner-1", None, None),
+            "_resolve_owner_for_short_id": lambda video_id: "owner-1",
+            "_preferred_brand_channel_ids": lambda owner_user_id, active_brand_id: [],
+            "_parse_refresh_mode": lambda value: "auto",
+            "_load_short_comment_sync_state_entry": lambda video_id: {"last_synced_at": None},
+            "_should_allow_live_comment_fetch": lambda last_synced_at: True,
+            "_sync_youtube_comments_for_video": lambda owner_user_id, video_id, video_title=None: 1,
+            "_load_youtube_platform_comment_total": lambda video_id: 12,
+            "_upsert_short_comment_platform_total": lambda video_id, total: captured_totals.append((video_id, total)),
+            "fetch_comment_records_for_video": lambda *args, **kwargs: [{"comment_id": "c1", "status": "published", "is_reply": False}],
+            "_build_short_title_map": lambda: {},
+            "_apply_short_title_fallback": lambda comments, title_map: None,
+            "_thread_youtube_comment_rows": lambda comments: comments,
+            "_summarize_comment_counts_for_entries": lambda comments: {"pending": 0, "published": 1, "rejected": 0},
+            "_upsert_short_comment_counts": lambda video_id, summary: captured_summaries.append((video_id, summary)),
+            "_load_short_comment_cache": lambda short_video_ids: {
+                "short-1": {
+                    "platform_comment_count": 12,
+                    "last_seen_comment_count": 4,
+                }
+            },
+            "current_app": type(
+                "_App",
+                (),
+                {
+                    "logger": type(
+                        "_Logger",
+                        (),
+                        {
+                            "info": staticmethod(lambda *args, **kwargs: None),
+                            "exception": staticmethod(lambda *args, **kwargs: None),
+                        },
+                    )()
+                },
+            )(),
+        },
+    )
+
+    payload = namespace["shorts_comments"]("short-1")
+
+    assert captured_totals == [("short-1", 12)]
+    assert captured_summaries == [("short-1", {"pending": 0, "published": 1, "rejected": 0})]
+    assert payload["platform_comment_count"] == 12
+    assert payload["last_seen_comment_count"] == 4
+    assert payload["live_fetch_attempted"] is True
+
+
+def test_mark_seen_uses_platform_total_not_pending_plus_published():
+    captured = {
+        "counts": [],
+        "platform": [],
+        "seen": [],
+    }
+
+    class _FakeRequest:
+        @staticmethod
+        def get_json(silent=True):
+            return {
+                "pending": 2,
+                "published": 3,
+                "rejected": 1,
+                "mark_seen": True,
+                "platform_comment_count": 11,
+            }
+
+    namespace = _load_videos_function(
+        {
+            "_normalize_nonnegative_int",
+            "shorts_comment_cache_counts",
+        },
+        extra_namespace={
+            "request": _FakeRequest(),
+            "jsonify": lambda payload=None, **kwargs: payload if payload is not None else kwargs,
+            "_parse_bool": lambda value, default=False: bool(value),
+            "_upsert_short_comment_counts": lambda video_id, summary: captured["counts"].append((video_id, summary)),
+            "_upsert_short_comment_platform_total": lambda video_id, total: captured["platform"].append((video_id, total)),
+            "_update_short_comment_last_seen_count": lambda video_id, total: captured["seen"].append((video_id, total)),
+        },
+    )
+
+    payload = namespace["shorts_comment_cache_counts"]("short-1")
+
+    assert captured["counts"] == [("short-1", {"pending": 2, "published": 3, "rejected": 1})]
+    assert captured["platform"] == [("short-1", 11)]
+    assert captured["seen"] == [("short-1", 11)]
+    assert payload["platform_comment_count"] == 11
+    assert payload["last_seen_comment_count"] == 11
+
+
+def test_instagram_cache_read_does_not_advance_last_seen():
+    captured_seen = []
+
+    class _Args(dict):
+        def get(self, key, default=None):
+            return super().get(key, default)
+
+    namespace = _load_videos_function(
+        {
+            "instagram_media_comments",
+        },
+        extra_namespace={
+            "_require_instagram_media_entry": lambda queue_id: (
+                {"id": queue_id, "instagram_media_id": "ig-1", "comment_count": 7, "last_seen_comment_count": 2},
+                None,
+            ),
+            "request": type("_Req", (), {"args": _Args({})})(),
+            "_parse_refresh_mode": lambda value: "cache",
+            "_normalize_instagram_limit": lambda value, default: default,
+            "_load_instagram_comment_cache_sync_timestamp": lambda media_id: None,
+            "_should_allow_live_comment_fetch": lambda last_synced_at: False,
+            "refresh_instagram_media": lambda queue_id, comments_limit=25: None,
+            "get_instagram_queue_entry": lambda queue_id: None,
+            "_build_instagram_media_payload": lambda entry: {
+                "comment_count": entry.get("comment_count"),
+                "comments": [{"id": "c1"}],
+                "last_seen_comment_count": entry.get("last_seen_comment_count"),
+            },
+            "update_instagram_last_seen_comment_count": lambda queue_id, count: captured_seen.append((queue_id, count)),
+            "jsonify": lambda **kwargs: kwargs,
+            "current_app": type(
+                "_App",
+                (),
+                {
+                    "logger": type(
+                        "_Logger",
+                        (),
+                        {
+                            "info": staticmethod(lambda *args, **kwargs: None),
+                            "warning": staticmethod(lambda *args, **kwargs: None),
+                        },
+                    )()
+                },
+            )(),
+            "COMMENT_LIVE_FETCH_MIN_INTERVAL_SECONDS": 60,
+            "InstagramActionError": Exception,
+        },
+    )
+
+    payload = namespace["instagram_media_comments"]("queue-1")
+
+    assert captured_seen == []
+    assert payload["platform_comment_count"] == 7
+    assert payload["live_fetch_attempted"] is False

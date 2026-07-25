@@ -822,6 +822,22 @@ def _update_short_comment_last_seen_count(short_video_id: str, last_seen_count: 
         conn.close()
 
 
+def _normalize_nonnegative_int(value: Any) -> int | None:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, normalized)
+
+
+def _load_youtube_platform_comment_total(short_video_id: str) -> int | None:
+    short_id = str(short_video_id or "").strip()
+    if not short_id:
+        return None
+    stats = fetch_video_stats([short_id]).get(short_id) or {}
+    return _normalize_nonnegative_int(stats.get("comment_count"))
+
+
 def _adjust_short_comment_counts(short_video_id: str, delta_summary: Dict[str, int]) -> Dict[str, int]:
     if not short_video_id:
         return {}
@@ -2233,8 +2249,7 @@ def instagram_media_comments(queue_id):
             current_count = cached_count
         else:
             current_count = len(payload.get("comments") or [])
-    update_instagram_last_seen_comment_count(queue_id, current_count)
-    payload["last_seen_comment_count"] = current_count
+    payload["platform_comment_count"] = current_count
     payload["live_fetch_attempted"] = live_fetch_attempted
     payload["live_fetch_skipped"] = live_fetch_skipped
     payload["live_fetch_failed"] = live_fetch_failed
@@ -4257,6 +4272,9 @@ def shorts_comments(video_id):
                 video_id,
                 video_title=video_title,
             )
+            platform_total = _load_youtube_platform_comment_total(video_id)
+            if platform_total is not None:
+                _upsert_short_comment_platform_total(video_id, platform_total)
         except Exception:
             live_fetch_failed = True
             note = "Latest YouTube comments could not be fetched. Showing cached comments."
@@ -4282,14 +4300,19 @@ def shorts_comments(video_id):
         _apply_short_title_fallback(comments, title_map)
         comments = _thread_youtube_comment_rows(comments)
         summary_counts = None
+        platform_total = None
         if requested_status == "all" and comments:
             summary_counts = _summarize_comment_counts_for_entries(comments)
             _upsert_short_comment_counts(video_id, summary_counts)
+        cache_entry = _load_short_comment_cache([video_id]).get(video_id, {})
+        platform_total = cache_entry.get("platform_comment_count")
         return jsonify(
             success=True,
             comments=comments,
             status=requested_status,
             counts=summary_counts,
+            platform_comment_count=platform_total,
+            last_seen_comment_count=cache_entry.get("last_seen_comment_count", 0),
             note=note,
             live_fetch_attempted=live_fetch_attempted,
             live_fetch_skipped=live_fetch_skipped,
@@ -4319,15 +4342,35 @@ def shorts_comment_cache_counts(video_id):
         "rejected": _safe_count("rejected"),
     }
     _upsert_short_comment_counts(video_id, summary)
+    platform_total = _normalize_nonnegative_int(data.get("platform_comment_count"))
+    if platform_total is not None:
+        _upsert_short_comment_platform_total(video_id, platform_total)
     mark_seen = _parse_bool(data.get("mark_seen"), default=False)
     last_seen_count = None
-    if mark_seen:
-        last_seen_count = summary.get("pending", 0) + summary.get("published", 0)
+    if mark_seen and platform_total is not None:
+        last_seen_count = platform_total
         _update_short_comment_last_seen_count(video_id, last_seen_count)
     payload = {"success": True, "counts": summary}
+    if platform_total is not None:
+        payload["platform_comment_count"] = platform_total
     if last_seen_count is not None:
         payload["last_seen_comment_count"] = last_seen_count
     return jsonify(payload)
+
+
+@video_shorts_bp.route("/instagram/media/<queue_id>/last_seen", methods=["POST"])
+def instagram_media_last_seen(queue_id):
+    entry, error = _require_instagram_media_entry(queue_id)
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    platform_total = _normalize_nonnegative_int(
+        data.get("platform_comment_count", entry.get("comment_count"))
+    )
+    if platform_total is None:
+        return jsonify(success=False, message="Platform comment count is required"), 400
+    update_instagram_last_seen_comment_count(queue_id, platform_total)
+    return jsonify(success=True, last_seen_comment_count=platform_total)
 
 
 @video_shorts_bp.route("/shorts/comments/<comment_id>/approve", methods=["POST"])
