@@ -235,6 +235,70 @@
   color: var(--text) !important;
 }
 
+.vs-publishing-page .vs-sync-notice {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 22px;
+  margin: -0.15rem 0 0.6rem;
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.vs-publishing-page .vs-sync-notice.d-none {
+  display: none !important;
+}
+
+.vs-publishing-page .vs-sync-notice-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.18rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.vs-publishing-page .vs-sync-notice-icon {
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.vs-publishing-page .vs-sync-notice-label {
+  color: inherit;
+  line-height: 1.2;
+}
+
+.vs-publishing-page .vs-sync-notice.is-loading .vs-sync-notice-icon {
+  animation: vs-sync-spin 0.85s linear infinite;
+}
+
+.vs-publishing-page .vs-sync-notice.is-loading .vs-sync-notice-inner {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.vs-publishing-page .vs-sync-notice.is-success .vs-sync-notice-inner {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.vs-publishing-page .vs-sync-notice.is-warning .vs-sync-notice-inner {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+@keyframes vs-sync-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .vs-app #shortCommentsList .list-group-item,
 .vs-app #instagramCommentsList .list-group-item {
   background: rgba(255, 255, 255, 0.04) !important;

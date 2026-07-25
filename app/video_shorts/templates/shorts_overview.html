@@ -523,7 +523,7 @@
       </div>
       <div class="modal-body vs-modal-body">
         <p class="text-muted small mb-3 vs-modal-meta" id="shortCommentsVideoMeta"></p>
-        <div id="shortCommentsSyncNotice" class="text-muted small mb-2 d-none" aria-live="polite"></div>
+        <div id="shortCommentsSyncNotice" class="vs-sync-notice d-none" aria-live="polite"></div>
         <div id="shortCommentsLoading" class="text-center py-4 d-none">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -552,7 +552,7 @@
       </div>
       <div class="modal-body vs-modal-body">
         <p class="text-muted small mb-3 vs-modal-meta" id="instagramCommentsMeta"></p>
-        <div id="instagramCommentsSyncNotice" class="text-muted small mb-2 d-none" aria-live="polite"></div>
+        <div id="instagramCommentsSyncNotice" class="vs-sync-notice d-none" aria-live="polite"></div>
         <div id="instagramCommentsLoading" class="text-center py-4 d-none">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -991,15 +991,25 @@
         syncNoticeTimer = null;
       }
       if (!message) {
-        syncNoticeEl.textContent = "";
+        syncNoticeEl.innerHTML = "";
         syncNoticeEl.classList.add("d-none");
-        syncNoticeEl.classList.remove("text-muted", "text-success", "text-warning");
+        syncNoticeEl.classList.remove("is-loading", "is-success", "is-warning");
         return;
       }
-      syncNoticeEl.textContent = message;
-      syncNoticeEl.classList.remove("d-none", "text-muted", "text-success", "text-warning");
+      const iconClass =
+        tone === "success"
+          ? "bi-check-circle-fill"
+          : tone === "warning"
+            ? "bi-exclamation-circle-fill"
+            : "bi-arrow-repeat";
+      syncNoticeEl.innerHTML =
+        `<span class="vs-sync-notice-inner">` +
+        `<i class="bi ${iconClass} vs-sync-notice-icon" aria-hidden="true"></i>` +
+        `<span class="vs-sync-notice-label">${message}</span>` +
+        `</span>`;
+      syncNoticeEl.classList.remove("d-none", "is-loading", "is-success", "is-warning");
       syncNoticeEl.classList.add(
-        tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-muted"
+        tone === "success" ? "is-success" : tone === "warning" ? "is-warning" : "is-loading"
       );
       if (autoHideMs > 0) {
         syncNoticeTimer = window.setTimeout(() => setSyncNotice(""), autoHideMs);
@@ -1753,15 +1763,25 @@
           instagramSyncNoticeTimer = null;
         }
         if (!message) {
-          instagramSyncNotice.textContent = "";
+          instagramSyncNotice.innerHTML = "";
           instagramSyncNotice.classList.add("d-none");
-          instagramSyncNotice.classList.remove("text-muted", "text-success", "text-warning");
+          instagramSyncNotice.classList.remove("is-loading", "is-success", "is-warning");
           return;
         }
-        instagramSyncNotice.textContent = message;
-        instagramSyncNotice.classList.remove("d-none", "text-muted", "text-success", "text-warning");
+        const iconClass =
+          tone === "success"
+            ? "bi-check-circle-fill"
+            : tone === "warning"
+              ? "bi-exclamation-circle-fill"
+              : "bi-arrow-repeat";
+        instagramSyncNotice.innerHTML =
+          `<span class="vs-sync-notice-inner">` +
+          `<i class="bi ${iconClass} vs-sync-notice-icon" aria-hidden="true"></i>` +
+          `<span class="vs-sync-notice-label">${message}</span>` +
+          `</span>`;
+        instagramSyncNotice.classList.remove("d-none", "is-loading", "is-success", "is-warning");
         instagramSyncNotice.classList.add(
-          tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-muted"
+          tone === "success" ? "is-success" : tone === "warning" ? "is-warning" : "is-loading"
         );
         if (autoHideMs > 0) {
           instagramSyncNoticeTimer = window.setTimeout(() => setInstagramSyncNotice(""), autoHideMs);
