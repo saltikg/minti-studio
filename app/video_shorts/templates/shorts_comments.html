@@ -46,6 +46,27 @@
       background-color: #0f1722;
       border-color: rgba(255, 255, 255, 0.24);
     }
+
+    .vs-comments-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.65rem;
+      padding: 1rem 1.25rem 1.2rem;
+      color: rgba(238, 243, 248, 0.84);
+      font-size: 0.95rem;
+    }
+
+    .vs-comments-loading.d-none {
+      display: none !important;
+    }
+
+    .vs-comments-end {
+      padding: 0.25rem 1.25rem 1rem;
+      text-align: center;
+      color: rgba(238, 243, 248, 0.58);
+      font-size: 0.84rem;
+    }
   </style>
 {% endblock %}
 
@@ -139,210 +160,25 @@
               <th>Likes</th>
             </tr>
           </thead>
-          <tbody>
-            {% for comment in comments %}
-              {% set status_key = (comment.status or '')|lower %}
-              <tr data-comment-row="{{ comment.platform }}:{{ comment.comment_id }}">
-                <td data-label="AI Check">
-                  {% if comment.moderation_flagged is none %}
-                    <span class="badge bg-secondary">Pending</span>
-                  {% elif comment.moderation_flagged %}
-                    <span class="badge bg-danger">Flagged</span>
-                    {% if comment.moderation_reason %}
-                      <div class="small vs-text-body mt-1">{{ comment.moderation_reason }}</div>
-                    {% endif %}
-                  {% else %}
-                    <span class="badge bg-success">OK</span>
-                  {% endif %}
-                </td>
-                <td data-label="Status">
-                  <span class="badge {{ comment.status_badge }}">{{ comment.status_label }}</span>
-                  <div class="mt-2 d-flex flex-nowrap gap-2">
-                    {% if comment.platform == 'youtube' %}
-                      {% set allow_approve = status_key in ['heldforreview', 'likelyspam', 'pending', 'rejected'] %}
-                      {% set allow_reject = status_key in ['heldforreview', 'likelyspam', 'pending', 'published'] %}
-                      <button
-                        type="button"
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                        data-comment-action="reply"
-                        data-comment-id="{{ comment.comment_id }}"
-                        data-comment-platform="youtube"
-                        data-video-id="{{ comment.video_id }}"
-                        title="Reply"
-                        aria-label="Reply">
-                        <i class="bi bi-reply"></i>
-                      </button>
-                      {% if allow_approve %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="approve"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="youtube"
-                          data-comment-status="{{ comment.status }}"
-                          data-video-id="{{ comment.video_id }}"
-                          title="Approve"
-                          aria-label="Approve">
-                          <i class="bi bi-check-lg"></i>
-                        </button>
-                      {% endif %}
-                      {% if allow_reject %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="reject"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="youtube"
-                          data-comment-status="{{ comment.status }}"
-                          data-video-id="{{ comment.video_id }}"
-                          title="Reject"
-                          aria-label="Reject">
-                          <i class="bi bi-x-lg"></i>
-                        </button>
-                      {% endif %}
-                      <button
-                        type="button"
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                        data-comment-action="hide"
-                        data-comment-id="{{ comment.comment_id }}"
-                        data-comment-platform="youtube"
-                        data-comment-status="{{ comment.status }}"
-                        data-video-id="{{ comment.video_id }}"
-                        title="Hide user"
-                        aria-label="Hide user">
-                        <i class="bi bi-eye-slash"></i>
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                        data-comment-action="delete"
-                        data-comment-id="{{ comment.comment_id }}"
-                        data-comment-platform="youtube"
-                        data-comment-status="{{ comment.status }}"
-                        data-video-id="{{ comment.video_id }}"
-                        data-thread-id="{{ comment.thread_id }}"
-                        data-is-reply="{{ comment.parent_id is not none }}"
-                        title="Delete"
-                        aria-label="Delete">
-                        <i class="bi bi-trash"></i>
-                      </button>
-                    {% elif comment.platform == 'instagram' %}
-                      {% if not comment.parent_id %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="reply"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="instagram"
-                          data-queue-id="{{ comment.queue_id }}"
-                          title="Reply"
-                          aria-label="Reply">
-                          <i class="bi bi-reply"></i>
-                        </button>
-                      {% endif %}
-                      {% if status_key == 'hidden' %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="unhide"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="instagram"
-                          data-queue-id="{{ comment.queue_id }}"
-                          title="Unhide"
-                          aria-label="Unhide">
-                          <i class="bi bi-eye"></i>
-                        </button>
-                      {% elif status_key != 'deleted' %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="hide"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="instagram"
-                          data-queue-id="{{ comment.queue_id }}"
-                          title="Hide"
-                          aria-label="Hide">
-                          <i class="bi bi-eye-slash"></i>
-                        </button>
-                      {% endif %}
-                      {% if status_key != 'deleted' %}
-                      <button
-                        type="button"
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                        data-comment-action="delete"
-                        data-comment-id="{{ comment.comment_id }}"
-                        data-comment-platform="instagram"
-                        data-queue-id="{{ comment.queue_id }}"
-                        title="Delete"
-                        aria-label="Delete">
-                        <i class="bi bi-trash"></i>
-                      </button>
-                      {% endif %}
-                    {% elif comment.platform == 'facebook' %}
-                      {% if not comment.parent_id %}
-                        <button
-                          type="button"
-                          class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                          data-comment-action="reply"
-                          data-comment-id="{{ comment.comment_id }}"
-                          data-comment-platform="facebook"
-                          data-queue-id="{{ comment.queue_id }}"
-                          title="Reply"
-                          aria-label="Reply">
-                          <i class="bi bi-reply"></i>
-                        </button>
-                      {% endif %}
-                      <button
-                        type="button"
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
-                        data-comment-action="delete"
-                        data-comment-id="{{ comment.comment_id }}"
-                        data-comment-platform="facebook"
-                        data-queue-id="{{ comment.queue_id }}"
-                        title="Delete"
-                        aria-label="Delete">
-                        <i class="bi bi-trash"></i>
-                      </button>
-                    {% endif %}
-                  </div>
-                </td>
-                <td data-label="Platform">
-                  <span class="badge vs-platform-badge">
-                    {% if comment.platform == 'youtube' %}
-                      <i class="bi bi-youtube"></i>
-                    {% elif comment.platform == 'instagram' %}
-                      <i class="bi bi-instagram"></i>
-                    {% else %}
-                      <i class="bi bi-facebook"></i>
-                    {% endif %}
-                  </span>
-                </td>
-                <td class="vs-comment-cell" data-label="Comment">
-                  <div class="fw-semibold">{{ comment.author or 'Unknown' }}</div>
-                  <div class="mt-2 vs-comment-text">{{ comment.text or '-' }}</div>
-                </td>
-                <td class="vs-comment-title" data-label="Video Title">
-                  {% if comment.comment_url %}
-                    {% set full_title = comment.video_title or '-' %}
-                    <a href="{{ comment.comment_url }}" class="text-decoration-none vs-ellipsis" target="_blank" rel="noopener" title="{{ full_title }}">
-                      {{ full_title[:15] }}{% if full_title|length > 15 %}...{% endif %}
-                    </a>
-                  {% else %}
-                    {% set full_title = comment.video_title or '-' %}
-                    <span class="vs-ellipsis" title="{{ full_title }}">{{ full_title[:15] }}{% if full_title|length > 15 %}...{% endif %}</span>
-                  {% endif %}
-                </td>
-                <td class="vs-comment-date" data-label="Date">{{ comment.published_at|fmt_dt }}</td>
-                <td class="vs-comment-likes" data-label="Likes">{{ (comment.like_count or 0) }} likes</td>
-              </tr>
+          <tbody id="commentsTableBody">
+            {% if comments %}
+              {% include "partials/_shorts_comments_rows.html" %}
             {% else %}
-              <tr>
+              <tr id="commentsEmptyState">
                 <td colspan="8" class="text-center py-5 text-muted">No comments found.</td>
               </tr>
-            {% endfor %}
+            {% endif %}
           </tbody>
         </table>
       </div>
+      <div id="commentsLoadingState" class="vs-comments-loading {% if not has_more_comments %}d-none{% endif %}">
+        <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+        <span>Loading more comments…</span>
+      </div>
+      <div id="commentsEndState" class="vs-comments-end {% if has_more_comments or not comments %}d-none{% endif %}">
+        End of comments
+      </div>
+      <div id="commentsScrollSentinel" style="height: 1px;" {% if not has_more_comments %}class="d-none"{% endif %}></div>
     </div>
   </div>
 </div>
@@ -350,6 +186,15 @@
 <script>
   const filterCheckboxes = document.querySelectorAll(".vs-comments-filter-check");
   const filterDropdowns = document.querySelectorAll(".vs-filter-dropdown");
+  const commentsTableBody = document.getElementById("commentsTableBody");
+  const commentsLoadingState = document.getElementById("commentsLoadingState");
+  const commentsEndState = document.getElementById("commentsEndState");
+  const commentsScrollSentinel = document.getElementById("commentsScrollSentinel");
+  const commentsEmptyState = () => document.getElementById("commentsEmptyState");
+  const commentsFeedBase = "{{ url_for('video_shorts_bp.shorts_comments_feed') }}";
+  let nextCursor = {{ next_cursor|tojson }};
+  let hasMoreComments = {{ has_more_comments|tojson }};
+  let commentsFeedLoading = false;
 
   filterDropdowns.forEach((dropdown) => {
     const toggle = dropdown.querySelector("[data-filter-toggle]");
@@ -392,8 +237,72 @@
 
   filterCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", updateFilters));
 
+  function currentFeedUrl() {
+    const url = new URL(commentsFeedBase, window.location.origin);
+    const params = new URLSearchParams(window.location.search);
+    params.forEach((value, key) => url.searchParams.append(key, value));
+    if (nextCursor) {
+      url.searchParams.set("cursor", nextCursor);
+    }
+    return url.toString();
+  }
+
+  function updateScrollState() {
+    commentsLoadingState?.classList.toggle("d-none", !hasMoreComments || !commentsFeedLoading);
+    commentsScrollSentinel?.classList.toggle("d-none", !hasMoreComments);
+    commentsEndState?.classList.toggle("d-none", hasMoreComments || !commentsTableBody?.children.length);
+  }
+
+  async function loadMoreComments() {
+    if (!hasMoreComments || commentsFeedLoading || !nextCursor) {
+      return;
+    }
+    commentsFeedLoading = true;
+    updateScrollState();
+    try {
+      const resp = await fetch(currentFeedUrl(), {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.success === false) {
+        throw new Error(data.message || "Could not load more comments.");
+      }
+      if (commentsEmptyState()) {
+        commentsEmptyState().remove();
+      }
+      const rowsHtml = String(data.rows_html || "").trim();
+      if (rowsHtml) {
+        commentsTableBody.insertAdjacentHTML("beforeend", rowsHtml);
+      }
+      nextCursor = data.next_cursor || null;
+      hasMoreComments = Boolean(data.has_more && nextCursor);
+    } catch (err) {
+      hasMoreComments = false;
+      console.error(err);
+    } finally {
+      commentsFeedLoading = false;
+      updateScrollState();
+    }
+  }
+
+  if ("IntersectionObserver" in window && commentsScrollSentinel) {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          loadMoreComments();
+        }
+      });
+    }, { rootMargin: "600px 0px" });
+    observer.observe(commentsScrollSentinel);
+  }
+
+  updateScrollState();
+
   async function handleAction(event) {
-    const button = event.currentTarget;
+    const button = event.target.closest(".vs-comment-action");
+    if (!button) {
+      return;
+    }
     const action = button.dataset.commentAction;
     const platform = button.dataset.commentPlatform;
     const commentId = button.dataset.commentId;
@@ -502,8 +411,6 @@
     }
   }
 
-  document.querySelectorAll(".vs-comment-action").forEach((button) => {
-    button.addEventListener("click", handleAction);
-  });
+  commentsTableBody?.addEventListener("click", handleAction);
 </script>
 {% endblock %}

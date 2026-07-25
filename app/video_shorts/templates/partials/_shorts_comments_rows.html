@@ -1,0 +1,196 @@
+{% for comment in comments %}
+  {% set status_key = (comment.status or '')|lower %}
+  <tr data-comment-row="{{ comment.platform }}:{{ comment.comment_id }}">
+    <td data-label="AI Check">
+      {% if comment.moderation_flagged is none %}
+        <span class="badge bg-secondary">Pending</span>
+      {% elif comment.moderation_flagged %}
+        <span class="badge bg-danger">Flagged</span>
+        {% if comment.moderation_reason %}
+          <div class="small vs-text-body mt-1">{{ comment.moderation_reason }}</div>
+        {% endif %}
+      {% else %}
+        <span class="badge bg-success">OK</span>
+      {% endif %}
+    </td>
+    <td data-label="Status">
+      <span class="badge {{ comment.status_badge }}">{{ comment.status_label }}</span>
+      <div class="mt-2 d-flex flex-nowrap gap-2">
+        {% if comment.platform == 'youtube' %}
+          {% set allow_approve = status_key in ['heldforreview', 'likelyspam', 'pending', 'rejected'] %}
+          {% set allow_reject = status_key in ['heldforreview', 'likelyspam', 'pending', 'published'] %}
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+            data-comment-action="reply"
+            data-comment-id="{{ comment.comment_id }}"
+            data-comment-platform="youtube"
+            data-video-id="{{ comment.video_id }}"
+            title="Reply"
+            aria-label="Reply">
+            <i class="bi bi-reply"></i>
+          </button>
+          {% if allow_approve %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="approve"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="youtube"
+              data-comment-status="{{ comment.status }}"
+              data-video-id="{{ comment.video_id }}"
+              title="Approve"
+              aria-label="Approve">
+              <i class="bi bi-check-lg"></i>
+            </button>
+          {% endif %}
+          {% if allow_reject %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="reject"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="youtube"
+              data-comment-status="{{ comment.status }}"
+              data-video-id="{{ comment.video_id }}"
+              title="Reject"
+              aria-label="Reject">
+              <i class="bi bi-x-lg"></i>
+            </button>
+          {% endif %}
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+            data-comment-action="hide"
+            data-comment-id="{{ comment.comment_id }}"
+            data-comment-platform="youtube"
+            data-comment-status="{{ comment.status }}"
+            data-video-id="{{ comment.video_id }}"
+            title="Hide user"
+            aria-label="Hide user">
+            <i class="bi bi-eye-slash"></i>
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+            data-comment-action="delete"
+            data-comment-id="{{ comment.comment_id }}"
+            data-comment-platform="youtube"
+            data-comment-status="{{ comment.status }}"
+            data-video-id="{{ comment.video_id }}"
+            data-thread-id="{{ comment.thread_id }}"
+            data-is-reply="{{ comment.parent_id is not none }}"
+            title="Delete"
+            aria-label="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
+        {% elif comment.platform == 'instagram' %}
+          {% if not comment.parent_id %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="reply"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="instagram"
+              data-queue-id="{{ comment.queue_id }}"
+              title="Reply"
+              aria-label="Reply">
+              <i class="bi bi-reply"></i>
+            </button>
+          {% endif %}
+          {% if status_key == 'hidden' %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="unhide"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="instagram"
+              data-queue-id="{{ comment.queue_id }}"
+              title="Unhide"
+              aria-label="Unhide">
+              <i class="bi bi-eye"></i>
+            </button>
+          {% elif status_key != 'deleted' %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="hide"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="instagram"
+              data-queue-id="{{ comment.queue_id }}"
+              title="Hide"
+              aria-label="Hide">
+              <i class="bi bi-eye-slash"></i>
+            </button>
+          {% endif %}
+          {% if status_key != 'deleted' %}
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+            data-comment-action="delete"
+            data-comment-id="{{ comment.comment_id }}"
+            data-comment-platform="instagram"
+            data-queue-id="{{ comment.queue_id }}"
+            title="Delete"
+            aria-label="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
+          {% endif %}
+        {% elif comment.platform == 'facebook' %}
+          {% if not comment.parent_id %}
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+              data-comment-action="reply"
+              data-comment-id="{{ comment.comment_id }}"
+              data-comment-platform="facebook"
+              data-queue-id="{{ comment.queue_id }}"
+              title="Reply"
+              aria-label="Reply">
+              <i class="bi bi-reply"></i>
+            </button>
+          {% endif %}
+          <button
+            type="button"
+            class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 vs-comment-action"
+            data-comment-action="delete"
+            data-comment-id="{{ comment.comment_id }}"
+            data-comment-platform="facebook"
+            data-queue-id="{{ comment.queue_id }}"
+            title="Delete"
+            aria-label="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
+        {% endif %}
+      </div>
+    </td>
+    <td data-label="Platform">
+      <span class="badge vs-platform-badge">
+        {% if comment.platform == 'youtube' %}
+          <i class="bi bi-youtube"></i>
+        {% elif comment.platform == 'instagram' %}
+          <i class="bi bi-instagram"></i>
+        {% else %}
+          <i class="bi bi-facebook"></i>
+        {% endif %}
+      </span>
+    </td>
+    <td class="vs-comment-cell" data-label="Comment">
+      <div class="fw-semibold">{{ comment.author or 'Unknown' }}</div>
+      <div class="mt-2 vs-comment-text">{{ comment.text or '-' }}</div>
+    </td>
+    <td class="vs-comment-title" data-label="Video Title">
+      {% if comment.comment_url %}
+        {% set full_title = comment.video_title or '-' %}
+        <a href="{{ comment.comment_url }}" class="text-decoration-none vs-ellipsis" target="_blank" rel="noopener" title="{{ full_title }}">
+          {{ full_title[:15] }}{% if full_title|length > 15 %}...{% endif %}
+        </a>
+      {% else %}
+        {% set full_title = comment.video_title or '-' %}
+        <span class="vs-ellipsis" title="{{ full_title }}">{{ full_title[:15] }}{% if full_title|length > 15 %}...{% endif %}</span>
+      {% endif %}
+    </td>
+    <td class="vs-comment-date" data-label="Date">{{ comment.published_at|fmt_dt }}</td>
+    <td class="vs-comment-likes" data-label="Likes">{{ (comment.like_count or 0) }} likes</td>
+  </tr>
+{% endfor %}

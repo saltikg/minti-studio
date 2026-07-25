@@ -341,6 +341,10 @@ def fetch_comment_records_for_video_ids(
     sort_key: Optional[str] = None,
     sort_dir: str = "desc",
     owner_user_id: Optional[str] = None,
+    cursor_sort_value: Optional[str] = None,
+    cursor_updated_at: Optional[str] = None,
+    cursor_platform: Optional[str] = None,
+    cursor_comment_id: Optional[str] = None,
 ) -> List[Dict[str, object]]:
     normalized_video_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
     if not normalized_video_ids:
@@ -354,12 +358,54 @@ def fetch_comment_records_for_video_ids(
         _append_owner_user_filter(where, params, owner_user_id)
         _append_status_filter(where, params, status)
         _append_platform_filter(where, params, platform)
+        sort_expr = (
+            "COALESCE(NULLIF(published_at, ''), NULLIF(updated_at, ''), '')"
+            if (sort_key or "").lower() == "date"
+            else "COALESCE(NULLIF(updated_at, ''), '')"
+        )
+        updated_expr = "COALESCE(NULLIF(updated_at, ''), '')"
+        cursor_sort_text = str(cursor_sort_value or "")
+        cursor_updated_text = str(cursor_updated_at or "")
+        cursor_platform_text = str(cursor_platform or "")
+        cursor_comment_text = str(cursor_comment_id or "")
+        if cursor_sort_text and cursor_updated_text and cursor_platform_text and cursor_comment_text:
+            if (sort_dir or "").lower() == "asc":
+                where.append(
+                    "("
+                    f"{sort_expr} > ? "
+                    f"OR ({sort_expr} = ? AND {updated_expr} > ?) "
+                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform > ?) "
+                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform = ? AND comment_id > ?)"
+                    ")"
+                )
+            else:
+                where.append(
+                    "("
+                    f"{sort_expr} < ? "
+                    f"OR ({sort_expr} = ? AND {updated_expr} < ?) "
+                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform > ?) "
+                    f"OR ({sort_expr} = ? AND {updated_expr} = ? AND platform = ? AND comment_id > ?)"
+                    ")"
+                )
+            params.extend(
+                [
+                    cursor_sort_text,
+                    cursor_sort_text,
+                    cursor_updated_text,
+                    cursor_sort_text,
+                    cursor_updated_text,
+                    cursor_platform_text,
+                    cursor_sort_text,
+                    cursor_updated_text,
+                    cursor_platform_text,
+                    cursor_comment_text,
+                ]
+            )
         where_clause = " AND ".join(where)
         sort_dir_clean = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
-        if (sort_key or "").lower() == "date":
-            order_clause = f"published_at {sort_dir_clean} NULLS LAST, updated_at {sort_dir_clean}"
-        else:
-            order_clause = f"updated_at {sort_dir_clean}"
+        order_clause = (
+            f"{sort_expr} {sort_dir_clean}, {updated_expr} {sort_dir_clean}, platform ASC, comment_id ASC"
+        )
         query = f"""
             SELECT
                 platform,
@@ -380,7 +426,8 @@ def fetch_comment_records_for_video_ids(
                 moderation_flagged,
                 moderation_reason,
                 moderation_checked_at,
-                updated_at
+                updated_at,
+                {sort_expr} AS _cursor_sort_value
             FROM social_comment_cache
             WHERE {where_clause}
             ORDER BY {order_clause}

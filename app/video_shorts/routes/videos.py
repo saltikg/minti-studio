@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone, time as dt_time
 from collections import deque
+import base64
 import os
 import re
 import unicodedata
@@ -4106,6 +4107,86 @@ def shorts_overview():
         unread_videos_total=unread_videos_total,
     )
 
+COMMENTS_PAGE_BATCH_SIZE = 100
+
+
+def _encode_comments_page_cursor(comment: Dict[str, Any]) -> Optional[str]:
+    payload = {
+        "sort_value": str(comment.get("_cursor_sort_value") or ""),
+        "updated_at": str(comment.get("updated_at") or ""),
+        "platform": str(comment.get("platform") or ""),
+        "comment_id": str(comment.get("comment_id") or ""),
+    }
+    if not all(payload.values()):
+        return None
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_comments_page_cursor(value: Optional[str]) -> Dict[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return {}
+    try:
+        padding = "=" * (-len(text) % 4)
+        decoded = base64.urlsafe_b64decode((text + padding).encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "sort_value": str(payload.get("sort_value") or "").strip(),
+        "updated_at": str(payload.get("updated_at") or "").strip(),
+        "platform": str(payload.get("platform") or "").strip(),
+        "comment_id": str(payload.get("comment_id") or "").strip(),
+    }
+
+
+def _normalize_comments_page_comment(comment: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(comment)
+    status_label, status_badge = _comment_status_meta(normalized.get("status"))
+    normalized["status_label"] = status_label
+    normalized["status_badge"] = status_badge
+    normalized["_cursor"] = _encode_comments_page_cursor(normalized)
+    return normalized
+
+
+def _fetch_comments_page_batch(
+    *,
+    allowed_video_ids: List[str],
+    owner_scope_user_id: str,
+    status_filters: List[str],
+    platform_filters: List[str],
+    sort_key: str,
+    sort_dir: str,
+    include_youtube: bool,
+    brand_title_map: Dict[str, str],
+    cursor: Optional[Dict[str, str]] = None,
+    limit: int = COMMENTS_PAGE_BATCH_SIZE,
+) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
+    rows = fetch_comment_records_for_video_ids(
+        sorted(allowed_video_ids),
+        limit=max(1, limit) + 1,
+        status=status_filters,
+        platform=platform_filters,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
+        owner_user_id=owner_scope_user_id,
+        cursor_sort_value=(cursor or {}).get("sort_value"),
+        cursor_updated_at=(cursor or {}).get("updated_at"),
+        cursor_platform=(cursor or {}).get("platform"),
+        cursor_comment_id=(cursor or {}).get("comment_id"),
+    )
+    comments = [comment for comment in rows if str(comment.get("video_id") or "") in allowed_video_ids]
+    has_more = len(comments) > limit
+    visible = comments[:limit]
+    if include_youtube and visible:
+        _apply_short_title_fallback(visible, brand_title_map)
+    normalized = [_normalize_comments_page_comment(comment) for comment in visible]
+    next_cursor = normalized[-1].get("_cursor") if has_more and normalized else None
+    return normalized, next_cursor, has_more
+
 
 @video_shorts_bp.route("/shorts/comments")
 def shorts_comments_page():
@@ -4164,23 +4245,18 @@ def shorts_comments_page():
             max_videos=12,
             latest_by_video=latest_by_video,
         )
-    comments = fetch_comment_records_for_video_ids(
-        sorted(allowed_video_ids),
-        limit=2000,
-        status=status_filters,
-        platform=platform_filters,
+    brand_title_map = _build_short_title_map()
+    comments, next_cursor, has_more = _fetch_comments_page_batch(
+        allowed_video_ids=sorted(allowed_video_ids),
+        owner_scope_user_id=owner_scope_user_id,
+        status_filters=status_filters,
+        platform_filters=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
-        owner_user_id=owner_scope_user_id,
+        include_youtube=include_youtube,
+        brand_title_map=brand_title_map,
+        limit=COMMENTS_PAGE_BATCH_SIZE,
     )
-    brand_title_map = _build_short_title_map()
-    comments = [comment for comment in comments if str(comment.get("video_id") or "") in allowed_video_ids]
-    if include_youtube:
-        _apply_short_title_fallback(comments, brand_title_map)
-    for comment in comments:
-        status_label, status_badge = _comment_status_meta(comment.get("status"))
-        comment["status_label"] = status_label
-        comment["status_badge"] = status_badge
     return render_template(
         "shorts_comments.html",
         comments=comments,
@@ -4190,6 +4266,47 @@ def shorts_comments_page():
         selected_platform_filters=platform_filters,
         sort_key=sort_key,
         sort_dir=sort_dir,
+        next_cursor=next_cursor,
+        has_more_comments=has_more,
+    )
+
+
+@video_shorts_bp.route("/shorts/comments/feed")
+def shorts_comments_feed():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Unauthorized"), 401
+    brand_id = current_brand_id()
+    brand_owner_user_id, _brand_name = _load_brand_scope_context(brand_id)
+    owner_scope_user_id = brand_owner_user_id or current_user["id"]
+    status_filters = _parse_multi_filter_values("status")
+    platform_filters = _parse_multi_filter_values("platform")
+    sort_key = (request.args.get("sort") or "date").strip().lower()
+    sort_dir = (request.args.get("dir") or "desc").strip().lower()
+    sort_dir = "asc" if sort_dir == "asc" else "desc"
+    cursor = _decode_comments_page_cursor(request.args.get("cursor"))
+    allowed_video_ids = _build_allowed_comment_video_ids()
+    selected_platforms = set(platform_filters)
+    include_all_platforms = not selected_platforms
+    include_youtube = include_all_platforms or "youtube" in selected_platforms
+    comments, next_cursor, has_more = _fetch_comments_page_batch(
+        allowed_video_ids=sorted(allowed_video_ids),
+        owner_scope_user_id=owner_scope_user_id,
+        status_filters=status_filters,
+        platform_filters=platform_filters,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
+        include_youtube=include_youtube,
+        brand_title_map=_build_short_title_map(),
+        cursor=cursor,
+        limit=COMMENTS_PAGE_BATCH_SIZE,
+    )
+    rows_html = render_template("partials/_shorts_comments_rows.html", comments=comments)
+    return jsonify(
+        success=True,
+        rows_html=rows_html,
+        next_cursor=next_cursor,
+        has_more=has_more,
     )
 
 
