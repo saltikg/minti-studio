@@ -4461,9 +4461,13 @@ def shorts_comment_cache_counts(video_id):
     platform_total = _normalize_nonnegative_int(data.get("platform_comment_count"))
     if platform_total is not None:
         _upsert_short_comment_platform_total(video_id, platform_total)
+    explicit_last_seen_count = _normalize_nonnegative_int(data.get("last_seen_comment_count"))
     mark_seen = _parse_bool(data.get("mark_seen"), default=False)
     last_seen_count = None
-    if mark_seen and platform_total is not None:
+    if mark_seen and explicit_last_seen_count is not None:
+        last_seen_count = explicit_last_seen_count
+        _update_short_comment_last_seen_count(video_id, last_seen_count)
+    elif mark_seen and platform_total is not None:
         last_seen_count = platform_total
         _update_short_comment_last_seen_count(video_id, last_seen_count)
     payload = {"success": True, "counts": summary}

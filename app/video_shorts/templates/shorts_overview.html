@@ -1117,18 +1117,30 @@
               return;
             }
           }
+          const normalizedPlatformCount = Number(data.platform_comment_count);
+          const shouldPersistSeenFromAutoResult =
+            fetchMode !== "cache" &&
+            !data.live_fetch_failed &&
+            (data.live_fetch_attempted || data.live_fetch_skipped) &&
+            (currentComments.length > 0 ||
+              (Number.isFinite(normalizedPlatformCount) && normalizedPlatformCount <= 0));
+          if (shouldPersistSeenFromAutoResult) {
+            const displayedCount = countDisplayedTopLevelComments(currentComments);
+            persistCounts(currentVideoId, {
+              pending: currentCounts.heldForReview || 0,
+              published: currentCounts.published || 0,
+              rejected: currentCounts.rejected || 0,
+              platform_comment_count: data.platform_comment_count,
+            }, {
+              displayedCount,
+            });
+          }
           if (
             fetchMode !== "cache" &&
             data.live_fetch_attempted &&
             !data.live_fetch_failed &&
             !data.live_fetch_skipped
           ) {
-            persistCounts(currentVideoId, {
-              pending: currentCounts.heldForReview || 0,
-              published: currentCounts.published || 0,
-              rejected: currentCounts.rejected || 0,
-              platform_comment_count: data.platform_comment_count,
-            });
             setSyncNotice("Updated just now", "success", 3000);
           }
           if (data.live_fetch_failed) {
@@ -1229,6 +1241,13 @@
       return normalized.pending + normalized.published;
     }
 
+    function countDisplayedTopLevelComments(comments) {
+      if (!Array.isArray(comments) || !comments.length) {
+        return 0;
+      }
+      return comments.reduce((total, comment) => total + (comment?.is_reply ? 0 : 1), 0);
+    }
+
     function applyCountsToRow(videoId, counts) {
       if (!videoId) {
         return;
@@ -1294,7 +1313,7 @@
       }
     }
 
-    function persistCounts(videoId, counts) {
+    function persistCounts(videoId, counts, options = {}) {
       if (!videoId) {
         return;
       }
@@ -1302,12 +1321,21 @@
         return;
       }
       const platformCount = normalizePlatformCount(counts);
+      const displayedCountRaw =
+        options && options.displayedCount !== undefined
+          ? Number(options.displayedCount)
+          : Number.NaN;
+      const displayedCount =
+        Number.isFinite(displayedCountRaw) && displayedCountRaw >= 0
+          ? displayedCountRaw
+          : platformCount;
       const payload = {
         pending: Number(counts.pending ?? counts.heldForReview ?? 0) || 0,
         published: Number(counts.published ?? counts.published_comment_count ?? 0) || 0,
         rejected: Number(counts.rejected ?? counts.rejected_comment_count ?? 0) || 0,
         mark_seen: true,
         platform_comment_count: platformCount,
+        last_seen_comment_count: displayedCount,
       };
       fetch(`/video_shorts/shorts/comments/${videoId}/cache_counts`, {
         method: "POST",
@@ -1788,14 +1816,14 @@
         }
       }
 
-      function persistInstagramSeen(queueId, platformCommentCount) {
+      function persistInstagramSeen(queueId, displayedCommentCount) {
         if (!queueId) {
           return;
         }
         if (!instagramModalEl.classList.contains("show") || currentInstagramQueueId !== queueId) {
           return;
         }
-        const normalizedCount = Number(platformCommentCount);
+        const normalizedCount = Number(displayedCommentCount);
         if (!Number.isFinite(normalizedCount) || normalizedCount < 0) {
           return;
         }
@@ -2127,16 +2155,29 @@
                 return;
               }
             }
+            const normalizedInstagramPlatformCount = Number(
+              data.platform_comment_count ?? data.comment_count
+            );
+            const shouldPersistInstagramSeenFromAutoResult =
+              fetchMode !== "cache" &&
+              !data.live_fetch_failed &&
+              (data.live_fetch_attempted || data.live_fetch_skipped) &&
+              (comments.length > 0 ||
+                (Number.isFinite(normalizedInstagramPlatformCount) &&
+                  normalizedInstagramPlatformCount <= 0));
+            if (shouldPersistInstagramSeenFromAutoResult) {
+              const displayedCount = countDisplayedTopLevelComments(comments);
+              persistInstagramSeen(
+                currentInstagramQueueId,
+                displayedCount
+              );
+            }
             if (
               fetchMode !== "cache" &&
               data.live_fetch_attempted &&
               !data.live_fetch_failed &&
               !data.live_fetch_skipped
             ) {
-              persistInstagramSeen(
-                currentInstagramQueueId,
-                data.platform_comment_count ?? data.comment_count
-              );
               setInstagramSyncNotice("Updated just now", "success", 3000);
             }
             if (data.live_fetch_failed) {
