@@ -278,7 +278,7 @@
                         <span
                           role="button"
                           tabindex="0"
-                          class="short-comments-btn {% if pending_count %}short-comments-btn-pending{% elif entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
+                          class="short-comments-btn {% if pending_count and entry.has_unread_comments %}short-comments-btn-pending{% elif entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
                           data-comments-url="{{ entry.comments_url }}"
                           data-comments-status="all"
                           data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
@@ -1227,18 +1227,18 @@
     }
 
     function normalizePlatformCount(counts, normalizedCounts) {
-      const explicitTotal =
-        Number(
-          counts?.platform_comment_count ??
-            counts?.platformCommentCount ??
-            counts?.total_comment_count ??
-            counts?.totalCommentCount
-        );
-      if (Number.isFinite(explicitTotal) && explicitTotal >= 0) {
-        return explicitTotal;
-      }
       const normalized = normalizedCounts || normalizeCounts(counts);
-      return normalized.pending + normalized.published;
+      const publishedTotal = Number(
+        counts?.platform_comment_count ??
+          counts?.platformCommentCount ??
+          counts?.total_comment_count ??
+          counts?.totalCommentCount
+      );
+      const safePublishedTotal =
+        Number.isFinite(publishedTotal) && publishedTotal >= 0
+          ? publishedTotal
+          : normalized.published;
+      return safePublishedTotal + normalized.pending + normalized.rejected;
     }
 
     function countDisplayedTopLevelComments(comments) {
@@ -1296,8 +1296,11 @@
           countEl = triggerBtn.querySelector("[data-role='comment-count']");
         }
         const hasUnread = totalCount > lastSeenCount;
-        if (normalized.pending > 0) {
+        if (normalized.pending > 0 && hasUnread) {
           triggerBtn.classList.add("short-comments-btn-pending");
+          countEl.textContent = `(${normalized.pending})`;
+        } else if (normalized.pending > 0) {
+          triggerBtn.classList.add("short-comments-btn-default");
           countEl.textContent = `(${normalized.pending})`;
         } else if (totalCount > 0) {
           triggerBtn.classList.add(hasUnread ? "short-comments-btn-unread" : "short-comments-btn-default");

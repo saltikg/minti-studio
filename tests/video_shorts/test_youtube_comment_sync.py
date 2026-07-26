@@ -92,6 +92,35 @@ def _load_videos_function(function_names: set[str], *, extra_namespace: Optional
     return namespace
 
 
+def test_tracked_short_comment_total_includes_pending_and_rejected():
+    namespace = _load_videos_function(
+        {
+            "_normalize_nonnegative_int",
+            "_tracked_short_comment_total",
+        },
+    )
+
+    tracked_total = namespace["_tracked_short_comment_total"]
+
+    assert (
+        tracked_total(
+            platform_comment_count=5,
+            pending_comment_count=2,
+            rejected_comment_count=1,
+        )
+        == 8
+    )
+    assert (
+        tracked_total(
+            platform_comment_count=None,
+            pending_comment_count=2,
+            rejected_comment_count=0,
+            fallback_comment_count=3,
+        )
+        == 5
+    )
+
+
 def test_youtube_body_sync_fetches_when_count_unchanged_but_cache_incomplete():
     helpers = _load_sync_helpers()
 
