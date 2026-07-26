@@ -761,8 +761,9 @@ def _upsert_short_comment_platform_total(
                 INSERT INTO short_comment_cache (
                     short_video_id,
                     platform_comment_count,
+                    last_seen_comment_count,
                     comments_last_synced_at
-                ) VALUES (?, ?, ?)
+                ) VALUES (?, ?, 0, ?)
                 ON CONFLICT (short_video_id)
                 DO UPDATE SET
                     platform_comment_count = excluded.platform_comment_count,
@@ -777,8 +778,9 @@ def _upsert_short_comment_platform_total(
                     short_video_id,
                     pending_comment_count,
                     platform_comment_count,
+                    last_seen_comment_count,
                     comments_last_synced_at
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 0, ?)
                 ON CONFLICT (short_video_id)
                 DO UPDATE SET
                     pending_comment_count = excluded.pending_comment_count,
