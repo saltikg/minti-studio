@@ -5343,7 +5343,8 @@ def save_crop_area(video_pk):
     background_visual_key = (request.form.get("background_visual_key") or "").strip()
     if background_visual_key == "":
         background_visual_key = None
-    subscribe_overlay_enabled_raw = (request.form.get("enable_subscribe_overlay") or "").strip().lower()
+    subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
+    subscribe_overlay_enabled_raw = (subscribe_overlay_value or "").strip().lower()
     subscribe_overlay_enabled = subscribe_overlay_enabled_raw in {"1", "true", "yes", "on"}
     crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
     if crop_aspect not in {"landscape", "portrait"}:
@@ -5401,7 +5402,7 @@ def save_crop_area(video_pk):
         if visual_mode == "podcast":
             try:
                 audio_sql = """
-                    SELECT podcast_audio_filename
+                    SELECT podcast_audio_filename, subscribe_overlay_enabled
                     FROM youtube_videos
                     WHERE id = ?
                       AND owner_user_id = ?
@@ -5416,6 +5417,8 @@ def save_crop_area(video_pk):
                 audio_row = conn.execute(audio_sql, audio_params).fetchone()
                 if audio_row and str(audio_row[0] or "").strip():
                     crop_aspect = "landscape"
+                if subscribe_overlay_value is None and audio_row is not None and len(audio_row) > 1:
+                    subscribe_overlay_enabled = bool(audio_row[1]) if audio_row[1] is not None else True
             except Exception:
                 pass
         update_set_parts = [
@@ -10856,9 +10859,8 @@ def save_short_settings(video_pk):
     subtitle_bg_color = _normalize_hex_color(request.form.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_COLOR)
     subtitle_bg_alpha = _normalize_alpha_percent(request.form.get("subtitle_bg_alpha") or DEFAULT_SUBTITLE_BG_ALPHA, DEFAULT_SUBTITLE_BG_ALPHA)
     subtitle_text_alpha = _normalize_alpha_percent(request.form.get("subtitle_text_alpha") or DEFAULT_SUBTITLE_TEXT_ALPHA, DEFAULT_SUBTITLE_TEXT_ALPHA)
-    subscribe_overlay_enabled = (request.form.get("enable_subscribe_overlay") or "").lower() in {"1", "true", "yes", "on"}
-    if not _resolve_brand_subscribe_overlay_path(brand_id):
-        subscribe_overlay_enabled = False
+    subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
+    subscribe_overlay_enabled = (subscribe_overlay_value or "").lower() in {"1", "true", "yes", "on"}
     show_title = (request.form.get("show_title") or "").lower() not in {"0", "false", "no", "off"}
     show_subtitle = (request.form.get("show_subtitle") or "").lower() not in {"0", "false", "no", "off"}
     is_music_only = (request.form.get("is_music_only") or "").lower() in {"1", "true", "yes", "on"}
@@ -10890,7 +10892,7 @@ def save_short_settings(video_pk):
     current_user = getattr(g, "vs_current_user", None)
     video_columns = table_columns(conn, "youtube_videos")
     select_sql = """
-        SELECT video_id
+        SELECT video_id, subscribe_overlay_enabled
         FROM youtube_videos
         WHERE id = ?
           AND owner_user_id = ?
@@ -10906,6 +10908,10 @@ def save_short_settings(video_pk):
     if not row:
         conn.close()
         return jsonify(success=False, message="Video not found"), 404
+    if subscribe_overlay_value is None:
+        subscribe_overlay_enabled = bool(row[1]) if len(row) > 1 and row[1] is not None else True
+    if not _resolve_brand_subscribe_overlay_path(brand_id):
+        subscribe_overlay_enabled = False
     if podcast_audio_filename and current_user:
         if not _resolve_user_podcast_audio_path(current_user.get("id"), podcast_audio_filename):
             podcast_audio_filename = ""
