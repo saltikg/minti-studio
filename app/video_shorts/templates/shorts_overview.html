@@ -266,7 +266,8 @@
                       {{ entry.short_like_count if entry.short_like_count is not none else '-' }}
                     </span>
                     {% set pending_count = entry.pending_comment_count or 0 %}
-                    {% set total_comments = entry.platform_comment_count %}
+                    {% set bucket_total = (entry.pending_comment_count or 0) + (entry.published_comment_count or 0) + (entry.rejected_comment_count or 0) %}
+                    {% set total_comments = bucket_total if bucket_total > 0 else entry.platform_comment_count %}
                     {% if total_comments is none and entry.short_comment_count is not none %}
                       {% set total_comments = entry.short_comment_count %}
                     {% endif %}
@@ -1170,12 +1171,16 @@
 
     function updateCounts(comments) {
       const counts = {
-        all: comments.length,
+        all: 0,
         heldForReview: 0,
         published: 0,
         rejected: 0,
       };
       comments.forEach((comment) => {
+        if (comment?.is_reply) {
+          return;
+        }
+        counts.all += 1;
         const status = comment.status || "unknown";
         if (status === "heldForReview" || status === "likelySpam") {
           counts.heldForReview += 1;
@@ -1228,17 +1233,20 @@
 
     function normalizePlatformCount(counts, normalizedCounts) {
       const normalized = normalizedCounts || normalizeCounts(counts);
+      const bucketTotal = normalized.pending + normalized.published + normalized.rejected;
+      if (bucketTotal > 0) {
+        return bucketTotal;
+      }
       const publishedTotal = Number(
         counts?.platform_comment_count ??
           counts?.platformCommentCount ??
           counts?.total_comment_count ??
           counts?.totalCommentCount
       );
-      const safePublishedTotal =
-        Number.isFinite(publishedTotal) && publishedTotal >= 0
-          ? publishedTotal
-          : normalized.published;
-      return safePublishedTotal + normalized.pending + normalized.rejected;
+      if (Number.isFinite(publishedTotal) && publishedTotal >= 0) {
+        return publishedTotal;
+      }
+      return 0;
     }
 
     function countDisplayedTopLevelComments(comments) {
