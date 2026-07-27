@@ -5343,6 +5343,8 @@ def save_crop_area(video_pk):
     background_visual_key = (request.form.get("background_visual_key") or "").strip()
     if background_visual_key == "":
         background_visual_key = None
+    subscribe_overlay_enabled_raw = (request.form.get("enable_subscribe_overlay") or "").strip().lower()
+    subscribe_overlay_enabled = subscribe_overlay_enabled_raw in {"1", "true", "yes", "on"}
     crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
     if crop_aspect not in {"landscape", "portrait"}:
         crop_aspect = "landscape"
@@ -5452,6 +5454,7 @@ def save_crop_area(video_pk):
                 "static_visual_key = ?",
                 "background_visual_key = ?",
                 "crop_aspect = ?",
+                "subscribe_overlay_enabled = ?",
             ]
         )
         update_sql = f"""
@@ -5465,6 +5468,7 @@ def save_crop_area(video_pk):
                 static_visual_key,
                 background_visual_key,
                 crop_aspect,
+                subscribe_overlay_enabled,
                 video_pk,
                 current_user.get("id") if current_user else None,
             ]

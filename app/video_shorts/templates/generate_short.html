@@ -2040,6 +2040,14 @@
                 </div>
               </div>
               <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                {% set focus_category_label_map = {
+                  "tez": "Thesis",
+                  "ikaz": "Warning",
+                  "vecize": "Maxim",
+                  "hikaye": "Story",
+                  "cozum": "Solution",
+                  "duygu": "Emotion"
+                } %}
                 {% for item in focus_category_options %}
                   <label class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-2 px-2 py-1">
                     <input
@@ -2047,7 +2055,7 @@
                       class="form-check-input mt-0 ai-focus-category-checkbox"
                       value="{{ item.key }}"
                       {% if item.key in selected_focus_categories %}checked{% endif %}>
-                    <span>{{ item.label }}</span>
+                    <span>{{ focus_category_label_map.get(item.key, item.label) }}</span>
                   </label>
                 {% endfor %}
               </div>
@@ -8722,6 +8730,10 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("background_visual_key", activeBackgroundKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
+    const subscribeToggle = settingsContainer?.querySelector(`[name="enable_subscribe_overlay"]`);
+    if (subscribeToggle) {
+      params.append("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
+    }
     const originalText = saveBtn.textContent;
     const savingText = saveBtn.dataset.savingText || "Saving…";
     saveBtn.disabled = true;
