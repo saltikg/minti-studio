@@ -104,7 +104,8 @@ def test_tracked_short_comment_total_includes_pending_and_rejected():
 
     assert (
         tracked_total(
-            platform_comment_count=5,
+            platform_comment_count=99,
+            published_comment_count=5,
             pending_comment_count=2,
             rejected_comment_count=1,
         )
@@ -113,11 +114,22 @@ def test_tracked_short_comment_total_includes_pending_and_rejected():
     assert (
         tracked_total(
             platform_comment_count=None,
+            published_comment_count=3,
             pending_comment_count=2,
             rejected_comment_count=0,
             fallback_comment_count=3,
         )
         == 5
+    )
+    assert (
+        tracked_total(
+            platform_comment_count=11,
+            published_comment_count=0,
+            pending_comment_count=0,
+            rejected_comment_count=0,
+            fallback_comment_count=7,
+        )
+        == 11
     )
 
 
