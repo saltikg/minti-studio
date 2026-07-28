@@ -6629,6 +6629,9 @@ def shorts_storage_plans():
     has_managed_subscription = user_has_managed_subscription(billing_user)
     subscription_cancel_notice = None
     subscription_cancel_effective_date = None
+    free_period_notice = None
+    free_period_renewal_date = None
+    period_end = None
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
         period_end = billing_user.get("subscription_current_period_end")
         if isinstance(period_end, datetime):
@@ -6636,6 +6639,20 @@ def shorts_storage_plans():
             subscription_cancel_effective_date = effective_date
         else:
             effective_date = "the end of your billing period"
+    else:
+        period_end = (billing_user or {}).get("subscription_current_period_end")
+    if billing_user and billing_user.get("free_period_active"):
+        free_months = int(billing_user.get("free_months") or 0)
+        if isinstance(period_end, datetime):
+            free_period_renewal_date = period_end.astimezone(timezone.utc).strftime("%B %d, %Y")
+        elif period_end:
+            free_period_renewal_date = str(period_end)
+        else:
+            free_period_renewal_date = "the end of your billing period"
+        if free_months == 1:
+            free_period_notice = f"First month on us — renews {free_period_renewal_date}"
+        elif free_months >= 2:
+            free_period_notice = f"First {free_months} months on us — renews {free_period_renewal_date}"
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
@@ -6678,6 +6695,7 @@ def shorts_storage_plans():
         billing_has_managed_subscription=has_managed_subscription,
         billing_portal_url=url_for("video_shorts_bp.billing_portal"),
         subscription_cancel_notice=subscription_cancel_notice,
+        free_period_notice=free_period_notice,
         current_plan_id=effective_plan_id,
         subscription_cancel_at_period_end=bool((billing_user or {}).get("subscription_cancel_at_period_end")),
         subscription_cancel_effective_date=subscription_cancel_effective_date,

@@ -110,6 +110,7 @@ def create_embedded_checkout_session(
         mode="subscription",
         ui_mode="embedded_page",
         redirect_on_completion="if_required",
+        allow_promotion_codes=True,
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
         return_url=return_url,
@@ -236,6 +237,53 @@ def normalize_subscription_payload(subscription: Any) -> Dict[str, Any]:
     }
 
 
+def _extract_free_period_state(subscription: Any) -> Dict[str, Any]:
+    def _lookup(obj: Any, key: str):
+        value = getattr(obj, key, None)
+        if value is None and isinstance(obj, dict):
+            value = obj.get(key)
+        return value
+
+    coupon = None
+    discounts = _lookup(subscription, "discounts")
+    discount_entries = None
+    if discounts is not None:
+        discount_entries = _lookup(discounts, "data")
+        if discount_entries is None and isinstance(discounts, (list, tuple)):
+            discount_entries = discounts
+    if discount_entries:
+        first_discount = discount_entries[0]
+        coupon = _lookup(first_discount, "coupon")
+    if coupon is None:
+        legacy_discount = _lookup(subscription, "discount")
+        if legacy_discount is not None:
+            coupon = _lookup(legacy_discount, "coupon")
+
+    percent_off = _lookup(coupon, "percent_off") if coupon is not None else None
+    duration = (_lookup(coupon, "duration") or "").strip().lower() if coupon is not None else ""
+    duration_in_months = _lookup(coupon, "duration_in_months") if coupon is not None else None
+
+    try:
+        is_free = float(percent_off) == 100.0
+    except Exception:
+        is_free = False
+
+    free_months = 0
+    if is_free:
+        if duration == "once":
+            free_months = 1
+        elif duration == "repeating":
+            try:
+                free_months = int(duration_in_months or 0)
+            except Exception:
+                free_months = 0
+
+    return {
+        "free_period_active": bool(is_free and free_months >= 1),
+        "free_months": free_months if free_months >= 1 else 0,
+    }
+
+
 def _update_user_subscription_snapshot(
     *,
     user_id: str,
@@ -317,6 +365,8 @@ def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Opti
             "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else None,
             "billing_interval": row[7],
             "plan_id": row[8],
+            "free_period_active": False,
+            "free_months": 0,
         }
 
     state = _read_state()
@@ -330,6 +380,7 @@ def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Opti
     try:
         live_subscription = retrieve_subscription(subscription_id)
         normalized = normalize_subscription_payload(live_subscription)
+        free_period_state = _extract_free_period_state(live_subscription)
         current_cancel = state.get("subscription_cancel_at_period_end")
         if (
             current_cancel is None
@@ -350,10 +401,16 @@ def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Opti
                 billing_interval=normalized.get("billing_interval"),
             )
             state = _read_state() or state
+        state["free_period_active"] = bool(free_period_state.get("free_period_active"))
+        state["free_months"] = int(free_period_state.get("free_months") or 0)
     except Exception:
         logger.exception("Failed to refresh live Stripe subscription state user_id=%s subscription_id=%s", normalized_user_id, subscription_id)
     if state.get("subscription_cancel_at_period_end") is None:
         state["subscription_cancel_at_period_end"] = False
+    if "free_period_active" not in state:
+        state["free_period_active"] = False
+    if "free_months" not in state:
+        state["free_months"] = 0
     return state
 
 

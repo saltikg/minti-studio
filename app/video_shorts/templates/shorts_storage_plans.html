@@ -342,6 +342,9 @@
             </span>
           {% endif %}
         </div>
+        {% if free_period_notice %}
+          <div class="usage-reset">{{ free_period_notice }}</div>
+        {% endif %}
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
       <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
