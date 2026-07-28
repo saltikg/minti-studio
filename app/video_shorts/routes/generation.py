@@ -5328,6 +5328,12 @@ def delete_long_video_from_generate(video_pk: int):
 def save_crop_area(video_pk):
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
+    current_app.logger.warning(
+        "SUBOVL crop-save vid=%s present=%s val=%r",
+        video_pk,
+        "enable_subscribe_overlay" in request.form,
+        request.form.get("enable_subscribe_overlay"),
+    )
     def _parse_ratio(name: str):
         value = request.form.get(name)
         if value is None or value == "":
@@ -5399,22 +5405,29 @@ def save_crop_area(video_pk):
     try:
         _ensure_video_crop_schema(conn)
         video_columns = table_columns(conn, "youtube_videos")
+        existing_row = None
+        try:
+            existing_sql = """
+                SELECT podcast_audio_filename, subscribe_overlay_enabled
+                FROM youtube_videos
+                WHERE id = ?
+                  AND owner_user_id = ?
+            """
+            existing_params: List[Any] = [video_pk, current_user.get("id") if current_user else None]
+            if "brand_id" in video_columns:
+                if brand_id is None:
+                    existing_sql += "\n AND brand_id IS NULL"
+                else:
+                    existing_sql += "\n AND brand_id = ?"
+                    existing_params.append(brand_id)
+            existing_row = conn.execute(existing_sql, existing_params).fetchone()
+        except Exception:
+            existing_row = None
+        if subscribe_overlay_value is None and existing_row is not None and len(existing_row) > 1:
+            subscribe_overlay_enabled = bool(existing_row[1]) if existing_row[1] is not None else True
         if visual_mode == "podcast":
             try:
-                audio_sql = """
-                    SELECT podcast_audio_filename, subscribe_overlay_enabled
-                    FROM youtube_videos
-                    WHERE id = ?
-                      AND owner_user_id = ?
-                """
-                audio_params: List[Any] = [video_pk, current_user.get("id") if current_user else None]
-                if "brand_id" in video_columns:
-                    if brand_id is None:
-                        audio_sql += "\n AND brand_id IS NULL"
-                    else:
-                        audio_sql += "\n AND brand_id = ?"
-                        audio_params.append(brand_id)
-                audio_row = conn.execute(audio_sql, audio_params).fetchone()
+                audio_row = existing_row
                 if audio_row and str(audio_row[0] or "").strip():
                     crop_aspect = "landscape"
                 if subscribe_overlay_value is None and audio_row is not None and len(audio_row) > 1:
@@ -10822,6 +10835,12 @@ def add_v2_non_speech_keyword(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_short_settings", methods=["POST"])
 def save_short_settings(video_pk):
     brand_id = current_brand_id()
+    current_app.logger.warning(
+        "SUBOVL settings-save vid=%s present=%s val=%r",
+        video_pk,
+        "enable_subscribe_overlay" in request.form,
+        request.form.get("enable_subscribe_overlay"),
+    )
     font_key = request.form.get("font") or DEFAULT_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:

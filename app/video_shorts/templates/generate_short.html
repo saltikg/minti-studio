@@ -8631,7 +8631,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       },
     );
-    const subscribeToggle = settingsContainer.querySelector(`[name="enable_subscribe_overlay"]`);
+    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
@@ -8730,7 +8730,7 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("background_visual_key", activeBackgroundKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
-    const subscribeToggle = settingsContainer?.querySelector(`[name="enable_subscribe_overlay"]`);
+    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
     if (subscribeToggle) {
       params.append("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
