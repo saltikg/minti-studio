@@ -5328,12 +5328,6 @@ def delete_long_video_from_generate(video_pk: int):
 def save_crop_area(video_pk):
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
-    current_app.logger.warning(
-        "SUBOVL crop-save vid=%s present=%s val=%r",
-        video_pk,
-        "enable_subscribe_overlay" in request.form,
-        request.form.get("enable_subscribe_overlay"),
-    )
     def _parse_ratio(name: str):
         value = request.form.get(name)
         if value is None or value == "":
@@ -10835,12 +10829,6 @@ def add_v2_non_speech_keyword(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_short_settings", methods=["POST"])
 def save_short_settings(video_pk):
     brand_id = current_brand_id()
-    current_app.logger.warning(
-        "SUBOVL settings-save vid=%s present=%s val=%r",
-        video_pk,
-        "enable_subscribe_overlay" in request.form,
-        request.form.get("enable_subscribe_overlay"),
-    )
     font_key = request.form.get("font") or DEFAULT_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
