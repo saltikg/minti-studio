@@ -22,12 +22,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app import create_app
 from app.video_shorts.routes.videos import (
+    _build_comment_moderation_map,
     _collect_short_broadcast_entries,
     _merge_youtube_comments,
     _summarize_comment_counts_for_entries,
     _upsert_short_comment_counts,
 )
-from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
@@ -698,17 +698,11 @@ def _sync_youtube_comments_for_videos(
         if not comments:
             updated_count += 1
             continue
-        moderation_entries = [
-            {"id": str(comment.get("comment_id")), "text": comment.get("text") or ""}
-            for comment in comments
-            if comment.get("comment_id") and comment.get("text")
-        ]
-        moderation_map = (
-            moderate_text_entries(moderation_entries, owner_user_id)
-            if moderation_entries
-            else {}
+        moderation_map, _ = _build_comment_moderation_map(
+            comments,
+            owner_user_id,
+            platform="youtube",
         )
-        now = datetime.now(timezone.utc)
         records = []
         for comment in comments:
             comment_id = comment.get("comment_id")
@@ -735,7 +729,7 @@ def _sync_youtube_comments_for_videos(
                     "like_count": comment.get("like_count"),
                     "moderation_flagged": moderation.get("flagged") if moderation else None,
                     "moderation_reason": moderation.get("reason") if moderation else None,
-                    "moderation_checked_at": now if moderation else None,
+                    "moderation_checked_at": moderation.get("checked_at") if moderation else None,
                 }
             )
         if records:

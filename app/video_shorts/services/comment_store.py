@@ -611,6 +611,59 @@ def fetch_comments_missing_moderation(
         conn.close()
 
 
+def fetch_comment_moderation_state(
+    platform: str,
+    comment_ids: Sequence[str],
+    *,
+    owner_user_id: Optional[str] = None,
+) -> Dict[str, Dict[str, object]]:
+    normalized_comment_ids = [
+        str(comment_id or "").strip()
+        for comment_id in comment_ids
+        if str(comment_id or "").strip()
+    ]
+    if not platform or not normalized_comment_ids:
+        return {}
+    conn = get_db_readonly()
+    try:
+        ensure_comment_cache_schema(conn)
+        placeholders = ", ".join(["?"] * len(normalized_comment_ids))
+        where = [f"platform = ?", f"comment_id IN ({placeholders})"]
+        params: List[object] = [platform, *normalized_comment_ids]
+        _append_owner_user_filter(where, params, owner_user_id)
+        where_clause = " AND ".join(where)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    comment_id,
+                    text,
+                    moderation_flagged,
+                    moderation_reason,
+                    moderation_checked_at
+                FROM social_comment_cache
+                WHERE {where_clause}
+                """,
+                params,
+            ).fetchall()
+        except Exception as exc:
+            if "social_comment_cache" in str(exc).lower():
+                return {}
+            raise
+        return {
+            str(comment_id): {
+                "text": text,
+                "moderation_flagged": moderation_flagged,
+                "moderation_reason": moderation_reason,
+                "moderation_checked_at": moderation_checked_at,
+            }
+            for comment_id, text, moderation_flagged, moderation_reason, moderation_checked_at in rows
+            if comment_id
+        }
+    finally:
+        conn.close()
+
+
 def update_comment_moderation(records: List[Dict[str, object]]) -> None:
     if not records:
         return

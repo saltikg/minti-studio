@@ -36,6 +36,7 @@ from app.video_shorts.services.comment_store import (
     upsert_comment_records,
     fetch_comment_records,
     fetch_comment_records_for_video_ids,
+    fetch_comment_moderation_state,
     fetch_latest_comment_timestamps,
     fetch_comments_missing_moderation,
     fetch_comment_records_for_video,
@@ -700,6 +701,56 @@ def _badge_total_from_comment_summary(summary: Dict[str, int]) -> int:
     return max(0, int(summary.get("published", 0) or 0)) + max(
         0, int(summary.get("pending", 0) or 0)
     )
+
+
+def _build_comment_moderation_map(
+    comments: List[Dict[str, Any]],
+    owner_user_id: str,
+    *,
+    platform: str,
+) -> tuple[Dict[str, Dict[str, object]], datetime]:
+    now = datetime.now(timezone.utc)
+    comment_ids = [
+        str(comment.get("comment_id"))
+        for comment in comments
+        if comment.get("comment_id")
+    ]
+    existing_state = fetch_comment_moderation_state(
+        platform,
+        comment_ids,
+        owner_user_id=owner_user_id,
+    )
+    moderation_map: Dict[str, Dict[str, object]] = {}
+    entries_to_moderate: List[Dict[str, str]] = []
+    for comment in comments:
+        comment_id = str(comment.get("comment_id") or "").strip()
+        if not comment_id:
+            continue
+        text = comment.get("text") or ""
+        existing = existing_state.get(comment_id) or {}
+        existing_text = existing.get("text") or ""
+        checked_at = existing.get("moderation_checked_at")
+        if checked_at and existing_text == text:
+            moderation_map[comment_id] = {
+                "flagged": existing.get("moderation_flagged"),
+                "reason": existing.get("moderation_reason"),
+                "checked_at": checked_at,
+            }
+            continue
+        if text:
+            entries_to_moderate.append({"id": comment_id, "text": text})
+    fresh_moderation = (
+        moderate_text_entries(entries_to_moderate, owner_user_id)
+        if entries_to_moderate
+        else {}
+    )
+    for comment_id, moderation in fresh_moderation.items():
+        moderation_map[str(comment_id)] = {
+            "flagged": moderation.get("flagged"),
+            "reason": moderation.get("reason"),
+            "checked_at": now,
+        }
+    return moderation_map, now
 
 
 def _upsert_short_comment_counts(short_video_id: str, summary: Dict[str, int]):
@@ -1867,15 +1918,11 @@ def _sync_youtube_comments_for_video(
     comments = _merge_youtube_comments(comments)
     summary_counts = _summarize_comment_counts_for_entries(comments)
     _upsert_short_comment_counts(short_video_id, summary_counts)
-    moderation_entries = [
-        {"id": str(comment.get("comment_id")), "text": comment.get("text") or ""}
-        for comment in comments
-        if comment.get("comment_id") and comment.get("text")
-    ]
-    moderation_map = (
-        moderate_text_entries(moderation_entries, owner_user_id) if moderation_entries else {}
+    moderation_map, now = _build_comment_moderation_map(
+        comments,
+        owner_user_id,
+        platform="youtube",
     )
-    now = datetime.now(timezone.utc)
     title_value = (video_title or "").strip() or short_video_id
     records = []
     for comment in comments:
@@ -1902,7 +1949,7 @@ def _sync_youtube_comments_for_video(
                 "like_count": comment.get("like_count"),
                 "moderation_flagged": moderation.get("flagged") if moderation else None,
                 "moderation_reason": moderation.get("reason") if moderation else None,
-                "moderation_checked_at": now if moderation else None,
+                "moderation_checked_at": moderation.get("checked_at") if moderation else None,
             }
         )
     if records:
