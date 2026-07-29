@@ -1478,6 +1478,9 @@
         previous_status: comment.status || "",
         video_id: currentVideoId || comment.video_id || "",
       };
+      if (typeof comment.is_reply !== "undefined") {
+        payload.is_reply = Boolean(comment.is_reply);
+      }
       fetch(`/video_shorts/shorts/comments/${comment.comment_id}/hide`, {
         method: "POST",
         headers: {

@@ -698,8 +698,10 @@ def _summarize_comment_counts_for_entries(comments: List[Dict[str, Any]]) -> Dic
 
 
 def _badge_total_from_comment_summary(summary: Dict[str, int]) -> int:
-    return max(0, int(summary.get("published", 0) or 0)) + max(
-        0, int(summary.get("pending", 0) or 0)
+    return (
+        max(0, int(summary.get("published", 0) or 0))
+        + max(0, int(summary.get("pending", 0) or 0))
+        + max(0, int(summary.get("rejected", 0) or 0))
     )
 
 
@@ -913,16 +915,19 @@ def _adjust_short_comment_counts(short_video_id: str, delta_summary: Dict[str, i
             SELECT
               COALESCE(pending_comment_count, 0),
               COALESCE(published_comment_count, 0),
-              COALESCE(rejected_comment_count, 0)
+              COALESCE(rejected_comment_count, 0),
+              COALESCE(last_seen_comment_count, 0)
             FROM short_comment_cache
             WHERE short_video_id = ?
             """,
             [short_video_id],
         ).fetchone()
-        pending, published, rejected = row if row else (0, 0, 0)
+        pending, published, rejected, last_seen = row if row else (0, 0, 0, 0)
         pending = max(0, pending + delta_summary.get("pending", 0))
         published = max(0, published + delta_summary.get("published", 0))
         rejected = max(0, rejected + delta_summary.get("rejected", 0))
+        platform_total = pending + published + rejected
+        clamped_last_seen = min(max(0, last_seen), platform_total)
         conn.execute(
             """
             INSERT INTO short_comment_cache (
@@ -931,14 +936,16 @@ def _adjust_short_comment_counts(short_video_id: str, delta_summary: Dict[str, i
                 published_comment_count,
                 rejected_comment_count,
                 platform_comment_count,
+                last_seen_comment_count,
                 comments_last_synced_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (short_video_id)
             DO UPDATE SET
                 pending_comment_count = excluded.pending_comment_count,
                 published_comment_count = excluded.published_comment_count,
                 rejected_comment_count = excluded.rejected_comment_count,
                 platform_comment_count = excluded.platform_comment_count,
+                last_seen_comment_count = excluded.last_seen_comment_count,
                 comments_last_synced_at = excluded.comments_last_synced_at
             """,
             [
@@ -946,12 +953,19 @@ def _adjust_short_comment_counts(short_video_id: str, delta_summary: Dict[str, i
                 pending,
                 published,
                 rejected,
-                pending + published,
+                platform_total,
+                clamped_last_seen,
                 datetime.now(timezone.utc),
             ],
         )
         conn.commit()
-        return {"pending": pending, "published": published, "rejected": rejected}
+        return {
+            "pending": pending,
+            "published": published,
+            "rejected": rejected,
+            "platform_comment_count": platform_total,
+            "last_seen_comment_count": clamped_last_seen,
+        }
     finally:
         conn.close()
 
@@ -4562,6 +4576,7 @@ def shorts_comment_approve(comment_id):
     data = request.get_json(silent=True) or {}
     previous_status = (data.get("previous_status") or "").strip()
     video_id = (data.get("video_id") or "").strip()
+    is_reply = bool(data.get("is_reply"))
     try:
         youtube = _require_youtube_client()
         youtube.comments().setModerationStatus(
@@ -4570,7 +4585,7 @@ def shorts_comment_approve(comment_id):
         ).execute()
         update_comment_status("youtube", comment_id, "published")
         counts = None
-        if video_id:
+        if video_id and not is_reply:
             delta = _status_transition_delta(previous_status, "published")
             counts = _adjust_short_comment_counts(video_id, delta)
         return jsonify(success=True, counts=counts)
@@ -4589,6 +4604,7 @@ def shorts_comment_reject(comment_id):
     data = request.get_json(silent=True) or {}
     previous_status = (data.get("previous_status") or "").strip()
     video_id = (data.get("video_id") or "").strip()
+    is_reply = bool(data.get("is_reply"))
     try:
         youtube = _require_youtube_client()
         youtube.comments().setModerationStatus(
@@ -4597,7 +4613,7 @@ def shorts_comment_reject(comment_id):
         ).execute()
         update_comment_status("youtube", comment_id, "rejected")
         counts = None
-        if video_id:
+        if video_id and not is_reply:
             delta = _status_transition_delta(previous_status, "rejected")
             counts = _adjust_short_comment_counts(video_id, delta)
         return jsonify(success=True, counts=counts)
@@ -4616,6 +4632,7 @@ def shorts_comment_hide(comment_id):
     data = request.get_json(silent=True) or {}
     previous_status = (data.get("previous_status") or "").strip()
     video_id = (data.get("video_id") or "").strip()
+    is_reply = bool(data.get("is_reply"))
     try:
         youtube = _require_youtube_client()
         youtube.comments().setModerationStatus(
@@ -4625,7 +4642,7 @@ def shorts_comment_hide(comment_id):
         ).execute()
         update_comment_status("youtube", comment_id, "rejected")
         counts = None
-        if video_id:
+        if video_id and not is_reply:
             delta = _status_transition_delta(previous_status, "rejected")
             counts = _adjust_short_comment_counts(video_id, delta)
         return jsonify(success=True, counts=counts)
@@ -4661,7 +4678,7 @@ def shorts_comment_delete(comment_id):
                 raise
         delete_comment_record("youtube", comment_id)
         counts = None
-        if video_id:
+        if video_id and not is_reply:
             delta = _removal_delta(previous_status)
             counts = _adjust_short_comment_counts(video_id, delta)
         return jsonify(success=True, counts=counts)
@@ -4710,7 +4727,7 @@ def shorts_comment_reply(comment_id):
         }
         bucket = _normalize_status_for_bucket(new_comment.get("status") or "published")
         counts = None
-        if bucket and snippet.get("videoId"):
+        if bucket and snippet.get("videoId") and not new_comment.get("is_reply"):
             delta = {"pending": 0, "published": 0, "rejected": 0}
             delta[bucket] = 1
             counts = _adjust_short_comment_counts(snippet.get("videoId"), delta)
