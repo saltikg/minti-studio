@@ -696,9 +696,16 @@ def _summarize_comment_counts_for_entries(comments: List[Dict[str, Any]]) -> Dic
     return summary
 
 
+def _badge_total_from_comment_summary(summary: Dict[str, int]) -> int:
+    return max(0, int(summary.get("published", 0) or 0)) + max(
+        0, int(summary.get("pending", 0) or 0)
+    )
+
+
 def _upsert_short_comment_counts(short_video_id: str, summary: Dict[str, int]):
     if not short_video_id:
         return
+    platform_total = _badge_total_from_comment_summary(summary)
     conn = get_db()
     _ensure_video_crop_schema(conn)
     try:
@@ -711,13 +718,15 @@ def _upsert_short_comment_counts(short_video_id: str, summary: Dict[str, int]):
                 pending_comment_count,
                 published_comment_count,
                 rejected_comment_count,
+                platform_comment_count,
                 comments_last_synced_at
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (short_video_id)
             DO UPDATE SET
                 pending_comment_count = excluded.pending_comment_count,
                 published_comment_count = excluded.published_comment_count,
                 rejected_comment_count = excluded.rejected_comment_count,
+                platform_comment_count = excluded.platform_comment_count,
                 comments_last_synced_at = excluded.comments_last_synced_at
             """,
             [
@@ -725,6 +734,7 @@ def _upsert_short_comment_counts(short_video_id: str, summary: Dict[str, int]):
                 summary.get("pending", 0),
                 summary.get("published", 0),
                 summary.get("rejected", 0),
+                platform_total,
                 now,
             ],
         )
@@ -869,16 +879,25 @@ def _adjust_short_comment_counts(short_video_id: str, delta_summary: Dict[str, i
                 pending_comment_count,
                 published_comment_count,
                 rejected_comment_count,
+                platform_comment_count,
                 comments_last_synced_at
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (short_video_id)
             DO UPDATE SET
                 pending_comment_count = excluded.pending_comment_count,
                 published_comment_count = excluded.published_comment_count,
                 rejected_comment_count = excluded.rejected_comment_count,
+                platform_comment_count = excluded.platform_comment_count,
                 comments_last_synced_at = excluded.comments_last_synced_at
             """,
-            [short_video_id, pending, published, rejected, datetime.now(timezone.utc)],
+            [
+                short_video_id,
+                pending,
+                published,
+                rejected,
+                pending + published,
+                datetime.now(timezone.utc),
+            ],
         )
         conn.commit()
         return {"pending": pending, "published": published, "rejected": rejected}
@@ -1846,6 +1865,8 @@ def _sync_youtube_comments_for_video(
     if not any_success:
         return 0
     comments = _merge_youtube_comments(comments)
+    summary_counts = _summarize_comment_counts_for_entries(comments)
+    _upsert_short_comment_counts(short_video_id, summary_counts)
     moderation_entries = [
         {"id": str(comment.get("comment_id")), "text": comment.get("text") or ""}
         for comment in comments
@@ -1888,7 +1909,7 @@ def _sync_youtube_comments_for_video(
         upsert_comment_records(records)
     _update_short_comment_sync_state(
         short_video_id,
-        last_comment_count=len(comments),
+        last_comment_count=_badge_total_from_comment_summary(summary_counts),
     )
     return len(records)
 
@@ -3931,9 +3952,7 @@ def shorts_overview():
             if stats or comment_activity > 0:
                 entry["publish_status"] = "published"
                 entry["publish_status_label"] = "Published"
-        total_comments = _normalize_nonnegative_int(entry.get("platform_comment_count"))
-        if total_comments is None:
-            total_comments = _normalize_nonnegative_int(entry.get("short_comment_count")) or 0
+        total_comments = _normalize_nonnegative_int(entry.get("platform_comment_count")) or 0
         last_seen = entry.get("last_seen_comment_count") or 0
         entry["has_unread_comments"] = total_comments > last_seen
         entry["has_any_unread_comments"] = bool(entry.get("has_unread_comments")) or any(
@@ -4386,9 +4405,6 @@ def shorts_comments(video_id):
                 video_id,
                 video_title=video_title,
             )
-            platform_total = _load_youtube_platform_comment_total(video_id)
-            if platform_total is not None:
-                _upsert_short_comment_platform_total(video_id, platform_total)
         except Exception:
             live_fetch_failed = True
             note = "Latest YouTube comments could not be fetched. Showing cached comments."
@@ -4457,8 +4473,8 @@ def shorts_comment_cache_counts(video_id):
     }
     _upsert_short_comment_counts(video_id, summary)
     platform_total = _normalize_nonnegative_int(data.get("platform_comment_count"))
-    if platform_total is not None:
-        _upsert_short_comment_platform_total(video_id, platform_total)
+    if platform_total is None:
+        platform_total = _badge_total_from_comment_summary(summary)
     explicit_last_seen_count = _normalize_nonnegative_int(data.get("last_seen_comment_count"))
     mark_seen = _parse_bool(data.get("mark_seen"), default=False)
     last_seen_count = None

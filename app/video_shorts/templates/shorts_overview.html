@@ -267,9 +267,6 @@
                     </span>
                     {% set pending_count = entry.pending_comment_count or 0 %}
                     {% set total_comments = entry.platform_comment_count %}
-                    {% if total_comments is none and entry.short_comment_count is not none %}
-                      {% set total_comments = entry.short_comment_count %}
-                    {% endif %}
                     {% if total_comments is none %}
                       {% set total_comments = 0 %}
                     {% endif %}
@@ -1233,9 +1230,7 @@
     function normalizePlatformCount(counts, normalizedCounts) {
       const publishedTotal = Number(
         counts?.platform_comment_count ??
-          counts?.platformCommentCount ??
-          counts?.total_comment_count ??
-          counts?.totalCommentCount
+          counts?.platformCommentCount
       );
       if (Number.isFinite(publishedTotal) && publishedTotal >= 0) {
         return publishedTotal;

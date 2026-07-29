@@ -31,10 +31,15 @@ pick_log_file() {
 
 if [[ "$MODE" == "youtube-comments" ]]; then
   LOG_FILE="$(pick_log_file "$LOG_DIR/social_youtube_comments.log")"
+  COMMENT_SCAN_SCOPE="recent50"
+  if (( $(date -u +%H) % 4 == 0 )); then
+    COMMENT_SCAN_SCOPE="all"
+  fi
   CMD=(
     "$ROOT/.venv/bin/python"
     "app/video_shorts/tasks/run_social_jobs.py"
     "--only-youtube-comments"
+    "--comment-scan-scope" "$COMMENT_SCAN_SCOPE"
   )
 else
   LOG_FILE="$(pick_log_file "$LOG_DIR/social_all.log")"

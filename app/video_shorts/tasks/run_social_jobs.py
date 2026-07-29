@@ -76,6 +76,12 @@ def main() -> int:
     ap.add_argument("--comments-limit", type=int, default=25, help="Max Instagram comments per media")
     ap.add_argument("--skip-youtube-comments", action="store_true", help="Skip YouTube comment sync")
     ap.add_argument("--only-youtube-comments", action="store_true", help="Run only YouTube comment sync")
+    ap.add_argument(
+        "--comment-scan-scope",
+        choices=("recent50", "all"),
+        default="recent50",
+        help="YouTube comment scan scope for --only-youtube-comments runs",
+    )
     args = ap.parse_args()
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -86,7 +92,7 @@ def main() -> int:
     if args.only_youtube_comments:
         if not _run_locked_step(
             "YouTube comment sync (only)",
-            sync_short_comments_main,
+            lambda: sync_short_comments_main(comment_scan_scope=args.comment_scan_scope),
             lock_timeout_seconds=PUBLISH_LOCK_TIMEOUT_SECONDS,
             required=True,
         ):
@@ -99,7 +105,7 @@ def main() -> int:
     if not args.skip_youtube_comments:
         if not _run_locked_step(
             "YouTube comment sync",
-            sync_short_comments_main,
+            lambda: sync_short_comments_main(comment_scan_scope=args.comment_scan_scope),
             lock_timeout_seconds=PUBLISH_LOCK_TIMEOUT_SECONDS,
             required=True,
         ):

@@ -24,12 +24,8 @@ from app import create_app
 from app.video_shorts.routes.videos import (
     _collect_short_broadcast_entries,
     _merge_youtube_comments,
+    _summarize_comment_counts_for_entries,
     _upsert_short_comment_counts,
-    _upsert_short_comment_platform_total,
-)
-from app.video_shorts.services.comment_store import (
-    fetch_latest_comment_timestamps,
-    fetch_top_level_comment_counts,
 )
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
@@ -55,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 COMMENT_COUNT_SYNC_RECENT_SIZE = int(os.getenv("SHORT_COMMENT_COUNT_SYNC_LIMIT", "100"))
 YOUTUBE_COMMENT_FETCH_MAX_RESULTS = 50
+YOUTUBE_COMMENT_RECENT_SCAN_SIZE = 50
 
 
 def _unique_short_ids(entries: List[Dict[str, object]]) -> List[str]:
@@ -92,6 +89,22 @@ def _select_recent_entries(
         if len(picked) >= max_items:
             break
     return picked
+
+
+def _normalize_comment_scan_scope(value: object) -> str:
+    return "all" if str(value or "").strip().lower() == "all" else "recent50"
+
+
+def _select_youtube_comment_scan_entries(
+    entries: List[Dict[str, object]],
+    scan_scope: str,
+) -> List[Dict[str, object]]:
+    if not entries:
+        return []
+    normalized_scope = _normalize_comment_scan_scope(scan_scope)
+    if normalized_scope == "all":
+        return _select_recent_entries(entries, len(entries))
+    return _select_recent_entries(entries, YOUTUBE_COMMENT_RECENT_SCAN_SIZE)
 
 
 def _normalize_comment_count(value: object) -> Optional[int]:
@@ -212,7 +225,6 @@ def _sync_youtube_comment_totals(
         total = _normalize_comment_count(comment_count_map.get(short_id))
         if total is None:
             continue
-        _upsert_short_comment_platform_total(short_id, total)
         sync_updates.setdefault(short_id, {}).update(
             {
                 "observed_comment_count": total,
@@ -221,6 +233,12 @@ def _sync_youtube_comment_totals(
         )
         refreshed += 1
     return refreshed
+
+
+def _youtube_badge_total_from_summary(summary: Dict[str, int]) -> int:
+    return max(0, int(summary.get("published", 0) or 0)) + max(
+        0, int(summary.get("pending", 0) or 0)
+    )
 
 
 def _sync_instagram_comment_counts(entries: List[Dict[str, object]]) -> int:
@@ -623,25 +641,12 @@ def _select_sync_ids(
 def _sync_youtube_comments_for_videos(
     owner_user_id: str,
     short_ids: List[str],
-    latest_by_video: Dict[str, object],
     title_map: Dict[str, str],
-    sync_state: Dict[str, Dict[str, object]],
-    comment_counts: Dict[str, Optional[int]],
-    cached_top_level_counts: Dict[str, int],
     sync_updates: Dict[str, Dict[str, object]],
     short_oauth_user_ids: Dict[str, Optional[str]],
 ) -> int:
     updated_count = 0
     for short_id in short_ids:
-        current_comment_count = _normalize_comment_count(comment_counts.get(short_id))
-        cached_top_level_count = cached_top_level_counts.get(short_id, 0)
-        if not _should_fetch_youtube_comment_bodies(
-            short_id,
-            current_comment_count,
-            sync_state.get(short_id),
-            cached_top_level_count,
-        ):
-            continue
         comments: List[Dict[str, object]] = []
         any_success = False
         try:
@@ -680,24 +685,16 @@ def _sync_youtube_comments_for_videos(
             pass
         if not any_success:
             continue
+        comments = _merge_youtube_comments(comments)
+        summary_counts = _summarize_comment_counts_for_entries(comments)
+        badge_total = _youtube_badge_total_from_summary(summary_counts)
+        _upsert_short_comment_counts(short_id, summary_counts)
         sync_updates.setdefault(short_id, {}).update(
             {
                 "last_synced_at": datetime.now(timezone.utc),
-                "last_comment_count": current_comment_count,
+                "last_comment_count": badge_total,
             }
         )
-        if not comments:
-            updated_count += 1
-            continue
-        comments = _merge_youtube_comments(comments)
-        latest_ts = latest_by_video.get(short_id) if latest_by_video else None
-        if latest_ts:
-            comments = [
-                comment
-                for comment in comments
-                if not comment.get("published_at")
-                or comment.get("published_at") > latest_ts
-            ]
         if not comments:
             updated_count += 1
             continue
@@ -763,7 +760,7 @@ def _load_owner_user_ids() -> List[str]:
         conn.close()
 
 
-def main() -> int:
+def main(*, comment_scan_scope: str = "recent50") -> int:
     app = create_app()
     with app.app_context():
         comment_sync_enabled = os.getenv("YT_COMMENT_SYNC_ENABLED", "0").strip().lower() in {
@@ -780,13 +777,10 @@ def main() -> int:
         }
         try:
             if comment_sync_enabled:
+                scan_scope = _normalize_comment_scan_scope(comment_scan_scope)
                 entries = _collect_short_broadcast_entries()
                 all_short_video_ids = _unique_short_ids(entries)
-                sync_state = _load_sync_state(all_short_video_ids)
                 sync_updates: Dict[str, Dict[str, object]] = {}
-                short_owner_context = _load_short_owner_context(entries) if entries else {}
-                owner_short_ids = _group_short_ids_by_owner(short_owner_context)
-                short_oauth_user_ids = _resolve_short_oauth_user_ids(short_owner_context)
                 comment_count_map = (
                     {
                         short_id: _normalize_comment_count((stats or {}).get("comment_count"))
@@ -796,6 +790,14 @@ def main() -> int:
                     else {}
                 )
                 recent_entries = _select_recent_entries(entries, COMMENT_COUNT_SYNC_RECENT_SIZE)
+                scan_entries = _select_youtube_comment_scan_entries(entries, scan_scope)
+                scan_short_owner_context = (
+                    _load_short_owner_context(scan_entries) if scan_entries else {}
+                )
+                scan_owner_short_ids = _group_short_ids_by_owner(scan_short_owner_context)
+                scan_short_oauth_user_ids = _resolve_short_oauth_user_ids(
+                    scan_short_owner_context
+                )
                 if not all_short_video_ids:
                     logger.info("No short videos found for comment count sync.")
                 else:
@@ -817,10 +819,9 @@ def main() -> int:
                 )
                 if not full_sync_enabled:
                     logger.info("Full YouTube comment sync disabled; skipping comment fetch.")
-                if full_sync_enabled and entries:
-                    owner_user_ids = _load_owner_user_ids()
-                    publish_map = _build_publish_sort_map(entries)
-                    title_map = _build_title_map(entries)
+                if full_sync_enabled and scan_entries:
+                    owner_user_ids = sorted(scan_owner_short_ids.keys())
+                    title_map = _build_title_map(scan_entries)
                     conn = get_db()
                     try:
                         _ensure_sync_state_table(conn)
@@ -831,35 +832,16 @@ def main() -> int:
                     else:
                         total_records = 0
                         for owner_user_id in owner_user_ids:
-                            candidate_ids = owner_short_ids.get(owner_user_id, [])
+                            candidate_ids = scan_owner_short_ids.get(owner_user_id, [])
                             if not candidate_ids:
                                 continue
-                            selected_ids = _select_sync_ids(
-                                candidate_ids,
-                                publish_map,
-                                sync_state,
-                                recent_size=12,
-                                rotate_size=24,
-                            )
-                            latest_by_video = fetch_latest_comment_timestamps(
-                                owner_user_id,
-                                platform="youtube",
-                            )
-                            cached_top_level_counts = fetch_top_level_comment_counts(
-                                selected_ids,
-                                platform="youtube",
-                            )
                             try:
                                 updated_count = _sync_youtube_comments_for_videos(
                                     owner_user_id,
-                                    selected_ids,
-                                    latest_by_video,
+                                    candidate_ids,
                                     title_map,
-                                    sync_state,
-                                    comment_count_map,
-                                    cached_top_level_counts,
                                     sync_updates,
-                                    short_oauth_user_ids,
+                                    scan_short_oauth_user_ids,
                                 )
                                 total_records += updated_count
                             except Exception:
@@ -868,8 +850,9 @@ def main() -> int:
                                     owner_user_id,
                                 )
                         logger.info(
-                            "Synced %s new YouTube comments across %s owners.",
+                            "Scanned %s YouTube shorts for comments scope=%s across %s owners.",
                             total_records,
+                            scan_scope,
                             len(owner_user_ids),
                         )
                 if sync_updates:
