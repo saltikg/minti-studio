@@ -833,26 +833,6 @@ def _normalize_nonnegative_int(value: Any) -> int | None:
     return max(0, normalized)
 
 
-def _tracked_short_comment_total(
-    *,
-    platform_comment_count: Any,
-    published_comment_count: Any = None,
-    pending_comment_count: Any = 0,
-    rejected_comment_count: Any = 0,
-    fallback_comment_count: Any = None,
-) -> int:
-    bucket_published_total = _normalize_nonnegative_int(published_comment_count) or 0
-    pending_total = _normalize_nonnegative_int(pending_comment_count) or 0
-    rejected_total = _normalize_nonnegative_int(rejected_comment_count) or 0
-    bucket_total = bucket_published_total + pending_total + rejected_total
-    if bucket_total > 0:
-        return bucket_total
-    published_total = _normalize_nonnegative_int(platform_comment_count)
-    if published_total is None:
-        published_total = _normalize_nonnegative_int(fallback_comment_count)
-    return published_total or 0
-
-
 def _load_youtube_platform_comment_total(short_video_id: str) -> int | None:
     short_id = str(short_video_id or "").strip()
     if not short_id:
@@ -3951,13 +3931,9 @@ def shorts_overview():
             if stats or comment_activity > 0:
                 entry["publish_status"] = "published"
                 entry["publish_status_label"] = "Published"
-        total_comments = _tracked_short_comment_total(
-            platform_comment_count=entry.get("platform_comment_count"),
-            published_comment_count=entry.get("published_comment_count"),
-            pending_comment_count=entry.get("pending_comment_count"),
-            rejected_comment_count=entry.get("rejected_comment_count"),
-            fallback_comment_count=entry.get("short_comment_count"),
-        )
+        total_comments = _normalize_nonnegative_int(entry.get("platform_comment_count"))
+        if total_comments is None:
+            total_comments = _normalize_nonnegative_int(entry.get("short_comment_count")) or 0
         last_seen = entry.get("last_seen_comment_count") or 0
         entry["has_unread_comments"] = total_comments > last_seen
         entry["has_any_unread_comments"] = bool(entry.get("has_unread_comments")) or any(

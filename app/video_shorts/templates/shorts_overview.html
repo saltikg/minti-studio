@@ -266,8 +266,7 @@
                       {{ entry.short_like_count if entry.short_like_count is not none else '-' }}
                     </span>
                     {% set pending_count = entry.pending_comment_count or 0 %}
-                    {% set bucket_total = (entry.pending_comment_count or 0) + (entry.published_comment_count or 0) + (entry.rejected_comment_count or 0) %}
-                    {% set total_comments = bucket_total if bucket_total > 0 else entry.platform_comment_count %}
+                    {% set total_comments = entry.platform_comment_count %}
                     {% if total_comments is none and entry.short_comment_count is not none %}
                       {% set total_comments = entry.short_comment_count %}
                     {% endif %}
@@ -279,7 +278,7 @@
                         <span
                           role="button"
                           tabindex="0"
-                          class="short-comments-btn {% if pending_count and entry.has_unread_comments %}short-comments-btn-pending{% elif entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
+                          class="short-comments-btn {% if entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
                           data-comments-url="{{ entry.comments_url }}"
                           data-comments-status="all"
                           data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
@@ -1232,11 +1231,6 @@
     }
 
     function normalizePlatformCount(counts, normalizedCounts) {
-      const normalized = normalizedCounts || normalizeCounts(counts);
-      const bucketTotal = normalized.pending + normalized.published + normalized.rejected;
-      if (bucketTotal > 0) {
-        return bucketTotal;
-      }
       const publishedTotal = Number(
         counts?.platform_comment_count ??
           counts?.platformCommentCount ??
@@ -1293,7 +1287,6 @@
         triggerBtn.dataset.platformCommentCount = totalCount;
         triggerBtn.classList.add("short-comments-btn");
         triggerBtn.classList.remove(
-          "short-comments-btn-pending",
           "short-comments-btn-default",
           "short-comments-btn-unread"
         );
@@ -1304,13 +1297,7 @@
           countEl = triggerBtn.querySelector("[data-role='comment-count']");
         }
         const hasUnread = totalCount > lastSeenCount;
-        if (normalized.pending > 0 && hasUnread) {
-          triggerBtn.classList.add("short-comments-btn-pending");
-          countEl.textContent = `(${normalized.pending})`;
-        } else if (normalized.pending > 0) {
-          triggerBtn.classList.add("short-comments-btn-default");
-          countEl.textContent = `(${normalized.pending})`;
-        } else if (totalCount > 0) {
+        if (totalCount > 0) {
           triggerBtn.classList.add(hasUnread ? "short-comments-btn-unread" : "short-comments-btn-default");
           countEl.textContent = `(${totalCount})`;
         } else {
