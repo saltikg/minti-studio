@@ -1786,10 +1786,6 @@
   </div>
 </div>
 
-<div id="js-debug-panel"
-     class="alert alert-danger py-2 px-3 d-none"
-     style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;"></div>
-
 {% if (video.download_status or '')|lower == 'pending' and not ((video.video_id or '')|lower).startswith('local_') %}
   <div class="alert alert-info">
     We are preparing the source video. This can take a little while.
@@ -8952,24 +8948,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script>
-window.__vsDebugLog = (message) => {
-  try {
-    const panel = document.getElementById("js-debug-panel");
-    if (!panel) return;
-    panel.classList.remove("d-none");
-    const line = `[${new Date().toLocaleTimeString()}] ${String(message || "Unknown error")}`;
-    panel.textContent = panel.textContent ? `${panel.textContent}\n${line}` : line;
-  } catch (_) {}
-};
-window.addEventListener("error", (event) => {
-  const msg = event?.error?.stack || event?.message || "window error";
-  window.__vsDebugLog(msg);
-});
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event?.reason;
-  const msg = (reason && (reason.stack || reason.message)) || String(reason || "unhandled rejection");
-  window.__vsDebugLog(msg);
-});
+window.__vsDebugLog = () => {};
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
