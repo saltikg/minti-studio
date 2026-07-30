@@ -8635,15 +8635,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
-    const showTitleField = settingsContainer.querySelector(`[name="show_title"]`);
+    const showTitleField = modalEl.querySelector(`[name="show_title"]`);
     if (showTitleField) {
       params.set("show_title", showTitleField.checked ? "1" : "0");
     }
-    const showSubtitleField = settingsContainer.querySelector(`[name="show_subtitle"]`);
+    const showSubtitleField = modalEl.querySelector(`[name="show_subtitle"]`);
     if (showSubtitleField) {
       params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
     }
-    const musicOnlyToggle = settingsContainer.querySelector(`[name="is_music_only"]`);
+    const musicOnlyToggle = modalEl.querySelector(`[name="is_music_only"]`);
     if (musicOnlyToggle) {
       params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
     }

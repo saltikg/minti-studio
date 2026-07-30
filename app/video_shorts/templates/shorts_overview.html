@@ -275,7 +275,7 @@
                         <span
                           role="button"
                           tabindex="0"
-                          class="short-comments-btn {% if entry.has_unread_comments %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
+                          class="short-comments-btn {% if entry.has_unread_comments or pending_count > 0 %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
                           data-comments-url="{{ entry.comments_url }}"
                           data-comments-status="all"
                           data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
@@ -287,9 +287,6 @@
                           <i class="bi bi-chat-dots"></i>
                           <span class="fw-semibold" data-role="comment-count">({{ total_comments }})</span>
                         </span>
-                        {% if pending_count %}
-                          <span class="comment-alert-dot ms-1"></span>
-                        {% endif %}
                       {% else %}
                         <i class="bi bi-chat-dots"></i>
                         <span class="fw-semibold">{{ entry.short_comment_count if entry.short_comment_count is not none else 0 }}</span>
@@ -1291,7 +1288,7 @@
             "<i class=\"bi bi-chat-dots\"></i><span class=\"fw-semibold\" data-role=\"comment-count\"></span>";
           countEl = triggerBtn.querySelector("[data-role='comment-count']");
         }
-        const hasUnread = totalCount > lastSeenCount;
+        const hasUnread = totalCount > lastSeenCount || normalized.pending > 0;
         if (totalCount > 0) {
           triggerBtn.classList.add(hasUnread ? "short-comments-btn-unread" : "short-comments-btn-default");
           countEl.textContent = `(${totalCount})`;
@@ -1299,10 +1296,6 @@
           triggerBtn.classList.add("short-comments-btn-default");
           countEl.textContent = "(0)";
         }
-      }
-      const alertDot = row ? row.querySelector(".comment-alert-dot") : null;
-      if (alertDot) {
-        alertDot.classList.toggle("d-none", normalized.pending <= 0);
       }
     }
 
