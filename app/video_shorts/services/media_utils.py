@@ -422,7 +422,7 @@ def normalize_source_video_for_streaming(path: Path, *, log: logging.Logger | No
     if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
         return path
     try:
-        if not source_video_needs_faststart(path):
+        if not source_video_needs_remux(path):
             active_logger.info("source faststart skip path=%s reason=already_streamable", path)
             return path
     except Exception:
