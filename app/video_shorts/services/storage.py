@@ -3,8 +3,10 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 from typing import Iterable, List, Optional
 from urllib.parse import quote
 
@@ -12,6 +14,9 @@ from app.video_shorts.config import (
     AWS_ACCESS_KEY_ID,
     AWS_REGION,
     AWS_SECRET_ACCESS_KEY,
+    CLOUDFRONT_DOMAIN,
+    CLOUDFRONT_KEY_PAIR_ID,
+    CLOUDFRONT_PRIVATE_KEY_PATH,
     MEDIA_BACKEND,
     S3_BUCKET_NAME,
     STATIC_USER_AUDIO_DIR,
@@ -22,14 +27,62 @@ from app.video_shorts.config import (
 try:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.signers import CloudFrontSigner
 except ImportError:  # pragma: no cover
     boto3 = None
     BotoCoreError = ClientError = Exception
+    CloudFrontSigner = None
+
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+except ImportError:  # pragma: no cover
+    hashes = serialization = padding = None
 
 
 _LOCAL_STATIC_ROOT = STATIC_USER_IMAGES_DIR.parent.resolve()
 _MIGRATED_PREFIXES = ("user_images/", "user_audio/", "user_podcasts/")
 _STORAGE_REFERENCE_PREFIX = "s3://"
+
+
+def _require_cloudfront_config() -> tuple[str, str, Path]:
+    domain = str(CLOUDFRONT_DOMAIN or "").strip()
+    key_pair_id = str(CLOUDFRONT_KEY_PAIR_ID or "").strip()
+    private_key_path_raw = str(CLOUDFRONT_PRIVATE_KEY_PATH or "").strip()
+    missing = []
+    if not domain:
+        missing.append("CLOUDFRONT_DOMAIN")
+    if not key_pair_id:
+        missing.append("CLOUDFRONT_KEY_PAIR_ID")
+    if not private_key_path_raw:
+        missing.append("CLOUDFRONT_PRIVATE_KEY_PATH")
+    if missing:
+        raise RuntimeError(
+            "CloudFront viewer URL signing is enabled for MEDIA_BACKEND=s3 but required env vars are missing: "
+            + ", ".join(missing)
+        )
+    private_key_path = Path(private_key_path_raw)
+    if not private_key_path.exists() or not private_key_path.is_file():
+        raise RuntimeError(
+            f"CloudFront private key file does not exist or is not a file: {private_key_path}"
+        )
+    return domain, key_pair_id, private_key_path
+
+
+@lru_cache(maxsize=1)
+def _load_cloudfront_signer() -> tuple[str, Callable[..., str]]:
+    if CloudFrontSigner is None or serialization is None or hashes is None or padding is None:
+        raise RuntimeError("CloudFront signed URLs require botocore CloudFrontSigner and cryptography.")
+    domain, key_pair_id, private_key_path = _require_cloudfront_config()
+    private_key = serialization.load_pem_private_key(
+        private_key_path.read_bytes(),
+        password=None,
+    )
+
+    def rsa_signer(message: bytes) -> bytes:
+        return private_key.sign(message, padding.PKCS1v15(), hashes.SHA1())
+
+    return domain, CloudFrontSigner(key_pair_id, rsa_signer)
 
 
 class ManagedTempPath(os.PathLike[str]):
@@ -242,10 +295,12 @@ class S3Storage(Storage):
             raise
 
     def public_url(self, key: str) -> str:
-        return self.client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket_name, "Key": key},
-            ExpiresIn=3600,
+        domain, signer = _load_cloudfront_signer()
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)
+        url = f"https://{domain}/{quote(str(key).lstrip('/'), safe='/')}"
+        return signer.generate_presigned_url(
+            url,
+            date_less_than=expires_at,
         )
 
     def download_to_temp(self, key: str) -> Path:
