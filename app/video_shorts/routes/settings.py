@@ -147,7 +147,23 @@ def settings_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    return redirect(url_for("video_shorts_bp.static_images_page"))
+    settings_items = [
+        {
+            "title": "Backgrounds",
+            "subtitle": "Manage visual assets for Generate",
+            "meta": "Manage the background images available in Generate.",
+            "icon": "image",
+            "href": url_for("video_shorts_bp.static_images_page"),
+        },
+        {
+            "title": "Prompts",
+            "subtitle": "Tune your AI writing and moderation prompts",
+            "meta": "Customize the AI prompts for comment moderation and video descriptions.",
+            "icon": "notes",
+            "href": url_for("video_shorts_bp.prompts_page"),
+        },
+    ]
+    return render_template("shorts_settings.html", settings_items=settings_items)
 
 
 @video_shorts_bp.route("/settings/categories", methods=["GET", "POST"])
