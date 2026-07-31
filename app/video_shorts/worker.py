@@ -22,7 +22,11 @@ from app.video_shorts.config import (
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
-from app.video_shorts.services.media_utils import _resolve_source_video, _cleanup_resolved_source_video
+from app.video_shorts.services.media_utils import (
+    _cleanup_resolved_source_video,
+    _resolve_source_video,
+    remux_s3_source_video_if_needed,
+)
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
@@ -37,6 +41,7 @@ from app.video_shorts.services.quick_short_flow import (
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
+    JOB_TYPE_NORMALIZE_UPLOAD,
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
@@ -520,6 +525,75 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         _cleanup_resolved_source_video(source_path, is_temp)
 
 
+def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    video_id = str(payload.get("video_id") or "").strip()
+    source_key = str(payload.get("source_key") or "").strip()
+    video_pk = int(payload.get("video_pk") or 0)
+    if not video_id or not source_key or not video_pk:
+        app.logger.warning(
+            "normalize fallback job_id=%s video_id=%s key=%s error=missing-payload",
+            job.get("id"),
+            video_id,
+            source_key,
+        )
+        return {"normalized": False, "reason": "missing-payload"}
+
+    storage = get_media_storage()
+    source_path = None
+    try:
+        source_path = storage.download_to_temp(source_key)
+        streamable_key = f"videos/{video_id}_streamable.mp4"
+        new_key = remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            Path(source_path),
+            target_key=streamable_key,
+            log=app.logger,
+        )
+        if not new_key:
+            return {
+                "normalized": False,
+                "reason": "already-streamable-or-fallback",
+                "db_field": "youtube_videos.video_url",
+            }
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET video_url = ?
+                WHERE id = ?
+                """,
+                [build_storage_reference(new_key), video_pk],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return {
+            "normalized": True,
+            "source_key": source_key,
+            "streamable_key": new_key,
+            "db_field": "youtube_videos.video_url",
+        }
+    except Exception as exc:
+        app.logger.warning(
+            "normalize fallback job_id=%s video_id=%s key=%s error=%s",
+            job.get("id"),
+            video_id,
+            source_key,
+            exc,
+        )
+        return {
+            "normalized": False,
+            "reason": "fallback",
+            "source_key": source_key,
+            "db_field": "youtube_videos.video_url",
+        }
+    finally:
+        _cleanup_resolved_source_video(Path(source_path) if source_path else None, bool(source_path))
+
+
 def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     video_pk = int(payload.get("video_pk"))
@@ -667,6 +741,8 @@ def process_next_job(app, worker_id: str) -> bool:
     try:
         if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
             result = _execute_ingest_youtube_job(app, job)
+        elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:
+            result = _execute_normalize_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_TRANSCRIBE_UPLOAD:
             result = _execute_transcribe_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_PUBLISH_SHORT:

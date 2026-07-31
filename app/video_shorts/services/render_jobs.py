@@ -18,6 +18,7 @@ from app.video_shorts.services.usage_metering import (
 JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
+JOB_TYPE_NORMALIZE_UPLOAD = "normalize_upload"
 JOB_TYPE_TRANSCRIBE_UPLOAD = "transcribe_upload"
 JOB_TYPE_PUBLISH_SHORT = "publish_short"
 JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK = "instagram_comment_webhook"

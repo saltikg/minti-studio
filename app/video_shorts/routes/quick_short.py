@@ -44,13 +44,20 @@ from app.video_shorts.services.quick_short_flow import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_NORMALIZE_UPLOAD,
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     enqueue_job,
+    enqueue_worker_job,
     get_job,
     update_job_payload,
 )
-from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.storage import (
+    build_storage_reference,
+    get_media_storage,
+    is_storage_reference,
+    public_url_for_stored_media,
+)
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
@@ -515,11 +522,25 @@ def _ensure_quick_schema() -> None:
     schema_conn.close()
 
 
-def _source_video_public_url(video_id: str) -> str:
+def _source_video_public_url(video_id: str, stored_source: str = "") -> str:
     if not video_id:
         return ""
+    if is_storage_reference(stored_source):
+        resolved = public_url_for_stored_media(stored_source)
+        if resolved:
+            return resolved
     storage = get_media_storage()
     local_storage = get_media_storage("local")
+    streamable_key = f"videos/{video_id}_streamable.mp4"
+    streamable_local = VIDEOS_DIR / f"{video_id}_streamable.mp4"
+    if streamable_local.exists():
+        return local_storage.public_url(streamable_key)
+    if getattr(storage, "backend_name", "local") == "s3":
+        try:
+            if storage.exists(streamable_key):
+                return storage.public_url(streamable_key)
+        except Exception:
+            pass
     for suffix in (".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
         key = f"videos/{video_id}{suffix}"
         local_candidate = VIDEOS_DIR / f"{video_id}{suffix}"
@@ -576,7 +597,7 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
         try:
             row = conn.execute(
                 """
-                SELECT id, video_id, title, thumbnail_url, duration_seconds, download_status, transcript_status
+                SELECT id, video_id, title, thumbnail_url, duration_seconds, download_status, transcript_status, video_url
                 FROM youtube_videos
                 WHERE id = ?
                 """,
@@ -592,7 +613,7 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
                     "duration_label": _format_time_label(row[4]) if row[4] is not None else None,
                     "download_status": row[5],
                     "transcript_status": row[6],
-                    "source_url": _source_video_public_url(row[1]),
+                    "source_url": _source_video_public_url(row[1], row[7] or ""),
                 }
             if video_id:
                 transcript_text, segments = generation._fetch_transcript(conn, video_id)
@@ -879,6 +900,7 @@ def quick_short_upload_complete():
         ensure_brand_schema(conn)
         ensure_channel_owner_schema(conn)
         _ensure_video_crop_schema(conn)
+        source_reference = build_storage_reference(source_key)
         if session.get("upload_kind") == "music":
             channel_id = _get_or_create_music_channel(conn, current_user.get("id"), brand_id)
         elif session.get("upload_kind") == "podcast":
@@ -908,7 +930,7 @@ def quick_short_upload_complete():
                     None,
                     None,
                     None,
-                    None,
+                    source_reference,
                     current_user.get("id"),
                     brand_id,
                     bool(session.get("upload_kind") == "music"),
@@ -938,7 +960,7 @@ def quick_short_upload_complete():
                     None,
                     None,
                     None,
-                    None,
+                    source_reference,
                     current_user.get("id"),
                     brand_id,
                 ],
@@ -960,6 +982,20 @@ def quick_short_upload_complete():
         f"s3://{source_key}",
         int(upload_payload.get("size_bytes") or 0),
         current_user.get("id"),
+    )
+    normalize_input_hash = sha256(
+        f"quick-upload-normalize:{current_user['id']}:{brand_id}:{video_id}:{source_key}".encode("utf-8")
+    ).hexdigest()
+    enqueue_worker_job(
+        user_id=current_user["id"],
+        job_type=JOB_TYPE_NORMALIZE_UPLOAD,
+        payload={
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "source_key": source_key,
+        },
+        input_hash=normalize_input_hash,
+        priority=100,
     )
     job_input_hash = sha256(f"quick-upload:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
     enqueue_result = enqueue_job(
@@ -1017,6 +1053,7 @@ def _create_uploaded_video_session_and_enqueue(
         ensure_brand_schema(conn)
         ensure_channel_owner_schema(conn)
         _ensure_video_crop_schema(conn)
+        source_reference = build_storage_reference(source_key)
         if upload_kind == "music":
             channel_id = _get_or_create_music_channel(conn, current_user.get("id"), brand_id)
         elif upload_kind == "podcast":
@@ -1046,7 +1083,7 @@ def _create_uploaded_video_session_and_enqueue(
                     None,
                     None,
                     None,
-                    None,
+                    source_reference,
                     current_user.get("id"),
                     brand_id,
                     bool(upload_kind == "music"),
@@ -1076,7 +1113,7 @@ def _create_uploaded_video_session_and_enqueue(
                     None,
                     None,
                     None,
-                    None,
+                    source_reference,
                     current_user.get("id"),
                     brand_id,
                 ],

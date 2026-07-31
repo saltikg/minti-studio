@@ -3270,6 +3270,15 @@ def _resolve_source_video_public_url(video_id: str) -> str:
 
 def _build_transcript_player_source(video: Dict[str, Any]) -> Dict[str, str]:
     source_url = str(video.get("video_url") or "").strip()
+    if is_storage_reference(source_url):
+        direct_url = public_url_for_stored_media(source_url)
+        if direct_url:
+            return {
+                "type": "file",
+                "youtube_id": "",
+                "watch_url": "",
+                "src": direct_url,
+            }
     youtube_video_id = _extract_youtube_video_id(source_url, fallback_video_id=str(video.get("video_id") or ""))
     if youtube_video_id:
         return {

@@ -245,6 +245,177 @@ def source_video_needs_faststart(path: Path) -> bool:
     return moov_offset > mdat_offset
 
 
+def _source_video_remux_reason(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
+        return None
+    atoms = _top_level_atom_offsets(path)
+    if not atoms:
+        return None
+    if "moof" in atoms:
+        return "fragmented"
+    moov_offset = atoms.get("moov")
+    mdat_offset = atoms.get("mdat")
+    if moov_offset is None:
+        return "moov-missing"
+    if mdat_offset is None:
+        return None
+    if moov_offset > mdat_offset:
+        return "moov-behind-mdat"
+    return None
+
+
+def source_video_needs_remux(path: Path) -> bool:
+    return _source_video_remux_reason(path) is not None
+
+
+def _resolve_s3_source_video_key(video_id: str, preferred_suffix: str | None = None) -> tuple[object | None, str | None]:
+    candidate_suffixes: list[str] = []
+    if preferred_suffix:
+        candidate_suffixes.append(str(preferred_suffix))
+    candidate_suffixes.extend([".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"])
+    seen: set[str] = set()
+    suffixes = []
+    for suffix in candidate_suffixes:
+        normalized = str(suffix or "").strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        suffixes.append(normalized)
+    storages = []
+    primary_storage = get_media_storage()
+    if getattr(primary_storage, "backend_name", "local") == "s3":
+        storages.append(primary_storage)
+    elif S3_BUCKET_NAME:
+        try:
+            storages.append(get_media_storage("s3"))
+        except Exception:
+            logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
+            return None, None
+    for storage in storages:
+        for suffix in suffixes:
+            key = f"videos/{video_id}{suffix}"
+            try:
+                if storage.exists(key):
+                    return storage, key
+            except Exception:
+                logger.exception("source video s3 exists check failed video_id=%s key=%s", video_id, key)
+                continue
+    return None, None
+
+
+def remux_s3_source_video_if_needed(
+    video_id: str,
+    source_key: str,
+    local_path: Path,
+    *,
+    target_key: str | None = None,
+    log: logging.Logger | None = None,
+) -> str | None:
+    active_logger = log or logger
+    suffix = local_path.suffix.lower()
+    if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
+        return None
+    try:
+        reason = _source_video_remux_reason(local_path)
+    except Exception:
+        active_logger.exception("source remux detection failed video_id=%s path=%s", video_id, local_path)
+        return None
+    if not reason:
+        active_logger.info(
+            "normalize skip video_id=%s key=%s path=%s reason=already_streamable",
+            video_id,
+            source_key,
+            local_path,
+        )
+        return None
+
+    storage, resolved_source_key = _resolve_s3_source_video_key(video_id, suffix)
+    if not storage:
+        primary_storage = get_media_storage()
+        if getattr(primary_storage, "backend_name", "local") == "s3":
+            storage = primary_storage
+        elif S3_BUCKET_NAME:
+            try:
+                storage = get_media_storage("s3")
+            except Exception:
+                logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
+                return None
+    upload_key = str(target_key or "").strip() or str(source_key or "").strip() or str(resolved_source_key or "").strip()
+    if not storage or not upload_key:
+        active_logger.warning(
+            "normalize fallback video_id=%s key=%s path=%s reason=%s error=%s",
+            video_id,
+            source_key,
+            local_path,
+            reason,
+            "s3-key-unresolved",
+        )
+        return None
+
+    temp_output = local_path.with_name(f"{local_path.stem}.remux.{os.getpid()}{local_path.suffix}")
+    resolved_ffmpeg = _resolve_ffmpeg()
+    cmd = [
+        resolved_ffmpeg,
+        "-y",
+        "-i",
+        str(local_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(temp_output),
+    ]
+    try:
+        active_logger.info(
+            "normalize start video_id=%s key=%s target_key=%s path=%s reason=%s timeout=%ss",
+            video_id,
+            source_key,
+            upload_key,
+            local_path,
+            reason,
+            SOURCE_FASTSTART_TIMEOUT_SECONDS,
+        )
+        run_media_subprocess(
+            cmd,
+            operation="source_remux_for_streaming",
+            context=f"video_id={video_id} key={source_key} target_key={upload_key} reason={reason}",
+            output_paths=[temp_output],
+            log=active_logger,
+            check=True,
+            timeout=max(SOURCE_FASTSTART_TIMEOUT_SECONDS, FFMPEG_SHORT_TIMEOUT),
+            capture_output=True,
+            text=True,
+        )
+        if not temp_output.exists() or temp_output.stat().st_size <= 0:
+            raise RuntimeError("remux output missing or empty")
+        storage.put_file(temp_output, upload_key)
+        active_logger.info(
+            "normalize done video_id=%s key=%s path=%s reason=%s new_key=%s",
+            video_id,
+            source_key,
+            local_path,
+            reason,
+            upload_key,
+        )
+        return upload_key
+    except Exception as exc:
+        active_logger.warning(
+            "normalize fallback video_id=%s key=%s target_key=%s path=%s reason=%s error=%s",
+            video_id,
+            source_key,
+            upload_key,
+            local_path,
+            reason,
+            exc,
+        )
+        try:
+            temp_output.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
 def normalize_source_video_for_streaming(path: Path, *, log: logging.Logger | None = None) -> Path:
     active_logger = log or logger
     suffix = path.suffix.lower()
