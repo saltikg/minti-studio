@@ -7,7 +7,7 @@
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
         <h3 class="mb-1">Prompts</h3>
-        <div class="vs-text-body">Update the system prompt used for AI comment moderation.</div>
+        <div class="vs-text-body">Manage AI prompts for the current brand.</div>
       </div>
     </div>
 
@@ -33,5 +33,175 @@
         </form>
       </div>
     </div>
+
+    {% set description_language_list = (description_languages or default_description_languages or 'en').split(',') %}
+    <div class="card shadow-sm mb-4 vs-card">
+      <div class="card-body">
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-3">
+          <div>
+            <h4 class="vs-card-title mb-1">Description prompt</h4>
+            <div class="vs-text-body small">
+              This prompt applies to the current brand{% if vs_current_brand and vs_current_brand.get('name') %}: <strong>{{ vs_current_brand.get('name') }}</strong>{% endif %}.
+            </div>
+          </div>
+          <span class="badge text-bg-light border">Brand scoped</span>
+        </div>
+
+        <form id="descriptionPromptForm" class="row g-3">
+          <div class="col-12">
+            <label class="form-label vs-card-title">Output languages</label>
+            <div class="d-flex flex-wrap gap-3">
+              <label class="form-check d-flex align-items-center gap-2 mb-0">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  name="description_languages"
+                  value="en"
+                  {% if 'en' in description_language_list %}checked{% endif %}
+                >
+                <span class="form-check-label">English</span>
+              </label>
+              <label class="form-check d-flex align-items-center gap-2 mb-0">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  name="description_languages"
+                  value="tr"
+                  {% if 'tr' in description_language_list %}checked{% endif %}
+                >
+                <span class="form-check-label">Turkish</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <label for="descriptionPromptTextarea" class="form-label vs-card-title">Prompt template</label>
+            <textarea
+              id="descriptionPromptTextarea"
+              name="description_prompt"
+              class="form-control vs-input"
+              rows="16"
+              placeholder="Edit the description prompt for this brand."
+            >{{ description_prompt }}</textarea>
+            <div class="small vs-text-body mt-2">
+              Available placeholders: <code>{language_instruction}</code>, <code>{template_block}</code>, <code>{transcripts_source}</code>, <code>{date_note_line}</code>.
+            </div>
+          </div>
+
+          <div class="col-12 d-flex flex-wrap align-items-center gap-2">
+            <button
+              type="submit"
+              class="btn vs-btn vs-btn-primary d-flex align-items-center gap-2"
+              id="descriptionPromptSaveButton"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">save</span>
+              <span>Save</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-outline-secondary d-flex align-items-center gap-2"
+              id="descriptionPromptResetButton"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">restart_alt</span>
+              <span>Reset to default</span>
+            </button>
+            <span class="small vs-text-body" id="descriptionPromptStatus" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
+
+  <script>
+    (() => {
+      const form = document.getElementById("descriptionPromptForm");
+      if (!form) {
+        return;
+      }
+
+      const endpoint = "{{ url_for('video_shorts_bp.description_prompt_settings_api') }}";
+      const promptTextarea = document.getElementById("descriptionPromptTextarea");
+      const saveButton = document.getElementById("descriptionPromptSaveButton");
+      const resetButton = document.getElementById("descriptionPromptResetButton");
+      const statusEl = document.getElementById("descriptionPromptStatus");
+      const defaultPrompt = {{ default_description_prompt|tojson }};
+      const defaultLanguages = {{ default_description_languages|tojson }};
+
+      function selectedLanguages() {
+        return Array.from(form.querySelectorAll('input[name="description_languages"]:checked'))
+          .map((input) => input.value)
+          .filter(Boolean);
+      }
+
+      function applyLanguages(languageCsv) {
+        const active = new Set(String(languageCsv || defaultLanguages || "en").split(",").map((value) => value.trim()).filter(Boolean));
+        form.querySelectorAll('input[name="description_languages"]').forEach((input) => {
+          input.checked = active.has(input.value);
+        });
+      }
+
+      function setStatus(message, tone = "muted") {
+        statusEl.textContent = message || "";
+        statusEl.classList.remove("text-success", "text-danger", "text-warning");
+        if (tone === "success") {
+          statusEl.classList.add("text-success");
+        } else if (tone === "error") {
+          statusEl.classList.add("text-danger");
+        } else if (tone === "warning") {
+          statusEl.classList.add("text-warning");
+        }
+      }
+
+      async function saveDescriptionSettings(payload, successMessage) {
+        saveButton.disabled = true;
+        resetButton.disabled = true;
+        setStatus("Saving…");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "fetch",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.success) {
+            throw new Error(data.message || "Failed to save description prompt.");
+          }
+          promptTextarea.value = data.description_prompt || defaultPrompt;
+          applyLanguages(data.description_languages || defaultLanguages);
+          setStatus(successMessage, "success");
+        } catch (error) {
+          setStatus(error.message || "Failed to save description prompt.", "error");
+        } finally {
+          saveButton.disabled = false;
+          resetButton.disabled = false;
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const languages = selectedLanguages();
+        await saveDescriptionSettings(
+          {
+            description_prompt: promptTextarea.value,
+            description_languages: languages.length ? languages.join(",") : defaultLanguages,
+          },
+          "Description prompt saved."
+        );
+      });
+
+      resetButton.addEventListener("click", async () => {
+        await saveDescriptionSettings(
+          {
+            description_prompt: "",
+            description_languages: "",
+          },
+          "Description prompt reset to default."
+        );
+      });
+    })();
+  </script>
 {% endblock %}

@@ -326,11 +326,20 @@
             {% endif %}
           </a>
 
+          <div class="sidebar-section-label ps-3 pt-2 pb-1">Settings</div>
+
           <a href="{{ url_for('video_shorts_bp.static_images_page') }}"
-             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link ps-4
                     {% if '/settings/static-images' in request.path or request.path.endswith('/settings') %}active{% endif %}">
              <span class="material-symbols-outlined">image</span>
             <span>Backgrounds</span>
+          </a>
+
+          <a href="{{ url_for('video_shorts_bp.prompts_page') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link ps-4
+                    {% if '/settings/prompts' in request.path %}active{% endif %}">
+             <span class="material-symbols-outlined">notes</span>
+            <span>Prompts</span>
           </a>
 
           {% if vs_current_user and vs_current_user.get('role') == 'admin' %}

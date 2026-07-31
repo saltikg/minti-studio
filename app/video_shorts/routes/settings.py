@@ -286,11 +286,12 @@ def prompts_page():
     brand_id = current_brand_id()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    user_id = current_user.get("id")
 
     conn = get_db()
     ensure_brand_schema(conn)
     ensure_prompt_settings_schema(conn)
-    key = _brand_prompt_key(current_user.get("id"), brand_id)
+    key = _brand_prompt_key(user_id, brand_id)
     row = conn.execute(
         "SELECT value FROM shorts_prompt_settings WHERE key = ?",
         [key],
@@ -307,7 +308,7 @@ def prompts_page():
                 updated_by = excluded.updated_by,
                 updated_at = excluded.updated_at
             """,
-            [key, current_value, current_user.get("id")],
+            [key, current_value, user_id],
         )
         conn.commit()
 
@@ -328,17 +329,23 @@ def prompts_page():
                 updated_by = excluded.updated_by,
                 updated_at = excluded.updated_at
             """,
-            [key, value, current_user.get("id")],
+            [key, value, user_id],
         )
         conn.commit()
         conn.close()
         flash("Prompt guncellendi.", "success")
         return redirect(url_for("video_shorts_bp.prompts_page"))
 
+    description_prompt, description_languages = load_description_settings(user_id, brand_id)
     conn.close()
     return render_template(
         "shorts_prompts.html",
         comment_moderation_prompt=current_value,
+        description_prompt=description_prompt,
+        description_languages=normalize_description_languages(description_languages) or DEFAULT_DESCRIPTION_LANGUAGES,
+        default_description_prompt=DEFAULT_DESCRIPTION_PROMPT,
+        default_description_languages=DEFAULT_DESCRIPTION_LANGUAGES,
+        active_brand_id=brand_id,
     )
 
 
