@@ -22,6 +22,16 @@ from app.video_shorts.services.background_preferences import (
     save_background_preference,
 )
 from app.video_shorts.services.comment_moderation import DEFAULT_COMMENT_MODERATION_PROMPT, _prompt_key
+from app.video_shorts.services.description_prompt_settings import (
+    DEFAULT_DESCRIPTION_LANGUAGES,
+    DEFAULT_DESCRIPTION_PROMPT,
+    delete_description_languages,
+    delete_description_prompt,
+    load_description_settings,
+    normalize_description_languages,
+    save_description_languages,
+    save_description_prompt,
+)
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.system_backgrounds import (
     is_system_background_key,
@@ -329,6 +339,46 @@ def prompts_page():
     return render_template(
         "shorts_prompts.html",
         comment_moderation_prompt=current_value,
+    )
+
+
+@video_shorts_bp.route("/settings/prompts/description", methods=["GET", "POST"])
+def description_prompt_settings_api():
+    current_user = getattr(g, "vs_current_user", None)
+    brand_id = current_brand_id()
+    if not current_user:
+        return jsonify({"success": False, "message": "Authentication required."}), 401
+
+    user_id = current_user.get("id")
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) if request.is_json else request.form
+        prompt_present = "description_prompt" in (data or {})
+        languages_present = "description_languages" in (data or {})
+
+        if prompt_present:
+            prompt_value = str((data.get("description_prompt") if data else "") or "").strip()
+            if prompt_value:
+                save_description_prompt(user_id, brand_id, prompt_value, user_id)
+            else:
+                delete_description_prompt(user_id, brand_id)
+
+        if languages_present:
+            languages_value = str((data.get("description_languages") if data else "") or "").strip()
+            if languages_value:
+                save_description_languages(user_id, brand_id, languages_value, user_id)
+            else:
+                delete_description_languages(user_id, brand_id)
+
+    prompt_text, languages = load_description_settings(user_id, brand_id)
+    return jsonify(
+        {
+            "success": True,
+            "brand_id": brand_id,
+            "description_prompt": prompt_text,
+            "description_languages": normalize_description_languages(languages) or DEFAULT_DESCRIPTION_LANGUAGES,
+            "using_default_prompt": prompt_text == DEFAULT_DESCRIPTION_PROMPT,
+        }
     )
 
 

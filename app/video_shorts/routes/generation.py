@@ -131,6 +131,11 @@ from app.video_shorts.services.disk_guard import (
     USER_FACING_DISK_GUARD_MESSAGE,
     disk_guard_triggered,
 )
+from app.video_shorts.services.description_prompt_settings import (
+    DEFAULT_DESCRIPTION_PROMPT,
+    DESCRIPTION_CONTEXT_PADDING_SECONDS,
+    load_description_settings,
+)
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
     make_system_background_key,
@@ -12519,7 +12524,7 @@ def prepare_description(video_pk):
         )
 
     conn = get_db_readonly()
-    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, published_at, video_date_text")
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, published_at, video_date_text, duration_seconds")
     conn.close()
     if not row:
         return _respond(
@@ -12534,6 +12539,7 @@ def prepare_description(video_pk):
     video_title = row[1]
     published_at = row[2]
     video_date_text = (row[3] or "").strip()
+    duration_seconds = row[4]
 
     plan_path = SHORTS_DIR / f"{vid}_plan.json"
     if not plan_path.exists():
@@ -12581,8 +12587,31 @@ def prepare_description(video_pk):
     _, segments = _fetch_transcript(conn, vid)
     conn.close()
 
-    transcript_full = plan_entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
-    transcripts_source = transcript_full or ""
+    clip_transcript = plan_entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
+    try:
+        clip_start = max(0.0, float(start or 0.0))
+    except Exception:
+        clip_start = 0.0
+    try:
+        clip_end = max(clip_start, float(end or clip_start))
+    except Exception:
+        clip_end = clip_start
+    try:
+        max_duration = float(duration_seconds) if duration_seconds is not None else None
+    except Exception:
+        max_duration = None
+    context_start = max(0.0, clip_start - DESCRIPTION_CONTEXT_PADDING_SECONDS)
+    context_end = clip_end + DESCRIPTION_CONTEXT_PADDING_SECONDS
+    if max_duration is not None:
+        context_end = min(max_duration, context_end)
+    context_transcript = build_transcript_for_range(segments, context_start, context_end, prefer_tr=True)
+    transcripts_source = (
+        "WIDER CONTEXT TRANSCRIPT (use this for understanding and summarizing the clip in context; "
+        "do not copy it into the Full Transcript section unless it appears inside the clip itself):\n"
+        f"{context_transcript or clip_transcript or ''}\n\n"
+        "CLIP TRANSCRIPT (use this exact text for the Full Transcript section):\n"
+        f"{clip_transcript or ''}"
+    )
 
     date_str = ""
     try:
@@ -12599,66 +12628,85 @@ def prepare_description(video_pk):
         contains_letters = bool(re.search(r"[A-Za-zÇĞİÖŞÜçğışöü]", video_date_hint))
         if contains_letters:
             date_instruction_text = (
-                f"Video date text: {video_date_hint}. Bu metin hem tarih hem yer içeriyor; Türkçe açıklamada "
-                f"bu bilgiyi örneğin “{video_date_hint}’da muhterem Fethullah Gülen Hocaefendi’nin sohbeti...” gibi "
-                "doğal bir cümleyle aktarın ve İngilizce açıklamada da bunun tercümesi niteliğinde bir cümleyle "
-                "yeri ve tarihi belirtin."
+                f"Video date text: {video_date_hint}. This text includes date/location context. "
+                "Use it naturally in the description when relevant."
             )
         else:
             date_instruction_text = (
-                f"Video date text: {video_date_hint}. Açıklamaya kesinlikle “{video_date_hint} tarihinde "
-                "muhterem Fethullah Gülen Hocaefendi’nin sohbeti” gibi ifade ekleyin ve İngilizce kısımda "
-                f"“On {video_date_hint}, ...” gibi net bir tarih cümlesi kurun."
+                f"Video date text: {video_date_hint}. If you mention the date, phrase it naturally like "
+                f"“Recorded on {video_date_hint} ...”."
             )
-        date_prompt_note = date_instruction_text
+        date_note_line = f"- Date note: {date_instruction_text}"
+    elif date_str:
+        date_instruction_text = (
+            f"If it fits naturally, you may mention that the clip is from a video recorded or published on {date_str}."
+        )
+        date_note_line = f"- Date note: {date_instruction_text}"
     else:
-        date_instruction_text = "Video date text: Yok."
-        date_prompt_note = "Video date text: Yok; bu durumda tarihi belirtmeyin."
+        date_instruction_text = ""
+        date_note_line = ""
 
+    saved_prompt, description_languages = load_description_settings(current_user.get("id"), brand_id)
+
+    if description_languages == "tr":
+        language_instruction = (
+            "Write the full output in Turkish only. Use Turkish section labels and Turkish hashtags. "
+            "Do not include any English section."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Açıklama\n"
+            "<2-3 paragraf Türkçe açıklama>\n\n"
+            "Hashtagler\n"
+            "#etiket1 #etiket2 #etiket3 ...\n\n"
+            "Tam Metin\n"
+            "<klip transkriptini aynen buraya koy>"
+        )
+        system_message = "You write YouTube descriptions in Turkish based on user instructions."
+    elif description_languages == "en,tr":
+        language_instruction = (
+            "Write both an English and a Turkish version. Keep both versions aligned in meaning. "
+            "Use the exact template sections provided below and keep the clip transcript section in both languages."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Description\n"
+            "<2-3 paragraph English description>\n\n"
+            "Hashtags\n"
+            "#tag1 #tag2 #tag3 ...\n\n"
+            "Full Transcript\n"
+            "<put the clip transcript here exactly as provided>\n\n"
+            "Açıklama\n"
+            "<2-3 paragraf Türkçe açıklama>\n\n"
+            "Hashtagler\n"
+            "#etiket1 #etiket2 #etiket3 ...\n\n"
+            "Tam Metin\n"
+            "<klip transkriptini aynen buraya koy>"
+        )
+        system_message = "You write multilingual YouTube descriptions in English and Turkish based on user instructions."
+    else:
+        language_instruction = (
+            "Write the full output in English only. Use English section labels and English hashtags. "
+            "Do not include any Turkish section."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Description\n"
+            "<2-3 paragraph English description>\n\n"
+            "Hashtags\n"
+            "#tag1 #tag2 #tag3 ...\n\n"
+            "Full Transcript\n"
+            "<put the clip transcript here exactly as provided>"
+        )
+        system_message = "You write YouTube descriptions in English based on user instructions."
+
+    prompt_template = saved_prompt or DEFAULT_DESCRIPTION_PROMPT
     prompt = (
-        "Sen YouTube için iki dilli (Türkçe + İngilizce) açıklama yazan uzman bir editörsün.\n"
-        "Videoda konuşan kişi muhterem Fethullah Gülen Hocaefendi’dir.\n"
-        "\n"
-        "Aşağıdaki transkripti analiz et ama açıklamalarda ASLA kopyalama yapma.\n"
-        "\n"
-        "GÖREV:\n"
-        "Aşağıdaki ŞABLONU eksiksiz ve sırasıyla doldur.\n"
-        "\n"
-        "KURALLAR:\n"
-        "- ÇIKTI sadece şablon olacak, ekstra başlık yok.\n"
-        "- Türkçe Aciklama: 2–3 paragraf, anlamlı özet; transkript cümlelerinden kopyalama yapma.\n"
-        "- Türkçe Hashtag: en az 10 hashtag, tek satır.\n"
-        "- Tam Metin: transkripti AYNEN koy (virgülüne dokunma).\n"
-        "- English Description: 2–3 paragraf, Türkçe açıklamanın anlam karşılığı; içinde “Hocaefendi” ve “muhterem” geçecek.\n"
-        "- English Hashtags: en az 10 hashtag, tek satır.\n"
-        "- Full English Transcript: transkriptin TAM İngilizce çevirisi, eksiksiz.\n"
-        "- Transkriptte tarih varsa (Vaaz tarihi: XXX), açıklamalarda doğal biçimde kullan; yoksa hiç bahsetme.\n"
-        f"- Video date info requirement: {date_prompt_note}\n"
-        "\n"
-        "ŞABLON (Aynen bu sırayla üret):\n"
-        "\n"
-        "<Türkçe açıklama – tam metin>\n"
-        "\n"
-        "Hashtagler  \n"
-        "#tag1 #tag2 #tag3 ...\n"
-        "\n"
-        "Tam Metin  \n"
-        "<transkript_buraya_aynen>\n"
-        "\n"
-        "Description  \n"
-        "[English description - 2-3 paragraf]\n"
-        "\n"
-        "Hashtags  \n"
-        "#tag1 #tag2 #tag3 ...\n"
-        "\n"
-        "Full Transcript  \n"
-        "<transkriptin_ingilizce_tam_çevirisi>\n"
-        "\n"
-        f"Vaaz tarihi: {date_str}  \n"
-        f"{date_instruction_text}  \n"
-        "\n"
-        "TRANSKRIPT  \n"
-        f"{transcripts_source}"
+        prompt_template
+        .replace("{language_instruction}", language_instruction)
+        .replace("{template_block}", template_block)
+        .replace("{date_note_line}", date_note_line)
+        .replace("{transcripts_source}", transcripts_source)
     )
 
     try:
@@ -12667,7 +12715,7 @@ def prepare_description(video_pk):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an assistant that writes bilingual YouTube descriptions (Turkish then English) per the user instructions.",
+                    "content": system_message,
                 },
                 {"role": "user", "content": prompt},
             ],
