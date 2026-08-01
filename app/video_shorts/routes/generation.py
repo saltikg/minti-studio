@@ -106,7 +106,9 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.background_preferences import load_background_preference
 from app.video_shorts.services.user_preferences import (
+    load_user_preference,
     load_user_bool_preference,
+    save_user_preference,
     save_user_bool_preference,
 )
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
@@ -143,8 +145,17 @@ from app.video_shorts.services.system_backgrounds import (
     resolve_system_background_path,
     system_background_static_filename,
 )
+from app.video_shorts.services.system_subscribe_animations import (
+    choose_deterministic_system_subscribe,
+    is_system_subscribe_key,
+    list_system_subscribe_paths,
+    make_system_subscribe_key,
+    resolve_system_subscribe_path,
+    system_subscribe_static_filename,
+)
 from app.video_shorts.services.storage import (
     StorageEntry,
+    build_storage_reference,
     get_media_storage,
     is_storage_reference,
     public_url_for_stored_media,
@@ -697,6 +708,109 @@ def _user_image_public_url(user_id: str, filename: str) -> str:
     return resolved.public_url or get_media_storage("local").public_url(key)
 
 
+def _subscribe_overlay_preference_key(video_pk: Any, brand_id: Optional[str]) -> str:
+    clean_brand = str(brand_id or "").strip()
+    return f"subscribe_overlay_image:{clean_brand}:{int(video_pk)}"
+
+
+def _load_subscribe_overlay_key(
+    user_id: Optional[str],
+    brand_id: Optional[str],
+    video_pk: Any,
+) -> Optional[str]:
+    if not user_id or video_pk in (None, ""):
+        return None
+    try:
+        return load_user_preference(
+            str(user_id),
+            _subscribe_overlay_preference_key(video_pk, brand_id),
+        )
+    except Exception:
+        return None
+
+
+def _save_subscribe_overlay_key(
+    user_id: Optional[str],
+    brand_id: Optional[str],
+    video_pk: Any,
+    subscribe_key: Optional[str],
+) -> None:
+    if not user_id or video_pk in (None, ""):
+        return
+    save_user_preference(
+        str(user_id),
+        _subscribe_overlay_preference_key(video_pk, brand_id),
+        subscribe_key,
+    )
+
+
+def _subscribe_storage_reference_for_asset(
+    subscribe_key: Optional[str],
+    *,
+    expected_owner_user_id: Optional[str] = None,
+    expected_brand_id: Optional[str] = None,
+) -> Optional[str]:
+    clean_key = str(subscribe_key or "").strip()
+    if not clean_key:
+        return None
+    if is_system_subscribe_key(clean_key):
+        system_path = resolve_system_subscribe_path(clean_key)
+        return str(system_path) if system_path and system_path.exists() else None
+    if not clean_key.startswith("usersub:"):
+        return None
+    image_id = clean_key.split(":", 1)[1].strip()
+    if not image_id:
+        return None
+    conn_images = get_db_readonly()
+    try:
+        row = conn_images.execute(
+            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ? AND COALESCE(asset_kind, 'background') = 'subscribe'",
+            [image_id],
+        ).fetchone()
+    finally:
+        conn_images.close()
+    if not row or not row[1]:
+        return None
+    owner_id, filename, owner_brand_id = row[0], row[1], row[2]
+    if expected_owner_user_id and owner_id and owner_id != expected_owner_user_id:
+        current_app.logger.warning(
+            "Subscribe overlay owner mismatch for image_id=%s owner=%s expected_owner=%s",
+            image_id,
+            owner_id,
+            expected_owner_user_id,
+        )
+        return None
+    if expected_brand_id and owner_brand_id and owner_brand_id != expected_brand_id:
+        current_app.logger.warning(
+            "Subscribe overlay brand mismatch for image_id=%s owner_brand=%s expected_brand=%s",
+            image_id,
+            owner_brand_id,
+            expected_brand_id,
+        )
+        return None
+    return build_storage_reference(_user_media_storage_key("image", owner_id, filename))
+
+
+def _normalize_subscribe_overlay_key(
+    subscribe_key: Optional[str],
+    *,
+    expected_owner_user_id: Optional[str] = None,
+    expected_brand_id: Optional[str] = None,
+) -> Optional[str]:
+    clean_key = str(subscribe_key or "").strip()
+    if not clean_key:
+        return None
+    if is_system_subscribe_key(clean_key):
+        system_path = resolve_system_subscribe_path(clean_key)
+        return clean_key if system_path and system_path.exists() else None
+    reference = _subscribe_storage_reference_for_asset(
+        clean_key,
+        expected_owner_user_id=expected_owner_user_id,
+        expected_brand_id=expected_brand_id,
+    )
+    return clean_key if reference else None
+
+
 def _resolve_user_static_image_path(
     image_id: str,
     *,
@@ -744,6 +858,70 @@ def _resolve_user_static_image_path(
             return storage.download_to_temp(key), True
         except Exception:
             current_app.logger.exception("Failed to download static image from s3 image_id=%s key=%s", clean_image_id, key)
+    return None, False
+
+
+def _resolve_subscribe_overlay_path(
+    subscribe_key: Optional[str],
+    *,
+    expected_owner_user_id: Optional[str] = None,
+    expected_brand_id: Optional[str] = None,
+) -> Tuple[Optional[Path], bool]:
+    clean_key = str(subscribe_key or "").strip()
+    if not clean_key:
+        return None, False
+    if is_system_subscribe_key(clean_key):
+        system_path = resolve_system_subscribe_path(clean_key)
+        if system_path and system_path.exists():
+            return system_path, False
+        return None, False
+    if not clean_key.startswith("usersub:"):
+        return None, False
+    image_id = clean_key.split(":", 1)[1].strip()
+    if not image_id:
+        return None, False
+    conn_images = get_db_readonly()
+    try:
+        row = conn_images.execute(
+            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ? AND COALESCE(asset_kind, 'background') = 'subscribe'",
+            [image_id],
+        ).fetchone()
+    finally:
+        conn_images.close()
+    if not row or not row[1]:
+        return None, False
+    owner_id, filename, owner_brand_id = row[0], row[1], row[2]
+    if expected_owner_user_id and owner_id and owner_id != expected_owner_user_id:
+        current_app.logger.warning(
+            "Subscribe overlay owner mismatch for image_id=%s owner=%s expected_owner=%s",
+            image_id,
+            owner_id,
+            expected_owner_user_id,
+        )
+        return None, False
+    if expected_brand_id and owner_brand_id and owner_brand_id != expected_brand_id:
+        current_app.logger.warning(
+            "Subscribe overlay brand mismatch for image_id=%s owner_brand=%s expected_brand=%s",
+            image_id,
+            owner_brand_id,
+            expected_brand_id,
+        )
+        return None, False
+    key = _user_media_storage_key("image", owner_id, filename)
+    storage = get_media_storage()
+    candidate = STATIC_USER_IMAGES_DIR / owner_id / filename
+    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[candidate])
+    if resolved.local_path and resolved.local_path.exists():
+        return resolved.local_path, False
+    if resolved.exists and resolved.backend == "s3":
+        try:
+            return storage.download_to_temp(key), True
+        except Exception:
+            current_app.logger.exception(
+                "Failed to download subscribe overlay from s3 image_id=%s key=%s",
+                image_id,
+                key,
+            )
     return None, False
 
 
@@ -2835,6 +3013,7 @@ def _build_render_job_options(
     show_title: bool,
     show_subtitle: bool,
     subscribe_overlay: bool,
+    subscribe_overlay_image: Optional[str],
     is_music_only: bool,
     static_visual_key: Optional[str],
     background_visual_key: Optional[str],
@@ -2869,6 +3048,7 @@ def _build_render_job_options(
         "show_title": bool(show_title),
         "show_subtitle": bool(show_subtitle),
         "subscribe_overlay": bool(subscribe_overlay),
+        "subscribe_overlay_image": subscribe_overlay_image,
         "is_music_only": bool(is_music_only),
         "static_visual_key": static_visual_key,
         "background_visual_key": background_visual_key,
@@ -4060,17 +4240,28 @@ def generate_short(video_pk):
 
     static_visual_options = []
     user_background_visual_options = []
+    user_subscribe_visual_options = []
     created_visual_options = []
     if current_user:
         conn_images = get_db_readonly()
         job_rows = []
         try:
-            rows = conn_images.execute(
+            background_rows = conn_images.execute(
                 """
                 SELECT i.id, i.label, i.filename, COALESCE(i.use_as_background, false)
                 FROM shorts_static_images i
                 WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
                   AND COALESCE(i.asset_kind, 'background') = 'background'
+                ORDER BY i.created_at
+                """,
+                [current_user.get("id"), brand_id],
+            ).fetchall()
+            subscribe_rows = conn_images.execute(
+                """
+                SELECT i.id, i.label, i.filename, COALESCE(i.file_ext, '')
+                FROM shorts_static_images i
+                WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+                  AND COALESCE(i.asset_kind, 'background') = 'subscribe'
                 ORDER BY i.created_at
                 """,
                 [current_user.get("id"), brand_id],
@@ -4091,7 +4282,7 @@ def generate_short(video_pk):
             ).fetchall()
         finally:
             conn_images.close()
-        for idx, row in enumerate(rows, start=1):
+        for idx, row in enumerate(background_rows, start=1):
             image_url = _user_image_public_url(current_user.get("id"), row[2])
             static_visual_options.append(
                 {
@@ -4109,6 +4300,16 @@ def generate_short(video_pk):
                         "description": "User background",
                     }
                 )
+        for idx, row in enumerate(subscribe_rows, start=1):
+            user_subscribe_visual_options.append(
+                {
+                    "key": f"usersub:{row[0]}",
+                    "label": row[1] or f"SUB{idx}",
+                    "image_url": _user_image_public_url(current_user.get("id"), row[2]),
+                    "file_ext": str(row[3] or Path(row[2] or "").suffix.lstrip(".")).lower(),
+                    "description": "Workspace subscribe animation",
+                }
+            )
         for idx, row in enumerate(job_rows, start=1):
             job_id = str(row[0] or "").strip()
             output_url = str(row[1] or "").strip()
@@ -4193,6 +4394,18 @@ def generate_short(video_pk):
     ]
     bg_visual_options = list(system_background_visual_options) + list(user_background_visual_options)
     bg_visual_map = {opt["key"]: opt for opt in bg_visual_options}
+    system_subscribe_visual_options = [
+        {
+            "key": make_system_subscribe_key(system_path.name),
+            "label": system_path.stem.replace("_", " "),
+            "image_url": url_for("video_shorts_bp.static", filename=system_subscribe_static_filename(system_path)),
+            "file_ext": system_path.suffix.lstrip(".").lower(),
+            "description": "System subscribe animation",
+        }
+        for system_path in list_system_subscribe_paths()
+    ]
+    subscribe_visual_options = list(system_subscribe_visual_options) + list(user_subscribe_visual_options)
+    subscribe_visual_map = {opt["key"]: opt for opt in subscribe_visual_options}
     preferred_bg_key = None
     if current_user:
         preferred_bg_key = load_background_preference(current_user.get("id"), brand_id)
@@ -4207,6 +4420,21 @@ def generate_short(video_pk):
                 video_background_visual_key = candidate_key
     active_bg_visual = bg_visual_map.get(video_background_visual_key)
     background_visual_label = active_bg_visual["label"] if active_bg_visual else None
+    video_subscribe_overlay_key = _load_subscribe_overlay_key(
+        current_user.get("id") if current_user else None,
+        brand_id,
+        video_pk,
+    )
+    if video_subscribe_overlay_key not in subscribe_visual_map:
+        video_subscribe_overlay_key = None
+    if not video_subscribe_overlay_key:
+        auto_subscribe_path = choose_deterministic_system_subscribe(str(video.get("video_id") or ""))
+        if auto_subscribe_path:
+            candidate_key = make_system_subscribe_key(auto_subscribe_path.name)
+            if candidate_key in subscribe_visual_map:
+                video_subscribe_overlay_key = candidate_key
+    active_subscribe_visual = subscribe_visual_map.get(video_subscribe_overlay_key)
+    subscribe_visual_label = active_subscribe_visual["label"] if active_subscribe_visual else None
 
     session["vs_font"] = video_font_key
     session["vs_sub_font"] = video_sub_font_key
@@ -4755,8 +4983,7 @@ def generate_short(video_pk):
     llm_description_enabled = current_plan_id not in {"", "free"}
     suggested_long_video_title = _build_long_highlights_title(video.get("title") or "")
     long_compilation_videos = _list_generated_long_compilations(video.get("video_id") or "", limit=12)
-    brand_subscribe_overlay_path = _resolve_brand_subscribe_overlay_path(brand_id)
-    brand_subscribe_overlay_available = bool(brand_subscribe_overlay_path)
+    brand_subscribe_overlay_available = bool(subscribe_visual_options)
     if not brand_subscribe_overlay_available:
         selected_subscribe_overlay = False
 
@@ -4974,6 +5201,9 @@ def generate_short(video_pk):
         bg_visual_options=bg_visual_options,
         video_background_visual_key=video_background_visual_key,
         background_visual_label=background_visual_label,
+        subscribe_visual_options=subscribe_visual_options,
+        video_subscribe_overlay_key=video_subscribe_overlay_key,
+        subscribe_visual_label=subscribe_visual_label,
         background_preference_update_url=url_for("video_shorts_bp.update_selected_background"),
         clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
         hide_clip_coachmark=hide_clip_coachmark,
@@ -5358,6 +5588,11 @@ def save_crop_area(video_pk):
     background_visual_key = (request.form.get("background_visual_key") or "").strip()
     if background_visual_key == "":
         background_visual_key = None
+    subscribe_overlay_key = _normalize_subscribe_overlay_key(
+        request.form.get("subscribe_overlay_image"),
+        expected_owner_user_id=current_user.get("id") if current_user else None,
+        expected_brand_id=brand_id,
+    )
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
     subscribe_overlay_enabled_raw = (subscribe_overlay_value or "").strip().lower()
     subscribe_overlay_enabled = subscribe_overlay_enabled_raw in {"1", "true", "yes", "on"}
@@ -5508,6 +5743,12 @@ def save_crop_area(video_pk):
         conn.commit()
         if cursor.rowcount == 0:
             return jsonify(success=False, message="Video not found."), 404
+        _save_subscribe_overlay_key(
+            current_user.get("id") if current_user else None,
+            brand_id,
+            video_pk,
+            subscribe_overlay_key,
+        )
     except Exception as exc:
         current_app.logger.exception("Crop save failed for video %s: %s", video_pk, exc)
         return jsonify(success=False, message="Unable to save crop settings."), 500
@@ -5528,6 +5769,7 @@ def save_crop_area(video_pk):
             "crop2_h_ratio": crop2_values["crop2_h_ratio"],
             "static_visual_key": static_visual_key,
             "background_visual_key": background_visual_key,
+            "subscribe_overlay_image": subscribe_overlay_key,
             "crop_aspect": crop_aspect,
         },
     )
@@ -10899,6 +11141,11 @@ def save_short_settings(video_pk):
     subtitle_bg_color = _normalize_hex_color(request.form.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_COLOR)
     subtitle_bg_alpha = _normalize_alpha_percent(request.form.get("subtitle_bg_alpha") or DEFAULT_SUBTITLE_BG_ALPHA, DEFAULT_SUBTITLE_BG_ALPHA)
     subtitle_text_alpha = _normalize_alpha_percent(request.form.get("subtitle_text_alpha") or DEFAULT_SUBTITLE_TEXT_ALPHA, DEFAULT_SUBTITLE_TEXT_ALPHA)
+    subscribe_overlay_key = _normalize_subscribe_overlay_key(
+        request.form.get("subscribe_overlay_image"),
+        expected_owner_user_id=current_user.get("id") if current_user else None,
+        expected_brand_id=brand_id,
+    )
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
     subscribe_overlay_enabled = (subscribe_overlay_value or "").lower() in {"1", "true", "yes", "on"}
     show_title = (request.form.get("show_title") or "").lower() not in {"0", "false", "no", "off"}
@@ -10950,8 +11197,6 @@ def save_short_settings(video_pk):
         return jsonify(success=False, message="Video not found"), 404
     if subscribe_overlay_value is None:
         subscribe_overlay_enabled = bool(row[1]) if len(row) > 1 and row[1] is not None else True
-    if not _resolve_brand_subscribe_overlay_path(brand_id):
-        subscribe_overlay_enabled = False
     if podcast_audio_filename and current_user:
         if not _resolve_user_podcast_audio_path(current_user.get("id"), podcast_audio_filename):
             podcast_audio_filename = ""
@@ -11019,6 +11264,12 @@ def save_short_settings(video_pk):
                 params,
             )
         conn.commit()
+        _save_subscribe_overlay_key(
+            current_user.get("id") if current_user else None,
+            brand_id,
+            video_pk,
+            subscribe_overlay_key,
+        )
     except Exception as exc:
         conn.close()
         current_app.logger.warning("Failed to save short settings for %s: %s", video_pk, exc)
@@ -11072,7 +11323,6 @@ def autoclip_video(video_pk):
 
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
-    brand_subscribe_overlay_path = _resolve_brand_subscribe_overlay_path(brand_id)
     export_reserved = False
     usage = None
     if not current_user:
@@ -11530,8 +11780,6 @@ def autoclip_video(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
-    if not brand_subscribe_overlay_path:
-        video_subscribe_overlay = False
     try:
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
@@ -11619,6 +11867,15 @@ def autoclip_video(video_pk):
             status=400,
             category="warning",
         )
+    selected_subscribe_overlay_key = _normalize_subscribe_overlay_key(
+        _load_subscribe_overlay_key(video_owner_user_id, brand_id, video_pk),
+        expected_owner_user_id=video_owner_user_id,
+        expected_brand_id=brand_id,
+    )
+    if not selected_subscribe_overlay_key:
+        auto_subscribe_path = choose_deterministic_system_subscribe(vid)
+        if auto_subscribe_path:
+            selected_subscribe_overlay_key = make_system_subscribe_key(auto_subscribe_path.name)
     src_path = None
     src_path_is_temp = False
     if not queued_job:
@@ -11648,6 +11905,11 @@ def autoclip_video(video_pk):
                 show_title=video_show_title,
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay=video_subscribe_overlay,
+                subscribe_overlay_image=_subscribe_storage_reference_for_asset(
+                    selected_subscribe_overlay_key,
+                    expected_owner_user_id=video_owner_user_id,
+                    expected_brand_id=brand_id,
+                ),
                 is_music_only=video_is_music_only,
                 static_visual_key=video_static_visual_key,
                 background_visual_key=video_background_visual_key,
@@ -11823,6 +12085,8 @@ def autoclip_video(video_pk):
     created_video_path = None
     created_video_is_temp = False
     bg_path_is_temp = False
+    subscribe_overlay_path = None
+    subscribe_overlay_path_is_temp = False
     made = 0
     missing_outputs = 0
     clip_filename = plan_entry.get("clip_filename") or f"{plan_index}_{vid}.mp4"
@@ -11900,6 +12164,14 @@ def autoclip_video(video_pk):
         }
         preferred_bg_key = load_background_preference(video_owner_user_id, current_brand_id()) if video_owner_user_id else None
         bg_visual_key = preferred_bg_key or video_background_visual_key
+        if selected_subscribe_overlay_key:
+            subscribe_overlay_path, subscribe_overlay_path_is_temp = _resolve_subscribe_overlay_path(
+                selected_subscribe_overlay_key,
+                expected_owner_user_id=video_owner_user_id,
+                expected_brand_id=brand_id,
+            )
+        if not subscribe_overlay_path:
+            video_subscribe_overlay = False
         bg_path = BGCOVER_PATH
         if not bg_path.exists():
             static_fallback = STATIC_IMG_DIR / bg_path.name
@@ -12158,7 +12430,7 @@ def autoclip_video(video_pk):
                 show_title=video_show_title,
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay_enabled=video_subscribe_overlay,
-                subscribe_overlay_path=brand_subscribe_overlay_path,
+                subscribe_overlay_path=subscribe_overlay_path,
                 crop_settings=crop_settings,
                 video_override_source=override_source,
                 audio_override_source=podcast_audio_path,
@@ -12444,6 +12716,11 @@ def autoclip_video(video_pk):
         if bg_path_is_temp and bg_path:
             try:
                 bg_path.unlink()
+            except Exception:
+                pass
+        if subscribe_overlay_path_is_temp and subscribe_overlay_path:
+            try:
+                subscribe_overlay_path.unlink()
             except Exception:
                 pass
         _cleanup_video_shorts_temp_path(podcast_audio_path)

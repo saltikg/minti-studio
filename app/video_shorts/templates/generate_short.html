@@ -469,6 +469,22 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     flex: 0 0 auto;
   }
+  .subscribe-selected-media {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    flex: 0 0 auto;
+  }
+  .subscribe-selected-media img,
+  .subscribe-selected-media video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
   .background-selected-meta {
     min-width: 0;
     flex: 1 1 auto;
@@ -539,6 +555,21 @@
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+  .background-picker-grid .subscribe-visual-option {
+    padding: 0;
+    aspect-ratio: 9 / 16;
+    overflow: hidden;
+  }
+  .background-picker-grid .subscribe-visual-option img,
+  .background-picker-grid .subscribe-visual-option video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .background-selected-card.is-disabled {
+    opacity: 0.55;
   }
   .background-picker-empty {
     font-size: 0.76rem;
@@ -1779,6 +1810,7 @@
         data-crop2-h="{{ video.crop2_h_ratio if video.crop2_h_ratio is not none else '' }}"
         data-static-visual-key="{{ video_static_visual_key or '' }}"
         data-background-visual-key="{{ video_background_visual_key or '' }}"
+        data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
         📐 Crop for Shorts
       </button>
@@ -1820,6 +1852,7 @@
       data-crop2-h="{{ video.crop2_h_ratio if video.crop2_h_ratio is not none else '' }}"
       data-static-visual-key="{{ video_static_visual_key or '' }}"
       data-background-visual-key="{{ video_background_visual_key or '' }}"
+      data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
       data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
       <span class="material-icons-outlined" aria-hidden="true">tune</span>
       <span>Editor</span>
@@ -2861,6 +2894,48 @@
                   <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
                   <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
                 </div>
+                <div class="background-selected-card mt-2" id="subscribe-selected-card">
+                  <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
+                  <div class="background-selected-meta">
+                    <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
+                    <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
+                  </div>
+                  <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
+                    <i class="bi bi-pencil-square"></i>
+                  </button>
+                </div>
+                <div class="background-picker-panel" id="subscribe-picker-panel">
+                  <div class="background-picker-head">
+                    <div class="background-picker-title">Choose a subscribe animation</div>
+                    <button type="button" class="btn btn-link btn-sm text-muted p-0" id="subscribe-picker-close">Done</button>
+                  </div>
+                  <div class="background-picker-grid" id="subscribe-visual-grid">
+                    {% for visual in subscribe_visual_options %}
+                      {% set subscribe_preview_url = visual.image_url or '' %}
+                      {% set subscribe_file_ext = (visual.file_ext or '')|lower %}
+                      <button
+                        type="button"
+                        class="static-visual-option subscribe-visual-option"
+                        data-subscribe-visual-key="{{ visual.key }}"
+                        data-preview-url="{{ subscribe_preview_url }}"
+                        data-file-ext="{{ subscribe_file_ext }}"
+                        aria-label="Select subscribe animation {{ visual.label }}"
+                        data-bs-toggle="tooltip"
+                        data-bs-placement="top"
+                        title="Subscribe animation {{ visual.label }}"
+                      >
+                        {% if subscribe_file_ext == 'mp4' %}
+                          <video src="{{ subscribe_preview_url }}" muted loop autoplay playsinline preload="metadata"></video>
+                        {% else %}
+                          <img src="{{ subscribe_preview_url }}" alt="Subscribe animation {{ visual.label }}">
+                        {% endif %}
+                        <span class="bg-selected-badge" aria-hidden="true">
+                          <i class="bi bi-check"></i>
+                        </span>
+                      </button>
+                    {% endfor %}
+                  </div>
+                </div>
               {% endif %}
               <div class="form-check form-switch mb-0">
                 <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
@@ -2876,7 +2951,7 @@
               </div>
             </div>
             {% if not brand_subscribe_overlay_available %}
-              <div class="crop-options-card-note">No brand subscribe animation configured for this workspace.</div>
+              <div class="crop-options-card-note">No subscribe animations are available for this workspace.</div>
             {% endif %}
           </div>
           <div class="control-group static-visual-selector d-none" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
@@ -7173,18 +7248,29 @@ document.addEventListener("DOMContentLoaded", () => {
   const createdVisualOptions = createdSelector ? JSON.parse(createdSelector.dataset.createdVisuals || "[]") : [];
   const bgSelector = modalEl.querySelector(".background-visual-selector");
   const bgVisualOptions = bgSelector ? JSON.parse(bgSelector.dataset.bgVisuals || "[]") : [];
+  const subscribeVisualOptions = {{ subscribe_visual_options | tojson | safe }};
   const backgroundSelectionUrl = bgSelector?.dataset.selectionUrl || "";
   const staticVisualMap = new Map(staticVisualOptions.map((option) => [option.key, option]));
   const createdVisualMap = new Map(createdVisualOptions.map((option) => [option.key, option]));
+  const subscribeVisualMap = new Map(subscribeVisualOptions.map((option) => [option.key, option]));
   const staticVisualButtons = Array.from(modalEl.querySelectorAll("#static-visual-grid .static-visual-option"));
   const createdVisualButtons = Array.from(modalEl.querySelectorAll("#created-visual-grid .created-visual-option"));
   const bgVisualButtons = Array.from(modalEl.querySelectorAll(".bg-visual-option"));
+  const subscribeVisualButtons = Array.from(modalEl.querySelectorAll(".subscribe-visual-option"));
   const backgroundSelectedThumb = modalEl.querySelector("#background-selected-thumb");
   const backgroundSelectedLabel = modalEl.querySelector("#background-selected-label");
   const backgroundSelectedNote = modalEl.querySelector("#background-selected-note");
   const backgroundEditBtn = modalEl.querySelector("#background-edit-btn");
   const backgroundPickerPanel = modalEl.querySelector("#background-picker-panel");
   const backgroundPickerCloseBtn = modalEl.querySelector("#background-picker-close");
+  const subscribeSelectedCard = modalEl.querySelector("#subscribe-selected-card");
+  const subscribeSelectedMedia = modalEl.querySelector("#subscribe-selected-media");
+  const subscribeSelectedLabel = modalEl.querySelector("#subscribe-selected-label");
+  const subscribeSelectedNote = modalEl.querySelector("#subscribe-selected-note");
+  const subscribeEditBtn = modalEl.querySelector("#subscribe-edit-btn");
+  const subscribePickerPanel = modalEl.querySelector("#subscribe-picker-panel");
+  const subscribePickerCloseBtn = modalEl.querySelector("#subscribe-picker-close");
+  const subscribeToggle = modalEl.querySelector('[name="enable_subscribe_overlay"]');
   const cropAspectSelector = modalEl.querySelector("#crop-aspect-selector");
   const cropAspectButtons = cropAspectSelector
     ? Array.from(cropAspectSelector.querySelectorAll("[data-crop-aspect]"))
@@ -7209,6 +7295,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let latestTrigger = null;
   let activeStaticVisualKey = "";
   let activeBackgroundKey = "";
+  let activeSubscribeKey = "";
   let activeCropAspect = "landscape";
   let activeVisualMode = "video";
   let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
@@ -7502,6 +7589,68 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (backgroundSelectedNote) {
       backgroundSelectedNote.textContent = selected?.description || "Default background";
+    }
+  };
+  const hasSubscribeOption = (key) => subscribeVisualOptions.some((opt) => (opt.key || "") === String(key || ""));
+  const getActiveSubscribeOption = () => (
+    subscribeVisualOptions.find((opt) => opt.key === activeSubscribeKey) || null
+  );
+  const setSubscribePickerOpen = (isOpen) => {
+    subscribePickerPanel?.classList.toggle("is-open", !!isOpen);
+    subscribeEditBtn?.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+  const syncSubscribePickerEnabled = () => {
+    const enabled = !!subscribeToggle?.checked;
+    subscribeSelectedCard?.classList.toggle("is-disabled", !enabled);
+    subscribeEditBtn?.toggleAttribute("disabled", !enabled);
+    if (!enabled) {
+      setSubscribePickerOpen(false);
+    }
+  };
+  const syncActiveSubscribeCard = () => {
+    const selected = getActiveSubscribeOption();
+    if (subscribeSelectedMedia) {
+      subscribeSelectedMedia.innerHTML = "";
+      const previewUrl = selected?.image_url || "";
+      const fileExt = String(selected?.file_ext || "").toLowerCase();
+      if (previewUrl) {
+        if (fileExt === "mp4") {
+          const video = document.createElement("video");
+          video.src = previewUrl;
+          video.muted = true;
+          video.loop = true;
+          video.autoplay = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          subscribeSelectedMedia.appendChild(video);
+        } else {
+          const img = document.createElement("img");
+          img.src = previewUrl;
+          img.alt = selected ? `Subscribe animation ${selected.label || ""}` : "";
+          subscribeSelectedMedia.appendChild(img);
+        }
+      }
+    }
+    if (subscribeSelectedLabel) {
+      subscribeSelectedLabel.textContent = selected?.label || "No subscribe animation selected";
+    }
+    if (subscribeSelectedNote) {
+      subscribeSelectedNote.textContent = selected?.description || "Shown below subtitles during render";
+    }
+    syncSubscribePickerEnabled();
+  };
+  const setActiveSubscribe = (key, options = {}) => {
+    const { closePicker = false } = options;
+    const normalizedKey = hasSubscribeOption(key) ? String(key || "") : "";
+    activeSubscribeKey = normalizedKey;
+    subscribeVisualButtons.forEach((button) => {
+      const matches = (button.dataset.subscribeVisualKey || "") === normalizedKey;
+      button.classList.toggle("active", matches);
+      button.setAttribute("aria-pressed", matches ? "true" : "false");
+    });
+    syncActiveSubscribeCard();
+    if (closePicker) {
+      setSubscribePickerOpen(false);
     }
   };
   const persistBackgroundPreference = async (key) => {
@@ -8458,9 +8607,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     syncPodcastAudioPreview();
   });
+  subscribeVisualButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveSubscribe(button.dataset.subscribeVisualKey || "", {
+        closePicker: true,
+      });
+    });
+  });
+  subscribeEditBtn?.addEventListener("click", () => {
+    if (!subscribeToggle?.checked) {
+      return;
+    }
+    setSubscribePickerOpen(!subscribePickerPanel?.classList.contains("is-open"));
+  });
+  subscribePickerCloseBtn?.addEventListener("click", () => {
+    setSubscribePickerOpen(false);
+  });
+  subscribeToggle?.addEventListener("change", () => {
+    syncSubscribePickerEnabled();
+  });
 
   setActiveStaticVisual(activeStaticVisualKey);
   syncActiveBackgroundCard();
+  syncActiveSubscribeCard();
   loadPodcastAudios();
   loadPodcastShortClips();
 
@@ -8585,7 +8754,9 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
     setActiveBackground(trigger.dataset.backgroundVisualKey || "");
+    setActiveSubscribe(trigger.dataset.subscribeVisualKey || "");
     setBackgroundPickerOpen(false);
+    setSubscribePickerOpen(false);
     setActiveCropAspect(trigger.dataset.cropAspect || "landscape");
     const triggerVisualKey = trigger.dataset.staticVisualKey || "";
     const preferredMode = (settingsContainer?.dataset.selectedVisualMode || "").toLowerCase();
@@ -8631,6 +8802,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
+    params.set("subscribe_overlay_image", activeSubscribeKey || "");
     const showTitleField = modalEl.querySelector(`[name="show_title"]`);
     if (showTitleField) {
       params.set("show_title", showTitleField.checked ? "1" : "0");
@@ -8724,6 +8896,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     params.append("static_visual_key", activeStaticVisualKey || "");
     params.append("background_visual_key", activeBackgroundKey || "");
+    params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
     const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
@@ -8783,6 +8956,7 @@ document.addEventListener("DOMContentLoaded", () => {
         latestTrigger.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
         latestTrigger.dataset.staticVisualKey = activeStaticVisualKey || "";
         latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
+        latestTrigger.dataset.subscribeVisualKey = activeSubscribeKey || "";
         latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
       }
       if (chooseBtn) {
@@ -8793,6 +8967,7 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
         chooseBtn.dataset.staticVisualKey = activeStaticVisualKey || "";
         chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
+        chooseBtn.dataset.subscribeVisualKey = activeSubscribeKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
       }
     } catch (err) {
