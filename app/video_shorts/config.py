@@ -406,6 +406,7 @@ STATIC_USER_IMAGES_DIR = Path(__file__).resolve().parent / "static" / "user_imag
 STATIC_USER_AUDIO_DIR = Path(__file__).resolve().parent / "static" / "user_audio"
 STATIC_USER_PODCASTS_DIR = Path(__file__).resolve().parent / "static" / "user_podcasts"
 STATIC_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+STATIC_SUBSCRIBE_ANIMATION_MAX_BYTES = 10 * 1024 * 1024
 STATIC_AUDIO_MAX_BYTES = 50 * 1024 * 1024
 
 STATIC_VISUAL_PRESETS = [

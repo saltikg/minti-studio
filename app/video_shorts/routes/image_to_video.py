@@ -41,6 +41,7 @@ def list_static_images():
             SELECT id, label, filename, created_at
             FROM shorts_static_images
             WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+              AND COALESCE(asset_kind, 'background') = 'background'
             ORDER BY created_at DESC
             """,
             [user_id, brand_id],

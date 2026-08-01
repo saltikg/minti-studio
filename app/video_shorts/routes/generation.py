@@ -709,7 +709,7 @@ def _resolve_user_static_image_path(
     conn_images = get_db_readonly()
     try:
         row = conn_images.execute(
-            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ?",
+            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ? AND COALESCE(asset_kind, 'background') = 'background'",
             [clean_image_id],
         ).fetchone()
     finally:
@@ -4070,6 +4070,7 @@ def generate_short(video_pk):
                 SELECT i.id, i.label, i.filename, COALESCE(i.use_as_background, false)
                 FROM shorts_static_images i
                 WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+                  AND COALESCE(i.asset_kind, 'background') = 'background'
                 ORDER BY i.created_at
                 """,
                 [current_user.get("id"), brand_id],
@@ -11982,7 +11983,7 @@ def autoclip_video(video_pk):
                     conn_images = get_db_readonly()
                     try:
                         row = conn_images.execute(
-                            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ?",
+                            "SELECT user_id, filename, brand_id FROM shorts_static_images WHERE id = ? AND COALESCE(asset_kind, 'background') = 'background'",
                             [image_id],
                         ).fetchone()
                     finally:

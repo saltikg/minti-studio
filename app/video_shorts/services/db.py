@@ -883,6 +883,7 @@ def ensure_static_images_schema(conn) -> None:
             id UUID PRIMARY KEY DEFAULT uuid(),
             user_id VARCHAR NOT NULL,
             brand_id VARCHAR,
+            asset_kind VARCHAR DEFAULT 'background',
             category_id UUID,
             use_as_background BOOLEAN DEFAULT false,
             label VARCHAR,
@@ -916,6 +917,21 @@ def ensure_static_images_schema(conn) -> None:
             conn.execute("ALTER TABLE shorts_static_images ADD COLUMN brand_id VARCHAR")
         except Exception:
             pass
+    if "asset_kind" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_static_images ADD COLUMN asset_kind VARCHAR DEFAULT 'background'")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            """
+            UPDATE shorts_static_images
+            SET asset_kind = 'background'
+            WHERE asset_kind IS NULL OR trim(asset_kind) = ''
+            """
+        )
+    except Exception:
+        pass
     try:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_shorts_static_images_user ON shorts_static_images(user_id)"
@@ -937,6 +953,12 @@ def ensure_static_images_schema(conn) -> None:
     try:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_shorts_static_images_background ON shorts_static_images(user_id, use_as_background)"
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shorts_static_images_kind ON shorts_static_images(user_id, brand_id, asset_kind)"
         )
     except Exception:
         pass

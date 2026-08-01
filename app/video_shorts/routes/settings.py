@@ -7,7 +7,12 @@ from flask import flash, jsonify, redirect, render_template, request, url_for, g
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import SHORTS_DIR, STATIC_IMAGE_MAX_BYTES, STATIC_USER_IMAGES_DIR
+from app.video_shorts.config import (
+    SHORTS_DIR,
+    STATIC_IMAGE_MAX_BYTES,
+    STATIC_SUBSCRIBE_ANIMATION_MAX_BYTES,
+    STATIC_USER_IMAGES_DIR,
+)
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
     ensure_background_preferences_schema,
@@ -91,6 +96,7 @@ def _resolve_selected_background_key(user_id: str, brand_id: str | None, backgro
                 SELECT id
                 FROM shorts_static_images
                 WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+                  AND COALESCE(asset_kind, 'background') = 'background'
                 """,
                 [image_id, user_id, brand_id],
             ).fetchone()
@@ -149,9 +155,9 @@ def settings_page():
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     settings_items = [
         {
-            "title": "Backgrounds",
-            "subtitle": "Manage visual assets for Generate",
-            "meta": "Manage the background images available in Generate.",
+            "title": "Video assets",
+            "subtitle": "Manage shared assets for Generate",
+            "meta": "Manage background images and subscribe animations for this workspace.",
             "icon": "image",
             "href": url_for("video_shorts_bp.static_images_page"),
         },
@@ -421,10 +427,14 @@ def static_images_page():
     if request.method == "POST":
         wants_json = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         action = (request.form.get("action") or "upload_image").strip().lower()
+        asset_kind = (request.form.get("asset_kind") or "background").strip().lower()
+        if asset_kind not in {"background", "subscribe"}:
+            asset_kind = "background"
         logger.info(
-            "static_images_page POST received user_id=%s action=%s wants_json=%s media_backend=%s",
+            "static_images_page POST received user_id=%s action=%s asset_kind=%s wants_json=%s media_backend=%s",
             current_user.get("id"),
             action,
+            asset_kind,
             wants_json,
             getattr(get_media_storage(), "backend_name", "unknown"),
         )
@@ -497,7 +507,7 @@ def static_images_page():
             "on",
             "yes",
         }
-        if not category_id:
+        if asset_kind == "background" and not category_id:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=missing_category",
                 current_user.get("id"),
@@ -508,34 +518,37 @@ def static_images_page():
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
             return redirect(url_for("video_shorts_bp.static_images_page"))
-        category = conn.execute(
-            """
-            SELECT id, name
-            FROM shorts_static_image_categories
-            WHERE id = ? AND user_id = ? AND COALESCE(is_active, true) = true
-              AND brand_id = ?
-            """,
-            [category_id, current_user.get("id"), brand_id],
-        ).fetchone()
-        if not category:
-            logger.warning(
-                "static image upload validation failed user_id=%s reason=category_not_found category_id=%s",
-                current_user.get("id"),
-                category_id,
-            )
-            conn.close()
-            message = "The selected category could not be found."
-            if wants_json:
-                return jsonify(success=False, message=message), 400
-            flash(message, "warning")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+        category = None
+        if asset_kind == "background":
+            category = conn.execute(
+                """
+                SELECT id, name
+                FROM shorts_static_image_categories
+                WHERE id = ? AND user_id = ? AND COALESCE(is_active, true) = true
+                  AND brand_id = ?
+                """,
+                [category_id, current_user.get("id"), brand_id],
+            ).fetchone()
+            if not category:
+                logger.warning(
+                    "static image upload validation failed user_id=%s reason=category_not_found category_id=%s",
+                    current_user.get("id"),
+                    category_id,
+                )
+                conn.close()
+                message = "The selected category could not be found."
+                if wants_json:
+                    return jsonify(success=False, message=message), 400
+                flash(message, "warning")
+                return redirect(url_for("video_shorts_bp.static_images_page"))
         if not upload or not upload.filename:
             logger.warning(
-                "static image upload validation failed user_id=%s reason=missing_file",
+                "static image upload validation failed user_id=%s reason=missing_file asset_kind=%s",
                 current_user.get("id"),
+                asset_kind,
             )
             conn.close()
-            message = "Please choose an image."
+            message = "Please choose a subscribe animation." if asset_kind == "subscribe" else "Please choose an image."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -543,16 +556,28 @@ def static_images_page():
 
         filename = secure_filename(upload.filename)
         ext = Path(filename).suffix.lower()
-        allowed_exts = {".png", ".jpg", ".jpeg", ".webp"}
+        if asset_kind == "subscribe":
+            allowed_exts = {".gif", ".mp4"}
+            max_bytes = STATIC_SUBSCRIBE_ANIMATION_MAX_BYTES
+            invalid_type_message = "Please upload only GIF or MP4 files."
+            missing_file_message = "Please choose a subscribe animation."
+            size_message = "File size must be 10MB or less."
+        else:
+            allowed_exts = {".png", ".jpg", ".jpeg", ".webp"}
+            max_bytes = STATIC_IMAGE_MAX_BYTES
+            invalid_type_message = "Please upload only PNG, JPG, or WEBP files."
+            missing_file_message = "Please choose an image."
+            size_message = "File size must be 5MB or less."
         if ext not in allowed_exts:
             logger.warning(
-                "static image upload validation failed user_id=%s reason=unsupported_ext filename=%s ext=%s",
+                "static image upload validation failed user_id=%s reason=unsupported_ext asset_kind=%s filename=%s ext=%s",
                 current_user.get("id"),
+                asset_kind,
                 filename,
                 ext,
             )
             conn.close()
-            message = "Please upload only PNG, JPG, or WEBP files."
+            message = invalid_type_message
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -564,16 +589,17 @@ def static_images_page():
             upload.stream.seek(0)
         except Exception:
             size_bytes = None
-        if size_bytes is not None and size_bytes > STATIC_IMAGE_MAX_BYTES:
+        if size_bytes is not None and size_bytes > max_bytes:
             logger.warning(
-                "static image upload validation failed user_id=%s reason=file_too_large filename=%s size_bytes=%s limit_bytes=%s",
+                "static image upload validation failed user_id=%s reason=file_too_large asset_kind=%s filename=%s size_bytes=%s limit_bytes=%s",
                 current_user.get("id"),
+                asset_kind,
                 filename,
                 size_bytes,
-                STATIC_IMAGE_MAX_BYTES,
+                max_bytes,
             )
             conn.close()
-            message = "File size must be 5MB or less."
+            message = size_message
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
@@ -644,15 +670,16 @@ def static_images_page():
             )
             conn.execute(
                 """
-                INSERT INTO shorts_static_images (id, user_id, brand_id, category_id, use_as_background, label, filename, file_size, file_ext, is_active, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, now())
+                INSERT INTO shorts_static_images (id, user_id, brand_id, asset_kind, category_id, use_as_background, label, filename, file_size, file_ext, is_active, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, now())
                 """,
                 [
                     image_id,
                     current_user["id"],
                     brand_id,
-                    category_id,
-                    use_as_background,
+                    asset_kind,
+                    category_id if asset_kind == "background" else None,
+                    use_as_background if asset_kind == "background" else False,
                     label,
                     stored_name,
                     size_bytes,
@@ -686,7 +713,7 @@ def static_images_page():
 
     rows = conn.execute(
         """
-        SELECT i.id, i.label, i.filename, i.created_at, i.file_size, c.id, c.name, COALESCE(i.use_as_background, false)
+        SELECT i.id, i.label, i.filename, i.created_at, i.file_size, c.id, c.name, COALESCE(i.use_as_background, false), COALESCE(i.file_ext, ''), COALESCE(i.asset_kind, 'background')
         FROM shorts_static_images i
         LEFT JOIN shorts_static_image_categories c
           ON c.id = i.category_id AND c.user_id = i.user_id
@@ -706,21 +733,26 @@ def static_images_page():
     ).fetchall()
     conn.close()
     images = []
+    subscribe_animations = []
     for row in rows:
-        images.append(
-            {
-                "id": row[0],
-                "background_key": f"userbg:{row[0]}",
-                "label": row[1],
-                "filename": row[2],
-                "created_at": row[3],
-                "file_size": row[4],
-                "category_id": str(row[5]) if row[5] else "",
-                "category_name": row[6] or "",
-                "use_as_background": bool(row[7]) if len(row) > 7 else False,
-                "image_url": _user_image_public_url(current_user.get("id"), row[2]),
-            }
-        )
+        item = {
+            "id": row[0],
+            "background_key": f"userbg:{row[0]}",
+            "label": row[1],
+            "filename": row[2],
+            "created_at": row[3],
+            "file_size": row[4],
+            "category_id": str(row[5]) if row[5] else "",
+            "category_name": row[6] or "",
+            "use_as_background": bool(row[7]) if len(row) > 7 else False,
+            "file_ext": row[8] or "",
+            "asset_kind": row[9] or "background",
+            "image_url": _user_image_public_url(current_user.get("id"), row[2]),
+        }
+        if item["asset_kind"] == "subscribe":
+            subscribe_animations.append(item)
+        else:
+            images.append(item)
     selected_background_key = load_background_preference(current_user.get("id"), brand_id)
     system_images = []
     for system_path in list_system_background_paths():
@@ -738,6 +770,7 @@ def static_images_page():
         "shorts_static_images.html",
         images=images,
         user_images=images,
+        subscribe_animations=subscribe_animations,
         system_images=system_images,
         categories=categories,
         selected_background_key=selected_background_key,
@@ -769,6 +802,7 @@ def update_static_image_category(image_id):
         SELECT id
         FROM shorts_static_images
         WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+          AND COALESCE(asset_kind, 'background') = 'background'
         """,
         [image_id, current_user.get("id"), brand_id],
     ).fetchone()
@@ -825,6 +859,7 @@ def update_static_image_background(image_id):
         SELECT id
         FROM shorts_static_images
         WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
+          AND COALESCE(asset_kind, 'background') = 'background'
         """,
         [image_id, current_user.get("id"), brand_id],
     ).fetchone()

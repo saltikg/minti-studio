@@ -1,6 +1,6 @@
 {% extends "vs_base.html" %}
 
-{% block title %}Background Library{% endblock %}
+{% block title %}Video Assets{% endblock %}
 
 {% block content %}
   <div class="container-fluid">
@@ -194,12 +194,17 @@
 
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
-        <h3 class="mb-1">Background Library</h3>
+        <h3 class="mb-1">Video assets</h3>
       </div>
     </div>
 
-    <form id="static-image-upload-form" method="post" enctype="multipart/form-data">
+    <form id="background-image-upload-form" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="asset_kind" value="background">
       <div class="card shadow-sm vs-card static-upload-card mb-4">
+        <div class="mb-3">
+          <div class="vs-card-title">Backgrounds</div>
+          <div class="static-page-subtitle">Upload and manage background images used in Generate.</div>
+        </div>
         <div class="row static-upload-layout align-items-start">
           <div class="col-12 col-lg-4">
             <div class="static-field">
@@ -280,7 +285,7 @@
     </form>
 
     <div class="card shadow-sm vs-card">
-      <div class="card-header">Static image library</div>
+      <div class="card-header">Background library</div>
       <div class="card-body">
         <div class="static-group">
           <div class="static-group-header">
@@ -411,13 +416,112 @@
         </div>
       </div>
     </div>
+
+    <form id="subscribe-animation-upload-form" method="post" enctype="multipart/form-data" class="mt-4">
+      <input type="hidden" name="asset_kind" value="subscribe">
+      <div class="card shadow-sm vs-card static-upload-card mb-4">
+        <div class="mb-3">
+          <div class="vs-card-title">Subscribe animations</div>
+          <div class="static-page-subtitle">A short animated subscribe clip shown below the subtitles. GIF or MP4.</div>
+        </div>
+        <div class="row static-upload-layout align-items-start">
+          <div class="col-12 col-lg-5">
+            <div class="static-field">
+              <label class="form-label vs-card-title">Upload animation</label>
+              <input type="file" name="image" id="subscribe-animation-file-input" class="static-hidden-file" accept=".gif,.mp4" required>
+              <div id="subscribe-dropzone" class="static-dropzone" role="button" tabindex="0" aria-label="Choose subscribe animation">
+                <div class="static-dropzone-copy">
+                  <span class="material-symbols-outlined" aria-hidden="true">subscriptions</span>
+                  <div class="static-dropzone-title">Drag and drop or choose a file</div>
+                  <div class="static-dropzone-hint">GIF or MP4</div>
+                  <button type="button" id="subscribe-pick-file-btn" class="btn btn-outline-light btn-sm">Choose file</button>
+                </div>
+              </div>
+              <div id="subscribe-file-preview" class="static-file-preview d-none">
+                <div class="static-file-meta w-100" id="subscribe-file-meta"></div>
+              </div>
+              <div class="form-text">Maximum 10MB (GIF or MP4).</div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-5">
+            <div class="static-field">
+              <label class="form-label vs-card-title">Label</label>
+              <input type="text" name="label" class="form-control vs-input static-input" maxlength="60" placeholder="Example: subscribe-loop">
+            </div>
+          </div>
+          <div class="col-12 col-lg-2">
+            <button type="submit" id="subscribe-upload-submit" class="btn vs-btn vs-btn-primary d-flex align-items-center justify-content-center gap-2 w-100 static-upload-submit" disabled>
+              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+              <span>Upload</span>
+            </button>
+          </div>
+          <div class="col-12">
+            <div id="subscribe-upload-progress" class="static-upload-progress">
+              <div class="static-upload-bar" id="subscribe-upload-bar"></div>
+              <div class="static-upload-meta">
+                <span id="subscribe-upload-text">0%</span>
+                <span id="subscribe-upload-bytes">0 MB / 0 MB</span>
+              </div>
+            </div>
+            <div id="subscribe-upload-error" class="alert alert-danger mt-2 d-none" role="alert"></div>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <div class="card shadow-sm vs-card">
+      <div class="card-header">Subscribe animation library</div>
+      <div class="card-body">
+        {% if subscribe_animations %}
+          <div class="row g-3">
+            {% for asset in subscribe_animations %}
+              <div class="col-sm-6 col-md-4 col-lg-3">
+                <div class="card vs-card h-100">
+                  {% if asset.file_ext == 'mp4' %}
+                    <video
+                      src="{{ asset.image_url }}"
+                      class="card-img-top"
+                      muted
+                      loop
+                      playsinline
+                      autoplay
+                      preload="metadata"
+                    ></video>
+                  {% else %}
+                    <img src="{{ asset.image_url }}" class="card-img-top" alt="{{ asset.label or 'Subscribe animation' }}">
+                  {% endif %}
+                  <div class="card-body d-flex flex-column gap-2">
+                    <div class="small text-white-50">
+                      <span>{{ asset.label or 'Subscribe animation' }}</span>
+                    </div>
+                    <div class="small text-white-50">
+                      <span>{{ asset.file_ext|upper or 'FILE' }}</span>
+                    </div>
+                    <div class="static-card-actions">
+                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=asset.id) }}" class="m-0">
+                        <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Are you sure you want to remove this subscribe animation?">
+                          <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
+                          <span>Remove</span>
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-center text-white-50 py-4">No subscribe animations yet.</div>
+        {% endif %}
+      </div>
+    </div>
   </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (() => {
-  const form = document.getElementById("static-image-upload-form");
+  const form = document.getElementById("background-image-upload-form");
   if (!form) return;
   const progressWrap = document.getElementById("static-upload-progress");
   const progressBar = document.getElementById("static-upload-bar");
@@ -732,6 +836,158 @@
     hideError();
     if (!fileInput?.files?.length) {
       showError("Please choose an image.");
+      syncUploadSubmitState();
+      return;
+    }
+    syncUploadSubmitState();
+    uploadSubmitBtn.disabled = true;
+    progressWrap.style.display = "block";
+    progressBar.style.width = "0%";
+    progressText.textContent = "0%";
+    progressBytes.textContent = "0 MB / 0 MB";
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", window.location.href, true);
+    xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+
+    xhr.upload.onprogress = (evt) => {
+      if (!evt.lengthComputable) return;
+      const pct = Math.round((evt.loaded / evt.total) * 100);
+      progressBar.style.width = `${pct}%`;
+      progressText.textContent = `${pct}%`;
+      progressBytes.textContent = `${formatMB(evt.loaded)} MB / ${formatMB(evt.total)} MB`;
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        window.location.reload();
+        return;
+      }
+      let message = "Upload failed.";
+      try {
+        const payload = JSON.parse(xhr.responseText);
+        if (payload && payload.message) message = payload.message;
+      } catch (err) {
+        // ignore parse errors
+      }
+      errorBox.textContent = message;
+      errorBox.classList.remove("d-none");
+      uploadSubmitBtn.disabled = false;
+    };
+
+    xhr.onerror = () => {
+      errorBox.textContent = "Connection error during upload.";
+      errorBox.classList.remove("d-none");
+      uploadSubmitBtn.disabled = false;
+    };
+
+    const formData = new FormData(form);
+    xhr.send(formData);
+  });
+})();
+
+(() => {
+  const form = document.getElementById("subscribe-animation-upload-form");
+  if (!form) return;
+
+  const progressWrap = document.getElementById("subscribe-upload-progress");
+  const progressBar = document.getElementById("subscribe-upload-bar");
+  const progressText = document.getElementById("subscribe-upload-text");
+  const progressBytes = document.getElementById("subscribe-upload-bytes");
+  const errorBox = document.getElementById("subscribe-upload-error");
+  const fileInput = document.getElementById("subscribe-animation-file-input");
+  const pickFileBtn = document.getElementById("subscribe-pick-file-btn");
+  const dropzone = document.getElementById("subscribe-dropzone");
+  const filePreview = document.getElementById("subscribe-file-preview");
+  const fileMeta = document.getElementById("subscribe-file-meta");
+  const uploadSubmitBtn = document.getElementById("subscribe-upload-submit");
+
+  const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(2);
+  const formatBytes = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const showError = (message) => {
+    errorBox.textContent = message;
+    errorBox.classList.remove("d-none");
+  };
+  const hideError = () => {
+    errorBox.classList.add("d-none");
+    errorBox.textContent = "";
+  };
+
+  const syncUploadSubmitState = () => {
+    const hasFile = Boolean(fileInput?.files?.length);
+    uploadSubmitBtn.disabled = !hasFile;
+  };
+
+  const renderSelectedFile = (file) => {
+    if (!filePreview || !fileMeta) return;
+    if (!file) {
+      filePreview.classList.add("d-none");
+      fileMeta.textContent = "";
+      syncUploadSubmitState();
+      return;
+    }
+    const ext = (file.name.split(".").pop() || "").toUpperCase();
+    fileMeta.innerHTML = "";
+    const nameLine = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = file.name;
+    nameLine.appendChild(strong);
+    const infoLine = document.createElement("div");
+    infoLine.textContent = `${formatBytes(file.size)} • ${ext || "-"}`;
+    fileMeta.appendChild(nameLine);
+    fileMeta.appendChild(infoLine);
+    filePreview.classList.remove("d-none");
+    syncUploadSubmitState();
+  };
+
+  pickFileBtn?.addEventListener("click", (evt) => {
+    evt.preventDefault();
+    fileInput?.click();
+  });
+
+  dropzone?.addEventListener("click", () => fileInput?.click());
+  dropzone?.addEventListener("keydown", (evt) => {
+    if (evt.key === "Enter" || evt.key === " ") {
+      evt.preventDefault();
+      fileInput?.click();
+    }
+  });
+  ["dragenter", "dragover"].forEach((evName) => {
+    dropzone?.addEventListener(evName, (evt) => {
+      evt.preventDefault();
+      dropzone.classList.add("is-active");
+    });
+  });
+  ["dragleave", "drop"].forEach((evName) => {
+    dropzone?.addEventListener(evName, (evt) => {
+      evt.preventDefault();
+      dropzone.classList.remove("is-active");
+    });
+  });
+  dropzone?.addEventListener("drop", (evt) => {
+    const files = evt.dataTransfer?.files;
+    if (!files || !files.length || !fileInput) return;
+    const dt = new DataTransfer();
+    dt.items.add(files[0]);
+    fileInput.files = dt.files;
+    renderSelectedFile(files[0]);
+  });
+  fileInput?.addEventListener("change", () => {
+    renderSelectedFile(fileInput.files?.[0] || null);
+  });
+  progressWrap.style.display = "none";
+  syncUploadSubmitState();
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    hideError();
+    if (!fileInput?.files?.length) {
+      showError("Please choose a subscribe animation.");
       syncUploadSubmitState();
       return;
     }
