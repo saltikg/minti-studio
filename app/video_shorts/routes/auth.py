@@ -762,8 +762,8 @@ def _build_onboarding_context() -> dict:
     progress_percent = int((completed_core_steps / core_total_steps) * 100) if core_total_steps else 0
 
     return {
-        "show_modal": not core_completed,
-        "auto_open": not core_completed and not dismissed,
+        "show_modal": False,
+        "auto_open": False,
         "core_completed": core_completed,
         "dismissed": dismissed,
         "completed_core_steps": completed_core_steps,
