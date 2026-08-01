@@ -708,6 +708,18 @@ def _user_image_public_url(user_id: str, filename: str) -> str:
     return resolved.public_url or get_media_storage("local").public_url(key)
 
 
+def _humanize_visual_asset_label(raw_label: Any, fallback_name: Any, default_label: str) -> str:
+    candidate = str(raw_label or "").strip()
+    if not candidate:
+        candidate = Path(str(fallback_name or "")).stem
+    candidate = Path(candidate).stem
+    candidate = re.sub(r"[_-]+", " ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    if not candidate:
+        return default_label
+    return candidate[:45].rstrip() + ("..." if len(candidate) > 45 else "")
+
+
 def _subscribe_overlay_preference_key(video_pk: Any, brand_id: Optional[str]) -> str:
     clean_brand = str(brand_id or "").strip()
     return f"subscribe_overlay_image:{clean_brand}:{int(video_pk)}"
@@ -4304,7 +4316,7 @@ def generate_short(video_pk):
             user_subscribe_visual_options.append(
                 {
                     "key": f"usersub:{row[0]}",
-                    "label": row[1] or f"SUB{idx}",
+                    "label": _humanize_visual_asset_label(row[1], row[2], f"Subscribe {idx}"),
                     "image_url": _user_image_public_url(current_user.get("id"), row[2]),
                     "file_ext": str(row[3] or Path(row[2] or "").suffix.lstrip(".")).lower(),
                     "description": "Workspace subscribe animation",

@@ -580,6 +580,11 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
+  @media (max-width: 575.98px) {
+    .background-picker-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   .trs-shell {
     display: flex;
     flex-direction: column;
@@ -1459,7 +1464,7 @@
   }
   .top-controls {
     display: grid;
-    grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.1fr) minmax(280px, 1.35fr);
+    grid-template-columns: minmax(180px, 0.85fr) minmax(240px, 1fr) minmax(240px, 1fr);
     gap: 14px;
     align-items: stretch;
   }
@@ -1468,6 +1473,32 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+  }
+  .crop-toggle-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px 16px;
+    margin-top: 14px;
+  }
+  .crop-toggle-card {
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .crop-toggle-card .form-check {
+    min-width: 0;
+  }
+  .crop-toggle-card .form-check-label {
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 0.88rem;
+    line-height: 1.25;
+  }
+  .crop-toggle-note {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.52);
   }
   .crop-options-card .controls {
     display: grid;
@@ -1485,6 +1516,16 @@
     margin-top: 10px;
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.52);
+  }
+  @media (max-width: 991.98px) {
+    .crop-toggle-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 575.98px) {
+    .crop-toggle-row {
+      grid-template-columns: 1fr;
+    }
   }
   .crop-preview-advanced {
     margin-bottom: 0;
@@ -2886,72 +2927,52 @@
               </div>
             {% endif %}
           </div>
-          <div class="control-group crop-options-card">
-            <label class="text-white-50">Options</label>
-            <div class="controls">
-              {% if brand_subscribe_overlay_available %}
-                <div class="form-check form-switch mb-0">
-                  <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                  <label class="form-check-label small" for="subscribeOverlayToggle">Show subscribe animation</label>
-                </div>
-                <div class="background-selected-card mt-2" id="subscribe-selected-card">
-                  <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
-                  <div class="background-selected-meta">
-                    <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
-                    <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
-                  </div>
-                  <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
-                    <i class="bi bi-pencil-square"></i>
+          <div class="control-group subscribe-visual-selector">
+            <label class="text-white-50">Subscribe</label>
+            <div class="background-selected-card" id="subscribe-selected-card">
+              <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
+              <div class="background-selected-meta">
+                <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
+                <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
+              </div>
+              <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
+                <i class="bi bi-pencil-square"></i>
+              </button>
+            </div>
+            <div class="background-picker-panel" id="subscribe-picker-panel">
+              <div class="background-picker-head">
+                <div class="background-picker-title">Choose a subscribe animation</div>
+                <button type="button" class="btn btn-link btn-sm text-muted p-0" id="subscribe-picker-close">Done</button>
+              </div>
+              <div class="background-picker-grid" id="subscribe-visual-grid">
+                {% for visual in subscribe_visual_options %}
+                  {% set subscribe_preview_url = visual.image_url or '' %}
+                  {% set subscribe_file_ext = (visual.file_ext or '')|lower %}
+                  <button
+                    type="button"
+                    class="static-visual-option subscribe-visual-option"
+                    data-subscribe-visual-key="{{ visual.key }}"
+                    data-preview-url="{{ subscribe_preview_url }}"
+                    data-file-ext="{{ subscribe_file_ext }}"
+                    aria-label="Select subscribe animation {{ visual.label }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Subscribe animation {{ visual.label }}"
+                  >
+                    {% if subscribe_file_ext == 'mp4' %}
+                      <video src="{{ subscribe_preview_url }}" muted loop autoplay playsinline preload="metadata"></video>
+                    {% else %}
+                      <img src="{{ subscribe_preview_url }}" alt="Subscribe animation {{ visual.label }}">
+                    {% endif %}
+                    <span class="bg-selected-badge" aria-hidden="true">
+                      <i class="bi bi-check"></i>
+                    </span>
                   </button>
-                </div>
-                <div class="background-picker-panel" id="subscribe-picker-panel">
-                  <div class="background-picker-head">
-                    <div class="background-picker-title">Choose a subscribe animation</div>
-                    <button type="button" class="btn btn-link btn-sm text-muted p-0" id="subscribe-picker-close">Done</button>
-                  </div>
-                  <div class="background-picker-grid" id="subscribe-visual-grid">
-                    {% for visual in subscribe_visual_options %}
-                      {% set subscribe_preview_url = visual.image_url or '' %}
-                      {% set subscribe_file_ext = (visual.file_ext or '')|lower %}
-                      <button
-                        type="button"
-                        class="static-visual-option subscribe-visual-option"
-                        data-subscribe-visual-key="{{ visual.key }}"
-                        data-preview-url="{{ subscribe_preview_url }}"
-                        data-file-ext="{{ subscribe_file_ext }}"
-                        aria-label="Select subscribe animation {{ visual.label }}"
-                        data-bs-toggle="tooltip"
-                        data-bs-placement="top"
-                        title="Subscribe animation {{ visual.label }}"
-                      >
-                        {% if subscribe_file_ext == 'mp4' %}
-                          <video src="{{ subscribe_preview_url }}" muted loop autoplay playsinline preload="metadata"></video>
-                        {% else %}
-                          <img src="{{ subscribe_preview_url }}" alt="Subscribe animation {{ visual.label }}">
-                        {% endif %}
-                        <span class="bg-selected-badge" aria-hidden="true">
-                          <i class="bi bi-check"></i>
-                        </span>
-                      </button>
-                    {% endfor %}
-                  </div>
-                </div>
-              {% endif %}
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
-                <label class="form-check-label small" for="showTitleToggle">Show title</label>
-              </div>
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
-                <label class="form-check-label small" for="showSubtitleToggle">Show subtitles</label>
-              </div>
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
-                <label class="form-check-label small" for="musicOnlyToggle">Music only (mute speech track)</label>
+                {% endfor %}
               </div>
             </div>
             {% if not brand_subscribe_overlay_available %}
-              <div class="crop-options-card-note">No subscribe animations are available for this workspace.</div>
+              <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
             {% endif %}
           </div>
           <div class="control-group static-visual-selector d-none" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
@@ -2970,6 +2991,32 @@
               <button type="button" class="visual-mode-btn" data-visual-mode="podcast">
                 <i class="bi bi-mic"></i><span class="text-white">Podcast</span>
               </button>
+            </div>
+          </div>
+        </div>
+        <div class="crop-toggle-row">
+          <div class="crop-toggle-card">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+              <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+            </div>
+          </div>
+          <div class="crop-toggle-card">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
+              <label class="form-check-label" for="showTitleToggle">Show title</label>
+            </div>
+          </div>
+          <div class="crop-toggle-card">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
+              <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
+            </div>
+          </div>
+          <div class="crop-toggle-card">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
+              <label class="form-check-label" for="musicOnlyToggle">Music only (mute speech track)</label>
             </div>
           </div>
         </div>
