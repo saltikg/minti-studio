@@ -59,7 +59,7 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
             COALESCE(u.email, j.user_id) AS user_email,
             j.started_at
         FROM shorts_render_jobs j
-        LEFT JOIN shorts_users u ON u.id = j.user_id
+        LEFT JOIN shorts_users u ON u.id::text = j.user_id
         WHERE j.status = 'processing'
         ORDER BY j.started_at ASC
     """
