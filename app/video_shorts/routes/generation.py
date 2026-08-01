@@ -11104,6 +11104,7 @@ def add_v2_non_speech_keyword(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_short_settings", methods=["POST"])
 def save_short_settings(video_pk):
     brand_id = current_brand_id()
+    current_user = getattr(g, "vs_current_user", None)
     font_key = request.form.get("font") or DEFAULT_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
@@ -11176,7 +11177,6 @@ def save_short_settings(video_pk):
 
     conn = get_db()
     _ensure_video_crop_schema(conn)
-    current_user = getattr(g, "vs_current_user", None)
     video_columns = table_columns(conn, "youtube_videos")
     select_sql = """
         SELECT video_id, subscribe_overlay_enabled
