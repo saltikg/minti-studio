@@ -23,6 +23,17 @@
     .vs-prompt-flow-card {
       padding: 18px;
     }
+    .vs-prompt-screenshot {
+      width: 100%;
+      max-width: 440px;
+      height: auto;
+      display: block;
+      border-radius: 10px;
+      border: 0.5px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+      margin-top: 14px;
+      margin-bottom: 12px;
+    }
     .vs-prompt-kicker {
       color: rgba(255, 255, 255, 0.52);
       font-size: 0.74rem;
@@ -164,22 +175,11 @@
           <div class="col-12">
             <div class="vs-prompt-surface vs-prompt-flow-card">
               <div class="vs-prompt-kicker">Where this is used</div>
-              <div class="vs-prompt-flow">
-                <div class="vs-prompt-flow-step">
-                  <span class="material-symbols-outlined" aria-hidden="true">subtitles</span>
-                  <span>Video transcript</span>
-                </div>
-                <span class="material-symbols-outlined vs-prompt-flow-arrow" aria-hidden="true">arrow_forward</span>
-                <div class="vs-prompt-flow-step vs-prompt-flow-step--accent">
-                  <span class="material-symbols-outlined" aria-hidden="true">notes</span>
-                  <span>This prompt</span>
-                </div>
-                <span class="material-symbols-outlined vs-prompt-flow-arrow" aria-hidden="true">arrow_forward</span>
-                <div class="vs-prompt-flow-step">
-                  <span class="material-symbols-outlined" aria-hidden="true">tag</span>
-                  <span>Description + hashtags</span>
-                </div>
-              </div>
+              <img
+                src="{{ url_for('video_shorts_bp.static', filename='img/ScheduleScreen.png') }}"
+                alt="Schedule & Publish screen showing the Create Description button that this prompt fills in."
+                class="vs-prompt-screenshot"
+              >
               <div class="small vs-text-body">
                 When you click Create description on a video, this prompt turns the transcript into the description and hashtags that get published.
               </div>
