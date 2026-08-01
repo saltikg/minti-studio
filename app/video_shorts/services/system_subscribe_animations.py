@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 from typing import List, Optional
 
@@ -81,8 +80,4 @@ def choose_deterministic_system_subscribe(video_id: Optional[str]) -> Optional[P
     candidates = [candidate for candidate in list_system_subscribe_paths() if candidate.exists()]
     if not candidates:
         return None
-    if not video_id:
-        return candidates[0]
-    digest = hashlib.sha256(str(video_id).encode("utf-8")).digest()
-    index = int.from_bytes(digest[:8], "big") % len(candidates)
-    return candidates[index]
+    return candidates[0]

@@ -1476,7 +1476,7 @@
   }
   .crop-toggle-row {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px 16px;
     margin-top: 14px;
   }
@@ -1599,9 +1599,6 @@
     flex-wrap: wrap;
     gap: 12px 16px;
     align-items: center;
-  }
-  .crop-split-toggle-wrap.is-hidden {
-    display: none !important;
   }
   .cropper-surfaces {
     display: grid;
@@ -2874,6 +2871,12 @@
                   <div class="aspect-title text-white">Fill</div>
                 </span>
               </button>
+              <button type="button" class="aspect-card" data-crop-aspect="portrait" data-split-enabled="1">
+                <span class="aspect-icon"><i class="bi bi-distribute-vertical"></i></span>
+                <span>
+                  <div class="aspect-title text-white">Fill split</div>
+                </span>
+              </button>
               <button type="button" class="aspect-card" data-crop-aspect="landscape">
                 <span class="aspect-icon"><i class="bi bi-display"></i></span>
                 <span>
@@ -2928,7 +2931,7 @@
             {% endif %}
           </div>
           <div class="control-group subscribe-visual-selector">
-            <label class="text-white-50">Subscribe</label>
+            <label class="text-white-50">Subscribe Animation</label>
             <div class="background-selected-card" id="subscribe-selected-card">
               <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
               <div class="background-selected-meta">
@@ -3011,12 +3014,6 @@
             <div class="form-check form-switch mb-0">
               <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
               <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
-            </div>
-          </div>
-          <div class="crop-toggle-card">
-            <div class="form-check form-switch mb-0">
-              <input class="form-check-input" type="checkbox" name="is_music_only" id="musicOnlyToggle" {% if selected_is_music_only %}checked{% endif %}>
-              <label class="form-check-label" for="musicOnlyToggle">Music only (mute speech track)</label>
             </div>
           </div>
         </div>
@@ -3321,10 +3318,6 @@
                   </div>
                 </div>
               </details>
-              <div class="form-check form-switch crop-split-toggle-wrap is-hidden mb-0" id="split-screen-toggle-wrap">
-                <input class="form-check-input" type="checkbox" id="splitScreenToggle">
-                <label class="form-check-label small" for="splitScreenToggle">Split screen (2 boxes)</label>
-              </div>
             </div>
           </div>
         </div>
@@ -7276,8 +7269,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const cropperSurfaces = modalEl.querySelector("#cropper-surfaces");
   const cropperSurfaceTop = modalEl.querySelector("#cropper-surface-top");
   const cropperSurfaceBottom = modalEl.querySelector("#cropper-surface-bottom");
-  const splitToggleWrap = modalEl.querySelector("#split-screen-toggle-wrap");
-  const splitToggleInput = modalEl.querySelector("#splitScreenToggle");
   const previewLoader = modalEl.querySelector("#cropper-loader");
   const infoEl = modalEl.querySelector("#cropper-info");
   const saveBtn = modalEl.querySelector("#crop-save-btn");
@@ -7540,7 +7531,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const ensureLandscapeForPodcastAudio = () => {
     if (!podcastAudioState.selectedId || activeVisualMode !== "podcast") return;
-    setActiveCropAspect("landscape");
+    setCropFormat("landscape", false);
   };
   const loadPodcastAudios = async () => {
     if (!staticAudiosUrl) return;
@@ -7898,13 +7889,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const updateSplitUiState = () => {
-    const splitAvailable = isPortraitCropAspect() && activeVisualMode === "video";
     const effectiveSplit = getEffectiveSplitEnabled();
-    splitToggleWrap?.classList.toggle("is-hidden", !splitAvailable);
-    if (splitToggleInput) {
-      splitToggleInput.checked = !!activeSplitEnabled;
-      splitToggleInput.disabled = !splitAvailable;
-    }
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
     cropperSurfaceTop?.classList.toggle("is-hidden", false);
     cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit);
@@ -8499,15 +8484,25 @@ document.addEventListener("DOMContentLoaded", () => {
       void persistBackgroundPreference(normalizedKey);
     }
   };
-  const setActiveCropAspect = (value) => {
+  const setCropFormat = (value, splitEnabled = false) => {
+    const wasEffectiveSplit = getEffectiveSplitEnabled();
     let normalized = value === "portrait" ? "portrait" : "landscape";
+    let nextSplitEnabled = !!splitEnabled;
     if (activeVisualMode === "podcast" && podcastAudioState.selectedId && normalized !== "landscape") {
       normalized = "landscape";
       setPodcastAudioStatus("Podcast audio selected: output format forced to horizontal (16:9).");
     }
+    if (normalized !== "portrait" || activeVisualMode !== "video") {
+      nextSplitEnabled = false;
+    }
+    if (wasEffectiveSplit && !nextSplitEnabled && lastSinglePresetRatios) {
+      currentPresetRatios = normalizePresetRatios(lastSinglePresetRatios);
+    }
     activeCropAspect = normalized;
+    activeSplitEnabled = nextSplitEnabled;
     cropAspectButtons.forEach((button) => {
-      const matches = (button.dataset.cropAspect || "") === normalized;
+      const matches = (button.dataset.cropAspect || "") === normalized
+        && (((button.dataset.splitEnabled || "") === "1") === nextSplitEnabled);
       button.classList.toggle("active", matches);
       button.setAttribute("aria-pressed", matches ? "true" : "false");
     });
@@ -8516,13 +8511,16 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSplitUiState();
     syncOverlayVisibilityUi();
     if (cropperInstances.top) {
-      if (getEffectiveSplitEnabled()) {
+      if (getEffectiveSplitEnabled() && !wasEffectiveSplit) {
         maybePrimeSplitDefaults();
       }
       initCroppers();
     } else {
       drawPreviewFromCropper();
     }
+  };
+  const setActiveCropAspect = (value) => {
+    setCropFormat(value, activeSplitEnabled);
   };
 
   [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
@@ -8641,7 +8639,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   cropAspectButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      setActiveCropAspect(button.dataset.cropAspect || "landscape");
+      setCropFormat(
+        button.dataset.cropAspect || "landscape",
+        (button.dataset.splitEnabled || "") === "1",
+      );
     });
   });
   podcastAudioUploadBtn?.addEventListener("click", uploadPodcastAudio);
@@ -8650,7 +8651,7 @@ document.addEventListener("DOMContentLoaded", () => {
     podcastAudioState.selectedId = podcastAudioSelect.value || "";
     if (podcastAudioState.selectedId) {
       setVisualMode("podcast");
-      setActiveCropAspect("landscape");
+      setCropFormat("landscape", false);
     }
     syncPodcastAudioPreview();
   });
@@ -8741,27 +8742,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  splitToggleInput?.addEventListener("change", () => {
-    const wasEnabled = activeSplitEnabled;
-    activeSplitEnabled = !!splitToggleInput.checked;
-    if (activeSplitEnabled && !wasEnabled) {
-      maybePrimeSplitDefaults();
-    }
-    if (!activeSplitEnabled && wasEnabled && lastSinglePresetRatios) {
-      currentPresetRatios = normalizePresetRatios(lastSinglePresetRatios);
-    }
-    updateSplitUiState();
-    if (getEffectiveSplitEnabled() && (!previewImgBottom?.getAttribute("src") || !previewImgBottom?.naturalWidth)) {
-      loadActivePreviewImage();
-      return;
-    }
-    if (naturalSize.width && naturalSize.height) {
-      initCroppers();
-    } else {
-      drawPreviewFromCropper();
-    }
-  });
-
   modalEl.addEventListener("show.bs.modal", (event) => {
     const trigger = event?.relatedTarget;
     if (!trigger) {
@@ -8804,7 +8784,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setActiveSubscribe(trigger.dataset.subscribeVisualKey || "");
     setBackgroundPickerOpen(false);
     setSubscribePickerOpen(false);
-    setActiveCropAspect(trigger.dataset.cropAspect || "landscape");
+    setCropFormat(trigger.dataset.cropAspect || "landscape", activeSplitEnabled);
     const triggerVisualKey = trigger.dataset.staticVisualKey || "";
     const preferredMode = (settingsContainer?.dataset.selectedVisualMode || "").toLowerCase();
     if (preferredMode === "podcast" && podcastAudioState.selectedId) {
