@@ -853,7 +853,7 @@ def _guard_video_shorts():
 @video_shorts_bp.route("/login", methods=["GET", "POST"])
 def login():
     if _is_authenticated():
-        nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.channels_page")
+        nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
         return redirect(nxt)
     error = None
     prefill_email = (request.args.get("email") or "").strip().lower()
@@ -911,7 +911,7 @@ def login():
                 if brand:
                     session["vs_brand_id"] = brand["id"]
                 flash(f"Welcome back, {row[3] or row[1]}!", "success")
-                nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.channels_page")
+                nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
                 return redirect(nxt)
     if error:
         flash(error, "danger")
@@ -921,7 +921,7 @@ def login():
 @video_shorts_bp.route("/register", methods=["GET", "POST"])
 def register():
     if _is_authenticated():
-        return redirect(url_for("video_shorts_bp.channels_page"))
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
     error = None
     pending_email = ""
     signups_enabled = _signups_enabled()
@@ -1450,7 +1450,7 @@ def google_login():
     authorization_url, state = flow.authorization_url(prompt="consent")
     session["google_oauth_state"] = state
     session["google_oauth_code_verifier"] = flow.code_verifier
-    session["google_login_next"] = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.channels_page")
+    session["google_login_next"] = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
     return redirect(authorization_url)
 
 
@@ -1603,7 +1603,7 @@ def google_oauth_callback():
     if brand:
         session["vs_brand_id"] = brand["id"]
     flash("Signed in with Google.", "success")
-    nxt = _normalize_next_url(session.pop("google_login_next", None)) or url_for("video_shorts_bp.channels_page")
+    nxt = _normalize_next_url(session.pop("google_login_next", None)) or url_for("video_shorts_bp.my_videos_page")
     return redirect(nxt)
 
 

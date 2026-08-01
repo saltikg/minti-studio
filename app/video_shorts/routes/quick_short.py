@@ -684,17 +684,7 @@ def _json_error(message: str, status: int = 400, **extra: Any):
 
 @video_shorts_bp.route("/shorts/quick", methods=["GET"])
 def quick_short():
-    current_user, redirect_response = _require_quick_user()
-    if redirect_response:
-        return redirect_response
-    _ensure_quick_schema()
-    session_id = (request.args.get("session") or "").strip()
-    session = get_session(session_id, user_id=current_user["id"]) if session_id else None
-    return render_template(
-        "quick_short_wizard.html",
-        initial_session=_build_session_payload(session),
-        max_minutes=int(MAX_QUICK_SHORT_SECONDS / 60),
-    )
+    return redirect(url_for("video_shorts_bp.my_videos_page"))
 
 
 @video_shorts_bp.route("/shorts/quick/api/session", methods=["GET"])
