@@ -8560,10 +8560,16 @@ document.addEventListener("DOMContentLoaded", () => {
     syncPreviewCanvasSize();
     updateSplitUiState();
     syncOverlayVisibilityUi();
-    if (cropperInstances.top) {
-      if (getEffectiveSplitEnabled() && !wasEffectiveSplit) {
-        maybePrimeSplitDefaults();
-      }
+    if (getEffectiveSplitEnabled() && !wasEffectiveSplit) {
+      maybePrimeSplitDefaults();
+    }
+    if (getEffectiveSplitEnabled() && (!previewImgBottom?.getAttribute("src") || !previewImgBottom?.naturalWidth)) {
+      loadActivePreviewImage();
+      return;
+    }
+    if (naturalSize.width && naturalSize.height) {
+      initCroppers();
+    } else if (cropperInstances.top) {
       initCroppers();
     } else {
       drawPreviewFromCropper();
