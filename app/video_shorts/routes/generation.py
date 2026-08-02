@@ -29,6 +29,7 @@ from app.video_shorts.config import (
     DEFAULT_SUB_FONT_SIZE,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
+    SUBTITLE_HIGHLIGHT_COLOR,
     DEFAULT_TITLE_BG_COLOR,
     DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_TEXT_ALPHA,
@@ -163,6 +164,7 @@ from app.video_shorts.services.storage import (
     resolve_stored_media,
 )
 from app.video_shorts.services.transcript_service import (
+    _build_ass_karaoke_for_clip,
     _build_srt_for_clip,
     _build_srt_from_text,
     _fetch_transcript,
@@ -3086,6 +3088,7 @@ def _build_render_job_options(
     subtitle_font_key: Optional[str],
     subtitle_font_size: Optional[int],
     subtitle_margin: Optional[int],
+    subtitle_style: Optional[str],
     title_margin: Optional[int],
     title_line_spacing: Optional[int],
     title_bg_color: Optional[str],
@@ -3121,6 +3124,7 @@ def _build_render_job_options(
         "subtitle_font_key": subtitle_font_key,
         "subtitle_font_size": subtitle_font_size,
         "subtitle_margin": subtitle_margin,
+        "subtitle_style": (subtitle_style or "plain").strip().lower(),
         "title_margin": title_margin,
         "title_line_spacing": title_line_spacing,
         "title_bg_color": title_bg_color,
@@ -4071,7 +4075,7 @@ def generate_short(video_pk):
         view_count, like_count, comment_count, published_at,
         split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio,
         crop_aspect,
-        title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, video_date_text, video_date_top, subscribe_overlay_enabled,
+        title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, subtitle_style, title_margin, title_line_spacing, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, video_date_text, video_date_top, subscribe_overlay_enabled,
         is_music_only,
         static_visual_key,
         background_visual_key,
@@ -4093,7 +4097,7 @@ def generate_short(video_pk):
         "view_count", "like_count", "comment_count", "published_at",
         "split_enabled", "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio", "crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio",
         "crop_aspect",
-        "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha", "subtitle_text_alpha", "video_date_text", "video_date_top", "subscribe_overlay_enabled",
+        "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin", "subtitle_style", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha", "subtitle_text_alpha", "video_date_text", "video_date_top", "subscribe_overlay_enabled",
         "is_music_only",
         "static_visual_key",
         "background_visual_key",
@@ -4272,6 +4276,9 @@ def generate_short(video_pk):
     video_sub_font_key = video.get("subtitle_font_key") or DEFAULT_SUB_FONT_KEY
     video_sub_font_size = video.get("subtitle_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin = video.get("subtitle_margin") or SUB_MARGIN_DEFAULT
+    video_subtitle_style = str(video.get("subtitle_style") or "plain").strip().lower()
+    if video_subtitle_style not in {"plain", "karaoke"}:
+        video_subtitle_style = "plain"
     video_title_margin = video.get("title_margin") or DEFAULT_TITLE_MARGIN
     video_title_line_spacing = video.get("title_line_spacing")
     try:
@@ -4528,6 +4535,7 @@ def generate_short(video_pk):
     session["vs_title_font_size"] = video_title_font_size or DEFAULT_TITLE_FONT_SIZE
     session["vs_sub_font_size"] = video_sub_font_size
     session["vs_sub_margin"] = video_sub_margin
+    session["vs_subtitle_style"] = video_subtitle_style
     session["vs_title_margin"] = video_title_margin
     session["vs_title_line_spacing"] = video_title_line_spacing
     session["vs_title_bg_color"] = video_title_bg_color
@@ -4550,6 +4558,7 @@ def generate_short(video_pk):
     selected_title_font_size = video_title_font_size
     selected_sub_font_size = video_sub_font_size
     selected_sub_margin = video_sub_margin
+    selected_subtitle_style = video_subtitle_style
     selected_title_margin = video_title_margin
     selected_title_line_spacing = video_title_line_spacing
     selected_title_bg_color = video_title_bg_color
@@ -5236,6 +5245,7 @@ def generate_short(video_pk):
         sub_font_sizes=SUB_FONT_SIZES,
         selected_sub_font_size=selected_sub_font_size,
         selected_sub_margin=selected_sub_margin,
+        selected_subtitle_style=selected_subtitle_style,
         selected_title_margin=selected_title_margin,
         selected_title_line_spacing=selected_title_line_spacing,
         selected_title_bg_color=selected_title_bg_color,
@@ -10843,6 +10853,9 @@ def create_clip_plan_v2(video_pk):
         or DEFAULT_SUBTITLE_TEXT_COLOR,
         DEFAULT_SUBTITLE_TEXT_COLOR,
     )
+    subtitle_style = (request.form.get("subtitle_style") or session.get("vs_subtitle_style") or "plain").strip().lower()
+    if subtitle_style not in {"plain", "karaoke"}:
+        subtitle_style = "plain"
     session["vs_title_font_size"] = title_font_size
     session["vs_sub_font_size"] = sub_font_size
     session["vs_sub_margin"] = sub_margin
@@ -10851,13 +10864,14 @@ def create_clip_plan_v2(video_pk):
     session["vs_title_bg_alpha"] = title_bg_alpha
     session["vs_title_text_color"] = title_text_color
     session["vs_subtitle_text_color"] = subtitle_text_color
+    session["vs_subtitle_style"] = subtitle_style
     conn_update = get_db()
     try:
         conn_update.execute(
             """UPDATE youtube_videos
-               SET title_font_key = ?, title_font_size = ?, subtitle_font_key = ?, subtitle_font_size = ?, subtitle_margin = ?, title_margin = ?, title_bg_color = ?, title_bg_alpha = ?, title_text_color = ?, subtitle_text_color = ?
+               SET title_font_key = ?, title_font_size = ?, subtitle_font_key = ?, subtitle_font_size = ?, subtitle_margin = ?, subtitle_style = ?, title_margin = ?, title_bg_color = ?, title_bg_alpha = ?, title_text_color = ?, subtitle_text_color = ?
              WHERE video_id = ?""",
-            [font_key, title_font_size, sub_font_key, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, vid],
+            [font_key, title_font_size, sub_font_key, sub_font_size, sub_margin, subtitle_style, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, vid],
         )
         conn_update.commit()
     except Exception as exc:
@@ -11252,6 +11266,9 @@ def save_short_settings(video_pk):
     subtitle_bg_color = _normalize_hex_color(request.form.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_COLOR)
     subtitle_bg_alpha = _normalize_alpha_percent(request.form.get("subtitle_bg_alpha") or DEFAULT_SUBTITLE_BG_ALPHA, DEFAULT_SUBTITLE_BG_ALPHA)
     subtitle_text_alpha = _normalize_alpha_percent(request.form.get("subtitle_text_alpha") or DEFAULT_SUBTITLE_TEXT_ALPHA, DEFAULT_SUBTITLE_TEXT_ALPHA)
+    subtitle_style = (request.form.get("subtitle_style") or "plain").strip().lower()
+    if subtitle_style not in {"plain", "karaoke"}:
+        subtitle_style = "plain"
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
         expected_owner_user_id=current_user.get("id") if current_user else None,
@@ -11328,6 +11345,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": sub_font_key,
             "subtitle_font_size": subtitle_font_size,
             "subtitle_margin": subtitle_margin,
+            "subtitle_style": subtitle_style,
             "title_margin": title_margin,
             "title_line_spacing": title_line_spacing,
             "title_bg_color": title_bg_color,
@@ -11391,6 +11409,7 @@ def save_short_settings(video_pk):
     session["vs_sub_font"] = sub_font_key
     session["vs_sub_font_size"] = subtitle_font_size
     session["vs_sub_margin"] = subtitle_margin
+    session["vs_subtitle_style"] = subtitle_style
     session["vs_title_margin"] = title_margin
     session["vs_title_line_spacing"] = title_line_spacing
     session["vs_title_bg_color"] = title_bg_color
@@ -11492,6 +11511,7 @@ def autoclip_video(video_pk):
     video_subtitle_bg_color = None
     video_subtitle_bg_alpha = DEFAULT_SUBTITLE_BG_ALPHA
     video_subtitle_text_alpha = DEFAULT_SUBTITLE_TEXT_ALPHA
+    video_subtitle_style = "plain"
     video_date_text = None
     video_date_top = DEFAULT_VIDEO_DATE_TOP
     video_subscribe_overlay = True
@@ -11514,13 +11534,13 @@ def autoclip_video(video_pk):
         crop_row = conn.execute(
             "SELECT split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio, crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio, "
             "crop_aspect, "
-            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, video_date_top, show_title, show_subtitle, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha "
+            "title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin, title_margin, title_line_spacing, title_bg_color, video_date_text, video_date_top, show_title, show_subtitle, subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key, video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids, owner_user_id, title_text_color, subtitle_text_color, title_bg_alpha, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha, subtitle_style "
             "FROM youtube_videos WHERE video_id = ?",
             [vid],
         ).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
-            if len(crop_row) >= 37:
+            if len(crop_row) >= 38:
                 query_indexes = {
                     "split_enabled": 0,
                     "crop_aspect": 9,
@@ -11551,6 +11571,40 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": 34,
                     "subtitle_bg_alpha": 35,
                     "subtitle_text_alpha": 36,
+                    "subtitle_style": 37,
+                }
+            elif len(crop_row) >= 37:
+                query_indexes = {
+                    "split_enabled": 0,
+                    "crop_aspect": 9,
+                    "title_font_key": 10,
+                    "title_font_size": 11,
+                    "subtitle_font_key": 12,
+                    "subtitle_font_size": 13,
+                    "subtitle_margin": 14,
+                    "title_margin": 15,
+                    "title_line_spacing": 16,
+                    "title_bg_color": 17,
+                    "video_date_text": 18,
+                    "video_date_top": 19,
+                    "show_title": 20,
+                    "show_subtitle": 21,
+                    "subscribe_overlay_enabled": 22,
+                    "is_music_only": 23,
+                    "static_visual_key": 24,
+                    "background_visual_key": 25,
+                    "video_overlay_offset": 26,
+                    "podcast_audio_filename": 27,
+                    "visual_mode": 28,
+                    "podcast_overlay_short_ids": 29,
+                    "owner_user_id": 30,
+                    "title_text_color": 31,
+                    "subtitle_text_color": 32,
+                    "title_bg_alpha": 33,
+                    "subtitle_bg_color": 34,
+                    "subtitle_bg_alpha": 35,
+                    "subtitle_text_alpha": 36,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 35:
                 query_indexes = {
@@ -11583,6 +11637,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": 32,
                     "subtitle_bg_alpha": 33,
                     "subtitle_text_alpha": 34,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 30:
                 query_indexes = {
@@ -11615,6 +11670,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": 27,
                     "subtitle_bg_alpha": 28,
                     "subtitle_text_alpha": 29,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 29:
                 query_indexes = {
@@ -11647,6 +11703,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 23:
                 query_indexes = {
@@ -11679,6 +11736,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 22:
                 query_indexes = {
@@ -11711,6 +11769,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 21:
                 # Has title_line_spacing + podcast_audio_filename, but no visual_mode.
@@ -11744,6 +11803,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             elif len(crop_row) >= 20:
                 # Has podcast_audio_filename, but no title_line_spacing/visual_mode.
@@ -11777,6 +11837,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             else:
                 # Legacy: no podcast_audio_filename, no title_line_spacing/visual_mode.
@@ -11810,6 +11871,7 @@ def autoclip_video(video_pk):
                     "subtitle_bg_color": None,
                     "subtitle_bg_alpha": None,
                     "subtitle_text_alpha": None,
+                    "subtitle_style": None,
                 }
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
@@ -11845,6 +11907,8 @@ def autoclip_video(video_pk):
                 video_subtitle_bg_alpha = _normalize_alpha_percent(crop_row[query_indexes["subtitle_bg_alpha"]], DEFAULT_SUBTITLE_BG_ALPHA)
             if query_indexes["subtitle_text_alpha"] is not None:
                 video_subtitle_text_alpha = _normalize_alpha_percent(crop_row[query_indexes["subtitle_text_alpha"]], DEFAULT_SUBTITLE_TEXT_ALPHA)
+            if query_indexes["subtitle_style"] is not None:
+                video_subtitle_style = str(crop_row[query_indexes["subtitle_style"]] or "plain").strip().lower()
             video_date_text = crop_row[query_indexes["video_date_text"]]
             if query_indexes["video_date_top"] is not None:
                 try:
@@ -11890,6 +11954,8 @@ def autoclip_video(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
+    if video_subtitle_style not in {"plain", "karaoke"}:
+        video_subtitle_style = "plain"
     try:
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
@@ -12001,6 +12067,7 @@ def autoclip_video(video_pk):
                 subtitle_font_key=video_sub_font_key,
                 subtitle_font_size=video_sub_font_size,
                 subtitle_margin=video_sub_margin,
+                subtitle_style=video_subtitle_style,
                 title_margin=video_title_margin,
                 title_line_spacing=video_title_line_spacing,
                 title_bg_color=video_title_bg_color,
@@ -12257,7 +12324,22 @@ def autoclip_video(video_pk):
                 sub_segments.append(s.get("tr_text") or s.get("text") or s.get("ar_text") or "")
             clip_text = build_transcript_for_range(segments, start, end, prefer_tr=True)
             subtitle_text = _sanitize_text_for_overlay(" ".join(sub_segments), 400)
-            subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
+            if video_subtitle_style == "karaoke":
+                subtitle_srt = _build_ass_karaoke_for_clip(
+                    segments,
+                    adj_start,
+                    adj_end,
+                    subtitle_font=sub_font_name,
+                    subtitle_font_size=sub_font_size,
+                    subtitle_margin=sub_margin,
+                    subtitle_text_color=subtitle_text_color,
+                    subtitle_text_alpha=subtitle_text_alpha,
+                    subtitle_bg_color=subtitle_bg_color,
+                    subtitle_bg_alpha=subtitle_bg_alpha,
+                    subtitle_highlight_color=SUBTITLE_HIGHLIGHT_COLOR,
+                )
+            else:
+                subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
             if subtitle_srt:
                 temp_subs.append(subtitle_srt)
 

@@ -7,7 +7,17 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from flask import current_app
 
-from app.video_shorts.config import FFMPEG_RENDER_TIMEOUT, FFPROBE_TIMEOUT, OPENAI_MODEL, WHISPER_MODEL, _openai_client
+from app.video_shorts.config import (
+    DEFAULT_SUBTITLE_BG_ALPHA,
+    DEFAULT_SUBTITLE_BG_COLOR,
+    DEFAULT_SUBTITLE_TEXT_ALPHA,
+    FFMPEG_RENDER_TIMEOUT,
+    FFPROBE_TIMEOUT,
+    OPENAI_MODEL,
+    SUBTITLE_HIGHLIGHT_COLOR,
+    WHISPER_MODEL,
+    _openai_client,
+)
 from app.video_shorts.services.db import _ensure_transcript_schema
 from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg, run_media_subprocess
 from app.video_shorts.services.transcript_lang_tagging import infer_lang_from_text, tag_segments_with_language
@@ -383,6 +393,199 @@ def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_
         return None
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".srt")
+    tmp_path = Path(tmp.name)
+    tmp.write("\n".join(lines).encode("utf-8"))
+    tmp.close()
+    return tmp_path
+
+
+def _format_ass_time(ts: float) -> str:
+    total_cs = max(0, int(round(float(ts or 0.0) * 100)))
+    hrs = total_cs // 360000
+    total_cs -= hrs * 360000
+    mins = total_cs // 6000
+    total_cs -= mins * 6000
+    secs = total_cs // 100
+    cs = total_cs - secs * 100
+    return f"{hrs}:{mins:02d}:{secs:02d}.{cs:02d}"
+
+
+def _hex_to_ass_color_with_alpha(
+    color: Optional[str],
+    alpha_percent: Optional[int],
+    fallback: str,
+    fallback_alpha: int,
+) -> str:
+    value = str(color or fallback or "").strip()
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        value = fallback
+    try:
+        alpha = int(alpha_percent if alpha_percent is not None else fallback_alpha)
+    except Exception:
+        alpha = fallback_alpha
+    alpha = max(0, min(100, alpha))
+    rr = int(value[1:3], 16)
+    gg = int(value[3:5], 16)
+    bb = int(value[5:7], 16)
+    aa = int(round((100 - alpha) * 255 / 100))
+    return f"&H{aa:02X}{bb:02X}{gg:02X}{rr:02X}"
+
+
+def _build_ass_karaoke_for_clip(
+    segments: List[Dict[str, Any]],
+    clip_start: float,
+    clip_end: float,
+    *,
+    subtitle_font: str,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_text_color: Optional[str],
+    subtitle_text_alpha: Optional[int],
+    subtitle_bg_color: Optional[str],
+    subtitle_bg_alpha: Optional[int],
+    subtitle_highlight_color: Optional[str] = None,
+) -> Path | None:
+    events: List[Tuple[float, float, str]] = []
+
+    for seg in segments:
+        try:
+            s = float(seg.get("start", 0.0) or 0.0)
+        except Exception:
+            continue
+        try:
+            d = seg.get("duration")
+            d = float(d) if d is not None else None
+        except Exception:
+            d = None
+        try:
+            e_val = seg.get("end")
+            e = float(e_val) if e_val is not None else None
+        except Exception:
+            e = None
+        if e is None:
+            e = s + max(d or 0.0, 0.0)
+        if d is None:
+            d = max(e - s, 0.0)
+        if e <= clip_start or s >= clip_end:
+            continue
+
+        overlap_start = max(s, clip_start)
+        overlap_end = min(e, clip_end)
+        overlap_duration = max(overlap_end - overlap_start, 0.0)
+        rel_start = max(0.0, overlap_start - clip_start)
+        rel_end = max(rel_start + 0.1, overlap_end - clip_start)
+
+        words_raw = seg.get("words") or []
+        karaoke_words: List[Dict[str, Any]] = []
+        if isinstance(words_raw, list):
+            for word in words_raw:
+                if not isinstance(word, dict):
+                    continue
+                word_text = str(word.get("word") or "").strip()
+                if not word_text:
+                    continue
+                try:
+                    word_start = float(word.get("start"))
+                except Exception:
+                    word_start = None
+                try:
+                    word_end = float(word.get("end"))
+                except Exception:
+                    word_end = None
+                if word_start is None or word_end is None:
+                    continue
+                if word_end <= clip_start or word_start >= clip_end:
+                    continue
+                karaoke_words.append(
+                    {
+                        "word": word_text,
+                        "start": max(word_start, clip_start),
+                        "end": min(word_end, clip_end),
+                    }
+                )
+
+        if karaoke_words:
+            chunk_start = 0
+            while chunk_start < len(karaoke_words):
+                chunk_words = karaoke_words[chunk_start:chunk_start + 10]
+                chunk_start += 10
+                if not chunk_words:
+                    continue
+                chunk_rel_start = max(0.0, float(chunk_words[0]["start"]) - clip_start)
+                chunk_rel_end = max(chunk_rel_start + 0.1, float(chunk_words[-1]["end"]) - clip_start)
+                if (s < clip_start or e > clip_end) and (chunk_rel_end - chunk_rel_start) < _MIN_BOUNDARY_CUE_SECONDS:
+                    continue
+                parts: List[str] = []
+                for item in chunk_words:
+                    duration_cs = max(1, int(round(max(float(item["end"]) - float(item["start"]), 0.01) * 100)))
+                    parts.append(f"{{\\k{duration_cs}}}{item['word']}")
+                events.append((chunk_rel_start, chunk_rel_end, " ".join(parts)))
+            continue
+
+        text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
+        if not text:
+            continue
+        is_boundary_segment = s < clip_start or e > clip_end
+        if is_boundary_segment:
+            text = _trim_text_to_segment_overlap(
+                text,
+                segment_start=s,
+                segment_end=e,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+            )
+            if not text or overlap_duration < _MIN_BOUNDARY_CUE_SECONDS:
+                continue
+        entries = _chunk_text_entries(text, rel_start, rel_end, max_words=10)
+        for start, end, chunk_text in entries:
+            if is_boundary_segment and (end - start) < _MIN_BOUNDARY_CUE_SECONDS:
+                continue
+            words = [token for token in re.findall(r"\S+", chunk_text) if token]
+            if not words:
+                continue
+            total_cs = max(1, int(round(max(end - start, 0.01) * 100)))
+            base_cs = max(1, total_cs // len(words))
+            remaining = total_cs - (base_cs * len(words))
+            parts = []
+            for idx, token in enumerate(words):
+                duration_cs = max(1, base_cs + (1 if idx < remaining else 0))
+                parts.append(f"{{\\k{duration_cs}}}{token}")
+            events.append((start, end, " ".join(parts)))
+
+    if not events:
+        return None
+
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "WrapStyle: 2",
+        "ScaledBorderAndShadow: yes",
+        "PlayResX: 1080",
+        "PlayResY: 1920",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
+        "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Default,"
+        f"{subtitle_font},"
+        f"{int(subtitle_font_size)},"
+        f"{_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+        f"{_hex_to_ass_color_with_alpha(subtitle_highlight_color or SUBTITLE_HIGHLIGHT_COLOR, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
+        "&H00000000,"
+        f"{_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
+        "0,0,0,0,100,100,0,0,4,1,0,2,40,40,"
+        f"{int(subtitle_margin)},1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for start, end, text in events:
+        lines.append(
+            f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Default,,0,0,0,,{text}"
+        )
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ass")
     tmp_path = Path(tmp.name)
     tmp.write("\n".join(lines).encode("utf-8"))
     tmp.close()
