@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/ubuntu/apps/minti_studio/.venv/bin/python
 from __future__ import annotations
 
 import os
@@ -8,10 +8,14 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
-import psycopg
 from dotenv import load_dotenv
+
+try:
+    import psycopg as _db_driver
+except ImportError:  # pragma: no cover
+    import psycopg2 as _db_driver
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,8 +51,8 @@ def _database_url() -> str:
     )
 
 
-def _connect() -> psycopg.Connection:
-    return psycopg.connect(_database_url(), options="-c search_path=main,public")
+def _connect() -> Any:
+    return _db_driver.connect(_database_url(), options="-c search_path=main,public")
 
 
 def _fetch_processing_jobs() -> list[ProcessingJob]:
