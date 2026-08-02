@@ -34,6 +34,7 @@ _TR_STOPWORDS = {
     "da", "mi", "mı", "mu", "mü", "sen", "ben", "biz", "siz", "onlar",
 }
 _MIN_BOUNDARY_CUE_SECONDS = 0.7
+KARAOKE_MAX_WORDS = 4
 
 
 def _normalize_whisper_language(raw: Any) -> str:
@@ -507,8 +508,8 @@ def _build_ass_karaoke_for_clip(
         if karaoke_words:
             chunk_start = 0
             while chunk_start < len(karaoke_words):
-                chunk_words = karaoke_words[chunk_start:chunk_start + 10]
-                chunk_start += 10
+                chunk_words = karaoke_words[chunk_start:chunk_start + KARAOKE_MAX_WORDS]
+                chunk_start += KARAOKE_MAX_WORDS
                 if not chunk_words:
                     continue
                 chunk_rel_start = max(0.0, float(chunk_words[0]["start"]) - clip_start)
@@ -536,7 +537,7 @@ def _build_ass_karaoke_for_clip(
             )
             if not text or overlap_duration < _MIN_BOUNDARY_CUE_SECONDS:
                 continue
-        entries = _chunk_text_entries(text, rel_start, rel_end, max_words=10)
+        entries = _chunk_text_entries(text, rel_start, rel_end, max_words=KARAOKE_MAX_WORDS)
         for start, end, chunk_text in entries:
             if is_boundary_segment and (end - start) < _MIN_BOUNDARY_CUE_SECONDS:
                 continue
@@ -570,8 +571,8 @@ def _build_ass_karaoke_for_clip(
         "Style: Default,"
         f"{subtitle_font},"
         f"{int(subtitle_font_size)},"
-        f"{_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(subtitle_highlight_color or SUBTITLE_HIGHLIGHT_COLOR, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
+        f"{_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         "&H00000000,"
         f"{_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
         "0,0,0,0,100,100,0,0,4,1,0,2,40,40,"
