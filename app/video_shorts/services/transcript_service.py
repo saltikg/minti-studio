@@ -520,7 +520,7 @@ def _build_ass_karaoke_for_clip(
                 for item in chunk_words:
                     duration_cs = max(1, int(round(max(float(item["end"]) - float(item["start"]), 0.01) * 100)))
                     parts.append(f"{{\\k{duration_cs}}}{item['word']}")
-                events.append((chunk_rel_start, chunk_rel_end, " ".join(parts)))
+                events.append((chunk_rel_start, chunk_rel_end, "{\\k0}" + " ".join(parts)))
             continue
 
         text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
@@ -551,7 +551,7 @@ def _build_ass_karaoke_for_clip(
             for idx, token in enumerate(words):
                 duration_cs = max(1, base_cs + (1 if idx < remaining else 0))
                 parts.append(f"{{\\k{duration_cs}}}{token}")
-            events.append((start, end, " ".join(parts)))
+            events.append((start, end, "{\\k0}" + " ".join(parts)))
 
     if not events:
         return None
