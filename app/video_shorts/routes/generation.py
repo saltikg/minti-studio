@@ -157,6 +157,7 @@ from app.video_shorts.services.storage import (
     StorageEntry,
     build_storage_reference,
     get_media_storage,
+    invalidate_cloudfront_paths,
     is_storage_reference,
     public_url_for_stored_media,
     resolve_stored_media,
@@ -954,6 +955,29 @@ def _short_local_path(filename: str) -> Path:
     return (SHORTS_DIR / safe_name).resolve()
 
 
+def invalidate_short_cdn_cache(filename: str) -> None:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return
+    key = _short_storage_key(safe_name)
+    try:
+        invalidation_id = invalidate_cloudfront_paths([f"/{key}"])
+        if invalidation_id:
+            current_app.logger.info(
+                "short cloudfront invalidation requested filename=%s key=%s invalidation_id=%s",
+                safe_name,
+                key,
+                invalidation_id,
+            )
+    except Exception as exc:
+        current_app.logger.warning(
+            "Failed to invalidate short CloudFront cache filename=%s key=%s: %s",
+            safe_name,
+            key,
+            exc,
+        )
+
+
 def _short_public_url(filename: str) -> str:
     safe_name = Path(filename or "").name
     if not safe_name:
@@ -1024,6 +1048,7 @@ def _delete_short_media(filename: str) -> bool:
             current_app.logger.info("short s3 delete begin filename=%s key=%s", safe_name, key)
             storage.delete(key)
             current_app.logger.info("short s3 delete success filename=%s key=%s", safe_name, key)
+            invalidate_short_cdn_cache(safe_name)
             deleted = True
         except Exception:
             current_app.logger.exception("short s3 delete failed filename=%s key=%s", safe_name, key)
@@ -12582,6 +12607,7 @@ def autoclip_video(video_pk):
                     clip_filename,
                     short_output_key,
                 )
+                invalidate_short_cdn_cache(clip_filename)
             if current_user:
                 size_bytes = final_file.stat().st_size if final_file.exists() else 0
                 usage = usage or {"used_bytes": 0, "limit_bytes": DEFAULT_USER_STORAGE_LIMIT}

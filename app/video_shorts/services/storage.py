@@ -46,6 +46,16 @@ _MIGRATED_PREFIXES = ("user_images/", "user_audio/", "user_podcasts/")
 _STORAGE_REFERENCE_PREFIX = "s3://"
 
 
+def _aws_session(region_name: Optional[str] = None):
+    if boto3 is None:
+        raise RuntimeError("boto3 is required for AWS-backed media storage")
+    return boto3.session.Session(
+        aws_access_key_id=AWS_ACCESS_KEY_ID or os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY or os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=region_name or None,
+    )
+
+
 def _require_cloudfront_config() -> tuple[str, str, Path]:
     domain = str(CLOUDFRONT_DOMAIN or "").strip()
     key_pair_id = str(CLOUDFRONT_KEY_PAIR_ID or "").strip()
@@ -257,11 +267,7 @@ class S3Storage(Storage):
             raise RuntimeError("boto3 is required for MEDIA_BACKEND=s3")
         if not bucket_name:
             raise RuntimeError("S3_BUCKET_NAME must be set for MEDIA_BACKEND=s3")
-        session = boto3.session.Session(
-            aws_access_key_id=AWS_ACCESS_KEY_ID or os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY or os.getenv("AWS_SECRET_ACCESS_KEY"),
-            region_name=region_name or None,
-        )
+        session = _aws_session(region_name)
         self.bucket_name = bucket_name
         self.region_name = region_name or "us-east-1"
         self.client = session.client("s3", region_name=self.region_name)
@@ -406,3 +412,31 @@ def resolve_stored_media(
         key,
         fallback_local_paths=fallback_local_paths,
     )
+
+
+def invalidate_cloudfront_paths(paths: Iterable[str]) -> Optional[str]:
+    distribution_id = str(CLOUDFRONT_DISTRIBUTION_ID or "").strip()
+    if not distribution_id:
+        return None
+
+    clean_paths = []
+    for raw_path in paths or ():
+        path = "/" + str(raw_path or "").lstrip("/")
+        if path == "/":
+            continue
+        clean_paths.append(path)
+    if not clean_paths:
+        return None
+
+    session = _aws_session(AWS_REGION)
+    client = session.client("cloudfront")
+    caller_reference = f"{clean_paths[0]}:{datetime.now(timezone.utc).isoformat()}"
+    response = client.create_invalidation(
+        DistributionId=distribution_id,
+        InvalidationBatch={
+            "Paths": {"Quantity": len(clean_paths), "Items": clean_paths},
+            "CallerReference": caller_reference,
+        },
+    )
+    invalidation = response.get("Invalidation", {})
+    return str(invalidation.get("Id") or "").strip() or None
