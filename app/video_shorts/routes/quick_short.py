@@ -478,8 +478,8 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
         """
         INSERT INTO youtube_videos
             (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id, download_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id, download_status, subtitle_style)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             channel_id,
@@ -496,6 +496,7 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
             owner_id,
             brand_id,
             "pending",
+            "karaoke",
         ],
     )
     row = conn.execute(
@@ -906,8 +907,8 @@ def quick_short_upload_complete():
                 INSERT INTO youtube_videos
                     (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
                      duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, is_music_only, transcript_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending')
+                     brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
                 """,
                 [
                     channel_id,
@@ -924,6 +925,7 @@ def quick_short_upload_complete():
                     current_user.get("id"),
                     brand_id,
                     bool(session.get("upload_kind") == "music"),
+                    "karaoke",
                 ],
             )
         except Exception:
@@ -936,8 +938,8 @@ def quick_short_upload_complete():
                 INSERT INTO youtube_videos
                     (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
                      duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, transcript_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending')
+                     brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
                 """,
                 [
                     channel_id,
@@ -953,6 +955,7 @@ def quick_short_upload_complete():
                     source_reference,
                     current_user.get("id"),
                     brand_id,
+                    "karaoke",
                 ],
             )
         row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
@@ -1059,8 +1062,8 @@ def _create_uploaded_video_session_and_enqueue(
                 INSERT INTO youtube_videos
                     (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
                      duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, is_music_only, transcript_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending')
+                     brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
                 """,
                 [
                     channel_id,
@@ -1077,6 +1080,7 @@ def _create_uploaded_video_session_and_enqueue(
                     current_user.get("id"),
                     brand_id,
                     bool(upload_kind == "music"),
+                    "karaoke",
                 ],
             )
         except Exception:
@@ -1089,8 +1093,8 @@ def _create_uploaded_video_session_and_enqueue(
                 INSERT INTO youtube_videos
                     (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
                      duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, transcript_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending')
+                     brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
                 """,
                 [
                     channel_id,
@@ -1106,6 +1110,7 @@ def _create_uploaded_video_session_and_enqueue(
                     source_reference,
                     current_user.get("id"),
                     brand_id,
+                    "karaoke",
                 ],
             )
         row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()

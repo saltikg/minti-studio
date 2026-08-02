@@ -3149,8 +3149,8 @@ def videos_page(channel_id):
                         """
                         INSERT INTO youtube_videos
                             (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id, download_status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id, brand_id, download_status, subtitle_style)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             channel_id,
@@ -3167,6 +3167,7 @@ def videos_page(channel_id):
                             channel.get("owner_user_id"),
                             channel.get("brand_id"),
                             "pending",
+                            "karaoke",
                         ],
                     )
                     imported += 1
