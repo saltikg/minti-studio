@@ -10377,8 +10377,27 @@ def edit_segment_text(video_pk):
         return jsonify({"success": False, "message": "Segment index out of range."}), 400
 
     seg = segments[segment_index]
+    segment_start = None
+    segment_end = None
+    try:
+        segment_start = float(seg.get("start")) if seg.get("start") is not None else None
+    except Exception:
+        segment_start = None
+    try:
+        segment_end = float(seg.get("end")) if seg.get("end") is not None else None
+    except Exception:
+        segment_end = None
+    if segment_end is None and segment_start is not None:
+        try:
+            duration = float(seg.get("duration")) if seg.get("duration") is not None else 0.0
+        except Exception:
+            duration = 0.0
+        segment_end = segment_start + max(duration, 0.0)
     seg["tr_text"] = new_text
     seg["text"] = new_text
+    seg["words"] = []
+    if "word_tags" in seg:
+        seg["word_tags"] = []
 
     updated_full_text = _joined_transcript_tr(segments)
     segments_json = json.dumps(segments, ensure_ascii=False)
@@ -10393,6 +10412,42 @@ def edit_segment_text(video_pk):
         return jsonify({"success": False, "message": str(exc)}), 500
 
     conn.close()
+
+    if segment_start is not None and segment_end is not None and segment_end > segment_start:
+        try:
+            current_user = getattr(g, "vs_current_user", None) or {}
+            user_id = str(current_user.get("id") or "")
+            if user_id:
+                plan_entries = _load_plan_entries(video_id)
+                for entry in plan_entries:
+                    try:
+                        plan_index = int(entry.get("plan_index"))
+                        entry_start = float(entry.get("start"))
+                        entry_end = float(entry.get("end"))
+                    except Exception:
+                        continue
+                    if entry_end <= segment_start or entry_start >= segment_end:
+                        continue
+                    try:
+                        clear_done_job_cache_for_plan(
+                            user_id=user_id,
+                            source_video_id=str(video_id or ""),
+                            plan_index=plan_index,
+                        )
+                    except Exception as exc:
+                        current_app.logger.warning(
+                            "Failed to clear render cache after transcript edit video_id=%s plan_index=%s: %s",
+                            video_id,
+                            plan_index,
+                            exc,
+                        )
+        except Exception as exc:
+            current_app.logger.warning(
+                "Failed to inspect overlapping plan entries after transcript edit video_id=%s: %s",
+                video_id,
+                exc,
+            )
+
     return jsonify({"success": True, "transcript": updated_full_text, "segment_text": new_text})
 
 
