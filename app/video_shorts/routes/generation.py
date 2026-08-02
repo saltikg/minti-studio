@@ -212,6 +212,8 @@ from app.video_shorts.services.render_jobs import (
     cancel_job,
     clear_done_job_cache_for_plan,
     enqueue_render_job,
+    invalidate_done_job_cache,
+    is_render_job_cache_valid,
 )
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
@@ -2864,6 +2866,54 @@ def _extract_plan_index_from_filename(value: Any) -> Optional[int]:
     if not match:
         return None
     return _coerce_positive_plan_index(match.group(1))
+
+
+def _resolve_clip_plan_identity(filename: str) -> Tuple[Optional[str], Optional[int]]:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return None, None
+    plan_index = _extract_plan_index_from_filename(safe_name)
+    stem = Path(safe_name).stem
+    match = re.match(r"^\d+_(.+)$", stem)
+    if not match:
+        return None, plan_index
+    video_id = str(match.group(1) or "").strip()
+    return (video_id or None), plan_index
+
+
+def _reset_deleted_clip_plan_entry(video_id: str, filename: str, *, plan_index: Optional[int] = None) -> Optional[int]:
+    if not video_id:
+        return None
+    plan_entries = _load_plan_entries(video_id)
+    if not plan_entries:
+        return None
+    match_entry = None
+    if plan_index is not None:
+        for entry in plan_entries:
+            try:
+                if int(entry.get("plan_index") or 0) == int(plan_index):
+                    match_entry = entry
+                    break
+            except Exception:
+                continue
+    if match_entry is None:
+        for entry in plan_entries:
+            if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
+                match_entry = entry
+                break
+    if not match_entry:
+        return None
+    match_entry["status"] = "pending"
+    match_entry["output_filename"] = None
+    match_entry["audio_start"] = None
+    match_entry["audio_end"] = None
+    match_entry.pop("render_job_id", None)
+    match_entry.pop("render_error", None)
+    _write_plan_entries(video_id, plan_entries)
+    try:
+        return int(match_entry.get("plan_index") or 0)
+    except Exception:
+        return None
 
 
 def _plan_entry_has_stable_identity(entry: Dict[str, Any]) -> bool:
@@ -6860,6 +6910,29 @@ def delete_storage_video():
         conn_assets.commit()
     finally:
         conn_assets.close()
+
+    if target_dir != "videos":
+        clip_name = filename or file_path.name
+        source_video_id, plan_index = _resolve_clip_plan_identity(clip_name)
+        if source_video_id and plan_index is not None:
+            try:
+                resolved_plan_index = _reset_deleted_clip_plan_entry(
+                    source_video_id,
+                    clip_name,
+                    plan_index=plan_index,
+                )
+            except Exception as exc:
+                current_app.logger.warning("Failed to update plan file after storage delete: %s", exc)
+                resolved_plan_index = None
+            try:
+                if resolved_plan_index is not None:
+                    clear_done_job_cache_for_plan(
+                        user_id=str(current_user.get("id") or ""),
+                        source_video_id=str(source_video_id or ""),
+                        plan_index=int(resolved_plan_index),
+                    )
+            except Exception as exc:
+                current_app.logger.warning("Failed to clear render cache after storage delete: %s", exc)
 
     if video_id and target_dir == "videos":
         conn = get_db()
@@ -11955,18 +12028,31 @@ def autoclip_video(video_pk):
             kind = enqueue_result.get("kind")
             job = enqueue_result.get("job") or {}
             if kind == "cached":
-                return _respond(
-                    "Matching clip already exists.",
-                    success=True,
-                    status=200,
-                    category="success",
-                    extras={
-                        "job_id": job.get("id"),
-                        "status": job.get("status"),
-                        "cached": True,
-                        "result": job.get("result"),
-                    },
-                )
+                if not is_render_job_cache_valid(job):
+                    try:
+                        invalidate_done_job_cache(str(job.get("id") or ""))
+                    except Exception as exc:
+                        current_app.logger.warning("Failed to invalidate stale cached render job %s: %s", job.get("id"), exc)
+                    enqueue_result = enqueue_render_job(
+                        user_id=str(current_user["id"]),
+                        payload=payload,
+                        input_hash=input_hash,
+                    )
+                    kind = enqueue_result.get("kind")
+                    job = enqueue_result.get("job") or {}
+                if kind == "cached":
+                    return _respond(
+                        "Matching clip already exists.",
+                        success=True,
+                        status=200,
+                        category="success",
+                        extras={
+                            "job_id": job.get("id"),
+                            "status": job.get("status"),
+                            "cached": True,
+                            "result": job.get("result"),
+                        },
+                    )
             if kind == "existing":
                 _update_plan_entry_job_state(
                     vid,

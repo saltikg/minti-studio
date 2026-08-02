@@ -15,6 +15,7 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
+from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
 
@@ -869,6 +870,15 @@ def delete_channel(channel_id):
 
         for video_id in video_ids:
             _delete_source_video_media(video_id)
+
+        if video_ids:
+            try:
+                clear_done_job_cache_for_videos(
+                    user_id=str(current_user["id"] or ""),
+                    source_video_ids=video_ids,
+                )
+            except Exception as exc:
+                current_app.logger.warning("Failed to clear render cache for deleted channel videos: %s", exc)
 
         if clip_filenames:
             clip_placeholders = ", ".join("?" for _ in clip_filenames)

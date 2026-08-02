@@ -260,6 +260,69 @@ def _find_job_by_hash(conn, *, user_id: str, input_hash: str, statuses: tuple[st
     return _row_to_job(row) if row else None
 
 
+def _invalidate_done_job_cache_entry(conn, job_id: str) -> None:
+    if not job_id:
+        return
+    conn.execute(
+        f"""
+        UPDATE {JOBS_TABLE}
+        SET input_hash = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        [job_id],
+    )
+
+
+def invalidate_done_job_cache(job_id: str) -> int:
+    if not job_id:
+        return 0
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        _invalidate_done_job_cache_entry(conn, job_id)
+        conn.commit()
+        return 1
+    finally:
+        conn.close()
+
+
+def is_render_job_cache_valid(job: Dict[str, Any]) -> bool:
+    if not isinstance(job, dict):
+        return False
+    if str(job.get("type") or "").strip() != JOB_TYPE_RENDER_SHORT:
+        return True
+    payload = job.get("payload") or {}
+    source_video_id = str(payload.get("source_video_id") or "").strip()
+    if not source_video_id:
+        return False
+    try:
+        plan_index = int(payload.get("plan_index"))
+    except Exception:
+        return False
+    try:
+        from app.video_shorts.routes import generation
+
+        plan_entries = generation._load_plan_entries(source_video_id) or []
+        target_entry = None
+        for entry in plan_entries:
+            try:
+                if int(entry.get("plan_index") or 0) == plan_index:
+                    target_entry = entry
+                    break
+            except Exception:
+                continue
+        if not target_entry:
+            return False
+        status = str(target_entry.get("status") or "").strip().lower()
+        output_filename = str(target_entry.get("output_filename") or "").strip()
+        if status not in {"created", "done"} or not output_filename:
+            return False
+        return bool(generation._short_exists(output_filename))
+    except Exception:
+        return False
+
+
 def _queue_position(conn, job_id: str) -> Optional[int]:
     row = conn.execute(
         f"""
@@ -373,6 +436,9 @@ def enqueue_job(
     try:
         ensure_render_jobs_schema(conn)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
+        if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done):
+            _invalidate_done_job_cache_entry(conn, existing_done["id"])
+            existing_done = None
         if existing_done:
             existing_done["cached"] = True
             existing_done["queue_position"] = None
@@ -796,6 +862,39 @@ def clear_done_job_cache_for_plan(*, user_id: str, source_video_id: str, plan_in
                 """,
                 [job_id],
             )
+            cleared += 1
+        conn.commit()
+        return cleared
+    finally:
+        conn.close()
+
+
+def clear_done_job_cache_for_videos(*, user_id: str, source_video_ids: list[str]) -> int:
+    normalized_ids = {str(video_id or "").strip() for video_id in source_video_ids if str(video_id or "").strip()}
+    if not user_id or not normalized_ids:
+        return 0
+    conn = get_db()
+    cleared = 0
+    try:
+        ensure_render_jobs_schema(conn)
+        rows = conn.execute(
+            f"""
+            {_job_select_sql()}
+            WHERE user_id = ?
+              AND status = ?
+            ORDER BY created_at DESC
+            """,
+            [user_id, JOB_STATUS_DONE],
+        ).fetchall()
+        matching_ids = []
+        for row in rows:
+            job = _row_to_job(row)
+            payload = job.get("payload") or {}
+            if str(payload.get("source_video_id") or "").strip() not in normalized_ids:
+                continue
+            matching_ids.append(job["id"])
+        for job_id in matching_ids:
+            _invalidate_done_job_cache_entry(conn, job_id)
             cleared += 1
         conn.commit()
         return cleared
