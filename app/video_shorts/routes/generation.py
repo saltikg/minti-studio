@@ -12630,6 +12630,7 @@ def autoclip_video(video_pk):
                 subtitle_bg_color=subtitle_bg_color,
                 subtitle_bg_alpha=subtitle_bg_alpha,
                 subtitle_text_alpha=subtitle_text_alpha,
+                subtitle_style=video_subtitle_style,
                 video_date_text=video_date_text,
                 video_date_top=video_date_top,
                 show_title=video_show_title,
@@ -12660,6 +12661,7 @@ def autoclip_video(video_pk):
                 subtitle_bg_color,
                 subtitle_bg_alpha,
                 subtitle_text_alpha,
+                video_subtitle_style,
             )
             final_file = output_path
 

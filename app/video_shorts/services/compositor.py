@@ -181,20 +181,32 @@ def _subtitle_force_style(
     subtitle_text_alpha: Optional[int],
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
+    subtitle_style: Optional[str] = None,
 ) -> str:
     clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
-    return (
+    normalized_subtitle_style = str(subtitle_style or "plain").strip().lower()
+    base = (
         f"PlayResX={int(target_width)},"
         f"PlayResY={int(target_height)},"
         f"Fontsize={subtitle_font_size},"
-        f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-        f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-        "BorderStyle=4,"
-        "Outline=1,"
-        "Shadow=0,"
-        f"MarginV={subtitle_margin},"
-        "Alignment=2,"
-        f"FontName={clean_font}"
+    )
+    if normalized_subtitle_style == "karaoke":
+        return (
+            base
+            + f"MarginV={subtitle_margin},"
+            + "Alignment=2,"
+            + f"FontName={clean_font}"
+        )
+    return (
+        base
+        + f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+        + f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
+        + "BorderStyle=4,"
+        + "Outline=1,"
+        + "Shadow=0,"
+        + f"MarginV={subtitle_margin},"
+        + "Alignment=2,"
+        + f"FontName={clean_font}"
     )
 
 
@@ -428,6 +440,7 @@ def _compose_with_background(
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
     subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
+    subtitle_style: Optional[str] = "plain",
 ):
     if not bg_path.exists():
         raise FileNotFoundError(f"Background image not found: {bg_path}")
@@ -491,6 +504,7 @@ def _compose_with_background(
             subtitle_text_alpha=subtitle_text_alpha,
             subtitle_bg_color=subtitle_bg_color,
             subtitle_bg_alpha=subtitle_bg_alpha,
+            subtitle_style=subtitle_style,
         )
         filter_parts.append(
             f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -583,6 +597,7 @@ def _compose_trimmed_with_background(
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
     subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
+    subtitle_style: Optional[str] = "plain",
     video_date_text: Optional[str] = None,
     video_date_top: Optional[int] = None,
     subscribe_overlay_enabled: bool = False,
@@ -727,6 +742,7 @@ def _compose_trimmed_with_background(
                 subtitle_text_alpha=subtitle_text_alpha,
                 subtitle_bg_color=subtitle_bg_color,
                 subtitle_bg_alpha=subtitle_bg_alpha,
+                subtitle_style=subtitle_style,
             )
             filter_parts.append(
                 f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -1374,6 +1390,7 @@ def _compose_trimmed_with_background(
             subtitle_text_alpha=subtitle_text_alpha,
             subtitle_bg_color=subtitle_bg_color,
             subtitle_bg_alpha=subtitle_bg_alpha,
+            subtitle_style=subtitle_style,
         )
         filter_parts.append(
             f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
@@ -1570,6 +1587,7 @@ def _cut_clip(
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
     subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
+    subtitle_style: Optional[str] = "plain",
 ):
     duration = max(end - start, 1.0)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1610,6 +1628,7 @@ def _cut_clip(
             subtitle_text_alpha=subtitle_text_alpha,
             subtitle_bg_color=subtitle_bg_color,
             subtitle_bg_alpha=subtitle_bg_alpha,
+            subtitle_style=subtitle_style,
         )
         cmd.extend(["-vf", f"subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'"])
     run_media_subprocess(
