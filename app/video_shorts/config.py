@@ -36,6 +36,7 @@ S3_BUCKET_NAME = (os.getenv("S3_BUCKET_NAME", "") or "").strip()
 CLOUDFRONT_DOMAIN = (os.getenv("CLOUDFRONT_DOMAIN", "") or "").strip()
 CLOUDFRONT_KEY_PAIR_ID = (os.getenv("CLOUDFRONT_KEY_PAIR_ID", "") or "").strip()
 CLOUDFRONT_PRIVATE_KEY_PATH = (os.getenv("CLOUDFRONT_PRIVATE_KEY_PATH", "") or "").strip()
+CLOUDFRONT_DISTRIBUTION_ID = (os.getenv("CLOUDFRONT_DISTRIBUTION_ID", "") or "").strip() or None
 SHORTS_DIR = Path(__file__).resolve().parent / "static" / "shorts"
 VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 VIDEO_SHORTS_TMP_DIR = Path(os.getenv("VIDEO_SHORTS_TMP_DIR") or (Path(__file__).resolve().parent / "tmp"))
