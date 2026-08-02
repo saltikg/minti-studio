@@ -3111,7 +3111,7 @@ def _build_render_job_options(
     podcast_audio_filename: str,
     podcast_overlay_short_ids: List[str],
     video_overlay_offset: Optional[int],
-    custom_transcript: Optional[str],
+    subtitle_text: Optional[str],
 ) -> Dict[str, Any]:
     return {
         "plan_index": int(plan_index),
@@ -3147,7 +3147,7 @@ def _build_render_job_options(
         "podcast_audio_filename": podcast_audio_filename or "",
         "podcast_overlay_short_ids": podcast_overlay_short_ids or [],
         "video_overlay_offset": video_overlay_offset,
-        "custom_transcript": (custom_transcript or "").strip(),
+        "subtitle_text": (subtitle_text or "").strip(),
     }
 
 
@@ -12056,6 +12056,11 @@ def autoclip_video(video_pk):
     src_path_is_temp = False
     if not queued_job:
         try:
+            effective_subtitle_text = (
+                (plan_entry.get("transcript_full_custom") or "").strip()
+                or build_transcript_for_range(segments, start, end, prefer_tr=True)
+                or ""
+            )
             job_options = _build_render_job_options(
                 plan_index=plan_index,
                 title=plan_entry.get("title") or video_title,
@@ -12094,7 +12099,7 @@ def autoclip_video(video_pk):
                 podcast_audio_filename=video_podcast_audio_filename,
                 podcast_overlay_short_ids=video_podcast_overlay_short_ids,
                 video_overlay_offset=video_overlay_offset,
-                custom_transcript=plan_entry.get("transcript_full_custom"),
+                subtitle_text=effective_subtitle_text,
             )
             input_hash = build_input_hash(
                 source_id=vid,
