@@ -6325,6 +6325,105 @@ def _format_admin_usd(amount: Optional[float], *, approx: bool = False) -> str:
     return f"{prefix}${amount:.2f}"
 
 
+def _format_transcript_hours_compact(minutes: Any) -> str:
+    try:
+        hours = round(float(minutes or 0) / 60.0, 1)
+    except Exception:
+        hours = 0.0
+    if abs(hours - round(hours)) < 1e-9:
+        return f"{int(round(hours))}h"
+    return f"{hours:.1f}h"
+
+
+def _build_admin_transcription_usage_display(used_minutes: Any, limit_minutes: Any) -> Dict[str, Any]:
+    try:
+        used_value = float(used_minutes or 0)
+    except Exception:
+        used_value = 0.0
+    limit_value: Optional[float]
+    try:
+        limit_value = None if limit_minutes is None else float(limit_minutes)
+    except Exception:
+        limit_value = None
+    used_label = _format_transcript_hours_compact(used_value)
+    limit_label = "∞" if limit_value is None else _format_transcript_hours_compact(limit_value)
+    return {
+        "used_minutes": used_value,
+        "limit_minutes": limit_value,
+        "used_label": used_label,
+        "limit_label": limit_label,
+        "display": f"{used_label} / {limit_label}",
+        "is_over_limit": bool(limit_value is not None and used_value > limit_value),
+    }
+
+
+def _load_admin_transcription_usage(
+    conn,
+    user_ids: List[str],
+    *,
+    plan_id_map: Optional[Dict[str, str]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    normalized_user_ids = [str(user_id or "").strip() for user_id in user_ids if str(user_id or "").strip()]
+    if not normalized_user_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in normalized_user_ids)
+    current_month_start = datetime.now(timezone.utc).date().replace(day=1)
+    used_minutes_map: Dict[str, float] = {}
+    limit_minutes_map: Dict[str, Optional[float]] = {}
+
+    usage_rows = conn.execute(
+        f"""
+        SELECT CAST(user_id AS VARCHAR), COALESCE(transcription_minutes_used, 0)
+        FROM shorts_user_usage
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+          AND period_start = ?
+        """,
+        normalized_user_ids + [current_month_start],
+    ).fetchall()
+    for row in usage_rows:
+        used_minutes_map[str(row[0])] = float(row[1] or 0.0)
+
+    resolved_plan_id_map = {str(key): str(value or "").strip() for key, value in (plan_id_map or {}).items() if str(key or "").strip()}
+    missing_plan_users = [user_id for user_id in normalized_user_ids if user_id not in resolved_plan_id_map]
+    if missing_plan_users:
+        missing_placeholders = ", ".join("?" for _ in missing_plan_users)
+        plan_rows = conn.execute(
+            f"""
+            SELECT CAST(id AS VARCHAR), COALESCE(plan_id, 'plan_free')
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) IN ({missing_placeholders})
+            """,
+            missing_plan_users,
+        ).fetchall()
+        for row in plan_rows:
+            resolved_plan_id_map[str(row[0])] = str(row[1] or "plan_free")
+
+    plan_ids = sorted({plan_id for plan_id in resolved_plan_id_map.values() if plan_id})
+    if plan_ids:
+        plan_placeholders = ", ".join("?" for _ in plan_ids)
+        plan_rows = conn.execute(
+            f"""
+            SELECT plan_id, monthly_transcription_minutes
+            FROM shorts_storage_plans
+            WHERE plan_id IN ({plan_placeholders})
+            """,
+            plan_ids,
+        ).fetchall()
+        for row in plan_rows:
+            plan_id = str(row[0] or "").strip()
+            limit_minutes_map[plan_id] = None if row[1] is None else float(row[1] or 0.0)
+
+    usage_lookup: Dict[str, Dict[str, Any]] = {}
+    for user_id in normalized_user_ids:
+        plan_id = resolved_plan_id_map.get(user_id) or "plan_free"
+        usage_lookup[user_id] = _build_admin_transcription_usage_display(
+            used_minutes_map.get(user_id, 0.0),
+            limit_minutes_map.get(plan_id),
+        )
+    return usage_lookup
+
+
 def _load_admin_cost_estimates(
     conn,
     user_ids: List[str],
@@ -6729,6 +6828,7 @@ def _load_admin_auth_users(
         params + [limit, offset],
     ).fetchall()
     cost_lookup: Dict[str, Dict[str, Any]] = {}
+    transcription_usage_lookup: Dict[str, Dict[str, Any]] = {}
     try:
         created_at_map = {str(row[0] or ""): row[6] for row in rows}
         cost_lookup = _load_admin_cost_estimates(
@@ -6739,6 +6839,15 @@ def _load_admin_auth_users(
     except Exception as exc:
         current_app.logger.exception("Admin cost list unavailable: %s", exc)
         cost_lookup = {}
+    try:
+        transcription_usage_lookup = _load_admin_transcription_usage(
+            conn,
+            [str(row[0] or "") for row in rows],
+            plan_id_map={str(row[0] or ""): str(row[4] or "plan_free") for row in rows},
+        )
+    except Exception as exc:
+        current_app.logger.exception("Admin transcription usage list unavailable: %s", exc)
+        transcription_usage_lookup = {}
     users: List[Dict[str, Any]] = []
     for row in rows:
         user_id = str(row[0] or "")
@@ -6785,6 +6894,7 @@ def _load_admin_auth_users(
                 "cost_summary": cost_lookup.get(user_id) or {
                     "display_monthly_avg_usd": "—",
                 },
+                "transcription_usage": transcription_usage_lookup.get(user_id) or {"display": "—"},
             }
         )
     return users, int(total_count or 0)
@@ -7060,6 +7170,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         timeline_rows = []
 
     cost_summary: Dict[str, Any]
+    transcription_usage: Dict[str, Any]
     try:
         cost_summary = _load_admin_cost_estimates(
             conn,
@@ -7077,6 +7188,15 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
             "display_this_month_usd": "—",
             "display_monthly_avg_usd": "—",
         }
+    try:
+        transcription_usage = _load_admin_transcription_usage(
+            conn,
+            [user_id],
+            plan_id_map={user_id: str(row[5] or "plan_free")},
+        ).get(user_id) or {"display": "—"}
+    except Exception as exc:
+        current_app.logger.exception("Admin transcription usage detail unavailable for user %s: %s", user_id, exc)
+        transcription_usage = {"display": "—"}
 
     return {
         "id": row[0],
@@ -7099,6 +7219,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "connected_platforms": connected_platforms,
         "timeline_events": timeline_rows,
         "cost_summary": cost_summary,
+        "transcription_usage": transcription_usage,
     }
 
 

@@ -283,6 +283,7 @@
               <div class="admin-detail-cost-value">{{ user_detail.cost_summary.display_monthly_avg_usd }}</div>
             </article>
           </div>
+          <div class="admin-detail-cost-note mb-0">Transcription this month: <strong{% if user_detail.transcription_usage.is_over_limit %} class="text-danger"{% endif %}>{{ user_detail.transcription_usage.display }}</strong></div>
           <div class="admin-detail-cost-note">Est. — transcription $0.006/min + storage $0.023/GB-mo. Storage &amp; average are approximate (no historical storage ledger).</div>
         </section>
       </div>

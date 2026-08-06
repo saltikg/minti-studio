@@ -175,6 +175,7 @@
             <th>Stage</th>
             <th>Plan</th>
             <th>Subscription</th>
+            <th class="text-end">TRANSCRIPT</th>
             <th class="text-end">COST / MO</th>
             <th>Created</th>
             <th>Last activity</th>
@@ -211,6 +212,7 @@
               </td>
               <td><span class="admin-users-pill">{{ user.plan_id }}</span></td>
               <td><span class="admin-users-pill">{{ user.subscription_status }}</span></td>
+              <td class="admin-users-meta admin-users-metric{% if user.transcription_usage.is_over_limit %} text-danger{% endif %}">{{ user.transcription_usage.display }}</td>
               <td class="admin-users-meta admin-users-metric">{{ user.cost_summary.display_monthly_avg_usd }}</td>
               <td class="admin-users-meta">
                 {{ user.created_at.strftime('%b %-d, %Y') if user.created_at and user.created_at.strftime else (user.created_at or '—') }}
