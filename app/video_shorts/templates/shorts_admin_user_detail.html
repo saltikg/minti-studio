@@ -12,6 +12,10 @@
       display: grid;
       gap: 18px;
     }
+    .admin-detail-stats-band {
+      display: grid;
+      gap: 14px;
+    }
     .admin-detail-summary {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -28,6 +32,15 @@
       display: grid;
       grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
       gap: 10px 18px;
+    }
+    .admin-detail-account-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px 24px;
+    }
+    .admin-detail-account-column {
+      display: grid;
+      gap: 10px;
     }
     .admin-detail-kv dt {
       color: rgba(255, 255, 255, 0.58);
@@ -152,8 +165,28 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .admin-detail-failure-toggle {
+      margin-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 12px;
+    }
+    .admin-detail-failure-toggle summary {
+      cursor: pointer;
+      color: rgba(255, 255, 255, 0.88);
+      font-weight: 600;
+      list-style: none;
+    }
+    .admin-detail-failure-toggle summary::-webkit-details-marker {
+      display: none;
+    }
+    .admin-detail-failure-toggle[open] summary {
+      margin-bottom: 12px;
+    }
     @media (max-width: 991.98px) {
       .admin-detail-summary {
+        grid-template-columns: 1fr;
+      }
+      .admin-detail-account-grid {
         grid-template-columns: 1fr;
       }
       .admin-detail-kv {
@@ -173,51 +206,87 @@
       <div class="vs-admin-muted">User ID: {{ user_detail.id }}</div>
     </div>
 
-    <section class="admin-detail-summary">
-      <article class="admin-detail-card">
-        <div class="admin-detail-stat-label">Videos uploaded</div>
-        <div class="admin-detail-stat-value">{{ user_detail.uploaded_videos }}</div>
-      </article>
-      <article class="admin-detail-card">
-        <div class="admin-detail-stat-label">Shorts generated</div>
-        <div class="admin-detail-stat-value">{{ user_detail.shorts_generated }}</div>
-      </article>
-      <article class="admin-detail-card">
-        <div class="admin-detail-stat-label">Shorts published</div>
-        <div class="admin-detail-stat-value">{{ user_detail.shorts_published }}</div>
-      </article>
+    <section class="admin-detail-card">
+      <div class="admin-detail-stats-band">
+        <section class="admin-detail-summary">
+          <article class="admin-detail-funnel-card">
+            <div class="admin-detail-stat-label">Videos uploaded</div>
+            <div class="admin-detail-stat-value">{{ user_detail.uploaded_videos }}</div>
+          </article>
+          <article class="admin-detail-funnel-card">
+            <div class="admin-detail-stat-label">Shorts generated</div>
+            <div class="admin-detail-stat-value">{{ user_detail.shorts_generated }}</div>
+          </article>
+          <article class="admin-detail-funnel-card">
+            <div class="admin-detail-stat-label">Shorts published</div>
+            <div class="admin-detail-stat-value">{{ user_detail.shorts_published }}</div>
+          </article>
+        </section>
+        <div>
+          <h2 class="h5 mb-3">Funnel breakdown</h2>
+          <div class="admin-detail-funnel">
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Generated</div>
+              <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.generated_total }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Scheduled</div>
+              <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.scheduled }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Published</div>
+              <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.published }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Failed</div>
+              <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.failed }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Overdue</div>
+              <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.overdue }}</div>
+            </article>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="admin-detail-card">
       <h2 class="h5 mb-3">Account info</h2>
-      <dl class="admin-detail-kv">
-        <dt>Name</dt>
-        <dd>{{ user_detail.name }}</dd>
+      <div class="admin-detail-account-grid">
+        <div class="admin-detail-account-column">
+          <dl class="admin-detail-kv">
+            <dt>Name</dt>
+            <dd>{{ user_detail.name }}</dd>
 
-        <dt>Email</dt>
-        <dd>{{ user_detail.email or '—' }}</dd>
+            <dt>Email</dt>
+            <dd>{{ user_detail.email or '—' }}</dd>
 
-        <dt>Username</dt>
-        <dd>{{ user_detail.username or '—' }}</dd>
+            <dt>Username</dt>
+            <dd>{{ user_detail.username or '—' }}</dd>
 
-        <dt>Role</dt>
-        <dd>{{ user_detail.role }}</dd>
+            <dt>Role</dt>
+            <dd>{{ user_detail.role }}</dd>
 
-        <dt>Plan</dt>
-        <dd>{{ user_detail.plan_id }}</dd>
+            <dt>Plan</dt>
+            <dd>{{ user_detail.plan_id }}</dd>
+          </dl>
+        </div>
+        <div class="admin-detail-account-column">
+          <dl class="admin-detail-kv">
+            <dt>Subscription status</dt>
+            <dd>{{ user_detail.subscription_status or '—' }}</dd>
 
-        <dt>Subscription status</dt>
-        <dd>{{ user_detail.subscription_status or '—' }}</dd>
+            <dt>Current period end</dt>
+            <dd>{{ user_detail.subscription_current_period_end.strftime('%b %-d, %Y · %H:%M') if user_detail.subscription_current_period_end and user_detail.subscription_current_period_end.strftime else (user_detail.subscription_current_period_end or '—') }}</dd>
 
-        <dt>Current period end</dt>
-        <dd>{{ user_detail.subscription_current_period_end.strftime('%b %-d, %Y · %H:%M') if user_detail.subscription_current_period_end and user_detail.subscription_current_period_end.strftime else (user_detail.subscription_current_period_end or '—') }}</dd>
+            <dt>Created</dt>
+            <dd>{{ user_detail.created_at.strftime('%b %-d, %Y · %H:%M') if user_detail.created_at and user_detail.created_at.strftime else (user_detail.created_at or '—') }}</dd>
 
-        <dt>Created</dt>
-        <dd>{{ user_detail.created_at.strftime('%b %-d, %Y · %H:%M') if user_detail.created_at and user_detail.created_at.strftime else (user_detail.created_at or '—') }}</dd>
-
-        <dt>Google sub present</dt>
-        <dd>{{ 'Yes' if user_detail.google_sub_present else 'No' }}</dd>
-      </dl>
+            <dt>Google sub present</dt>
+            <dd>{{ 'Yes' if user_detail.google_sub_present else 'No' }}</dd>
+          </dl>
+        </div>
+      </div>
     </section>
 
     <section class="admin-detail-card">
@@ -236,39 +305,13 @@
     </section>
 
     <section class="admin-detail-card">
-      <h2 class="h5 mb-3">Funnel breakdown</h2>
-      <div class="admin-detail-funnel">
-        <article class="admin-detail-funnel-card">
-          <div class="admin-detail-stat-label">Generated</div>
-          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.generated_total }}</div>
-        </article>
-        <article class="admin-detail-funnel-card">
-          <div class="admin-detail-stat-label">Scheduled</div>
-          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.scheduled }}</div>
-        </article>
-        <article class="admin-detail-funnel-card">
-          <div class="admin-detail-stat-label">Published</div>
-          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.published }}</div>
-        </article>
-        <article class="admin-detail-funnel-card">
-          <div class="admin-detail-stat-label">Failed</div>
-          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.failed }}</div>
-        </article>
-        <article class="admin-detail-funnel-card">
-          <div class="admin-detail-stat-label">Overdue</div>
-          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.overdue }}</div>
-        </article>
-      </div>
-    </section>
-
-    <section class="admin-detail-card">
       <h2 class="h5 mb-3">Recent failures</h2>
       {% if user_detail.failures_unavailable_note %}
         <p class="vs-admin-muted">{{ user_detail.failures_unavailable_note }}</p>
       {% endif %}
       {% if user_detail.recent_failures %}
         <div class="admin-detail-failure-list">
-          {% for failure in user_detail.recent_failures %}
+          {% for failure in user_detail.recent_failures[:5] %}
             <article class="admin-detail-failure-row">
               <div class="admin-detail-failure-top">
                 <span class="admin-detail-failure-tag">{{ failure.source }}</span>
@@ -282,6 +325,26 @@
             </article>
           {% endfor %}
         </div>
+        {% if user_detail.recent_failures|length > 5 %}
+          <details class="admin-detail-failure-toggle">
+            <summary>Show {{ user_detail.recent_failures|length - 5 }} more</summary>
+            <div class="admin-detail-failure-list">
+              {% for failure in user_detail.recent_failures[5:] %}
+                <article class="admin-detail-failure-row">
+                  <div class="admin-detail-failure-top">
+                    <span class="admin-detail-failure-tag">{{ failure.source }}</span>
+                    <span class="admin-detail-failure-id">{{ failure.identifier }}</span>
+                  </div>
+                  <div class="admin-detail-timeline-meta">
+                    <span>{{ failure.timestamp.strftime('%b %-d, %Y · %H:%M') if failure.timestamp and failure.timestamp.strftime else (failure.timestamp or '—') }}</span>
+                    {% if failure.meta %}<span>{{ failure.meta }}</span>{% endif %}
+                  </div>
+                  <div class="admin-detail-failure-reason">{{ failure.reason }}</div>
+                </article>
+              {% endfor %}
+            </div>
+          </details>
+        {% endif %}
       {% else %}
         <p class="vs-admin-muted mb-0">No failures recorded.</p>
       {% endif %}
