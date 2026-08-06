@@ -6467,6 +6467,31 @@ def _load_admin_auth_users(
         if "publish_status" in generated_columns
         else "0 AS shorts_published"
     )
+    scheduled_short_expr = (
+        "SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'scheduled' THEN 1 ELSE 0 END) AS scheduled_count"
+        if "publish_status" in generated_columns
+        else "0 AS scheduled_count"
+    )
+    failed_short_expr = (
+        "SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'failed' THEN 1 ELSE 0 END) AS failed_count"
+        if "publish_status" in generated_columns
+        else "0 AS failed_count"
+    )
+    overdue_short_expr = (
+        """
+        SUM(
+            CASE
+                WHEN lower(coalesce(publish_status, '')) <> 'published'
+                 AND planned_publish_at IS NOT NULL
+                 AND planned_publish_at <= now()
+                THEN 1
+                ELSE 0
+            END
+        ) AS overdue_count
+        """
+        if "publish_status" in generated_columns and "planned_publish_at" in generated_columns
+        else "0 AS overdue_count"
+    )
     generated_join = ""
     if generated_columns and "user_id" in generated_columns:
         generated_join = f"""
@@ -6475,6 +6500,9 @@ def _load_admin_auth_users(
                 CAST(user_id AS VARCHAR) AS user_id,
                 COUNT(*) AS shorts_generated,
                 {published_short_expr},
+                {scheduled_short_expr},
+                {failed_short_expr},
+                {overdue_short_expr},
                 {generated_activity_expr}
             FROM shorts_generated_videos
             GROUP BY CAST(user_id AS VARCHAR)
@@ -6503,6 +6531,9 @@ def _load_admin_auth_users(
           COALESCE(yv.uploaded_videos, 0),
           COALESCE(gv.shorts_generated, 0),
           COALESCE(gv.shorts_published, 0),
+          COALESCE(gv.scheduled_count, 0),
+          COALESCE(gv.failed_count, 0),
+          COALESCE(gv.overdue_count, 0),
           yv.last_video_activity,
           gv.last_short_activity
         FROM shorts_users u
@@ -6516,9 +6547,29 @@ def _load_admin_auth_users(
     ).fetchall()
     users: List[Dict[str, Any]] = []
     for row in rows:
-        last_activity = row[10]
-        if row[11] and (last_activity is None or row[11] > last_activity):
-            last_activity = row[11]
+        uploaded_videos = int(row[7] or 0)
+        shorts_generated = int(row[8] or 0)
+        shorts_published = int(row[9] or 0)
+        scheduled_count = int(row[10] or 0)
+        failed_count = int(row[11] or 0)
+        overdue_count = int(row[12] or 0)
+        last_activity = row[13]
+        if row[14] and (last_activity is None or row[14] > last_activity):
+            last_activity = row[14]
+        if uploaded_videos == 0:
+            stage = "no_upload"
+        elif shorts_generated == 0:
+            stage = "no_clips"
+        elif shorts_published > 0:
+            stage = "publishing"
+        elif failed_count > 0:
+            stage = "publish_failing"
+        elif overdue_count > 0:
+            stage = "overdue"
+        elif scheduled_count > 0:
+            stage = "scheduled"
+        else:
+            stage = "not_published"
         users.append(
             {
                 "id": row[0],
@@ -6528,9 +6579,13 @@ def _load_admin_auth_users(
                 "plan_id": row[4] or "plan_free",
                 "subscription_status": row[5] or "—",
                 "created_at": row[6],
-                "uploaded_videos": int(row[7] or 0),
-                "shorts_generated": int(row[8] or 0),
-                "shorts_published": int(row[9] or 0),
+                "uploaded_videos": uploaded_videos,
+                "shorts_generated": shorts_generated,
+                "shorts_published": shorts_published,
+                "scheduled_count": scheduled_count,
+                "failed_count": failed_count,
+                "overdue_count": overdue_count,
+                "stage": stage,
                 "last_activity_at": last_activity,
             }
         )
@@ -6593,6 +6648,7 @@ def _token_table_has_any_rows(table_name: str, owner_user_id: str) -> bool:
 def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     youtube_columns = table_columns(conn, "youtube_videos")
     generated_columns = table_columns(conn, "shorts_generated_videos")
+    render_job_columns = table_columns(conn, "shorts_render_jobs")
 
     row = conn.execute(
         """
@@ -6629,6 +6685,13 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
 
     shorts_generated = 0
     shorts_published = 0
+    funnel_breakdown = {
+        "generated_total": 0,
+        "scheduled": 0,
+        "published": 0,
+        "failed": 0,
+        "overdue": 0,
+    }
     if generated_columns and "user_id" in generated_columns:
         shorts_generated = int(
             conn.execute(
@@ -6650,6 +6713,43 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
                 ).fetchone()[0]
                 or 0
             )
+        if "publish_status" in generated_columns:
+            overdue_expr = (
+                """
+                SUM(
+                    CASE
+                        WHEN lower(coalesce(publish_status, '')) <> 'published'
+                         AND planned_publish_at IS NOT NULL
+                         AND planned_publish_at <= now()
+                        THEN 1
+                        ELSE 0
+                    END
+                )
+                """
+                if "planned_publish_at" in generated_columns
+                else "0"
+            )
+            breakdown_row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS generated_total,
+                    SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'scheduled' THEN 1 ELSE 0 END) AS scheduled_count,
+                    SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'published' THEN 1 ELSE 0 END) AS published_count,
+                    SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                    {overdue_expr} AS overdue_count
+                FROM shorts_generated_videos
+                WHERE user_id = ?
+                """,
+                [user_id],
+            ).fetchone()
+            if breakdown_row:
+                funnel_breakdown = {
+                    "generated_total": int(breakdown_row[0] or 0),
+                    "scheduled": int(breakdown_row[1] or 0),
+                    "published": int(breakdown_row[2] or 0),
+                    "failed": int(breakdown_row[3] or 0),
+                    "overdue": int(breakdown_row[4] or 0),
+                }
 
     connected_platforms = {
         "youtube": _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id),
@@ -6657,6 +6757,83 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "facebook": _token_table_has_any_rows("facebook_page_tokens", user_id),
         "tiktok": _token_table_has_any_rows("tiktok_oauth_tokens", user_id),
     }
+    recent_failures: List[Dict[str, Any]] = []
+    failures_unavailable_note = ""
+    try:
+        failure_items: List[Dict[str, Any]] = []
+        if render_job_columns:
+            render_failure_rows = conn.execute(
+                """
+                SELECT id, type, error, attempts, max_attempts, finished_at
+                FROM shorts_render_jobs
+                WHERE user_id = ?
+                  AND lower(coalesce(status, '')) = 'failed'
+                ORDER BY finished_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                LIMIT 20
+                """,
+                [user_id],
+            ).fetchall()
+            for failure_row in render_failure_rows:
+                reason = str(failure_row[2] or "").strip()
+                if len(reason) > 200:
+                    reason = reason[:197].rstrip() + "..."
+                attempts = int(failure_row[3] or 0)
+                max_attempts = int(failure_row[4] or 0)
+                attempt_label = f"{attempts}/{max_attempts}" if max_attempts else str(attempts)
+                failure_items.append(
+                    {
+                        "source": "render",
+                        "timestamp": failure_row[5],
+                        "identifier": failure_row[1] or failure_row[0] or "render_job",
+                        "reason": reason or "No error message recorded.",
+                        "meta": f"attempts {attempt_label}",
+                    }
+                )
+        elif not failures_unavailable_note:
+            failures_unavailable_note = "Render job history is unavailable."
+
+        if generated_columns and "user_id" in generated_columns and "publish_status" in generated_columns:
+            publish_ts_order = "updated_at DESC" if "updated_at" in generated_columns else "created_at DESC"
+            publish_id_col = "id" if "id" in generated_columns else "clip_filename"
+            publish_failure_rows = conn.execute(
+                f"""
+                SELECT {publish_id_col}, planned_publish_at, updated_at
+                FROM shorts_generated_videos
+                WHERE user_id = ?
+                  AND lower(coalesce(publish_status, '')) = 'failed'
+                ORDER BY {publish_ts_order}
+                LIMIT 20
+                """,
+                [user_id],
+            ).fetchall()
+            for failure_row in publish_failure_rows:
+                planned_at = failure_row[1]
+                reason = (
+                    f"Scheduled for {planned_at} but lifecycle remained failed."
+                    if planned_at
+                    else "Publish lifecycle marked failed."
+                )
+                failure_items.append(
+                    {
+                        "source": "publish",
+                        "timestamp": failure_row[2] or failure_row[1],
+                        "identifier": str(failure_row[0] or "generated_video"),
+                        "reason": reason,
+                        "meta": "",
+                    }
+                )
+        elif not failures_unavailable_note:
+            failures_unavailable_note = "Publish lifecycle history is unavailable."
+
+        failure_items.sort(
+            key=lambda item: str(item.get("timestamp") or ""),
+            reverse=True,
+        )
+        recent_failures = failure_items[:20]
+    except Exception as exc:
+        failures_unavailable_note = "Failure history is unavailable."
+        current_app.logger.exception("Admin failure panel unavailable for user %s: %s", user_id, exc)
+
     timeline_rows: List[Dict[str, Any]] = []
     try:
         timeline = conn.execute(
@@ -6699,6 +6876,9 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "uploaded_videos": uploaded_videos,
         "shorts_generated": shorts_generated,
         "shorts_published": shorts_published,
+        "funnel_breakdown": funnel_breakdown,
+        "recent_failures": recent_failures,
+        "failures_unavailable_note": failures_unavailable_note,
         "connected_platforms": connected_platforms,
         "timeline_events": timeline_rows,
     }

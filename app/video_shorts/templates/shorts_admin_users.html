@@ -54,6 +54,21 @@
       font-size: 0.84rem;
       white-space: nowrap;
     }
+    .admin-users-pill.is-success {
+      background: rgba(45, 212, 191, 0.14);
+      color: #99f6e4;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .admin-users-pill.is-warning {
+      background: rgba(245, 158, 11, 0.16);
+      color: #fcd34d;
+      border: 1px solid rgba(245, 158, 11, 0.22);
+    }
+    .admin-users-pill.is-danger {
+      background: rgba(248, 113, 113, 0.14);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.22);
+    }
     .admin-users-meta {
       color: rgba(255, 255, 255, 0.62);
       font-size: 0.9rem;
@@ -152,6 +167,7 @@
         <thead>
           <tr>
             <th>User</th>
+            <th>Stage</th>
             <th>Plan</th>
             <th>Subscription</th>
             <th>Created</th>
@@ -165,6 +181,27 @@
               <td>
                 <div class="fw-semibold">{{ user.name }}</div>
                 <div class="admin-users-email">{{ user.email or user.username or user.id }}</div>
+              </td>
+              <td>
+                {% set stage_label_map = {
+                  'no_upload': 'No upload',
+                  'no_clips': 'No clips',
+                  'publishing': 'Publishing',
+                  'publish_failing': 'Publish failing',
+                  'overdue': 'Overdue',
+                  'scheduled': 'Scheduled',
+                  'not_published': 'Not published'
+                } %}
+                {% set stage_class_map = {
+                  'no_upload': '',
+                  'no_clips': '',
+                  'publishing': 'is-success',
+                  'publish_failing': 'is-danger',
+                  'overdue': 'is-danger',
+                  'scheduled': 'is-warning',
+                  'not_published': 'is-warning'
+                } %}
+                <span class="admin-users-pill {{ stage_class_map.get(user.stage, '') }}">{{ stage_label_map.get(user.stage, user.stage or '—') }}</span>
               </td>
               <td><span class="admin-users-pill">{{ user.plan_id }}</span></td>
               <td><span class="admin-users-pill">{{ user.subscription_status }}</span></td>
@@ -184,7 +221,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="6" class="admin-users-meta text-center py-4">No users matched your search.</td>
+              <td colspan="7" class="admin-users-meta text-center py-4">No users matched your search.</td>
             </tr>
           {% endfor %}
         </tbody>

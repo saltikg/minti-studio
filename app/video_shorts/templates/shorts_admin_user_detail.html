@@ -92,11 +92,74 @@
       color: rgba(255, 255, 255, 0.96);
       font-weight: 600;
     }
+    .admin-detail-funnel {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .admin-detail-funnel-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 14px 16px;
+    }
+    .admin-detail-funnel-value {
+      margin-top: 8px;
+      font-size: 1.5rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .admin-detail-failure-list {
+      display: grid;
+      gap: 12px;
+    }
+    .admin-detail-failure-row {
+      display: grid;
+      gap: 6px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .admin-detail-failure-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .admin-detail-failure-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(248, 113, 113, 0.14);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.22);
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .admin-detail-failure-id {
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .admin-detail-failure-reason {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     @media (max-width: 991.98px) {
       .admin-detail-summary {
         grid-template-columns: 1fr;
       }
       .admin-detail-kv {
+        grid-template-columns: 1fr;
+      }
+      .admin-detail-funnel {
         grid-template-columns: 1fr;
       }
     }
@@ -167,6 +230,58 @@
           </span>
         {% endfor %}
       </div>
+    </section>
+
+    <section class="admin-detail-card">
+      <h2 class="h5 mb-3">Funnel breakdown</h2>
+      <div class="admin-detail-funnel">
+        <article class="admin-detail-funnel-card">
+          <div class="admin-detail-stat-label">Generated</div>
+          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.generated_total }}</div>
+        </article>
+        <article class="admin-detail-funnel-card">
+          <div class="admin-detail-stat-label">Scheduled</div>
+          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.scheduled }}</div>
+        </article>
+        <article class="admin-detail-funnel-card">
+          <div class="admin-detail-stat-label">Published</div>
+          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.published }}</div>
+        </article>
+        <article class="admin-detail-funnel-card">
+          <div class="admin-detail-stat-label">Failed</div>
+          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.failed }}</div>
+        </article>
+        <article class="admin-detail-funnel-card">
+          <div class="admin-detail-stat-label">Overdue</div>
+          <div class="admin-detail-funnel-value">{{ user_detail.funnel_breakdown.overdue }}</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="admin-detail-card">
+      <h2 class="h5 mb-3">Recent failures</h2>
+      {% if user_detail.failures_unavailable_note %}
+        <p class="vs-admin-muted">{{ user_detail.failures_unavailable_note }}</p>
+      {% endif %}
+      {% if user_detail.recent_failures %}
+        <div class="admin-detail-failure-list">
+          {% for failure in user_detail.recent_failures %}
+            <article class="admin-detail-failure-row">
+              <div class="admin-detail-failure-top">
+                <span class="admin-detail-failure-tag">{{ failure.source }}</span>
+                <span class="admin-detail-failure-id">{{ failure.identifier }}</span>
+              </div>
+              <div class="admin-detail-timeline-meta">
+                <span>{{ failure.timestamp.strftime('%b %-d, %Y · %H:%M') if failure.timestamp and failure.timestamp.strftime else (failure.timestamp or '—') }}</span>
+                {% if failure.meta %}<span>{{ failure.meta }}</span>{% endif %}
+              </div>
+              <div class="admin-detail-failure-reason">{{ failure.reason }}</div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="vs-admin-muted mb-0">No failures recorded.</p>
+      {% endif %}
     </section>
 
     <section class="admin-detail-card">
