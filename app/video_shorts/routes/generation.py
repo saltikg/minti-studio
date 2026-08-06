@@ -7528,7 +7528,7 @@ def admin_refresh_user_youtube_status(user_id: str):
 
     source_video_ids = [str(row[0] or "").strip() for row in source_rows if str(row[0] or "").strip()]
     if not source_video_ids:
-        flash("No pending YouTube clips found for this user.", "info")
+        flash("Checked 0 YouTube clip(s) across 0 source video(s); 0 newly updated.", "info")
         return redirect(redirect_target)
 
     checked_count = 0
@@ -7562,7 +7562,7 @@ def admin_refresh_user_youtube_status(user_id: str):
     if source_errors and not checked_count and not updated_count:
         flash("YouTube API error while refreshing this user. Try again.", "warning")
     elif checked_count == 0:
-        flash("No pending YouTube clips found in the user's plan files.", "info")
+        flash(f"Checked 0 YouTube clip(s) across {source_count} source video(s); 0 newly updated.", "info")
     elif updated_count:
         message = f"Checked {checked_count} YouTube clip(s) across {source_count} source video(s); updated {updated_count} to published."
         if source_errors:
