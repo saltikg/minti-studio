@@ -177,6 +177,9 @@ from src.trends.token_store_db import connect_store, relation_missing
 from app.video_shorts.services.non_speech_rules import load_non_speech_rules, add_non_speech_keyword
 
 DEFAULT_VIDEO_DATE_TOP = 1006
+WHISPER_USD_PER_MINUTE = 0.006
+S3_USD_PER_GB_MONTH = 0.023
+ADMIN_COST_APPROX_MONTH_THRESHOLD = 1.0
 from app.video_shorts.services.non_speech_overrides import (
     load_non_speech_overrides,
     save_non_speech_overrides,
@@ -6315,6 +6318,166 @@ def _load_storage_plan_catalog(conn) -> List[Dict[str, Any]]:
     return [plan_lookup[plan_id] for plan_id in plan_order if plan_id in plan_lookup]
 
 
+def _format_admin_usd(amount: Optional[float], *, approx: bool = False) -> str:
+    if amount is None:
+        return "—"
+    prefix = "≈" if approx else ""
+    return f"{prefix}${amount:.2f}"
+
+
+def _load_admin_cost_estimates(
+    conn,
+    user_ids: List[str],
+    *,
+    created_at_map: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    normalized_user_ids = [str(user_id or "").strip() for user_id in user_ids if str(user_id or "").strip()]
+    if not normalized_user_ids:
+        return {}
+
+    placeholders = ", ".join("?" for _ in normalized_user_ids)
+    current_month_start = datetime.now(timezone.utc).date().replace(day=1)
+    created_lookup = {str(key): value for key, value in (created_at_map or {}).items()}
+
+    event_age_map: Dict[str, Any] = {}
+    video_age_map: Dict[str, Any] = {}
+    event_minutes_map: Dict[str, Dict[str, float]] = {}
+    usage_minutes_map: Dict[str, float] = {}
+    storage_bytes_map: Dict[str, int] = {}
+    storage_row_users: set[str] = set()
+
+    event_rows = conn.execute(
+        f"""
+        SELECT
+          CAST(user_id AS VARCHAR) AS user_id,
+          SUM(COALESCE(minutes, 0)) AS total_minutes,
+          SUM(CASE WHEN period_start >= ? THEN COALESCE(minutes, 0) ELSE 0 END) AS this_month_minutes
+        FROM shorts_transcription_usage_events
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+        GROUP BY CAST(user_id AS VARCHAR)
+        """,
+        [current_month_start] + normalized_user_ids,
+    ).fetchall()
+    for row in event_rows:
+        event_minutes_map[str(row[0])] = {
+            "total": float(row[1] or 0.0),
+            "this_month": float(row[2] or 0.0),
+        }
+
+    usage_rows = conn.execute(
+        f"""
+        SELECT CAST(user_id AS VARCHAR), COALESCE(transcription_minutes_used, 0)
+        FROM shorts_user_usage
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+        """,
+        normalized_user_ids,
+    ).fetchall()
+    for row in usage_rows:
+        usage_minutes_map[str(row[0])] = float(row[1] or 0.0)
+
+    storage_rows = conn.execute(
+        f"""
+        SELECT
+          CAST(user_id AS VARCHAR) AS user_id,
+          SUM(COALESCE(size_bytes, 0)) AS total_bytes
+        FROM shorts_storage_assets
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+          AND COALESCE(status, 'active') = 'active'
+        GROUP BY CAST(user_id AS VARCHAR)
+        """,
+        normalized_user_ids,
+    ).fetchall()
+    for row in storage_rows:
+        storage_row_users.add(str(row[0]))
+        storage_bytes_map[str(row[0])] = int(row[1] or 0)
+
+    event_age_rows = conn.execute(
+        f"""
+        SELECT CAST(user_id AS VARCHAR), MIN(created_at)
+        FROM user_events
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+        GROUP BY CAST(user_id AS VARCHAR)
+        """,
+        normalized_user_ids,
+    ).fetchall()
+    for row in event_age_rows:
+        event_age_map[str(row[0])] = row[1]
+
+    video_age_rows = conn.execute(
+        f"""
+        SELECT CAST(owner_user_id AS VARCHAR), MIN(published_at)
+        FROM youtube_videos
+        WHERE CAST(owner_user_id AS VARCHAR) IN ({placeholders})
+        GROUP BY CAST(owner_user_id AS VARCHAR)
+        """,
+        normalized_user_ids,
+    ).fetchall()
+    for row in video_age_rows:
+        video_age_map[str(row[0])] = row[1]
+
+    now_utc = datetime.now(timezone.utc)
+    cost_map: Dict[str, Dict[str, Any]] = {}
+    for user_id in normalized_user_ids:
+        created_at = created_lookup.get(user_id)
+        age_anchor = created_at or event_age_map.get(user_id) or video_age_map.get(user_id)
+        if age_anchor is None:
+            age_months = 1.0
+        else:
+            anchor_value = age_anchor
+            if isinstance(anchor_value, datetime) and anchor_value.tzinfo is None:
+                anchor_value = anchor_value.replace(tzinfo=timezone.utc)
+            elif not isinstance(anchor_value, datetime):
+                anchor_value = datetime.combine(anchor_value, datetime.min.time(), tzinfo=timezone.utc)
+            age_months = max(1.0, (now_utc - anchor_value).total_seconds() / 2629800.0)
+
+        if user_id in event_minutes_map:
+            total_minutes = float(event_minutes_map[user_id]["total"])
+            this_month_minutes = float(event_minutes_map[user_id]["this_month"])
+            transcription_source = "events"
+        elif user_id in usage_minutes_map:
+            total_minutes = float(usage_minutes_map[user_id])
+            this_month_minutes = 0.0
+            transcription_source = "user_usage"
+        else:
+            total_minutes = 0.0
+            this_month_minutes = 0.0
+            transcription_source = "missing"
+
+        total_storage_gb = float(storage_bytes_map.get(user_id, 0)) / 1_000_000_000.0
+        transcription_total_usd = total_minutes * WHISPER_USD_PER_MINUTE
+        storage_now_usd_month = total_storage_gb * S3_USD_PER_GB_MONTH
+        this_month_usd = (this_month_minutes * WHISPER_USD_PER_MINUTE) + storage_now_usd_month
+        total_usd = transcription_total_usd + storage_now_usd_month
+        monthly_avg_usd = total_usd / age_months if age_months else total_usd
+        is_young_account = age_months <= ADMIN_COST_APPROX_MONTH_THRESHOLD
+
+        notes: List[str] = []
+        if transcription_source == "missing":
+            notes.append("missing_transcription")
+        if user_id not in storage_row_users:
+            notes.append("missing_storage")
+
+        cost_map[user_id] = {
+            "total_minutes": total_minutes,
+            "this_month_minutes": this_month_minutes,
+            "total_storage_gb": total_storage_gb,
+            "transcription_total_usd": transcription_total_usd,
+            "storage_now_usd_month": storage_now_usd_month,
+            "this_month_usd": this_month_usd,
+            "total_usd": total_usd,
+            "monthly_avg_usd": monthly_avg_usd,
+            "age_months": age_months,
+            "age_anchor": age_anchor,
+            "is_young_account": is_young_account,
+            "transcription_source": transcription_source,
+            "notes": notes,
+            "display_total_usd": _format_admin_usd(total_usd),
+            "display_this_month_usd": _format_admin_usd(this_month_usd),
+            "display_monthly_avg_usd": _format_admin_usd(monthly_avg_usd, approx=is_young_account),
+        }
+    return cost_map
+
+
 def _load_storage_plan_admin_users(
     conn,
     search_text: str = "",
@@ -6565,8 +6728,20 @@ def _load_admin_auth_users(
         """,
         params + [limit, offset],
     ).fetchall()
+    cost_lookup: Dict[str, Dict[str, Any]] = {}
+    try:
+        created_at_map = {str(row[0] or ""): row[6] for row in rows}
+        cost_lookup = _load_admin_cost_estimates(
+            conn,
+            [str(row[0] or "") for row in rows],
+            created_at_map=created_at_map,
+        )
+    except Exception as exc:
+        current_app.logger.exception("Admin cost list unavailable: %s", exc)
+        cost_lookup = {}
     users: List[Dict[str, Any]] = []
     for row in rows:
+        user_id = str(row[0] or "")
         uploaded_videos = int(row[7] or 0)
         shorts_generated = int(row[8] or 0)
         shorts_published = int(row[9] or 0)
@@ -6592,7 +6767,7 @@ def _load_admin_auth_users(
             stage = "not_published"
         users.append(
             {
-                "id": row[0],
+                "id": user_id,
                 "name": row[1] or row[3] or "Unnamed user",
                 "email": row[2] or "",
                 "username": row[3] or "",
@@ -6607,6 +6782,9 @@ def _load_admin_auth_users(
                 "overdue_count": overdue_count,
                 "stage": stage,
                 "last_activity_at": last_activity,
+                "cost_summary": cost_lookup.get(user_id) or {
+                    "display_monthly_avg_usd": "—",
+                },
             }
         )
     return users, int(total_count or 0)
@@ -6881,6 +7059,25 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     except Exception:
         timeline_rows = []
 
+    cost_summary: Dict[str, Any]
+    try:
+        cost_summary = _load_admin_cost_estimates(
+            conn,
+            [user_id],
+            created_at_map={user_id: row[8]},
+        ).get(user_id) or {
+            "display_total_usd": "—",
+            "display_this_month_usd": "—",
+            "display_monthly_avg_usd": "—",
+        }
+    except Exception as exc:
+        current_app.logger.exception("Admin cost detail unavailable for user %s: %s", user_id, exc)
+        cost_summary = {
+            "display_total_usd": "—",
+            "display_this_month_usd": "—",
+            "display_monthly_avg_usd": "—",
+        }
+
     return {
         "id": row[0],
         "username": row[1] or "",
@@ -6901,6 +7098,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "failures_unavailable_note": failures_unavailable_note,
         "connected_platforms": connected_platforms,
         "timeline_events": timeline_rows,
+        "cost_summary": cost_summary,
     }
 
 

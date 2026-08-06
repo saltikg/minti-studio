@@ -116,6 +116,23 @@
       background: rgba(255, 255, 255, 0.03);
       padding: 14px 16px;
     }
+    .admin-detail-cost-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .admin-detail-cost-value {
+      margin-top: 8px;
+      font-size: 1.35rem;
+      font-weight: 700;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+    .admin-detail-cost-note {
+      margin-top: 12px;
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.85rem;
+    }
     .admin-detail-funnel-value {
       margin-top: 8px;
       font-size: 1.5rem;
@@ -195,6 +212,9 @@
       .admin-detail-funnel {
         grid-template-columns: 1fr;
       }
+      .admin-detail-cost-row {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 {% endblock %}
@@ -247,6 +267,24 @@
             </article>
           </div>
         </div>
+        <section class="admin-detail-card">
+          <h2 class="h5 mb-3">Cost estimate</h2>
+          <div class="admin-detail-cost-row">
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Total</div>
+              <div class="admin-detail-cost-value">{{ user_detail.cost_summary.display_total_usd }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">This month</div>
+              <div class="admin-detail-cost-value">{{ user_detail.cost_summary.display_this_month_usd }}</div>
+            </article>
+            <article class="admin-detail-funnel-card">
+              <div class="admin-detail-stat-label">Monthly avg</div>
+              <div class="admin-detail-cost-value">{{ user_detail.cost_summary.display_monthly_avg_usd }}</div>
+            </article>
+          </div>
+          <div class="admin-detail-cost-note">Est. — transcription $0.006/min + storage $0.023/GB-mo. Storage &amp; average are approximate (no historical storage ledger).</div>
+        </section>
       </div>
     </section>
 
