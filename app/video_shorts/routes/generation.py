@@ -3841,28 +3841,36 @@ def _sync_generated_video_from_plan_entry(
     )
 
 
-def _refresh_plan_publish_status_from_youtube(video_id: str, entries: List[Dict[str, Any]]) -> None:
-    current_user = getattr(g, "vs_current_user", None) or {}
-    user_id = current_user.get("id")
-    brand_id = current_brand_id()
+def _refresh_plan_publish_status_from_youtube_for_owner(
+    video_id: str,
+    entries: List[Dict[str, Any]],
+    *,
+    user_id: Optional[str],
+    brand_id: Optional[str],
+) -> Dict[str, int]:
+    checked_count = 0
+    updated_count = 0
     if not has_refresh_token(user_id=user_id, brand_id=brand_id):
         current_app.logger.info(
-            "YouTube status refresh skipped for %s: missing refresh token.",
+            "YouTube status refresh skipped for %s: missing refresh token user_id=%s brand_id=%s.",
             video_id,
+            user_id,
+            brand_id,
         )
-        return
+        return {"checked_count": 0, "updated_count": 0}
     video_ids = [
         entry.get("yt_video_id")
         for entry in entries
         if entry.get("yt_video_id") and entry.get("publish_status") != "published"
     ]
     video_ids = [vid for vid in video_ids if vid]
+    checked_count = len(video_ids)
     if not video_ids:
         current_app.logger.info(
             "YouTube status refresh skipped for %s: no pending video ids.",
             video_id,
         )
-        return
+        return {"checked_count": 0, "updated_count": 0}
     statuses = fetch_video_statuses(video_ids, user_id=user_id, brand_id=brand_id)
     updated = False
     for entry in entries:
@@ -3884,6 +3892,7 @@ def _refresh_plan_publish_status_from_youtube(video_id: str, entries: List[Dict[
             entry["publish_status"] = "published"
             entry["yt_status"] = "published"
             updated = True
+            updated_count += 1
             try:
                 clip_name = str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()
                 if clip_name:
@@ -3904,11 +3913,22 @@ def _refresh_plan_publish_status_from_youtube(video_id: str, entries: List[Dict[
         try:
             _write_plan_entries(video_id, entries)
         except Exception as exc:
-            current_app.logger.warning(
-                "Failed to refresh plan publish status from YouTube for %s: %s",
-                video_id,
-                exc,
-            )
+                current_app.logger.warning(
+                    "Failed to refresh plan publish status from YouTube for %s: %s",
+                    video_id,
+                    exc,
+                )
+    return {"checked_count": checked_count, "updated_count": updated_count}
+
+
+def _refresh_plan_publish_status_from_youtube(video_id: str, entries: List[Dict[str, Any]]) -> None:
+    current_user = getattr(g, "vs_current_user", None) or {}
+    _refresh_plan_publish_status_from_youtube_for_owner(
+        video_id,
+        entries,
+        user_id=current_user.get("id"),
+        brand_id=current_brand_id(),
+    )
 
 
 def _build_display_timing(start: Any, end: Any, plan_start: Any = None, plan_end: Any = None) -> Dict[str, Optional[str]]:
@@ -6884,6 +6904,30 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _load_admin_user_brand_id(conn, user_id: str) -> Optional[str]:
+    ensure_brand_schema(conn)
+    row = conn.execute(
+        """
+        SELECT
+            COALESCE(
+                NULLIF(CAST(u.last_brand_id AS VARCHAR), ''),
+                (
+                    SELECT CAST(b.id AS VARCHAR)
+                    FROM shorts_brands b
+                    WHERE CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                    ORDER BY COALESCE(b.is_default, false) DESC, b.created_at ASC
+                    LIMIT 1
+                )
+            ) AS brand_id
+        FROM shorts_users u
+        WHERE CAST(u.id AS VARCHAR) = ?
+        LIMIT 1
+        """,
+        [user_id],
+    ).fetchone()
+    return str((row[0] if row else "") or "").strip() or None
+
+
 @video_shorts_bp.route("/shorts/scripts")
 def shorts_scripts():
     current_user = getattr(g, "vs_current_user", None)
@@ -7449,6 +7493,87 @@ def admin_user_detail(user_id: str):
         admin_title=detail["name"],
         user_detail=detail,
     )
+
+
+@video_shorts_bp.route("/admin/users/<user_id>/refresh-youtube-status", methods=["POST"])
+@require_admin
+def admin_refresh_user_youtube_status(user_id: str):
+    conn = get_db()
+    try:
+        detail = _load_admin_user_detail(conn, user_id)
+        if not detail:
+            abort(404)
+        brand_id = _load_admin_user_brand_id(conn, user_id)
+        source_rows = conn.execute(
+            """
+            SELECT DISTINCT CAST(source_video_id AS VARCHAR)
+            FROM shorts_generated_videos
+            WHERE CAST(user_id AS VARCHAR) = ?
+              AND youtube_video_id IS NOT NULL
+              AND (
+                    publish_status IS NULL
+                 OR lower(publish_status) <> 'published'
+              )
+            ORDER BY CAST(source_video_id AS VARCHAR)
+            """,
+            [user_id],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    redirect_target = url_for("video_shorts_bp.admin_user_detail", user_id=user_id)
+    if not has_refresh_token(user_id=user_id, brand_id=brand_id):
+        flash("No YouTube token available for this user.", "warning")
+        return redirect(redirect_target)
+
+    source_video_ids = [str(row[0] or "").strip() for row in source_rows if str(row[0] or "").strip()]
+    if not source_video_ids:
+        flash("No pending YouTube clips found for this user.", "info")
+        return redirect(redirect_target)
+
+    checked_count = 0
+    updated_count = 0
+    source_count = 0
+    source_errors = 0
+    for source_video_id in source_video_ids:
+        try:
+            plan_entries = _load_plan_entries(source_video_id)
+            if not plan_entries:
+                continue
+            result = _refresh_plan_publish_status_from_youtube_for_owner(
+                source_video_id,
+                plan_entries,
+                user_id=user_id,
+                brand_id=brand_id,
+            )
+            checked_count += int(result.get("checked_count") or 0)
+            updated_count += int(result.get("updated_count") or 0)
+            source_count += 1
+        except Exception as exc:
+            source_errors += 1
+            current_app.logger.exception(
+                "Admin YouTube publish refresh failed for user=%s brand=%s source_video_id=%s: %s",
+                user_id,
+                brand_id,
+                source_video_id,
+                exc,
+            )
+
+    if source_errors and not checked_count and not updated_count:
+        flash("YouTube API error while refreshing this user. Try again.", "warning")
+    elif checked_count == 0:
+        flash("No pending YouTube clips found in the user's plan files.", "info")
+    elif updated_count:
+        message = f"Checked {checked_count} YouTube clip(s) across {source_count} source video(s); updated {updated_count} to published."
+        if source_errors:
+            message += f" {source_errors} source video(s) could not be refreshed."
+        flash(message, "success")
+    else:
+        message = f"Checked {checked_count} YouTube clip(s) across {source_count} source video(s); 0 newly updated."
+        if source_errors:
+            message += f" {source_errors} source video(s) could not be refreshed."
+        flash(message, "info")
+    return redirect(redirect_target)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/delete_clip", methods=["POST"])

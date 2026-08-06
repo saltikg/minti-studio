@@ -230,6 +230,9 @@
           </span>
         {% endfor %}
       </div>
+      <form method="post" action="{{ url_for('video_shorts_bp.admin_refresh_user_youtube_status', user_id=user_detail.id) }}" class="mt-3">
+        <button type="submit" class="btn btn-outline-light">Refresh YouTube status</button>
+      </form>
     </section>
 
     <section class="admin-detail-card">
