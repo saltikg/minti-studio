@@ -6449,7 +6449,7 @@ def _load_admin_cost_estimates(
         this_month_usd = (this_month_minutes * WHISPER_USD_PER_MINUTE) + storage_now_usd_month
         total_usd = transcription_total_usd + storage_now_usd_month
         monthly_avg_usd = total_usd / age_months if age_months else total_usd
-        is_young_account = age_months <= ADMIN_COST_APPROX_MONTH_THRESHOLD
+        is_young_account = age_months <= ADMIN_COST_APPROX_MONTH_THRESHOLD and total_usd > 0
 
         notes: List[str] = []
         if transcription_source == "missing":
