@@ -9320,6 +9320,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
+  const subtitlePresetField = document.getElementById("subtitlePresetValue");
+  const subtitleStyleField = document.getElementById("subtitleStyleField");
+  const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
 
   const updateTitleFont = () => {
     if (titlePreview && titleFont) {
