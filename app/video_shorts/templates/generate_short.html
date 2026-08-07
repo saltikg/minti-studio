@@ -1711,6 +1711,44 @@
     gap: 8px;
     margin-bottom: 16px;
   }
+  .advanced-settings-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1;
+    transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+  }
+  .advanced-settings-toggle:hover,
+  .advanced-settings-toggle:focus-visible {
+    border-color: rgba(255, 216, 77, 0.42);
+    background: rgba(255, 216, 77, 0.12);
+    color: #ffffff;
+  }
+  .advanced-settings-toggle-icon {
+    font-size: 0.9rem;
+    transition: transform 160ms ease;
+  }
+  .advanced-settings-toggle[aria-expanded="true"] .advanced-settings-toggle-icon {
+    transform: rotate(180deg);
+  }
+  .advanced-settings-block.is-collapsed {
+    display: none !important;
+  }
+  .crop-preview-advanced-unified > summary {
+    display: none;
+  }
+  .crop-preview-advanced-unified .crop-preview-advanced-body {
+    margin-top: 0;
+  }
   .subtitle-preset-label {
     font-size: 0.74rem;
     font-weight: 700;
@@ -3029,7 +3067,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="top-controls mb-3">
+        <div class="top-controls mb-3 advanced-settings-block is-collapsed" data-advanced-block>
           <div class="control-group" id="crop-aspect-selector">
             <label class="text-white-50 d-flex align-items-center gap-2">
               Format
@@ -3167,7 +3205,7 @@
             </div>
           </div>
         </div>
-        <div class="crop-toggle-row">
+        <div class="crop-toggle-row advanced-settings-block is-collapsed" data-advanced-block>
           <div class="crop-toggle-card">
             <div class="form-check form-switch mb-0">
               <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
@@ -3187,7 +3225,7 @@
             </div>
           </div>
         </div>
-        <div class="visual-mode-detail-panel">
+        <div class="visual-mode-detail-panel advanced-settings-block is-collapsed" data-advanced-block>
           <div id="podcast-audio-card" class="mt-2 border rounded p-2 d-none" style="border-color: rgba(255,255,255,.10) !important; background: rgba(255,255,255,.02);">
               <div class="small text-white mb-1">Podcast audio</div>
               <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -3289,7 +3327,17 @@
                 {% endfor %}
               </div>
             </div>
-            <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden" aria-live="polite">
+            <button
+              type="button"
+              class="advanced-settings-toggle"
+              id="advanced-settings-toggle"
+              aria-expanded="false"
+              aria-controls="crop-preview-toolbar"
+            >
+              <span>Advanced settings</span>
+              <i class="bi bi-chevron-down advanced-settings-toggle-icon" aria-hidden="true"></i>
+            </button>
+            <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden advanced-settings-block is-collapsed" data-advanced-block aria-live="polite">
               <div class="crop-preview-toolbar-head">
                 <div class="crop-preview-toolbar-label" id="crop-preview-toolbar-label">Selected element</div>
                 <div class="crop-preview-toolbar-tip">Drag in the preview or use arrow keys to nudge.</div>
@@ -3485,8 +3533,8 @@
               </div>
               <div class="crop-preview-selection-note">Select Title, Video, Subtitle, or Date inside Final Preview.</div>
             </div>
-            <div class="crop-settings-inline-row">
-              <details class="crop-preview-advanced">
+            <div class="crop-settings-inline-row advanced-settings-block is-collapsed" data-advanced-block>
+              <details class="crop-preview-advanced crop-preview-advanced-unified" open>
                 <summary>Advanced</summary>
                 <div class="crop-preview-advanced-body">
                   <div class="crop-preview-advanced-hint">These match dragging elements in the preview, in pixels.</div>
@@ -7596,6 +7644,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarLabel = modalEl.querySelector("#crop-preview-toolbar-label");
   const previewToolbarTitle = modalEl.querySelector("#crop-preview-toolbar-title");
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
+  const advancedSettingsToggle = modalEl.querySelector("#advanced-settings-toggle");
+  const advancedSettingsBlocks = Array.from(modalEl.querySelectorAll("[data-advanced-block]"));
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const subtitlePresetField = settingsContainer?.querySelector('[name="subtitle_preset"]');
   const subtitleStyleField = settingsContainer?.querySelector('[name="subtitle_style"]');
@@ -8115,6 +8165,22 @@ document.addEventListener("DOMContentLoaded", () => {
       setSelectedPreviewElement("");
     }
   };
+  const isAdvancedExpanded = () => advancedSettingsToggle?.getAttribute("aria-expanded") === "true";
+  const setAdvancedExpanded = (expanded, options = {}) => {
+    const { scrollTarget = null } = options;
+    advancedSettingsToggle?.setAttribute("aria-expanded", expanded ? "true" : "false");
+    advancedSettingsBlocks.forEach((block) => {
+      block.classList.toggle("is-collapsed", !expanded);
+    });
+    if (expanded && scrollTarget && typeof scrollTarget.scrollIntoView === "function") {
+      window.requestAnimationFrame(() => {
+        scrollTarget.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  };
+  const toggleAdvancedExpanded = () => {
+    setAdvancedExpanded(!isAdvancedExpanded());
+  };
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
@@ -8144,6 +8210,11 @@ document.addEventListener("DOMContentLoaded", () => {
     selectedPreviewElement = (kind === "video" && !isPreviewElementDraggable("video")) ? "" : (kind || "");
     const isTitle = selectedPreviewElement === "title";
     const isSubtitle = selectedPreviewElement === "subtitle";
+    if ((isTitle || isSubtitle) && !isAdvancedExpanded()) {
+      setAdvancedExpanded(true, {
+        scrollTarget: isTitle ? previewToolbarTitle : previewToolbarSubtitle,
+      });
+    }
     previewToolbar?.classList.toggle("is-hidden", !selectedPreviewElement || (!isTitle && !isSubtitle));
     previewToolbarTitle?.classList.toggle("is-active", isTitle);
     previewToolbarSubtitle?.classList.toggle("is-active", isSubtitle);
@@ -8907,6 +8978,7 @@ document.addEventListener("DOMContentLoaded", () => {
   subscribeToggle?.addEventListener("change", () => {
     syncSubscribePickerEnabled();
   });
+  advancedSettingsToggle?.addEventListener("click", toggleAdvancedExpanded);
 
   setActiveStaticVisual(activeStaticVisualKey);
   syncActiveBackgroundCard();
@@ -9011,6 +9083,7 @@ document.addEventListener("DOMContentLoaded", () => {
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
     splitDefaultsPrimed = hasStoredCrop2;
     resetState();
+    setAdvancedExpanded(false);
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
     setActiveBackground(trigger.dataset.backgroundVisualKey || "");
@@ -9042,6 +9115,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   modalEl.addEventListener("hidden.bs.modal", () => {
+    setAdvancedExpanded(false);
     resetState();
   });
 
