@@ -59,6 +59,7 @@ from app.video_shorts.config import (
     OPENAI_MODEL,
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
+    SIGNUPS_ENABLED,
     SUB_FONT_CHOICES,
     SUB_FONT_SIZES,
     SUB_MARGIN_DEFAULT,
