@@ -171,38 +171,6 @@ SUBTITLE_PRESETS = {
     },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
-STYLE_TEMPLATES = [
-    {
-        "key": "classic",
-        "label": "Classic",
-        "subtitle_preset": "classic_yellow",
-        "title_font": "Oswald",
-        "title_font_key": DEFAULT_TITLE_FONT_KEY,
-        "title_text_color": "#0F172A",
-        "title_bg_color": "#FFD84D",
-        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
-    },
-    {
-        "key": "bold_green",
-        "label": "Bold Green",
-        "subtitle_preset": "pop_green",
-        "title_font": "Anton",
-        "title_font_key": "anton",
-        "title_text_color": "#FFFFFF",
-        "title_bg_color": "#0F172A",
-        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
-    },
-    {
-        "key": "vivid_pink",
-        "label": "Vivid Pink",
-        "subtitle_preset": "pop_pink",
-        "title_font": "Bebas Neue",
-        "title_font_key": "bebas_neue",
-        "title_text_color": "#FFFFFF",
-        "title_bg_color": "#EC4899",
-        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
-    },
-]
 DEFAULT_TITLE_BG_ALPHA = 92
 DEFAULT_SUBTITLE_BG_ALPHA = 85
 DEFAULT_SUBTITLE_TEXT_ALPHA = 100
@@ -345,6 +313,38 @@ DEFAULT_SUB_FONT_SIZE = 40
 DEFAULT_TITLE_MARGIN = 220
 DEFAULT_TITLE_BG_COLOR = "#FFD600"
 DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "400"))
+STYLE_TEMPLATES = [
+    {
+        "key": "classic",
+        "label": "Classic",
+        "subtitle_preset": "classic_yellow",
+        "title_font": "Oswald",
+        "title_font_key": DEFAULT_TITLE_FONT_KEY,
+        "title_text_color": "#0F172A",
+        "title_bg_color": "#FFD84D",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "bold_green",
+        "label": "Bold Green",
+        "subtitle_preset": "pop_green",
+        "title_font": "Anton",
+        "title_font_key": "anton",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#0F172A",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "vivid_pink",
+        "label": "Vivid Pink",
+        "subtitle_preset": "pop_pink",
+        "title_font": "Bebas Neue",
+        "title_font_key": "bebas_neue",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#EC4899",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+]
 
 STATIC_FONTS_DIR = Path(__file__).resolve().parent / "static" / "fonts"
 MINTI_BACKGROUNDS_DIR = Path(__file__).resolve().parent / "static" / "mintibackgrounds"
