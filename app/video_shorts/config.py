@@ -141,6 +141,30 @@ DEFAULT_TITLE_TEXT_COLOR = "#000000"
 DEFAULT_SUBTITLE_TEXT_COLOR = "#FFFFFF"
 DEFAULT_SUBTITLE_BG_COLOR = "#000000"
 SUBTITLE_HIGHLIGHT_COLOR = "#FFD84D"
+SUBTITLE_PRESETS = {
+    "classic_yellow": {
+        "active_color": "#FFD84D",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 1,
+        "bold": False,
+    },
+    "pop_green": {
+        "active_color": "#22C55E",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 4,
+        "bold": True,
+    },
+    "pop_pink": {
+        "active_color": "#EC4899",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 4,
+        "bold": True,
+    },
+}
+DEFAULT_SUBTITLE_PRESET = "classic_yellow"
 DEFAULT_TITLE_BG_ALPHA = 92
 DEFAULT_SUBTITLE_BG_ALPHA = 85
 DEFAULT_SUBTITLE_TEXT_ALPHA = 100

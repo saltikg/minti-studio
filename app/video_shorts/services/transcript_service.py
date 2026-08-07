@@ -8,12 +8,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from flask import current_app
 
 from app.video_shorts.config import (
+    DEFAULT_SUBTITLE_PRESET,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
     DEFAULT_SUBTITLE_TEXT_ALPHA,
     FFMPEG_RENDER_TIMEOUT,
     FFPROBE_TIMEOUT,
     OPENAI_MODEL,
+    SUBTITLE_PRESETS,
     SUBTITLE_HIGHLIGHT_COLOR,
     WHISPER_MODEL,
     _openai_client,
@@ -432,6 +434,11 @@ def _hex_to_ass_color_with_alpha(
     return f"&H{aa:02X}{bb:02X}{gg:02X}{rr:02X}"
 
 
+def _resolve_subtitle_preset(subtitle_preset: Optional[str]) -> Dict[str, Any]:
+    preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
+    return SUBTITLE_PRESETS.get(preset_key, SUBTITLE_PRESETS[DEFAULT_SUBTITLE_PRESET])
+
+
 def _build_ass_karaoke_for_clip(
     segments: List[Dict[str, Any]],
     clip_start: float,
@@ -444,7 +451,7 @@ def _build_ass_karaoke_for_clip(
     subtitle_text_alpha: Optional[int],
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
-    subtitle_highlight_color: Optional[str] = None,
+    subtitle_preset: Optional[str] = None,
 ) -> Path | None:
     events: List[Tuple[float, float, str]] = []
 
@@ -556,6 +563,16 @@ def _build_ass_karaoke_for_clip(
     if not events:
         return None
 
+    preset = _resolve_subtitle_preset(subtitle_preset)
+    active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
+    inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
+    outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
+    try:
+        outline_width = max(0, int(preset.get("outline_width", 1) or 1))
+    except Exception:
+        outline_width = 1
+    bold = -1 if bool(preset.get("bold")) else 0
+
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -571,11 +588,11 @@ def _build_ass_karaoke_for_clip(
         "Style: Default,"
         f"{subtitle_font},"
         f"{int(subtitle_font_size)},"
-        f"{_hex_to_ass_color_with_alpha(subtitle_highlight_color or SUBTITLE_HIGHLIGHT_COLOR, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
-        f"{_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
-        "&H00000000,"
+        f"{_hex_to_ass_color_with_alpha(active_color, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
+        f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
+        f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-        "0,0,0,0,100,100,0,0,4,1,0,2,40,40,"
+        f"{bold},0,0,0,100,100,0,0,4,{outline_width},0,2,40,40,"
         f"{int(subtitle_margin)},1",
         "",
         "[Events]",
