@@ -572,6 +572,11 @@ def _build_ass_karaoke_for_clip(
     except Exception:
         outline_width = 1
     try:
+        border_style = int(preset.get("border_style", 4) or 4)
+    except Exception:
+        border_style = 4
+    show_box = bool(preset.get("box", True))
+    try:
         active_scale = max(1, int(preset.get("active_scale", 100) or 100))
     except Exception:
         active_scale = 100
@@ -583,6 +588,15 @@ def _build_ass_karaoke_for_clip(
     active_word_tags = ""
     if active_scale != 100:
         active_word_tags = f"\\fscx{active_scale}\\fscy{active_scale}"
+    if show_box:
+        back_color = _hex_to_ass_color_with_alpha(
+            subtitle_bg_color,
+            subtitle_bg_alpha,
+            DEFAULT_SUBTITLE_BG_COLOR,
+            DEFAULT_SUBTITLE_BG_ALPHA,
+        )
+    else:
+        back_color = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
 
     lines = [
         "[Script Info]",
@@ -602,8 +616,8 @@ def _build_ass_karaoke_for_clip(
         f"{_hex_to_ass_color_with_alpha(active_color, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
-        f"{_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
-        f"{bold},0,0,0,100,100,0,0,4,{outline_width},0,2,40,40,"
+        f"{back_color},"
+        f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,2,40,40,"
         f"{int(subtitle_margin)},1",
         "",
         "[Events]",
