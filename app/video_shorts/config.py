@@ -148,6 +148,8 @@ SUBTITLE_PRESETS = {
         "outline_color": "#000000",
         "outline_width": 1,
         "bold": False,
+        "active_scale": 100,
+        "font": "Arimo",
     },
     "pop_green": {
         "active_color": "#22C55E",
@@ -155,6 +157,8 @@ SUBTITLE_PRESETS = {
         "outline_color": "#000000",
         "outline_width": 4,
         "bold": True,
+        "active_scale": 115,
+        "font": "Anton",
     },
     "pop_pink": {
         "active_color": "#EC4899",
@@ -162,9 +166,43 @@ SUBTITLE_PRESETS = {
         "outline_color": "#000000",
         "outline_width": 4,
         "bold": True,
+        "active_scale": 115,
+        "font": "Bebas Neue",
     },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
+STYLE_TEMPLATES = [
+    {
+        "key": "classic",
+        "label": "Classic",
+        "subtitle_preset": "classic_yellow",
+        "title_font": "Oswald",
+        "title_font_key": DEFAULT_TITLE_FONT_KEY,
+        "title_text_color": "#0F172A",
+        "title_bg_color": "#FFD84D",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "bold_green",
+        "label": "Bold Green",
+        "subtitle_preset": "pop_green",
+        "title_font": "Anton",
+        "title_font_key": "anton",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#0F172A",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "vivid_pink",
+        "label": "Vivid Pink",
+        "subtitle_preset": "pop_pink",
+        "title_font": "Bebas Neue",
+        "title_font_key": "bebas_neue",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#EC4899",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+]
 DEFAULT_TITLE_BG_ALPHA = 92
 DEFAULT_SUBTITLE_BG_ALPHA = 85
 DEFAULT_SUBTITLE_TEXT_ALPHA = 100

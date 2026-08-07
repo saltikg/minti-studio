@@ -571,7 +571,18 @@ def _build_ass_karaoke_for_clip(
         outline_width = max(0, int(preset.get("outline_width", 1) or 1))
     except Exception:
         outline_width = 1
+    try:
+        active_scale = max(1, int(preset.get("active_scale", 100) or 100))
+    except Exception:
+        active_scale = 100
     bold = -1 if bool(preset.get("bold")) else 0
+    preset_font = str(preset.get("font") or "").strip()
+    resolved_font = subtitle_font
+    if preset_font and str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() != DEFAULT_SUBTITLE_PRESET:
+        resolved_font = preset_font
+    active_word_tags = ""
+    if active_scale != 100:
+        active_word_tags = f"\\fscx{active_scale}\\fscy{active_scale}"
 
     lines = [
         "[Script Info]",
@@ -586,7 +597,7 @@ def _build_ass_karaoke_for_clip(
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         "Style: Default,"
-        f"{subtitle_font},"
+        f"{resolved_font},"
         f"{int(subtitle_font_size)},"
         f"{_hex_to_ass_color_with_alpha(active_color, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
@@ -599,6 +610,12 @@ def _build_ass_karaoke_for_clip(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     for start, end, text in events:
+        if active_word_tags:
+            text = re.sub(
+                r"\{\\k(\d+)\}([^\s]+)",
+                lambda match: f"{{\\k{match.group(1)}{active_word_tags}}}{match.group(2)}{{\\rDefault}}",
+                text,
+            )
         lines.append(
             f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Default,,0,0,0,,{text}"
         )

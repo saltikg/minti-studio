@@ -1706,7 +1706,19 @@
     min-width: min(100%, 320px);
     flex: 1 1 320px;
   }
+  .style-template-section {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
   .subtitle-preset-label {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.66);
+  }
+  .style-template-label {
     font-size: 0.74rem;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -1717,6 +1729,11 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
+  }
+  .style-template-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
   }
   .subtitle-preset-card {
     display: grid;
@@ -1730,11 +1747,30 @@
     text-align: left;
     transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
   }
+  .style-template-card {
+    display: grid;
+    gap: 6px;
+    min-height: 92px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(255, 255, 255, 0.9);
+    text-align: left;
+    transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
   .subtitle-preset-card:hover,
   .subtitle-preset-card:focus-visible {
     border-color: rgba(45, 212, 191, 0.42);
     background: rgba(45, 212, 191, 0.1);
     color: #f6ffff;
+    transform: translateY(-1px);
+  }
+  .style-template-card:hover,
+  .style-template-card:focus-visible {
+    border-color: rgba(255, 216, 77, 0.52);
+    background: rgba(255, 216, 77, 0.12);
+    color: #ffffff;
     transform: translateY(-1px);
   }
   .subtitle-preset-card.is-active {
@@ -1743,8 +1779,19 @@
     box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.18);
     color: #ffffff;
   }
+  .style-template-card.is-active {
+    border-color: rgba(255, 216, 77, 0.68);
+    background: linear-gradient(180deg, rgba(255, 216, 77, 0.22), rgba(255, 216, 77, 0.08));
+    box-shadow: 0 0 0 1px rgba(255, 216, 77, 0.2);
+    color: #ffffff;
+  }
   .subtitle-preset-card-title {
     font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .style-template-card-title {
+    font-size: 0.9rem;
     font-weight: 700;
     line-height: 1.15;
   }
@@ -1753,13 +1800,22 @@
     line-height: 1.3;
     color: rgba(255, 255, 255, 0.58);
   }
+  .style-template-card-note {
+    font-size: 0.74rem;
+    line-height: 1.32;
+    color: rgba(255, 255, 255, 0.62);
+  }
   .subtitle-preset-card.is-active .subtitle-preset-card-note {
     color: rgba(255, 255, 255, 0.8);
+  }
+  .style-template-card.is-active .style-template-card-note {
+    color: rgba(255, 255, 255, 0.82);
   }
   .subtitle-style-hidden {
     display: none;
   }
   @media (max-width: 575.98px) {
+    .style-template-grid,
     .subtitle-preset-grid {
       grid-template-columns: 1fr;
     }
@@ -3210,6 +3266,29 @@
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
+            <div class="style-template-section">
+              <div class="style-template-label">Style Template</div>
+              <div class="style-template-grid">
+                {% for template in style_templates %}
+                  <button
+                    type="button"
+                    class="style-template-card"
+                    data-style-template-card
+                    data-style-template-key="{{ template.key }}"
+                    data-style-template-subtitle-preset="{{ template.subtitle_preset }}"
+                    data-style-template-title-font-key="{{ template.title_font_key }}"
+                    data-style-template-title-font-family="{{ template.title_font }}"
+                    data-style-template-title-text-color="{{ template.title_text_color }}"
+                    data-style-template-title-bg-color="{{ template.title_bg_color }}"
+                    data-style-template-title-font-size="{{ template.title_font_size }}"
+                    aria-pressed="false"
+                  >
+                    <span class="style-template-card-title">{{ template.label }}</span>
+                    <span class="style-template-card-note">{{ template.title_font }} title + {{ template.label }} subtitles</span>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
             <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden" aria-live="polite">
               <div class="crop-preview-toolbar-head">
                 <div class="crop-preview-toolbar-label" id="crop-preview-toolbar-label">Selected element</div>
@@ -9320,22 +9399,41 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
+  const titleFontSizeInput = document.querySelector('.short-video-body [name="title_font_size"]');
+  const titleTextColorField = document.getElementById("titleTextColorValue");
+  const titleTextColorCustomInput = document.getElementById("titleTextCustomColor");
+  const titleTextColorSwatch = document.getElementById("titleTextColorSwatch");
+  const titleBgColorField = document.getElementById("titleBgColorValue");
+  const titleBgCustomInput = document.getElementById("titleBgCustomColor");
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const subtitleStyleField = document.getElementById("subtitleStyleField");
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
+  const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
 
   const updateTitleFont = () => {
-    if (titlePreview && titleFont) {
+    if (titleFont) {
       const option = titleFont.options[titleFont.selectedIndex];
       const fontFamily = option?.dataset.fontFamily || option?.value || "";
-      titlePreview.style.fontFamily = fontFamily || "inherit";
+      if (titlePreview) {
+        titlePreview.style.fontFamily = fontFamily || "inherit";
+      }
+      const previewTitle = document.getElementById("shorts-preview-title-band");
+      if (previewTitle) {
+        previewTitle.style.fontFamily = fontFamily || "inherit";
+      }
     }
   };
   const updateSubtitleFont = () => {
-    if (subtitlePreview && subtitleFont) {
+    if (subtitleFont) {
       const option = subtitleFont.options[subtitleFont.selectedIndex];
       const fontFamily = option?.dataset.fontFamily || option?.value || "";
-      subtitlePreview.style.fontFamily = fontFamily || "inherit";
+      if (subtitlePreview) {
+        subtitlePreview.style.fontFamily = fontFamily || "inherit";
+      }
+      const previewSubtitle = document.getElementById("shorts-preview-subtitle-band");
+      if (previewSubtitle) {
+        previewSubtitle.style.fontFamily = fontFamily || "inherit";
+      }
     }
   };
 
@@ -9457,6 +9555,74 @@ document.addEventListener("DOMContentLoaded", function () {
     const subtitleBgSwatch = document.getElementById("subtitleBgColorSwatch");
     if (subtitleBgSwatch) subtitleBgSwatch.style.backgroundColor = bgRgba;
   };
+  const applySubtitlePresetValue = (nextValue) => {
+    if (!nextValue || !subtitlePresetField) {
+      return;
+    }
+    subtitlePresetField.value = nextValue;
+    if (subtitleStyleField) {
+      subtitleStyleField.value = "karaoke";
+    }
+    syncSubtitlePresetCards();
+    applySubtitlePreview();
+  };
+  const applyTitleTextPreview = (hex) => {
+    if (titlePreview) titlePreview.style.color = hex;
+    const previewTitle = document.getElementById("shorts-preview-title-band");
+    if (previewTitle) previewTitle.style.color = hex;
+    if (titleTextColorSwatch) titleTextColorSwatch.style.backgroundColor = hex;
+  };
+  const syncStyleTemplateCards = () => {
+    const activeSubtitlePreset = String(subtitlePresetField?.value || "").trim();
+    const activeFontKey = String(titleFont?.value || "").trim();
+    const activeTitleColor = normalize(titleTextColorField?.value || "");
+    const activeTitleBg = normalize(titleBgColorField?.value || "");
+    const activeTitleSize = String(titleFontSizeInput?.value || "").trim();
+    styleTemplateCards.forEach((card) => {
+      const isActive =
+        String(card.dataset.styleTemplateSubtitlePreset || "").trim() === activeSubtitlePreset &&
+        String(card.dataset.styleTemplateTitleFontKey || "").trim() === activeFontKey &&
+        normalize(card.dataset.styleTemplateTitleTextColor || "") === activeTitleColor &&
+        normalize(card.dataset.styleTemplateTitleBgColor || "") === activeTitleBg &&
+        String(card.dataset.styleTemplateTitleFontSize || "").trim() === activeTitleSize;
+      card.classList.toggle("is-active", isActive);
+      card.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  };
+  const applyStyleTemplate = (card) => {
+    if (!card) {
+      return;
+    }
+    applySubtitlePresetValue(String(card.dataset.styleTemplateSubtitlePreset || "").trim());
+    const nextFontKey = String(card.dataset.styleTemplateTitleFontKey || "").trim();
+    if (titleFont && nextFontKey) {
+      titleFont.value = nextFontKey;
+      titleFont.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    const nextFontSize = String(card.dataset.styleTemplateTitleFontSize || "").trim();
+    if (titleFontSizeInput && nextFontSize) {
+      titleFontSizeInput.value = nextFontSize;
+      titleFontSizeInput.dispatchEvent(new Event("input", { bubbles: true }));
+      titleFontSizeInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    const nextTitleTextColor = normalize(card.dataset.styleTemplateTitleTextColor || "");
+    if (titleTextColorField && nextTitleTextColor) {
+      titleTextColorField.value = nextTitleTextColor;
+      if (titleTextColorCustomInput) {
+        titleTextColorCustomInput.value = nextTitleTextColor;
+      }
+      applyTitleTextPreview(nextTitleTextColor);
+    }
+    const nextTitleBgColor = normalize(card.dataset.styleTemplateTitleBgColor || "");
+    if (titleBgColorField && nextTitleBgColor) {
+      titleBgColorField.value = nextTitleBgColor;
+      if (titleBgCustomInput) {
+        titleBgCustomInput.value = nextTitleBgColor;
+      }
+      applyTitleBgPreview();
+    }
+    syncStyleTemplateCards();
+  };
 
   bindColorPicker({
     triggerId: "titleBgTrigger",
@@ -9474,11 +9640,7 @@ document.addEventListener("DOMContentLoaded", function () {
     hexId: "titleTextColorHex",
     swatchId: "titleTextColorSwatch",
     customInputId: "titleTextCustomColor",
-    onApply: (hex) => {
-      if (titlePreview) titlePreview.style.color = hex;
-      const previewTitle = document.getElementById("shorts-preview-title-band");
-      if (previewTitle) previewTitle.style.color = hex;
-    },
+    onApply: (hex) => applyTitleTextPreview(hex),
   });
   bindColorPicker({
     triggerId: "subtitleTextColorTrigger",
@@ -9512,21 +9674,23 @@ document.addEventListener("DOMContentLoaded", function () {
   };
   subtitlePresetCards.forEach((card) => {
     card.addEventListener("click", () => {
-      const nextValue = String(card.dataset.subtitlePresetValue || "").trim();
-      if (!nextValue || !subtitlePresetField) {
-        return;
-      }
-      subtitlePresetField.value = nextValue;
-      if (subtitleStyleField) {
-        subtitleStyleField.value = "karaoke";
-      }
-      syncSubtitlePresetCards();
-      applySubtitlePreview();
+      applySubtitlePresetValue(String(card.dataset.subtitlePresetValue || "").trim());
+      syncStyleTemplateCards();
     });
+  });
+  styleTemplateCards.forEach((card) => {
+    card.addEventListener("click", () => {
+      applyStyleTemplate(card);
+    });
+  });
+  [titleFont, titleFontSizeInput, titleTextColorField, titleBgColorField, subtitlePresetField].forEach((field) => {
+    field?.addEventListener("change", syncStyleTemplateCards);
+    field?.addEventListener("input", syncStyleTemplateCards);
   });
   syncSubtitlePresetCards();
   applyTitleBgPreview();
   applySubtitlePreview();
+  syncStyleTemplateCards();
 });
 </script>
 {% endblock %}
