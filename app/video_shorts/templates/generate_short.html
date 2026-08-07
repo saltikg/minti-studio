@@ -1700,6 +1700,70 @@
     color: rgba(255, 255, 255, 0.62);
     margin-top: 8px;
   }
+  .subtitle-preset-section {
+    display: grid;
+    gap: 8px;
+    min-width: min(100%, 320px);
+    flex: 1 1 320px;
+  }
+  .subtitle-preset-label {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.66);
+  }
+  .subtitle-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .subtitle-preset-card {
+    display: grid;
+    gap: 4px;
+    min-height: 72px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(255, 255, 255, 0.88);
+    text-align: left;
+    transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
+  .subtitle-preset-card:hover,
+  .subtitle-preset-card:focus-visible {
+    border-color: rgba(45, 212, 191, 0.42);
+    background: rgba(45, 212, 191, 0.1);
+    color: #f6ffff;
+    transform: translateY(-1px);
+  }
+  .subtitle-preset-card.is-active {
+    border-color: rgba(45, 212, 191, 0.56);
+    background: linear-gradient(180deg, rgba(45, 212, 191, 0.18), rgba(45, 212, 191, 0.08));
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.18);
+    color: #ffffff;
+  }
+  .subtitle-preset-card-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .subtitle-preset-card-note {
+    font-size: 0.72rem;
+    line-height: 1.3;
+    color: rgba(255, 255, 255, 0.58);
+  }
+  .subtitle-preset-card.is-active .subtitle-preset-card-note {
+    color: rgba(255, 255, 255, 0.8);
+  }
+  .subtitle-style-hidden {
+    display: none;
+  }
+  @media (max-width: 575.98px) {
+    .subtitle-preset-grid {
+      grid-template-columns: 1fr;
+    }
+  }
   .shorts-preview-frame {
     position: relative;
     overflow: hidden;
@@ -3302,9 +3366,33 @@
                       <span>BG alpha</span>
                       <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
                     </div>
-                    <div class="input-group-inline compact">
+                    <div class="subtitle-preset-section">
+                      <div class="subtitle-preset-label">Subtitle preset</div>
+                      <div class="subtitle-preset-grid" data-subtitle-preset-grid>
+                        {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
+                        {% set subtitle_preset_cards = [
+                          {'value': 'classic_yellow', 'label': 'Classic', 'note': 'Yellow active word'},
+                          {'value': 'pop_green', 'label': 'Pop Green', 'note': 'Green highlight, bold'},
+                          {'value': 'pop_pink', 'label': 'Pop Pink', 'note': 'Pink highlight, bold'}
+                        ] %}
+                        {% for preset in subtitle_preset_cards %}
+                          <button
+                            type="button"
+                            class="subtitle-preset-card{% if subtitle_preset_value == preset.value %} is-active{% endif %}"
+                            data-subtitle-preset-card
+                            data-subtitle-preset-value="{{ preset.value }}"
+                            aria-pressed="{{ 'true' if subtitle_preset_value == preset.value else 'false' }}"
+                          >
+                            <span class="subtitle-preset-card-title">{{ preset.label }}</span>
+                            <span class="subtitle-preset-card-note">{{ preset.note }}</span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                      <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
+                    </div>
+                    <div class="input-group-inline compact subtitle-style-hidden">
                       <span>Style</span>
-                      <select name="subtitle_style" class="form-select form-select-sm short-input-medium">
+                      <select name="subtitle_style" id="subtitleStyleField" class="form-select form-select-sm short-input-medium">
                         <option value="plain" {% if selected_subtitle_style == "plain" %}selected{% endif %}>Plain</option>
                         <option value="karaoke" {% if selected_subtitle_style == "karaoke" %}selected{% endif %}>Karaoke</option>
                       </select>
@@ -7430,6 +7518,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarTitle = modalEl.querySelector("#crop-preview-toolbar-title");
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
+  const subtitlePresetField = settingsContainer?.querySelector('[name="subtitle_preset"]');
+  const subtitleStyleField = settingsContainer?.querySelector('[name="subtitle_style"]');
+  const subtitlePresetCards = Array.from(settingsContainer?.querySelectorAll("[data-subtitle-preset-card]") || []);
   const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
   const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
   const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
@@ -8880,7 +8971,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const params = new URLSearchParams();
-    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "subtitle_style", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_text_alpha", "subtitle_bg_color", "subtitle_bg_alpha", "video_date_text", "video_date_top", "video_overlay_offset"].forEach(
+    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "subtitle_style", "subtitle_preset", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_text_alpha", "subtitle_bg_color", "subtitle_bg_alpha", "video_date_text", "video_date_top", "video_overlay_offset"].forEach(
       (name) => {
         const field = settingsContainer.querySelector(`[name="${name}"]`);
         if (field) {
@@ -8989,7 +9080,6 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
-    const subtitleStyleField = settingsContainer?.querySelector(`[name="subtitle_style"]`);
     if (subtitleStyleField) {
       params.append("subtitle_style", getPersistedFieldValue(subtitleStyleField));
     }
@@ -9409,6 +9499,29 @@ document.addEventListener("DOMContentLoaded", function () {
   titleBgAlphaInput?.addEventListener("input", applyTitleBgPreview);
   subtitleTextAlphaInput?.addEventListener("input", applySubtitlePreview);
   subtitleBgAlphaInput?.addEventListener("input", applySubtitlePreview);
+  const syncSubtitlePresetCards = () => {
+    const activeValue = String(subtitlePresetField?.value || "classic_yellow").trim() || "classic_yellow";
+    subtitlePresetCards.forEach((card) => {
+      const isActive = card.dataset.subtitlePresetValue === activeValue;
+      card.classList.toggle("is-active", isActive);
+      card.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  };
+  subtitlePresetCards.forEach((card) => {
+    card.addEventListener("click", () => {
+      const nextValue = String(card.dataset.subtitlePresetValue || "").trim();
+      if (!nextValue || !subtitlePresetField) {
+        return;
+      }
+      subtitlePresetField.value = nextValue;
+      if (subtitleStyleField) {
+        subtitleStyleField.value = "karaoke";
+      }
+      syncSubtitlePresetCards();
+      applySubtitlePreview();
+    });
+  });
+  syncSubtitlePresetCards();
   applyTitleBgPreview();
   applySubtitlePreview();
 });

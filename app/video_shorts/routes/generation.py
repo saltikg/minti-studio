@@ -11963,6 +11963,9 @@ def save_short_settings(video_pk):
     subtitle_style = (request.form.get("subtitle_style") or "plain").strip().lower()
     if subtitle_style not in {"plain", "karaoke"}:
         subtitle_style = "plain"
+    subtitle_preset = str(request.form.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
+    if subtitle_preset not in SUBTITLE_PRESETS:
+        subtitle_preset = DEFAULT_SUBTITLE_PRESET
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
         expected_owner_user_id=current_user.get("id") if current_user else None,
@@ -12040,6 +12043,7 @@ def save_short_settings(video_pk):
             "subtitle_font_size": subtitle_font_size,
             "subtitle_margin": subtitle_margin,
             "subtitle_style": subtitle_style,
+            "subtitle_preset": subtitle_preset,
             "title_margin": title_margin,
             "title_line_spacing": title_line_spacing,
             "title_bg_color": title_bg_color,
@@ -12104,6 +12108,7 @@ def save_short_settings(video_pk):
     session["vs_sub_font_size"] = subtitle_font_size
     session["vs_sub_margin"] = subtitle_margin
     session["vs_subtitle_style"] = subtitle_style
+    session["vs_subtitle_preset"] = subtitle_preset
     session["vs_title_margin"] = title_margin
     session["vs_title_line_spacing"] = title_line_spacing
     session["vs_title_bg_color"] = title_bg_color
