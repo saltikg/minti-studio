@@ -528,6 +528,21 @@ def _normalize_alpha_percent(value: Any, default: int = DEFAULT_TITLE_BG_ALPHA) 
     return max(0, min(100, alpha))
 
 
+def _normalize_optional_bool(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"0", "false", "no", "off", "f", ""}:
+        return False
+    if text in {"1", "true", "yes", "on", "t"}:
+        return True
+    return bool(value)
+
+
 def _format_size_bytes(num: int) -> str:
     if num is None:
         return "0 B"
@@ -4335,11 +4350,11 @@ def generate_short(video_pk):
     except Exception:
         video_date_top = DEFAULT_VIDEO_DATE_TOP
     raw_subscribe = video.get("subscribe_overlay_enabled")
-    video_subscribe_overlay = True if raw_subscribe is None else bool(raw_subscribe)
+    video_subscribe_overlay = _normalize_optional_bool(raw_subscribe, default=True)
     raw_show_title = video.get("show_title")
-    video_show_title = True if raw_show_title is None else bool(raw_show_title)
+    video_show_title = _normalize_optional_bool(raw_show_title, default=True)
     raw_show_subtitle = video.get("show_subtitle")
-    video_show_subtitle = True if raw_show_subtitle is None else bool(raw_show_subtitle)
+    video_show_subtitle = _normalize_optional_bool(raw_show_subtitle, default=True)
     raw_is_music_only = video.get("is_music_only")
     video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     selected_podcast_audio_filename = (video.get("podcast_audio_filename") or "").strip()
@@ -12687,9 +12702,9 @@ def autoclip_video(video_pk):
                     except Exception:
                         video_podcast_overlay_short_ids = []
             video_owner_user_id = crop_row[query_indexes["owner_user_id"]]
-            video_subscribe_overlay = True if raw_subscribe_overlay is None else bool(raw_subscribe_overlay)
-            video_show_title = True if raw_show_title is None else bool(raw_show_title)
-            video_show_subtitle = True if raw_show_subtitle is None else bool(raw_show_subtitle)
+            video_subscribe_overlay = _normalize_optional_bool(raw_subscribe_overlay, default=True)
+            video_show_title = _normalize_optional_bool(raw_show_title, default=True)
+            video_show_subtitle = _normalize_optional_bool(raw_show_subtitle, default=True)
             video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     finally:
         conn.close()
