@@ -508,6 +508,15 @@
   .subscribe-selected-actions .form-check-label {
     display: none;
   }
+  .section-inline-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .section-inline-head .text-white-50 {
+    margin: 0;
+  }
   .background-selected-meta {
     min-width: 0;
     flex: 1 1 auto;
@@ -2030,19 +2039,22 @@
   }
   .layout-top-row {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.35fr) minmax(156px, 0.75fr);
+    grid-template-columns: minmax(280px, 1.05fr) minmax(320px, 1.3fr) minmax(180px, 0.8fr);
     gap: 12px;
     align-items: start;
   }
   .layout-top-row .control-group,
-  .layout-top-row .crop-toggle-card {
+  .layout-top-row .layout-video-position-row {
     margin: 0;
   }
   .layout-top-row .control-group {
     gap: 8px;
   }
+  .layout-top-row .subscribe-visual-selector {
+    gap: 8px;
+  }
   .layout-video-position-row {
-    width: min(260px, 100%);
+    width: 100%;
   }
   .layout-video-position-row.is-hidden {
     display: none !important;
@@ -2285,7 +2297,7 @@
     .layout-top-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .layout-top-row .crop-toggle-card {
+    .layout-top-row .layout-video-position-row {
       grid-column: 1 / -1;
     }
   }
@@ -3580,19 +3592,21 @@
                       </div>
                       </div>
                       <div class="control-group subscribe-visual-selector">
-                      <label class="text-white-50">Subscribe Animation</label>
+                      <div class="section-inline-head">
+                        <label class="text-white-50">Subscribe Animation</label>
+                        <div class="crop-toggle-card">
+                          <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                            <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+                          </div>
+                        </div>
+                      </div>
                       <div class="background-selected-card" id="subscribe-selected-card">
                         <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
                         <div class="background-selected-meta">
                           <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
                         </div>
                         <div class="subscribe-selected-actions">
-                          <div class="crop-toggle-card">
-                            <div class="form-check form-switch mb-0">
-                              <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                              <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
-                            </div>
-                          </div>
                           <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
                             <i class="bi bi-pencil-square"></i>
                           </button>
@@ -3632,8 +3646,7 @@
                       <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
                       {% endif %}
                       </div>
-                    </div>
-                    <div class="input-group-inline compact layout-video-position-row" data-preview-control="video-position">
+                      <div class="input-group-inline compact layout-video-position-row" data-preview-control="video-position">
                       <span class="advanced-field-label">
                         <span class="advanced-field-label-main">Video position</span>
                         <span class="advanced-field-label-direction">from top</span>
@@ -3644,6 +3657,7 @@
                              value="{{ selected_video_overlay_offset or 400 }}"
                              min="0"
                              max="1200">
+                      </div>
                     </div>
                     <div class="control-group d-none static-visual-selector" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
                       <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
