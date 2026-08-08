@@ -1800,10 +1800,51 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
   }
-  .style-template-grid {
+  .style-template-carousel {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
     gap: 8px;
+    min-width: 0;
+  }
+  .style-template-carousel-viewport {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .style-template-carousel-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.82);
+    transition: opacity 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+  }
+  .style-template-carousel-arrow:hover,
+  .style-template-carousel-arrow:focus-visible {
+    border-color: rgba(255, 216, 77, 0.4);
+    background: rgba(255, 216, 77, 0.12);
+    color: #ffffff;
+  }
+  .style-template-carousel-arrow:disabled {
+    opacity: 0.32;
+    cursor: default;
+    pointer-events: none;
+  }
+  .style-template-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    padding: 2px;
+  }
+  .style-template-grid::-webkit-scrollbar {
+    display: none;
   }
   .subtitle-preset-card {
     display: grid;
@@ -1819,9 +1860,11 @@
   }
   .style-template-card {
     display: grid;
-    gap: 8px;
-    min-height: 160px;
-    padding: 10px 12px;
+    gap: 6px;
+    flex: 0 0 clamp(150px, 23vw, 182px);
+    min-width: 0;
+    min-height: 134px;
+    padding: 9px 10px 10px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.035);
@@ -1861,32 +1904,19 @@
     line-height: 1.15;
   }
   .style-template-card-title {
-    font-size: 0.86rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    line-height: 1.15;
-  }
-  .subtitle-preset-card-note {
-    font-size: 0.72rem;
-    line-height: 1.3;
-    color: rgba(255, 255, 255, 0.58);
-  }
-  .style-template-card-note {
-    font-size: 0.71rem;
-    line-height: 1.24;
-    color: rgba(255, 255, 255, 0.62);
+    line-height: 1.1;
   }
   .subtitle-preset-card.is-active .subtitle-preset-card-note {
     color: rgba(255, 255, 255, 0.8);
-  }
-  .style-template-card.is-active .style-template-card-note {
-    color: rgba(255, 255, 255, 0.82);
   }
   .style-template-card-preview {
     position: relative;
     display: grid;
     align-content: space-between;
-    min-height: 92px;
-    padding: 10px;
+    min-height: 82px;
+    padding: 8px;
     border-radius: 14px;
     overflow: hidden;
     background:
@@ -1898,7 +1928,7 @@
     content: "";
     position: absolute;
     inset: auto 8px 8px;
-    height: 28px;
+    height: 24px;
     border-radius: 10px;
     background: rgba(15, 23, 42, 0.82);
     opacity: 0.7;
@@ -1909,9 +1939,9 @@
     align-self: start;
     justify-self: start;
     max-width: 86%;
-    padding: 6px 8px;
+    padding: 5px 7px;
     border-radius: 9px;
-    font-size: 0.76rem;
+    font-size: 0.7rem;
     line-height: 1;
     letter-spacing: 0.01em;
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.26);
@@ -1924,7 +1954,7 @@
     flex-wrap: wrap;
     gap: 3px;
     max-width: 96%;
-    font-size: 0.72rem;
+    font-size: 0.66rem;
     line-height: 1;
     text-transform: uppercase;
     letter-spacing: 0.02em;
@@ -1964,6 +1994,12 @@
   .style-template-card-preview--bold-green .style-template-card-preview-word.is-active {
     color: #22c55e;
   }
+  .style-template-card-preview--bold-green::after,
+  .style-template-card-preview--vivid-pink::after,
+  .style-template-card-preview--minimal-white::after,
+  .style-template-card-preview--deep-blue::after {
+    opacity: 0;
+  }
   .style-template-card-preview--vivid-pink .style-template-card-preview-title {
     background: #ec4899;
     color: #ffffff;
@@ -1983,6 +2019,62 @@
   }
   .style-template-card-preview--vivid-pink .style-template-card-preview-word.is-active {
     color: #ec4899;
+  }
+  .style-template-card-preview--minimal-white .style-template-card-preview-title {
+    background: #ffffff;
+    color: #0f172a;
+    font-family: "Oswald", sans-serif;
+    font-weight: 700;
+  }
+  .style-template-card-preview--minimal-white .style-template-card-preview-word {
+    color: #e5e7eb;
+    font-family: "Open Sans", sans-serif;
+    text-shadow:
+      -1px -1px 0 rgba(17, 24, 39, 0.9),
+      1px -1px 0 rgba(17, 24, 39, 0.9),
+      -1px 1px 0 rgba(17, 24, 39, 0.9),
+      1px 1px 0 rgba(17, 24, 39, 0.9);
+  }
+  .style-template-card-preview--minimal-white .style-template-card-preview-word.is-active {
+    color: #ffffff;
+  }
+  .style-template-card-preview--deep-blue .style-template-card-preview-title {
+    background: #1d4ed8;
+    color: #ffffff;
+    font-family: "Anton", sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+  }
+  .style-template-card-preview--deep-blue .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Anton", sans-serif;
+    text-shadow:
+      -2px -2px 0 rgba(30, 58, 138, 0.98),
+      2px -2px 0 rgba(30, 58, 138, 0.98),
+      -2px 2px 0 rgba(30, 58, 138, 0.98),
+      2px 2px 0 rgba(30, 58, 138, 0.98);
+  }
+  .style-template-card-preview--deep-blue .style-template-card-preview-word.is-active {
+    color: #93c5fd;
+  }
+  .style-template-card-preview--clean-black .style-template-card-preview-title {
+    background: #111827;
+    color: #ffffff;
+    font-family: "Open Sans", sans-serif;
+    font-weight: 700;
+  }
+  .style-template-card-preview--clean-black::after {
+    background: rgba(0, 0, 0, 0.92);
+    opacity: 0.92;
+  }
+  .style-template-card-preview--clean-black .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Open Sans", sans-serif;
+    text-shadow:
+      -1px -1px 0 rgba(0, 0, 0, 0.96),
+      1px -1px 0 rgba(0, 0, 0, 0.96),
+      -1px 1px 0 rgba(0, 0, 0, 0.96),
+      1px 1px 0 rgba(0, 0, 0, 0.96);
   }
   .crop-modal-tab-nav {
     display: flex;
@@ -2260,9 +2352,15 @@
     display: none;
   }
   @media (max-width: 575.98px) {
-    .style-template-grid,
     .subtitle-preset-grid {
       grid-template-columns: 1fr;
+    }
+    .style-template-carousel {
+      grid-template-columns: 30px minmax(0, 1fr) 30px;
+      gap: 6px;
+    }
+    .style-template-card {
+      flex-basis: clamp(138px, 58vw, 166px);
     }
     .crop-modal-top-shell {
       padding: 14px 12px;
@@ -3521,44 +3619,58 @@
         <div class="crop-modal-top-shell">
           <div class="style-template-section">
             <div class="style-template-label">Style Template</div>
-            <div class="style-template-grid">
-              {% for template in style_templates %}
-                {% set preview_variant = 'classic' %}
-                {% if template.key == 'bold_green' %}
-                  {% set preview_variant = 'bold-green' %}
-                {% elif template.key == 'vivid_pink' %}
-                  {% set preview_variant = 'vivid-pink' %}
-                {% endif %}
-                <button
-                  type="button"
-                  class="style-template-card"
-                  data-style-template-card
-                  data-style-template-key="{{ template.key }}"
-                  data-style-template-subtitle-preset="{{ template.subtitle_preset }}"
-                  data-style-template-title-font-key="{{ template.title_font_key }}"
-                  data-style-template-title-font-family="{{ template.title_font }}"
-                  data-style-template-title-text-color="{{ template.title_text_color }}"
-                  data-style-template-title-bg-color="{{ template.title_bg_color }}"
-                  data-style-template-title-font-size="{{ template.title_font_size }}"
-                  aria-pressed="false"
-                >
-                  <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}">
-                    <span
-                      class="style-template-card-preview-title"
-                      style="background: {{ template.title_bg_color }}; color: {{ template.title_text_color }};"
+            <div class="style-template-carousel">
+              <button
+                type="button"
+                class="style-template-carousel-arrow"
+                data-style-template-carousel-prev
+                aria-label="Scroll style templates left"
+              >
+                <i class="bi bi-chevron-left" aria-hidden="true"></i>
+              </button>
+              <div class="style-template-carousel-viewport">
+                <div class="style-template-grid" data-style-template-carousel-track>
+                  {% for template in style_templates %}
+                    {% set preview_variant = template.key|replace('_', '-') %}
+                    <button
+                      type="button"
+                      class="style-template-card"
+                      data-style-template-card
+                      data-style-template-key="{{ template.key }}"
+                      data-style-template-subtitle-preset="{{ template.subtitle_preset }}"
+                      data-style-template-title-font-key="{{ template.title_font_key }}"
+                      data-style-template-title-font-family="{{ template.title_font }}"
+                      data-style-template-title-text-color="{{ template.title_text_color }}"
+                      data-style-template-title-bg-color="{{ template.title_bg_color }}"
+                      data-style-template-title-font-size="{{ template.title_font_size }}"
+                      aria-pressed="false"
                     >
-                      Minti Title
-                    </span>
-                    <div class="style-template-card-preview-subtitle" aria-hidden="true">
-                      <span class="style-template-card-preview-word">this</span>
-                      <span class="style-template-card-preview-word is-active">style</span>
-                      <span class="style-template-card-preview-word">pops</span>
-                    </div>
-                  </div>
-                  <span class="style-template-card-title">{{ template.label }}</span>
-                  <span class="style-template-card-note">{{ template.title_font }} title + {{ template.label }} subtitles</span>
-                </button>
-              {% endfor %}
+                      <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}">
+                        <span
+                          class="style-template-card-preview-title"
+                          style="background: {{ template.title_bg_color }}; color: {{ template.title_text_color }};"
+                        >
+                          Minti Title
+                        </span>
+                        <div class="style-template-card-preview-subtitle" aria-hidden="true">
+                          <span class="style-template-card-preview-word">this</span>
+                          <span class="style-template-card-preview-word is-active">style</span>
+                          <span class="style-template-card-preview-word">pops</span>
+                        </div>
+                      </div>
+                      <span class="style-template-card-title">{{ template.label }}</span>
+                    </button>
+                  {% endfor %}
+                </div>
+              </div>
+              <button
+                type="button"
+                class="style-template-carousel-arrow"
+                data-style-template-carousel-next
+                aria-label="Scroll style templates right"
+              >
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+              </button>
             </div>
           </div>
         </div>
@@ -9933,6 +10045,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleStyleField = document.getElementById("subtitleStyleField");
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
   const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
+  const styleTemplateCarouselTrack = document.querySelector("[data-style-template-carousel-track]");
+  const styleTemplateCarouselPrev = document.querySelector("[data-style-template-carousel-prev]");
+  const styleTemplateCarouselNext = document.querySelector("[data-style-template-carousel-next]");
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
 
@@ -10115,6 +10230,33 @@ document.addEventListener("DOMContentLoaded", function () {
       card.setAttribute("aria-pressed", isActive ? "true" : "false");
     });
   };
+  const updateStyleTemplateCarouselNav = () => {
+    if (!styleTemplateCarouselTrack) {
+      return;
+    }
+    const maxScrollLeft = Math.max(
+      0,
+      styleTemplateCarouselTrack.scrollWidth - styleTemplateCarouselTrack.clientWidth
+    );
+    const scrollLeft = styleTemplateCarouselTrack.scrollLeft;
+    const threshold = 6;
+    if (styleTemplateCarouselPrev) {
+      styleTemplateCarouselPrev.disabled = scrollLeft <= threshold;
+    }
+    if (styleTemplateCarouselNext) {
+      styleTemplateCarouselNext.disabled = scrollLeft >= maxScrollLeft - threshold;
+    }
+  };
+  const scrollStyleTemplateCarousel = (direction) => {
+    if (!styleTemplateCarouselTrack) {
+      return;
+    }
+    const firstCard = styleTemplateCards[0];
+    const cardGap = Number.parseFloat(window.getComputedStyle(styleTemplateCarouselTrack).gap || "0") || 0;
+    const cardWidth = firstCard ? firstCard.getBoundingClientRect().width + cardGap : 180;
+    const nextLeft = direction * Math.max(cardWidth * 2, styleTemplateCarouselTrack.clientWidth * 0.72);
+    styleTemplateCarouselTrack.scrollBy({ left: nextLeft, behavior: "smooth" });
+  };
   const applyStyleTemplate = (card) => {
     if (!card) {
       return;
@@ -10209,6 +10351,15 @@ document.addEventListener("DOMContentLoaded", function () {
       applyStyleTemplate(card);
     });
   });
+  styleTemplateCarouselPrev?.addEventListener("click", () => {
+    scrollStyleTemplateCarousel(-1);
+  });
+  styleTemplateCarouselNext?.addEventListener("click", () => {
+    scrollStyleTemplateCarousel(1);
+  });
+  styleTemplateCarouselTrack?.addEventListener("scroll", updateStyleTemplateCarouselNav, { passive: true });
+  window.addEventListener("resize", updateStyleTemplateCarouselNav);
+  updateStyleTemplateCarouselNav();
   const setActiveCropModalTab = (nextTab) => {
     const target = String(nextTab?.dataset.cropModalTabTarget || "").trim().toLowerCase();
     cropModalTabs.forEach((candidate) => {
