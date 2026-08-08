@@ -3386,8 +3386,8 @@
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
           </div>
         </div>
-        <div class="top-controls mb-3 advanced-settings-block is-collapsed" data-advanced-block>
-          <div class="control-group" id="crop-aspect-selector">
+        <div class="top-controls mb-3 advanced-settings-block is-collapsed" data-advanced-block data-crop-tab-group>
+          <div class="control-group" id="crop-aspect-selector" data-crop-tab-section="layout">
             <label class="text-white-50 d-flex align-items-center gap-2">
               Format
             </label>
@@ -3412,7 +3412,7 @@
               </button>
             </div>
           </div>
-          <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
+          <div class="control-group background-visual-selector" data-crop-tab-section="background" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
             <label class="text-white-50">Background</label>
             <div class="background-selected-card" id="background-selected-card">
               <img src="" alt="" class="background-selected-thumb" id="background-selected-thumb">
@@ -3457,7 +3457,7 @@
               </div>
             {% endif %}
           </div>
-          <div class="control-group subscribe-visual-selector">
+          <div class="control-group subscribe-visual-selector" data-crop-tab-section="layout">
             <label class="text-white-50">Subscribe Animation</label>
             <div class="background-selected-card" id="subscribe-selected-card">
               <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
@@ -3524,14 +3524,14 @@
             </div>
           </div>
         </div>
-        <div class="crop-toggle-row advanced-settings-block is-collapsed" data-advanced-block>
-          <div class="crop-toggle-card">
+        <div class="crop-toggle-row advanced-settings-block is-collapsed" data-advanced-block data-crop-tab-group>
+          <div class="crop-toggle-card" data-crop-tab-section="layout">
             <div class="form-check form-switch mb-0">
               <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
               <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
             </div>
           </div>
-          <div class="crop-toggle-card">
+          <div class="crop-toggle-card" data-crop-tab-section="title">
             <div class="form-check form-switch mb-0">
               <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
               <label class="form-check-label" for="showTitleToggle">Show title</label>
@@ -9797,6 +9797,8 @@ document.addEventListener("DOMContentLoaded", function () {
   const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
+  const cropTabSections = Array.from(document.querySelectorAll("[data-crop-tab-section]"));
+  const cropTabGroups = Array.from(document.querySelectorAll("[data-crop-tab-group]"));
 
   const updateTitleFont = () => {
     if (titleFont) {
@@ -10080,6 +10082,13 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     cropModalPanels.forEach((panel) => {
       panel.hidden = panel.dataset.cropModalPanel !== target;
+    });
+    cropTabSections.forEach((section) => {
+      section.hidden = section.dataset.cropTabSection !== target;
+    });
+    cropTabGroups.forEach((group) => {
+      const hasVisibleSection = Array.from(group.querySelectorAll("[data-crop-tab-section]")).some((section) => !section.hidden);
+      group.hidden = !hasVisibleSection;
     });
   };
   cropModalTabs.forEach((tab) => {
