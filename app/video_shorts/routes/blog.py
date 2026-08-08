@@ -86,7 +86,7 @@ def blog_article(slug: str):
         article=article,
         related_articles=related_articles,
         canonical_url=article["canonical_url"],
-        meta_title=f"{article['title']} | MintiStudio Blog",
-        meta_description=article["description"],
+        meta_title=article.get("meta_title") or f"{article['title']} | MintiStudio Blog",
+        meta_description=article.get("meta_description") or article["description"],
         article_json_ld=_article_json_ld(article),
     )
