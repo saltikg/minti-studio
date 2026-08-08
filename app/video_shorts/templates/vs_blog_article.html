@@ -302,7 +302,12 @@
     <h2 id="article-cta-title">{{ article.cta_title }}</h2>
     <p>{{ article.cta_body }}</p>
     <div class="vs-blog-cta-actions">
-      <a class="vs-blog-cta-btn" href="{{ url_for('video_shorts_bp.register') }}">Try MintiStudio</a>
+      <a
+        class="vs-blog-cta-btn"
+        href="{{ url_for('video_shorts_bp.register') }}"
+        data-minti-cta
+        data-cta-location="blog_article"
+      >Try MintiStudio</a>
     </div>
   </section>
 

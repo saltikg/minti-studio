@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/vs_theme.css') }}">
   <link rel="stylesheet"
     href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}">
+  {% include "_ga4_google_tag.html" %}
 
   <style>
     html {
@@ -415,7 +416,12 @@
           <a class="vs-marketing-login" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
         {% endblock %}
         {% block marketing_cta %}
-          <a class="vs-marketing-cta" href="{{ url_for('video_shorts_bp.register') }}">Try for free</a>
+          <a
+            class="vs-marketing-cta"
+            href="{{ url_for('video_shorts_bp.register') }}"
+            data-minti-cta
+            data-cta-location="marketing_topnav"
+          >Try for free</a>
         {% endblock %}
         <button
           type="button"
@@ -462,6 +468,23 @@
     document.addEventListener("DOMContentLoaded", function () {
       const menuToggle = document.querySelector("[data-marketing-menu-toggle]");
       const mobilePanel = document.getElementById("vs-marketing-mobile-panel");
+      const CTA_SELECTOR = "[data-minti-cta]";
+
+      document.addEventListener("click", function (event) {
+        const cta = event.target.closest(CTA_SELECTOR);
+        if (!cta) {
+          return;
+        }
+        const ctaText = (cta.dataset.ctaText || cta.textContent || "").trim();
+        const destination = (cta.dataset.ctaDestination || cta.getAttribute("href") || "").trim();
+        const ctaLocation = (cta.dataset.ctaLocation || "").trim();
+        trackMintiEvent("cta_click", {
+          cta_text: ctaText,
+          cta_location: ctaLocation,
+          destination: destination,
+        });
+      });
+
       if (!menuToggle || !mobilePanel) return;
 
       function closeMenu() {

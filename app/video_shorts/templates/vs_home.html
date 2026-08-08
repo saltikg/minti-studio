@@ -1740,7 +1740,12 @@
             </div>
           </div>
           <div class="hero-actions">
-            <a class="btn hero-primary hero-link" href="{{ url_for('video_shorts_bp.register') }}">
+            <a
+              class="btn hero-primary hero-link"
+              href="{{ url_for('video_shorts_bp.register') }}"
+              data-minti-cta
+              data-cta-location="home_hero"
+            >
               Try for free
             </a>
           </div>
@@ -1975,7 +1980,9 @@
           <div class="pricing-actions">
             <a
               class="pricing-btn {% if plan.is_featured %}pricing-btn-solid{% else %}pricing-btn-outline{% endif %}"
-              href="{{ url_for('video_shorts_bp.register') }}">
+              href="{{ url_for('video_shorts_bp.register') }}"
+              data-minti-cta
+              data-cta-location="pricing_{{ plan.plan_id }}">
               {{ plan.button_label }}
             </a>
           </div>
