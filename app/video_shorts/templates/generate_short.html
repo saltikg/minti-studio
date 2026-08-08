@@ -517,6 +517,11 @@
   .section-inline-head .text-white-50 {
     margin: 0;
   }
+  .section-inline-head .form-check {
+    display: flex;
+    align-items: center;
+    margin: 0;
+  }
   .section-inline-head .form-check-label {
     display: none;
   }
@@ -3578,7 +3583,6 @@
                   <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
                     <div class="layout-top-row">
                       <div class="control-group" id="crop-aspect-selector">
-                      <label class="text-white-50 d-flex align-items-center gap-2">Format</label>
                       <div class="controls" role="group" aria-label="Crop aspect ratio">
                         <button type="button" class="aspect-card" data-crop-aspect="portrait">
                           <span class="aspect-icon"><i class="bi bi-phone"></i></span>
@@ -3597,11 +3601,9 @@
                       <div class="control-group subscribe-visual-selector">
                       <div class="section-inline-head">
                         <label class="text-white-50">Subscribe Animation</label>
-                        <div class="crop-toggle-card">
-                          <div class="form-check form-switch mb-0">
-                            <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" aria-label="Show subscribe animation" {% if selected_subscribe_overlay %}checked{% endif %}>
-                            <label class="form-check-label" for="subscribeOverlayToggle"></label>
-                          </div>
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" aria-label="Show subscribe animation" {% if selected_subscribe_overlay %}checked{% endif %}>
+                          <label class="form-check-label" for="subscribeOverlayToggle"></label>
                         </div>
                       </div>
                       <div class="background-selected-card" id="subscribe-selected-card">
