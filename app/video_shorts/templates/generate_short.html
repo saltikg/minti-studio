@@ -1713,14 +1713,17 @@
   }
   .crop-modal-top-shell {
     display: grid;
-    gap: 18px;
-    margin-bottom: 20px;
-    padding: 18px 18px 12px;
+    gap: 14px;
+    margin-bottom: 14px;
+    padding: 14px 16px 8px;
     border-radius: 20px;
     background:
       radial-gradient(circle at top left, rgba(255, 216, 77, 0.16), transparent 38%),
       linear-gradient(180deg, #0f172a 0%, #111827 100%);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  #crop-area-modal .modal-dialog {
+    max-width: min(1200px, calc(100vw - 40px));
   }
   .crop-modal-top-shell .style-template-section {
     margin-bottom: 0;
@@ -1753,7 +1756,7 @@
   .style-template-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    gap: 8px;
   }
   .subtitle-preset-card {
     display: grid;
@@ -1769,9 +1772,9 @@
   }
   .style-template-card {
     display: grid;
-    gap: 12px;
-    min-height: 188px;
-    padding: 12px 14px;
+    gap: 8px;
+    min-height: 160px;
+    padding: 10px 12px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.035);
@@ -1811,7 +1814,7 @@
     line-height: 1.15;
   }
   .style-template-card-title {
-    font-size: 0.9rem;
+    font-size: 0.86rem;
     font-weight: 700;
     line-height: 1.15;
   }
@@ -1821,8 +1824,8 @@
     color: rgba(255, 255, 255, 0.58);
   }
   .style-template-card-note {
-    font-size: 0.74rem;
-    line-height: 1.32;
+    font-size: 0.71rem;
+    line-height: 1.24;
     color: rgba(255, 255, 255, 0.62);
   }
   .subtitle-preset-card.is-active .subtitle-preset-card-note {
@@ -1835,8 +1838,8 @@
     position: relative;
     display: grid;
     align-content: space-between;
-    min-height: 116px;
-    padding: 12px;
+    min-height: 92px;
+    padding: 10px;
     border-radius: 14px;
     overflow: hidden;
     background:
@@ -1847,9 +1850,9 @@
   .style-template-card-preview::after {
     content: "";
     position: absolute;
-    inset: auto 10px 10px;
-    height: 34px;
-    border-radius: 12px;
+    inset: auto 8px 8px;
+    height: 28px;
+    border-radius: 10px;
     background: rgba(15, 23, 42, 0.82);
     opacity: 0.7;
   }
@@ -1859,9 +1862,9 @@
     align-self: start;
     justify-self: start;
     max-width: 86%;
-    padding: 7px 10px;
-    border-radius: 10px;
-    font-size: 0.84rem;
+    padding: 6px 8px;
+    border-radius: 9px;
+    font-size: 0.76rem;
     line-height: 1;
     letter-spacing: 0.01em;
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.26);
@@ -1872,9 +1875,9 @@
     align-self: end;
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 3px;
     max-width: 96%;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     line-height: 1;
     text-transform: uppercase;
     letter-spacing: 0.02em;
@@ -1918,13 +1921,13 @@
     background: #ec4899;
     color: #ffffff;
     font-family: "Bebas Neue", sans-serif;
-    font-size: 0.94rem;
+    font-size: 0.84rem;
     font-weight: 400;
     letter-spacing: 0.05em;
   }
   .style-template-card-preview--vivid-pink .style-template-card-preview-word {
     font-family: "Bebas Neue", sans-serif;
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     text-shadow:
       -2px -2px 0 rgba(0, 0, 0, 0.98),
       2px -2px 0 rgba(0, 0, 0, 0.98),
@@ -1937,9 +1940,9 @@
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 20px;
     min-width: 0;
-    padding: 0 2px;
+    padding: 0 2px 2px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     overflow-x: auto;
     scrollbar-width: none;
@@ -1952,7 +1955,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0 0 12px;
+    padding: 0 0 10px;
     border: 0;
     background: transparent;
     color: rgba(255, 255, 255, 0.68);
@@ -1986,7 +1989,7 @@
     transform: scaleX(1);
   }
   .crop-modal-tab-panels {
-    margin-bottom: 16px;
+    margin-bottom: 10px;
   }
   .crop-modal-tab-panel[hidden] {
     display: none !important;
@@ -1994,7 +1997,7 @@
   .cropper-modal-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 20px;
+    gap: 16px;
     align-items: start;
   }
   .cropper-modal-main-panel,
@@ -2005,8 +2008,8 @@
   .crop-modal-settings-panel,
   .caption-tab-panel {
     display: grid;
-    gap: 18px;
-    padding: 18px;
+    gap: 14px;
+    padding: 14px;
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.04);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
@@ -2023,19 +2026,19 @@
   .crop-modal-title-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 140px;
-    gap: 12px;
+    gap: 10px;
     align-items: start;
   }
   .crop-modal-reframe-section {
     display: grid;
-    gap: 12px;
+    gap: 10px;
   }
   .caption-tab-toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding-bottom: 14px;
+    gap: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   .caption-tab-toggle-label {
@@ -2069,25 +2072,28 @@
   }
   .caption-tab-panel .subtitle-preset-section {
     min-width: 0;
-    gap: 10px;
+    gap: 8px;
   }
   .caption-tab-panel .subtitle-preset-grid {
-    gap: 10px;
+    gap: 8px;
   }
   .caption-tab-panel .subtitle-preset-card {
-    min-height: 96px;
-    padding: 14px 16px;
+    min-height: 84px;
+    padding: 12px 14px;
   }
   .caption-tab-font-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 96px;
-    gap: 12px;
+    gap: 10px;
     align-items: center;
   }
   .caption-tab-font-field,
   .caption-tab-size-field {
     display: grid;
-    gap: 8px;
+    gap: 6px;
+  }
+  .cropper-preview-card {
+    width: 248px;
   }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
@@ -2114,13 +2120,14 @@
       grid-template-columns: 1fr;
     }
     .crop-modal-top-shell {
-      padding: 16px 14px 10px;
+      padding: 14px 12px 8px;
     }
     .crop-modal-tab-nav {
-      gap: 16px;
+      gap: 14px;
     }
+    .crop-modal-settings-panel,
     .caption-tab-panel {
-      padding: 16px 14px;
+      padding: 12px;
     }
     .caption-tab-font-row {
       grid-template-columns: 1fr;
