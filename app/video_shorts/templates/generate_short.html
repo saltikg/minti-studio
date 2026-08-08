@@ -1725,38 +1725,6 @@
   .crop-modal-top-shell .style-template-section {
     margin-bottom: 0;
   }
-  .advanced-settings-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    align-self: flex-start;
-    margin-bottom: 16px;
-    padding: 10px 14px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.88);
-    font-size: 0.85rem;
-    font-weight: 600;
-    line-height: 1;
-    transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
-  }
-  .advanced-settings-toggle:hover,
-  .advanced-settings-toggle:focus-visible {
-    border-color: rgba(255, 216, 77, 0.42);
-    background: rgba(255, 216, 77, 0.12);
-    color: #ffffff;
-  }
-  .advanced-settings-toggle-icon {
-    font-size: 0.9rem;
-    transition: transform 160ms ease;
-  }
-  .advanced-settings-toggle[aria-expanded="true"] .advanced-settings-toggle-icon {
-    transform: rotate(180deg);
-  }
-  .advanced-settings-block.is-collapsed {
-    display: none !important;
-  }
   .crop-preview-advanced-unified > summary {
     display: none;
   }
@@ -2023,6 +1991,18 @@
   .crop-modal-tab-panel[hidden] {
     display: none !important;
   }
+  .cropper-modal-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 20px;
+    align-items: start;
+  }
+  .cropper-modal-main-panel,
+  .short-video-settings,
+  .short-video-body {
+    min-width: 0;
+  }
+  .crop-modal-settings-panel,
   .caption-tab-panel {
     display: grid;
     gap: 18px;
@@ -2030,6 +2010,25 @@
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.04);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  .crop-modal-settings-panel .control-group {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+  }
+  .crop-modal-settings-panel .crop-toggle-card {
+    width: 100%;
+    margin: 0;
+  }
+  .crop-modal-title-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px;
+    gap: 12px;
+    align-items: start;
+  }
+  .crop-modal-reframe-section {
+    display: grid;
+    gap: 12px;
   }
   .caption-tab-toggle-row {
     display: flex;
@@ -2124,6 +2123,14 @@
       padding: 16px 14px;
     }
     .caption-tab-font-row {
+      grid-template-columns: 1fr;
+    }
+    .crop-modal-title-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 991.98px) {
+    .cropper-modal-layout {
       grid-template-columns: 1fr;
     }
   }
@@ -3386,309 +3393,355 @@
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
           </div>
         </div>
-        <div class="top-controls mb-3 advanced-settings-block is-collapsed" data-advanced-block data-crop-tab-group>
-          <div class="control-group" id="crop-aspect-selector" data-crop-tab-section="layout">
-            <label class="text-white-50 d-flex align-items-center gap-2">
-              Format
-            </label>
-            <div class="controls" role="group" aria-label="Crop aspect ratio">
-              <button type="button" class="aspect-card" data-crop-aspect="portrait">
-                <span class="aspect-icon"><i class="bi bi-phone"></i></span>
-                <span>
-                  <div class="aspect-title text-white">Fill</div>
-                </span>
-              </button>
-              <button type="button" class="aspect-card" data-crop-aspect="portrait" data-split-enabled="1">
-                <span class="aspect-icon"><i class="bi bi-distribute-vertical"></i></span>
-                <span>
-                  <div class="aspect-title text-white">Fill split</div>
-                </span>
-              </button>
-              <button type="button" class="aspect-card" data-crop-aspect="landscape">
-                <span class="aspect-icon"><i class="bi bi-display"></i></span>
-                <span>
-                  <div class="aspect-title text-white">Fit</div>
-                </span>
-              </button>
-            </div>
-          </div>
-          <div class="control-group background-visual-selector" data-crop-tab-section="background" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
-            <label class="text-white-50">Background</label>
-            <div class="background-selected-card" id="background-selected-card">
-              <img src="" alt="" class="background-selected-thumb" id="background-selected-thumb">
-              <div class="background-selected-meta">
-                <div class="background-selected-label" id="background-selected-label">No background selected</div>
-                <div class="background-selected-note" id="background-selected-note">Default background</div>
-              </div>
-              <button type="button" class="background-edit-btn" id="background-edit-btn" aria-label="Change background">
-                <i class="bi bi-pencil-square"></i>
-              </button>
-            </div>
-            <div class="background-picker-panel" id="background-picker-panel">
-              <div class="background-picker-head">
-                <div class="background-picker-title">Choose a different default background</div>
-                <button type="button" class="btn btn-link btn-sm text-muted p-0" id="background-picker-close">Done</button>
-              </div>
-              <div class="background-picker-grid" id="background-visual-grid">
-                {% for visual in bg_visual_options %}
-                  {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
-                  <button
-                    type="button"
-                    class="static-visual-option bg-visual-option"
-                    data-bg-visual-key="{{ visual.key }}"
-                    data-img-url="{{ bg_img_url or '' }}"
-                    aria-label="Select background {{ visual.label }}"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Background {{ visual.label }}"
-                  >
-                    <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
-                    <span class="bg-selected-badge" aria-hidden="true">
-                      <i class="bi bi-check"></i>
-                    </span>
-                  </button>
-                {% endfor %}
-              </div>
-            </div>
-            {% if not bg_visual_options %}
-              <div class="small text-warning mt-2 background-picker-empty">
-                Please upload a background image from
-                <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Backgrounds</a>.
-              </div>
-            {% endif %}
-          </div>
-          <div class="control-group subscribe-visual-selector" data-crop-tab-section="layout">
-            <label class="text-white-50">Subscribe Animation</label>
-            <div class="background-selected-card" id="subscribe-selected-card">
-              <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
-              <div class="background-selected-meta">
-                <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
-                <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
-              </div>
-              <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
-                <i class="bi bi-pencil-square"></i>
-              </button>
-            </div>
-            <div class="background-picker-panel" id="subscribe-picker-panel">
-              <div class="background-picker-head">
-                <div class="background-picker-title">Choose a subscribe animation</div>
-                <button type="button" class="btn btn-link btn-sm text-muted p-0" id="subscribe-picker-close">Done</button>
-              </div>
-              <div class="background-picker-grid" id="subscribe-visual-grid">
-                {% for visual in subscribe_visual_options %}
-                  {% set subscribe_preview_url = visual.image_url or '' %}
-                  {% set subscribe_file_ext = (visual.file_ext or '')|lower %}
-                  <button
-                    type="button"
-                    class="static-visual-option subscribe-visual-option"
-                    data-subscribe-visual-key="{{ visual.key }}"
-                    data-preview-url="{{ subscribe_preview_url }}"
-                    data-file-ext="{{ subscribe_file_ext }}"
-                    aria-label="Select subscribe animation {{ visual.label }}"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Subscribe animation {{ visual.label }}"
-                  >
-                    {% if subscribe_file_ext == 'mp4' %}
-                      <video src="{{ subscribe_preview_url }}" muted loop autoplay playsinline preload="metadata"></video>
-                    {% else %}
-                      <img src="{{ subscribe_preview_url }}" alt="Subscribe animation {{ visual.label }}">
-                    {% endif %}
-                    <span class="bg-selected-badge" aria-hidden="true">
-                      <i class="bi bi-check"></i>
-                    </span>
-                  </button>
-                {% endfor %}
-              </div>
-            </div>
-            {% if not brand_subscribe_overlay_available %}
-              <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
-            {% endif %}
-          </div>
-          <div class="control-group static-visual-selector d-none" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
-            <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
-            <label class="text-white-50">Visual mode</label>
-            <div class="controls visual-mode-buttons" id="visual-mode-buttons">
-              <button type="button" class="visual-mode-btn" data-visual-mode="video">
-                <i class="bi bi-camera-video"></i><span class="text-white">Video</span>
-              </button>
-              <button type="button" class="visual-mode-btn" data-visual-mode="static">
-                <i class="bi bi-image"></i><span class="text-white">Static image</span>
-              </button>
-              <button type="button" class="visual-mode-btn" data-visual-mode="created">
-                <i class="bi bi-film"></i><span class="text-white">Created video</span>
-              </button>
-              <button type="button" class="visual-mode-btn" data-visual-mode="podcast">
-                <i class="bi bi-mic"></i><span class="text-white">Podcast</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="crop-toggle-row advanced-settings-block is-collapsed" data-advanced-block data-crop-tab-group>
-          <div class="crop-toggle-card" data-crop-tab-section="layout">
-            <div class="form-check form-switch mb-0">
-              <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-              <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
-            </div>
-          </div>
-          <div class="crop-toggle-card" data-crop-tab-section="title">
-            <div class="form-check form-switch mb-0">
-              <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
-              <label class="form-check-label" for="showTitleToggle">Show title</label>
-            </div>
-          </div>
-        </div>
-        <div class="visual-mode-detail-panel advanced-settings-block is-collapsed" data-advanced-block>
-          <div id="podcast-audio-card" class="mt-2 border rounded p-2 d-none" style="border-color: rgba(255,255,255,.10) !important; background: rgba(255,255,255,.02);">
-              <div class="small text-white mb-1">Podcast audio</div>
-              <div class="d-flex flex-wrap gap-2 align-items-center">
-                <select id="podcast-audio-select" class="form-select form-select-sm" style="max-width: 240px;">
-                  <option value="">No podcast audio</option>
-                </select>
-                <input type="hidden" name="podcast_audio_filename" id="podcastAudioFilename" value="{{ selected_podcast_audio_filename or '' }}">
-                <span class="small text-muted">Manage: <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}" target="_blank" rel="noopener">Podcast Audio</a></span>
-              </div>
-              <audio id="podcast-audio-preview" controls preload="none" class="w-100 d-none mt-2" style="max-height: 34px;"></audio>
-              <div id="podcast-audio-status" class="small text-muted mt-1"></div>
-              <div class="small text-muted mt-1">Selecting podcast audio forces horizontal output (16:9).</div>
-              <hr class="my-2" style="border-color: rgba(255,255,255,.12);">
-              <div class="small text-white mb-1">Related short clips (max 2)</div>
-              <input type="text" id="podcast-short-clips-search" class="form-control form-control-sm mb-2" placeholder="Search short clips...">
-              <input type="hidden" name="podcast_overlay_short_ids" id="podcastOverlayShortIds" value='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
-              <div id="podcast-short-clips-list" class="d-flex flex-column gap-1"></div>
-              <div id="podcast-short-clips-status" class="small text-muted mt-1"></div>
-            </div>
-          <div class="static-visual-strip" id="static-visual-grid">
-            {% for visual in static_visual_options %}
-              <button
-                type="button"
-                class="static-visual-option"
-                data-visual-key="{{ visual.key }}"
-                data-img-url="{{ visual.image_url or '' }}"
-                aria-label="Select static frame {{ visual.label }}"
-              >
-                {% if visual.image_url %}
-                  <img src="{{ visual.image_url }}" alt="Static visual {{ visual.label }}">
-                {% endif %}
-                <span class="bg-selected-badge" aria-hidden="true">
-                  <i class="bi bi-check"></i>
-                </span>
-                <span class="static-visual-badge">{{ visual.label }}</span>
-              </button>
-            {% endfor %}
-          </div>
-          <div class="static-visual-strip d-none" id="created-visual-grid">
-            {% for visual in created_visual_options %}
-              <button
-                type="button"
-                class="static-visual-option created-visual-option"
-                data-visual-key="{{ visual.key }}"
-                data-video-url="{{ visual.video_url or '' }}"
-                data-preview-image-url="{{ visual.preview_image_url or '' }}"
-                aria-label="Select created video {{ visual.label }}"
-              >
-                {% if visual.preview_image_url %}
-                  <img src="{{ visual.preview_image_url }}" alt="Created video {{ visual.label }}">
-                {% elif visual.video_url %}
-                  <video src="{{ visual.video_url }}" muted playsinline preload="metadata"></video>
-                {% endif %}
-                {% if visual.has_music %}
-                  <span class="created-music-badge" title="Has music" aria-label="Has music">
-                    <i class="bi bi-music-note-beamed"></i>
-                    <span class="created-music-level">%{{ visual.music_level_percent if visual.music_level_percent is not none else 0 }}</span>
-                  </span>
-                {% endif %}
-                <span class="bg-selected-badge" aria-hidden="true">
-                  <i class="bi bi-check"></i>
-                </span>
-                <span class="static-visual-badge">
-                  {{ visual.label }}{% if visual.duration_seconds %} ({{ visual.duration_seconds }} sn){% endif %}
-                </span>
-              </button>
-            {% endfor %}
-          </div>
-          <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
-        </div>
-        <div class="short-video-settings">
-          <div class="short-video-body"
+        <div class="cropper-modal-layout">
+          <div class="cropper-modal-main-panel">
+            <div class="short-video-settings">
+              <div class="short-video-body"
                data-save-url="{{ url_for('video_shorts_bp.save_short_settings', video_pk=video.id) }}"
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
-            <div class="crop-modal-tab-panels">
-              <div class="crop-modal-tab-panel" data-crop-modal-panel="layout" hidden></div>
-              <div class="crop-modal-tab-panel" data-crop-modal-panel="background" hidden></div>
-              <div class="crop-modal-tab-panel caption-tab-panel" data-crop-modal-panel="caption" hidden>
-                <div class="caption-tab-toggle-row">
-                  <div class="caption-tab-toggle-label">Show subtitles</div>
-                  <div class="crop-toggle-card">
-                    <div class="form-check form-switch mb-0">
-                      <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
-                      <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
+                <div class="crop-modal-tab-panels">
+                  <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="layout" hidden>
+                    <div class="control-group" id="crop-aspect-selector">
+                      <label class="text-white-50 d-flex align-items-center gap-2">Format</label>
+                      <div class="controls" role="group" aria-label="Crop aspect ratio">
+                        <button type="button" class="aspect-card" data-crop-aspect="portrait">
+                          <span class="aspect-icon"><i class="bi bi-phone"></i></span>
+                          <span><div class="aspect-title text-white">Fill</div></span>
+                        </button>
+                        <button type="button" class="aspect-card" data-crop-aspect="portrait" data-split-enabled="1">
+                          <span class="aspect-icon"><i class="bi bi-distribute-vertical"></i></span>
+                          <span><div class="aspect-title text-white">Fill split</div></span>
+                        </button>
+                        <button type="button" class="aspect-card" data-crop-aspect="landscape">
+                          <span class="aspect-icon"><i class="bi bi-display"></i></span>
+                          <span><div class="aspect-title text-white">Fit</div></span>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="control-group subscribe-visual-selector">
+                      <label class="text-white-50">Subscribe Animation</label>
+                      <div class="background-selected-card" id="subscribe-selected-card">
+                        <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
+                        <div class="background-selected-meta">
+                          <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
+                          <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
+                        </div>
+                        <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
+                          <i class="bi bi-pencil-square"></i>
+                        </button>
+                      </div>
+                      <div class="background-picker-panel" id="subscribe-picker-panel">
+                        <div class="background-picker-head">
+                          <div class="background-picker-title">Choose a subscribe animation</div>
+                          <button type="button" class="btn btn-link btn-sm text-muted p-0" id="subscribe-picker-close">Done</button>
+                        </div>
+                        <div class="background-picker-grid" id="subscribe-visual-grid">
+                          {% for visual in subscribe_visual_options %}
+                            {% set subscribe_preview_url = visual.image_url or '' %}
+                            {% set subscribe_file_ext = (visual.file_ext or '')|lower %}
+                            <button
+                              type="button"
+                              class="static-visual-option subscribe-visual-option"
+                              data-subscribe-visual-key="{{ visual.key }}"
+                              data-preview-url="{{ subscribe_preview_url }}"
+                              data-file-ext="{{ subscribe_file_ext }}"
+                              aria-label="Select subscribe animation {{ visual.label }}"
+                              data-bs-toggle="tooltip"
+                              data-bs-placement="top"
+                              title="Subscribe animation {{ visual.label }}"
+                            >
+                              {% if subscribe_file_ext == 'mp4' %}
+                                <video src="{{ subscribe_preview_url }}" muted loop autoplay playsinline preload="metadata"></video>
+                              {% else %}
+                                <img src="{{ subscribe_preview_url }}" alt="Subscribe animation {{ visual.label }}">
+                              {% endif %}
+                              <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
+                            </button>
+                          {% endfor %}
+                        </div>
+                      </div>
+                      {% if not brand_subscribe_overlay_available %}
+                        <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
+                      {% endif %}
+                    </div>
+                    <div class="crop-toggle-card">
+                      <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                        <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+                      </div>
+                    </div>
+                    <div class="input-group-inline compact" data-preview-control="video-position">
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Video position</span>
+                        <span class="advanced-field-label-direction">from top</span>
+                      </span>
+                      <input type="number"
+                             name="video_overlay_offset"
+                             class="form-control form-control-sm short-input-small"
+                             value="{{ selected_video_overlay_offset or 400 }}"
+                             min="0"
+                             max="1200">
+                    </div>
+                    <div class="control-group d-none static-visual-selector" data-static-visuals='{{ static_visual_options | tojson | safe }}'>
+                      <div class="d-none created-visual-selector" data-created-visuals='{{ created_visual_options | tojson | safe }}'></div>
+                      <label class="text-white-50">Visual mode</label>
+                      <div class="controls visual-mode-buttons" id="visual-mode-buttons">
+                        <button type="button" class="visual-mode-btn" data-visual-mode="video">
+                          <i class="bi bi-camera-video"></i><span class="text-white">Video</span>
+                        </button>
+                        <button type="button" class="visual-mode-btn" data-visual-mode="static">
+                          <i class="bi bi-image"></i><span class="text-white">Static image</span>
+                        </button>
+                        <button type="button" class="visual-mode-btn" data-visual-mode="created">
+                          <i class="bi bi-film"></i><span class="text-white">Created video</span>
+                        </button>
+                        <button type="button" class="visual-mode-btn" data-visual-mode="podcast">
+                          <i class="bi bi-mic"></i><span class="text-white">Podcast</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="visual-mode-detail-panel d-none">
+                      <div id="podcast-audio-card" class="mt-2 border rounded p-2 d-none" style="border-color: rgba(255,255,255,.10) !important; background: rgba(255,255,255,.02);">
+                        <div class="small text-white mb-1">Podcast audio</div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                          <select id="podcast-audio-select" class="form-select form-select-sm" style="max-width: 240px;">
+                            <option value="">No podcast audio</option>
+                          </select>
+                          <input type="hidden" name="podcast_audio_filename" id="podcastAudioFilename" value="{{ selected_podcast_audio_filename or '' }}">
+                          <span class="small text-muted">Manage: <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}" target="_blank" rel="noopener">Podcast Audio</a></span>
+                        </div>
+                        <audio id="podcast-audio-preview" controls preload="none" class="w-100 d-none mt-2" style="max-height: 34px;"></audio>
+                        <div id="podcast-audio-status" class="small text-muted mt-1"></div>
+                        <div class="small text-muted mt-1">Selecting podcast audio forces horizontal output (16:9).</div>
+                        <hr class="my-2" style="border-color: rgba(255,255,255,.12);">
+                        <div class="small text-white mb-1">Related short clips (max 2)</div>
+                        <input type="text" id="podcast-short-clips-search" class="form-control form-control-sm mb-2" placeholder="Search short clips...">
+                        <input type="hidden" name="podcast_overlay_short_ids" id="podcastOverlayShortIds" value='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
+                        <div id="podcast-short-clips-list" class="d-flex flex-column gap-1"></div>
+                        <div id="podcast-short-clips-status" class="small text-muted mt-1"></div>
+                      </div>
+                      <div class="static-visual-strip" id="static-visual-grid">
+                        {% for visual in static_visual_options %}
+                          <button
+                            type="button"
+                            class="static-visual-option"
+                            data-visual-key="{{ visual.key }}"
+                            data-img-url="{{ visual.image_url or '' }}"
+                            aria-label="Select static frame {{ visual.label }}"
+                          >
+                            {% if visual.image_url %}
+                              <img src="{{ visual.image_url }}" alt="Static visual {{ visual.label }}">
+                            {% endif %}
+                            <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
+                            <span class="static-visual-badge">{{ visual.label }}</span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                      <div class="static-visual-strip d-none" id="created-visual-grid">
+                        {% for visual in created_visual_options %}
+                          <button
+                            type="button"
+                            class="static-visual-option created-visual-option"
+                            data-visual-key="{{ visual.key }}"
+                            data-video-url="{{ visual.video_url or '' }}"
+                            data-preview-image-url="{{ visual.preview_image_url or '' }}"
+                            aria-label="Select created video {{ visual.label }}"
+                          >
+                            {% if visual.preview_image_url %}
+                              <img src="{{ visual.preview_image_url }}" alt="Created video {{ visual.label }}">
+                            {% elif visual.video_url %}
+                              <video src="{{ visual.video_url }}" muted playsinline preload="metadata"></video>
+                            {% endif %}
+                            {% if visual.has_music %}
+                              <span class="created-music-badge" title="Has music" aria-label="Has music">
+                                <i class="bi bi-music-note-beamed"></i>
+                                <span class="created-music-level">%{{ visual.music_level_percent if visual.music_level_percent is not none else 0 }}</span>
+                              </span>
+                            {% endif %}
+                            <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
+                            <span class="static-visual-badge">
+                              {{ visual.label }}{% if visual.duration_seconds %} ({{ visual.duration_seconds }} sn){% endif %}
+                            </span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                      <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
+                    </div>
+                    <div class="crop-modal-reframe-section">
+                      <div class="small text-muted mb-2">Drag to reframe</div>
+                      <div class="cropper-loader" id="cropper-loader">
+                        <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
+                        <span>Loading frame…</span>
+                      </div>
+                      <div class="cropper-surfaces" id="cropper-surfaces">
+                        <div class="cropper-surface" id="cropper-surface-top" data-crop-box="top">
+                          <div class="cropper-surface-label" id="cropper-surface-top-label">Crop</div>
+                          <div class="cropper-surface-image-wrap">
+                            <img id="cropper-image-top" src="" alt="Crop preview top" />
+                          </div>
+                        </div>
+                        <div class="cropper-surface is-hidden" id="cropper-surface-bottom" data-crop-box="bottom">
+                          <div class="cropper-surface-label" id="cropper-surface-bottom-label">Bottom</div>
+                          <div class="cropper-surface-image-wrap">
+                            <img id="cropper-image-bottom" src="" alt="Crop preview bottom" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="background" hidden>
+                    <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
+                      <label class="text-white-50">Background</label>
+                      <div class="background-selected-card" id="background-selected-card">
+                        <img src="" alt="" class="background-selected-thumb" id="background-selected-thumb">
+                        <div class="background-selected-meta">
+                          <div class="background-selected-label" id="background-selected-label">No background selected</div>
+                          <div class="background-selected-note" id="background-selected-note">Default background</div>
+                        </div>
+                        <button type="button" class="background-edit-btn" id="background-edit-btn" aria-label="Change background">
+                          <i class="bi bi-pencil-square"></i>
+                        </button>
+                      </div>
+                      <div class="background-picker-panel" id="background-picker-panel">
+                        <div class="background-picker-head">
+                          <div class="background-picker-title">Choose a different default background</div>
+                          <button type="button" class="btn btn-link btn-sm text-muted p-0" id="background-picker-close">Done</button>
+                        </div>
+                        <div class="background-picker-grid" id="background-visual-grid">
+                          {% for visual in bg_visual_options %}
+                            {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
+                            <button
+                              type="button"
+                              class="static-visual-option bg-visual-option"
+                              data-bg-visual-key="{{ visual.key }}"
+                              data-img-url="{{ bg_img_url or '' }}"
+                              aria-label="Select background {{ visual.label }}"
+                              data-bs-toggle="tooltip"
+                              data-bs-placement="top"
+                              title="Background {{ visual.label }}"
+                            >
+                              <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
+                              <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
+                            </button>
+                          {% endfor %}
+                        </div>
+                      </div>
+                      {% if not bg_visual_options %}
+                        <div class="small text-warning mt-2 background-picker-empty">
+                          Please upload a background image from
+                          <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Backgrounds</a>.
+                        </div>
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="crop-modal-tab-panel caption-tab-panel" data-crop-modal-panel="caption" hidden>
+                    <div class="caption-tab-toggle-row">
+                      <div class="caption-tab-toggle-label">Show subtitles</div>
+                      <div class="crop-toggle-card">
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
+                          <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="subtitle-preset-section">
+                      <div class="caption-tab-section-heading">Subtitle preset</div>
+                      <div class="subtitle-preset-grid" data-subtitle-preset-grid>
+                        {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
+                        {% set subtitle_preset_cards = [
+                          {'value': 'classic_yellow', 'label': 'Classic', 'note': 'Yellow active word'},
+                          {'value': 'pop_green', 'label': 'Pop Green', 'note': 'Green highlight, bold'},
+                          {'value': 'pop_pink', 'label': 'Pop Pink', 'note': 'Pink highlight, bold'}
+                        ] %}
+                        {% for preset in subtitle_preset_cards %}
+                          <button
+                            type="button"
+                            class="subtitle-preset-card{% if subtitle_preset_value == preset.value %} is-active{% endif %}"
+                            data-subtitle-preset-card
+                            data-subtitle-preset-value="{{ preset.value }}"
+                            aria-pressed="{{ 'true' if subtitle_preset_value == preset.value else 'false' }}"
+                          >
+                            <span class="subtitle-preset-card-title">{{ preset.label }}</span>
+                            <span class="subtitle-preset-card-note">{{ preset.note }}</span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                      <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
+                    </div>
+                    <div class="caption-tab-font-row">
+                      <div class="caption-tab-font-field">
+                        <div class="caption-tab-section-heading">Font</div>
+                        <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
+                          {% for f in sub_fonts %}
+                            <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                      <div class="caption-tab-size-field">
+                        <div class="caption-tab-section-heading">Size</div>
+                        <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
+                      </div>
+                    </div>
+                    <div class="input-group-inline compact" data-preview-control="subtitle">
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Subtitle position</span>
+                        <span class="advanced-field-label-direction">from bottom</span>
+                      </span>
+                      <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
+                    </div>
+                    <div class="input-group-inline compact subtitle-style-hidden">
+                      <span>Style</span>
+                      <select name="subtitle_style" id="subtitleStyleField" class="form-select form-select-sm short-input-medium">
+                        <option value="plain" {% if selected_subtitle_style == "plain" %}selected{% endif %}>Plain</option>
+                        <option value="karaoke" {% if selected_subtitle_style == "karaoke" %}selected{% endif %}>Karaoke</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="title" hidden>
+                    <div class="crop-toggle-card">
+                      <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" name="show_title" id="showTitleToggle" {% if selected_show_title %}checked{% endif %}>
+                        <label class="form-check-label" for="showTitleToggle">Show title</label>
+                      </div>
+                    </div>
+                    <div class="input-group-inline compact" data-preview-control="title">
+                      <span class="advanced-field-label">
+                        <span class="advanced-field-label-main">Title position</span>
+                        <span class="advanced-field-label-direction">from top</span>
+                      </span>
+                      <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
+                    </div>
+                    <div class="crop-modal-title-grid">
+                      <div class="input-group-inline compact">
+                        <span class="advanced-field-label">
+                          <span class="advanced-field-label-main">Date text</span>
+                        </span>
+                        <input type="text"
+                               name="video_date_text"
+                               class="form-control form-control-sm short-input-small short-input-wide"
+                               value="{{ selected_video_date|e }}"
+                               placeholder="Optional date">
+                      </div>
+                      <div class="input-group-inline compact">
+                        <span class="advanced-field-label">
+                          <span class="advanced-field-label-main">Date position</span>
+                          <span class="advanced-field-label-direction">from top</span>
+                        </span>
+                        <input type="number"
+                               name="video_date_top"
+                               class="form-control form-control-sm short-input-small"
+                               value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
+                               min="0"
+                               max="1200">
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div class="subtitle-preset-section">
-                  <div class="caption-tab-section-heading">Subtitle preset</div>
-                  <div class="subtitle-preset-grid" data-subtitle-preset-grid>
-                    {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
-                    {% set subtitle_preset_cards = [
-                      {'value': 'classic_yellow', 'label': 'Classic', 'note': 'Yellow active word'},
-                      {'value': 'pop_green', 'label': 'Pop Green', 'note': 'Green highlight, bold'},
-                      {'value': 'pop_pink', 'label': 'Pop Pink', 'note': 'Pink highlight, bold'}
-                    ] %}
-                    {% for preset in subtitle_preset_cards %}
-                      <button
-                        type="button"
-                        class="subtitle-preset-card{% if subtitle_preset_value == preset.value %} is-active{% endif %}"
-                        data-subtitle-preset-card
-                        data-subtitle-preset-value="{{ preset.value }}"
-                        aria-pressed="{{ 'true' if subtitle_preset_value == preset.value else 'false' }}"
-                      >
-                        <span class="subtitle-preset-card-title">{{ preset.label }}</span>
-                        <span class="subtitle-preset-card-note">{{ preset.note }}</span>
-                      </button>
-                    {% endfor %}
-                  </div>
-                  <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
-                </div>
-                <div class="caption-tab-font-row">
-                  <div class="caption-tab-font-field">
-                    <div class="caption-tab-section-heading">Font</div>
-                    <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
-                      {% for f in sub_fonts %}
-                        <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
-                      {% endfor %}
-                    </select>
-                  </div>
-                  <div class="caption-tab-size-field">
-                    <div class="caption-tab-section-heading">Size</div>
-                    <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
-                  </div>
-                </div>
-                <div class="input-group-inline compact subtitle-style-hidden">
-                  <span>Style</span>
-                  <select name="subtitle_style" id="subtitleStyleField" class="form-select form-select-sm short-input-medium">
-                    <option value="plain" {% if selected_subtitle_style == "plain" %}selected{% endif %}>Plain</option>
-                    <option value="karaoke" {% if selected_subtitle_style == "karaoke" %}selected{% endif %}>Karaoke</option>
-                  </select>
-                </div>
-              </div>
-              <div class="crop-modal-tab-panel" data-crop-modal-panel="title" hidden></div>
-            </div>
-            <button
-              type="button"
-              class="advanced-settings-toggle"
-              id="advanced-settings-toggle"
-              aria-expanded="false"
-              aria-controls="crop-preview-toolbar"
-            >
-              <span>Advanced settings</span>
-              <i class="bi bi-chevron-down advanced-settings-toggle-icon" aria-hidden="true"></i>
-            </button>
-            <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden advanced-settings-block is-collapsed" data-advanced-block aria-live="polite">
+                <div id="crop-preview-toolbar" class="crop-preview-toolbar is-hidden" aria-live="polite">
               <div class="crop-preview-toolbar-head">
                 <div class="crop-preview-toolbar-label" id="crop-preview-toolbar-label">Selected element</div>
                 <div class="crop-preview-toolbar-tip">Drag in the preview or use arrow keys to nudge.</div>
@@ -3844,85 +3897,6 @@
                 </div>
               </div>
               <div class="crop-preview-selection-note">Select Title, Video, Subtitle, or Date inside Final Preview.</div>
-            </div>
-            <div class="crop-settings-inline-row advanced-settings-block is-collapsed" data-advanced-block>
-              <details class="crop-preview-advanced crop-preview-advanced-unified" open>
-                <summary>Advanced</summary>
-                <div class="crop-preview-advanced-body">
-                  <div class="crop-preview-advanced-hint">These match dragging elements in the preview, in pixels.</div>
-                  <div class="crop-preview-advanced-grid">
-                    <div class="input-group-inline compact" data-preview-control="title">
-                      <span class="advanced-field-label">
-                        <span class="advanced-field-label-main">Title position</span>
-                        <span class="advanced-field-label-direction">from top</span>
-                      </span>
-                      <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
-                    </div>
-                    <div class="input-group-inline compact" data-preview-control="subtitle">
-                      <span class="advanced-field-label">
-                        <span class="advanced-field-label-main">Subtitle position</span>
-                        <span class="advanced-field-label-direction">from bottom</span>
-                      </span>
-                      <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
-                    </div>
-                    <div class="input-group-inline compact" data-preview-control="video-position">
-                      <span class="advanced-field-label">
-                        <span class="advanced-field-label-main">Video position</span>
-                        <span class="advanced-field-label-direction">from top</span>
-                      </span>
-                      <input type="number"
-                             name="video_overlay_offset"
-                             class="form-control form-control-sm short-input-small"
-                             value="{{ selected_video_overlay_offset or 400 }}"
-                             min="0"
-                             max="1200">
-                    </div>
-                    <div class="input-group-inline compact">
-                      <span class="advanced-field-label">
-                        <span class="advanced-field-label-main">Date text</span>
-                      </span>
-                      <input type="text"
-                             name="video_date_text"
-                             class="form-control form-control-sm short-input-small short-input-wide"
-                             value="{{ selected_video_date|e }}"
-                             placeholder="Optional date">
-                    </div>
-                    <div class="input-group-inline compact">
-                      <span class="advanced-field-label">
-                        <span class="advanced-field-label-main">Date position</span>
-                        <span class="advanced-field-label-direction">from top</span>
-                      </span>
-                      <input type="number"
-                             name="video_date_top"
-                             class="form-control form-control-sm short-input-small"
-                             value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
-                             min="0"
-                             max="1200">
-                    </div>
-                  </div>
-                </div>
-              </details>
-            </div>
-          </div>
-        </div>
-        <div class="cropper-modal-layout">
-          <div class="cropper-modal-preview flex-fill">
-            <div class="small text-muted mb-2">Drag to reframe</div>
-            <div class="cropper-loader" id="cropper-loader">
-              <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
-              <span>Loading frame…</span>
-            </div>
-            <div class="cropper-surfaces" id="cropper-surfaces">
-              <div class="cropper-surface" id="cropper-surface-top" data-crop-box="top">
-                <div class="cropper-surface-label" id="cropper-surface-top-label">Crop</div>
-                <div class="cropper-surface-image-wrap">
-                  <img id="cropper-image-top" src="" alt="Crop preview top" />
-                </div>
-              </div>
-              <div class="cropper-surface is-hidden" id="cropper-surface-bottom" data-crop-box="bottom">
-                <div class="cropper-surface-label" id="cropper-surface-bottom-label">Bottom</div>
-                <div class="cropper-surface-image-wrap">
-                  <img id="cropper-image-bottom" src="" alt="Crop preview bottom" />
                 </div>
               </div>
             </div>
@@ -7956,8 +7930,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarLabel = modalEl.querySelector("#crop-preview-toolbar-label");
   const previewToolbarTitle = modalEl.querySelector("#crop-preview-toolbar-title");
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
-  const advancedSettingsToggle = modalEl.querySelector("#advanced-settings-toggle");
-  const advancedSettingsBlocks = Array.from(modalEl.querySelectorAll("[data-advanced-block]"));
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const subtitlePresetField = settingsContainer?.querySelector('[name="subtitle_preset"]');
   const subtitleStyleField = settingsContainer?.querySelector('[name="subtitle_style"]');
@@ -8477,22 +8449,6 @@ document.addEventListener("DOMContentLoaded", () => {
       setSelectedPreviewElement("");
     }
   };
-  const isAdvancedExpanded = () => advancedSettingsToggle?.getAttribute("aria-expanded") === "true";
-  const setAdvancedExpanded = (expanded, options = {}) => {
-    const { scrollTarget = null } = options;
-    advancedSettingsToggle?.setAttribute("aria-expanded", expanded ? "true" : "false");
-    advancedSettingsBlocks.forEach((block) => {
-      block.classList.toggle("is-collapsed", !expanded);
-    });
-    if (expanded && scrollTarget && typeof scrollTarget.scrollIntoView === "function") {
-      window.requestAnimationFrame(() => {
-        scrollTarget.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
-    }
-  };
-  const toggleAdvancedExpanded = () => {
-    setAdvancedExpanded(!isAdvancedExpanded());
-  };
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
@@ -8522,11 +8478,6 @@ document.addEventListener("DOMContentLoaded", () => {
     selectedPreviewElement = (kind === "video" && !isPreviewElementDraggable("video")) ? "" : (kind || "");
     const isTitle = selectedPreviewElement === "title";
     const isSubtitle = selectedPreviewElement === "subtitle";
-    if ((isTitle || isSubtitle) && !isAdvancedExpanded()) {
-      setAdvancedExpanded(true, {
-        scrollTarget: isTitle ? previewToolbarTitle : previewToolbarSubtitle,
-      });
-    }
     previewToolbar?.classList.toggle("is-hidden", !selectedPreviewElement || (!isTitle && !isSubtitle));
     previewToolbarTitle?.classList.toggle("is-active", isTitle);
     previewToolbarSubtitle?.classList.toggle("is-active", isSubtitle);
@@ -9290,7 +9241,6 @@ document.addEventListener("DOMContentLoaded", () => {
   subscribeToggle?.addEventListener("change", () => {
     syncSubscribePickerEnabled();
   });
-  advancedSettingsToggle?.addEventListener("click", toggleAdvancedExpanded);
 
   setActiveStaticVisual(activeStaticVisualKey);
   syncActiveBackgroundCard();
@@ -9395,7 +9345,6 @@ document.addEventListener("DOMContentLoaded", () => {
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
     splitDefaultsPrimed = hasStoredCrop2;
     resetState();
-    setAdvancedExpanded(true);
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
     setActiveBackground(trigger.dataset.backgroundVisualKey || "");
@@ -9427,7 +9376,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   modalEl.addEventListener("hidden.bs.modal", () => {
-    setAdvancedExpanded(false);
     resetState();
   });
 
@@ -9797,8 +9745,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
-  const cropTabSections = Array.from(document.querySelectorAll("[data-crop-tab-section]"));
-  const cropTabGroups = Array.from(document.querySelectorAll("[data-crop-tab-group]"));
 
   const updateTitleFont = () => {
     if (titleFont) {
@@ -10082,13 +10028,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     cropModalPanels.forEach((panel) => {
       panel.hidden = panel.dataset.cropModalPanel !== target;
-    });
-    cropTabSections.forEach((section) => {
-      section.hidden = section.dataset.cropTabSection !== target;
-    });
-    cropTabGroups.forEach((group) => {
-      const hasVisibleSection = Array.from(group.querySelectorAll("[data-crop-tab-section]")).some((section) => !section.hidden);
-      group.hidden = !hasVisibleSection;
     });
   };
   cropModalTabs.forEach((tab) => {
