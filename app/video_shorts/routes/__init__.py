@@ -13,6 +13,7 @@ from . import stats  # noqa: F401
 from . import dashboard_v2  # noqa: F401
 from . import video_analytics  # noqa: F401
 from . import home  # noqa: F401
+from . import blog  # noqa: F401
 from . import image_to_video  # noqa: F401
 from . import monthly_top_video  # noqa: F401
 from . import knowledge_base  # noqa: F401

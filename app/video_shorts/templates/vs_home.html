@@ -1000,6 +1000,112 @@
     line-height: 1.45;
   }
 
+  .vs-home .blog-strip-section {
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding-top: 0.4rem;
+  }
+
+  .vs-home .blog-strip-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.2rem;
+  }
+
+  .vs-home .blog-strip-eyebrow {
+    margin: 0 0 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(93, 202, 165, 0.9);
+  }
+
+  .vs-home .blog-strip-title {
+    margin: 0;
+    font-size: clamp(1.8rem, 2.8vw, 2.45rem);
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-home .blog-strip-subline {
+    margin: 0.6rem 0 0;
+    max-width: 40rem;
+    color: var(--text-2);
+    line-height: 1.65;
+  }
+
+  .vs-home .blog-strip-link {
+    color: rgba(248, 250, 252, 0.9);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .vs-home .blog-strip-link:hover,
+  .vs-home .blog-strip-link:focus {
+    color: #ffffff;
+  }
+
+  .vs-home .blog-strip-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .vs-home .blog-strip-card {
+    display: grid;
+    gap: 0.9rem;
+    padding: 1.15rem;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+
+  .vs-home .blog-strip-date {
+    font-size: 0.82rem;
+    color: rgba(148, 163, 184, 0.86);
+  }
+
+  .vs-home .blog-strip-card-title {
+    margin: 0;
+    font-size: 1.12rem;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  .vs-home .blog-strip-card-title a {
+    color: rgba(248, 250, 252, 0.96);
+    text-decoration: none;
+  }
+
+  .vs-home .blog-strip-card-title a:hover,
+  .vs-home .blog-strip-card-title a:focus {
+    color: #ffffff;
+  }
+
+  .vs-home .blog-strip-card-text {
+    margin: 0;
+    color: var(--text-2);
+    line-height: 1.65;
+  }
+
+  .vs-home .blog-strip-card-cta {
+    color: rgba(93, 202, 165, 0.98);
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .vs-home .blog-strip-card-cta:hover,
+  .vs-home .blog-strip-card-cta:focus {
+    color: #89e2c3;
+  }
+
   .vs-home .pricing-lines {
     list-style: none;
     padding: 0;
@@ -1385,6 +1491,10 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .vs-home .blog-strip-grid {
+      grid-template-columns: 1fr;
+    }
+
     .vs-home .footer-legal {
       flex-direction: column;
       align-items: center;
@@ -1452,6 +1562,10 @@
     }
 
     .vs-home .pricing-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .vs-home .blog-strip-grid {
       grid-template-columns: 1fr;
     }
 
@@ -1870,6 +1984,31 @@
     </div>
     <p class="pricing-price-note"><small>Every plan includes plenty of storage for your library — fair-use limits apply.</small></p>
   </section>
+
+  {% if latest_blog_articles %}
+    <section class="blog-strip-section" aria-labelledby="from-the-blog-title">
+      <div class="blog-strip-header">
+        <div>
+          <p class="blog-strip-eyebrow">From the blog</p>
+          <h2 class="blog-strip-title" id="from-the-blog-title">Short-form publishing advice, without the hype</h2>
+          <p class="blog-strip-subline">Guides on scheduling, workflow, and getting more from each long-form video.</p>
+        </div>
+        <a class="blog-strip-link" href="{{ url_for('video_shorts_bp.blog_index') }}">View all articles</a>
+      </div>
+      <div class="blog-strip-grid">
+        {% for article in latest_blog_articles %}
+          <article class="blog-strip-card">
+            <div class="blog-strip-date">{{ article.published_on_display }}</div>
+            <h3 class="blog-strip-card-title">
+              <a href="{{ article.url }}">{{ article.title }}</a>
+            </h3>
+            <p class="blog-strip-card-text">{{ article.description }}</p>
+            <a class="blog-strip-card-cta" href="{{ article.url }}">Read article</a>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
 
   <section class="faq-section" id="faq">
     <h2 class="faq-title">Questions?</h2>

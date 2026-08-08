@@ -1,0 +1,145 @@
+{% extends "vs_marketing_base.html" %}
+
+{% block title %}{{ meta_title }}{% endblock %}
+{% block meta_description %}{{ meta_description }}{% endblock %}
+
+{% block seo_meta %}
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:site_name" content="MintiStudio">
+{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .vs-blog-index {
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    display: grid;
+    gap: 2.25rem;
+  }
+
+  .vs-blog-hero {
+    padding: clamp(1.4rem, 2vw, 2.2rem) 0 0.25rem;
+    text-align: center;
+  }
+
+  .vs-blog-eyebrow {
+    margin: 0 0 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(93, 202, 165, 0.9);
+  }
+
+  .vs-blog-title {
+    margin: 0;
+    font-size: clamp(2.15rem, 4vw, 3.65rem);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-blog-subtitle {
+    margin: 0.9rem auto 0;
+    max-width: 44rem;
+    color: var(--text-2);
+    line-height: 1.7;
+    font-size: 1.02rem;
+  }
+
+  .vs-blog-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .vs-blog-card {
+    display: grid;
+    gap: 0.9rem;
+    padding: 1.25rem;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .vs-blog-card-date {
+    font-size: 0.83rem;
+    color: rgba(148, 163, 184, 0.88);
+  }
+
+  .vs-blog-card-title {
+    margin: 0;
+    font-size: 1.22rem;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  .vs-blog-card-title a {
+    color: rgba(248, 250, 252, 0.98);
+    text-decoration: none;
+  }
+
+  .vs-blog-card-title a:hover,
+  .vs-blog-card-title a:focus {
+    color: #ffffff;
+  }
+
+  .vs-blog-card-text {
+    margin: 0;
+    color: var(--text-2);
+    line-height: 1.7;
+  }
+
+  .vs-blog-card-link {
+    color: rgba(93, 202, 165, 0.98);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .vs-blog-card-link:hover,
+  .vs-blog-card-link:focus {
+    color: #89e2c3;
+  }
+
+  @media (max-width: 991px) {
+    .vs-blog-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vs-blog-index">
+  <section class="vs-blog-hero">
+    <p class="vs-blog-eyebrow">MintiStudio Blog</p>
+    <h1 class="vs-blog-title">Better Shorts workflows for real publishing schedules</h1>
+    <p class="vs-blog-subtitle">
+      Practical articles on turning long videos into multiple Shorts, spacing releases across a steady calendar,
+      and building a workflow you can keep repeating.
+    </p>
+  </section>
+
+  <section aria-label="Blog articles">
+    <div class="vs-blog-grid">
+      {% for article in articles %}
+        <article class="vs-blog-card">
+          <div class="vs-blog-card-date">{{ article.published_on_display }}</div>
+          <h2 class="vs-blog-card-title">
+            <a href="{{ article.url }}">{{ article.title }}</a>
+          </h2>
+          <p class="vs-blog-card-text">{{ article.description }}</p>
+          <a class="vs-blog-card-link" href="{{ article.url }}">Read article</a>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

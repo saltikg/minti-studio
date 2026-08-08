@@ -1,0 +1,324 @@
+{% extends "vs_marketing_base.html" %}
+
+{% block title %}{{ meta_title }}{% endblock %}
+{% block meta_description %}{{ meta_description }}{% endblock %}
+
+{% block seo_meta %}
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:site_name" content="MintiStudio">
+  <meta property="article:published_time" content="{{ article.published_on_iso }}">
+  <script type="application/ld+json">{{ article_json_ld|safe }}</script>
+{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .vs-blog-article-page {
+    width: 100%;
+    max-width: 1160px;
+    margin: 0 auto;
+    display: grid;
+    gap: 2.4rem;
+  }
+
+  .vs-blog-article-shell {
+    max-width: 760px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .vs-blog-breadcrumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.15rem;
+    color: rgba(148, 163, 184, 0.88);
+    font-size: 0.9rem;
+  }
+
+  .vs-blog-breadcrumb a {
+    color: rgba(226, 232, 240, 0.9);
+    text-decoration: none;
+  }
+
+  .vs-blog-breadcrumb a:hover,
+  .vs-blog-breadcrumb a:focus {
+    color: #ffffff;
+  }
+
+  .vs-blog-article-title {
+    margin: 0;
+    font-size: clamp(2.2rem, 4vw, 3.65rem);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+
+  .vs-blog-article-description {
+    margin: 1rem 0 0;
+    color: var(--text-2);
+    font-size: 1.05rem;
+    line-height: 1.75;
+    max-width: 46rem;
+  }
+
+  .vs-blog-article-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+    color: rgba(148, 163, 184, 0.9);
+    font-size: 0.9rem;
+  }
+
+  .vs-blog-article-body {
+    display: grid;
+    gap: 1.8rem;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .vs-blog-section {
+    display: grid;
+    gap: 0.9rem;
+  }
+
+  .vs-blog-section h2 {
+    margin: 0;
+    font-size: clamp(1.35rem, 2.2vw, 1.7rem);
+    line-height: 1.2;
+    font-weight: 600;
+  }
+
+  .vs-blog-section p {
+    margin: 0;
+    color: rgba(226, 232, 240, 0.94);
+    line-height: 1.8;
+    font-size: 1rem;
+  }
+
+  .vs-blog-section ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: rgba(226, 232, 240, 0.94);
+    line-height: 1.8;
+  }
+
+  .vs-blog-section li + li {
+    margin-top: 0.45rem;
+  }
+
+  .vs-blog-sources,
+  .vs-blog-cta-card,
+  .vs-blog-related {
+    max-width: 760px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .vs-blog-sources {
+    padding: 1.2rem 1.25rem;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .vs-blog-sources h2,
+  .vs-blog-related h2 {
+    margin: 0 0 0.9rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+
+  .vs-blog-sources ul {
+    margin: 0;
+    padding-left: 1.15rem;
+  }
+
+  .vs-blog-sources a {
+    color: rgba(93, 202, 165, 0.98);
+    text-decoration: none;
+  }
+
+  .vs-blog-sources a:hover,
+  .vs-blog-sources a:focus {
+    color: #89e2c3;
+  }
+
+  .vs-blog-cta-card {
+    padding: 1.35rem 1.35rem 1.4rem;
+    border-radius: 26px;
+    background:
+      radial-gradient(circle at top left, rgba(93, 202, 165, 0.16), transparent 34%),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(17, 24, 39, 0.92));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .vs-blog-cta-card h2 {
+    margin: 0;
+    font-size: clamp(1.45rem, 2.6vw, 2rem);
+    line-height: 1.12;
+    font-weight: 500;
+  }
+
+  .vs-blog-cta-card p {
+    margin: 0.7rem 0 0;
+    color: var(--text-2);
+    line-height: 1.75;
+  }
+
+  .vs-blog-cta-actions {
+    margin-top: 1.1rem;
+  }
+
+  .vs-blog-cta-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0.9rem 1.3rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #5dcaa5, #1d9e75);
+    color: #07131a;
+    text-decoration: none;
+    font-weight: 600;
+    box-shadow: 0 10px 24px rgba(29, 158, 117, 0.24);
+  }
+
+  .vs-blog-cta-btn:hover,
+  .vs-blog-cta-btn:focus {
+    background: linear-gradient(135deg, #69d4b0, #26aa81);
+    color: #07131a;
+  }
+
+  .vs-blog-related-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .vs-blog-related-card {
+    display: grid;
+    gap: 0.6rem;
+    padding: 1rem 1.05rem;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .vs-blog-related-card h3 {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.35;
+    font-weight: 600;
+  }
+
+  .vs-blog-related-card a {
+    color: rgba(248, 250, 252, 0.98);
+    text-decoration: none;
+  }
+
+  .vs-blog-related-card a:hover,
+  .vs-blog-related-card a:focus {
+    color: #ffffff;
+  }
+
+  .vs-blog-related-date {
+    color: rgba(148, 163, 184, 0.86);
+    font-size: 0.82rem;
+  }
+
+  .vs-blog-related-text {
+    margin: 0;
+    color: var(--text-2);
+    line-height: 1.65;
+    font-size: 0.95rem;
+  }
+
+  @media (max-width: 767px) {
+    .vs-blog-related-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vs-blog-article-page">
+  <article class="vs-blog-article-shell">
+    <nav class="vs-blog-breadcrumb" aria-label="Breadcrumb">
+      <a href="{{ url_for('video_shorts_bp.home') }}">Home</a>
+      <span>/</span>
+      <a href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
+      <span>/</span>
+      <span aria-current="page">{{ article.title }}</span>
+    </nav>
+
+    <header>
+      <h1 class="vs-blog-article-title">{{ article.title }}</h1>
+      <p class="vs-blog-article-description">{{ article.description }}</p>
+      <div class="vs-blog-article-meta">
+        <span>{{ article.published_on_display }}</span>
+        <span>•</span>
+        <span>{{ article.reading_time }}</span>
+      </div>
+    </header>
+  </article>
+
+  <div class="vs-blog-article-body">
+    {% for section in article.sections %}
+      <section class="vs-blog-section">
+        <h2>{{ section.heading }}</h2>
+        {% for paragraph in section.paragraphs %}
+          <p>{{ paragraph }}</p>
+        {% endfor %}
+        {% if section.bullets %}
+          <ul>
+            {% for bullet in section.bullets %}
+              <li>{{ bullet }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+
+  <section class="vs-blog-sources" aria-labelledby="article-sources-title">
+    <h2 id="article-sources-title">Sources</h2>
+    <ul>
+      {% for source in article.sources %}
+        <li><a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.label }}</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="vs-blog-cta-card" aria-labelledby="article-cta-title">
+    <h2 id="article-cta-title">{{ article.cta_title }}</h2>
+    <p>{{ article.cta_body }}</p>
+    <div class="vs-blog-cta-actions">
+      <a class="vs-blog-cta-btn" href="{{ url_for('video_shorts_bp.register') }}">Try MintiStudio</a>
+    </div>
+  </section>
+
+  {% if related_articles %}
+    <section class="vs-blog-related" aria-labelledby="related-articles-title">
+      <h2 id="related-articles-title">More from the blog</h2>
+      <div class="vs-blog-related-grid">
+        {% for related in related_articles %}
+          <article class="vs-blog-related-card">
+            <div class="vs-blog-related-date">{{ related.published_on_display }}</div>
+            <h3><a href="{{ related.url }}">{{ related.title }}</a></h3>
+            <p class="vs-blog-related-text">{{ related.description }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}
