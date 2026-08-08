@@ -54,7 +54,7 @@ def _article_json_ld(article: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-@video_shorts_bp.route("/video_shorts/blog/", methods=["GET"])
+@video_shorts_bp.route("/blog/", methods=["GET"])
 def blog_index():
     articles = [_serialize_article(article) for article in get_blog_articles()]
     canonical_url = _absolute_url(url_for("video_shorts_bp.blog_index"))
@@ -70,7 +70,7 @@ def blog_index():
     )
 
 
-@video_shorts_bp.route("/video_shorts/blog/<slug>/", methods=["GET"])
+@video_shorts_bp.route("/blog/<slug>/", methods=["GET"])
 def blog_article(slug: str):
     article = get_blog_article(slug)
     if not article:
