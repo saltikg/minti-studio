@@ -9191,11 +9191,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       event.preventDefault();
       event.stopPropagation();
-      focusCropModalTabForPreviewKind(kind);
       setSelectedPreviewElement(kind);
       dragState = {
         kind,
         startClientY: event.clientY,
+        pointerDownClientY: event.clientY,
+        moved: false,
       };
       element.classList.add("is-dragging");
       previewFrame?.classList.add("is-dragging");
@@ -9210,11 +9211,15 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     const deltaPreviewY = event.clientY - dragState.startClientY;
     dragState.startClientY = event.clientY;
+    if (Math.abs(event.clientY - dragState.pointerDownClientY) > 2) {
+      dragState.moved = true;
+    }
     const deltaRenderY = deltaPreviewY / overlayScale;
     applyElementDelta(dragState.kind, deltaRenderY);
   });
 
   const endPreviewDrag = (event) => {
+    const completedDragState = dragState;
     if (event?.target && event.target.classList?.remove) {
       event.target.classList.remove("is-dragging");
     }
@@ -9223,6 +9228,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     previewFrame?.classList.remove("is-dragging");
     dragState = null;
+    if (completedDragState && !completedDragState.moved) {
+      focusCropModalTabForPreviewKind(completedDragState.kind);
+    }
   };
 
   previewFrame?.addEventListener("pointerup", endPreviewDrag);
