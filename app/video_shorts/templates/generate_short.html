@@ -485,6 +485,29 @@
     object-fit: cover;
     display: block;
   }
+  .subscribe-selected-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .subscribe-selected-actions .crop-toggle-card {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .subscribe-selected-actions .form-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+  }
+  .subscribe-selected-actions .form-check-label {
+    display: none;
+  }
   .background-selected-meta {
     min-width: 0;
     flex: 1 1 auto;
@@ -2018,19 +2041,6 @@
   .layout-top-row .control-group {
     gap: 8px;
   }
-  .layout-top-row .crop-toggle-card {
-    height: 100%;
-    padding: 10px 12px;
-  }
-  .layout-top-row .crop-toggle-card .form-check {
-    min-height: 100%;
-    display: grid;
-    align-content: center;
-    gap: 8px;
-  }
-  .layout-top-row .crop-toggle-card .form-check-label {
-    line-height: 1.2;
-  }
   .layout-video-position-row {
     width: min(260px, 100%);
   }
@@ -2038,16 +2048,8 @@
     display: none !important;
   }
   .crop-modal-reframe-section {
-    gap: 8px;
+    gap: 4px;
   }
-  .crop-modal-reframe-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding-top: 2px;
-  }
-  .crop-modal-reframe-head .small,
   .cropper-preview-card .small.text-muted {
     margin-bottom: 0 !important;
   }
@@ -2153,7 +2155,7 @@
   }
   .crop-modal-reframe-section {
     display: grid;
-    gap: 8px;
+    gap: 4px;
   }
   .caption-tab-toggle-row {
     display: flex;
@@ -3583,11 +3585,18 @@
                         <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
                         <div class="background-selected-meta">
                           <div class="background-selected-label" id="subscribe-selected-label">{{ subscribe_visual_label or 'No subscribe animation selected' }}</div>
-                          <div class="background-selected-note" id="subscribe-selected-note">Shown below subtitles during render</div>
                         </div>
-                        <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
-                          <i class="bi bi-pencil-square"></i>
-                        </button>
+                        <div class="subscribe-selected-actions">
+                          <div class="crop-toggle-card">
+                            <div class="form-check form-switch mb-0">
+                              <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                              <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+                            </div>
+                          </div>
+                          <button type="button" class="background-edit-btn" id="subscribe-edit-btn" aria-label="Change subscribe animation">
+                            <i class="bi bi-pencil-square"></i>
+                          </button>
+                        </div>
                       </div>
                       <div class="background-picker-panel" id="subscribe-picker-panel">
                         <div class="background-picker-head">
@@ -3620,14 +3629,8 @@
                         </div>
                       </div>
                       {% if not brand_subscribe_overlay_available %}
-                        <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
+                      <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
                       {% endif %}
-                      </div>
-                      <div class="crop-toggle-card">
-                        <div class="form-check form-switch mb-0">
-                          <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                          <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
-                        </div>
                       </div>
                     </div>
                     <div class="input-group-inline compact layout-video-position-row" data-preview-control="video-position">
@@ -3728,16 +3731,13 @@
                       <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
                     </div>
                     <div class="crop-modal-reframe-section">
-                      <div class="crop-modal-reframe-head">
-                        <div class="small text-muted">Drag to reframe</div>
-                      </div>
                       <div class="cropper-loader" id="cropper-loader">
                         <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
                         <span>Loading frame…</span>
                       </div>
                       <div class="cropper-surfaces" id="cropper-surfaces">
                         <div class="cropper-surface" id="cropper-surface-top" data-crop-box="top">
-                          <div class="cropper-surface-label" id="cropper-surface-top-label">Crop</div>
+                          <div class="cropper-surface-label" id="cropper-surface-top-label">Drag to reframe</div>
                           <div class="cropper-surface-image-wrap">
                             <img id="cropper-image-top" src="" alt="Crop preview top" />
                           </div>
@@ -8619,7 +8619,7 @@ document.addEventListener("DOMContentLoaded", () => {
     cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit);
     const topLabel = modalEl.querySelector("#cropper-surface-top-label");
     if (topLabel) {
-      topLabel.textContent = effectiveSplit ? "Top" : "Crop";
+      topLabel.textContent = effectiveSplit ? "Top" : "Drag to reframe";
     }
   };
   const isPreviewElementDraggable = (kind) => !(kind === "video" && isPortraitCropAspect());
