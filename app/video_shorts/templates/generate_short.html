@@ -1712,18 +1712,22 @@
   .style-template-section {
     display: grid;
     gap: 8px;
-    margin-bottom: 16px;
   }
   .crop-modal-top-shell {
     display: grid;
-    gap: 14px;
-    margin-bottom: 14px;
-    padding: 14px 16px 8px;
+    gap: 8px;
+    margin-bottom: 22px;
+    padding: 14px 16px 14px;
     border-radius: 20px;
     background:
       radial-gradient(circle at top left, rgba(255, 216, 77, 0.16), transparent 38%),
       linear-gradient(180deg, #0f172a 0%, #111827 100%);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+  .crop-modal-settings-shell {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 14px;
   }
   #crop-area-modal .modal-dialog {
     max-width: min(1200px, calc(100vw - 40px));
@@ -1945,7 +1949,7 @@
     align-items: center;
     gap: 20px;
     min-width: 0;
-    padding: 0 2px 2px;
+    padding: 0 2px 4px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     overflow-x: auto;
     scrollbar-width: none;
@@ -1996,6 +2000,56 @@
   }
   .crop-modal-tab-panel[hidden] {
     display: none !important;
+  }
+  .crop-modal-layout-panel {
+    gap: 12px;
+    padding-top: 12px;
+  }
+  .layout-top-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.35fr) minmax(156px, 0.75fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .layout-top-row .control-group,
+  .layout-top-row .crop-toggle-card {
+    margin: 0;
+  }
+  .layout-top-row .control-group {
+    gap: 8px;
+  }
+  .layout-top-row .crop-toggle-card {
+    height: 100%;
+    padding: 10px 12px;
+  }
+  .layout-top-row .crop-toggle-card .form-check {
+    min-height: 100%;
+    display: grid;
+    align-content: center;
+    gap: 8px;
+  }
+  .layout-top-row .crop-toggle-card .form-check-label {
+    line-height: 1.2;
+  }
+  .layout-video-position-row {
+    width: min(260px, 100%);
+  }
+  .layout-video-position-row.is-hidden {
+    display: none !important;
+  }
+  .crop-modal-reframe-section {
+    gap: 8px;
+  }
+  .crop-modal-reframe-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 2px;
+  }
+  .crop-modal-reframe-head .small,
+  .cropper-preview-card .small.text-muted {
+    margin-bottom: 0 !important;
   }
   .cropper-modal-layout {
     display: grid;
@@ -2099,7 +2153,7 @@
   }
   .crop-modal-reframe-section {
     display: grid;
-    gap: 10px;
+    gap: 8px;
   }
   .caption-tab-toggle-row {
     display: flex;
@@ -2162,6 +2216,7 @@
   }
   .cropper-preview-card {
     width: 248px;
+    padding-top: 12px;
   }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
@@ -2188,7 +2243,7 @@
       grid-template-columns: 1fr;
     }
     .crop-modal-top-shell {
-      padding: 14px 12px 8px;
+      padding: 14px 12px;
     }
     .crop-modal-tab-nav {
       gap: 14px;
@@ -2211,8 +2266,25 @@
     }
   }
   @media (max-width: 991.98px) {
+    .layout-top-row {
+      grid-template-columns: 1fr;
+    }
+    .layout-video-position-row {
+      width: 100%;
+    }
     .cropper-modal-layout {
       grid-template-columns: 1fr;
+    }
+    .cropper-preview-card {
+      padding-top: 0;
+    }
+  }
+  @media (max-width: 1199.98px) {
+    .layout-top-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .layout-top-row .crop-toggle-card {
+      grid-column: 1 / -1;
     }
   }
   .shorts-preview-frame {
@@ -3467,14 +3539,15 @@
               {% endfor %}
             </div>
           </div>
+        </div>
+        <div class="crop-modal-settings-shell">
           <div class="crop-modal-tab-nav" role="tablist" aria-label="Crop editor sections">
             <button type="button" class="crop-modal-tab is-active" data-crop-modal-tab data-crop-modal-tab-target="layout" role="tab" aria-selected="true">Layout</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="background" role="tab" aria-selected="false">Background</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="caption" role="tab" aria-selected="false">Caption</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
           </div>
-        </div>
-        <div class="cropper-modal-layout">
+          <div class="cropper-modal-layout">
           <div class="cropper-modal-main-panel">
             <div class="short-video-settings">
               <div class="short-video-body"
@@ -3485,8 +3558,9 @@
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
                 <div class="crop-modal-tab-panels">
-                  <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="layout" hidden>
-                    <div class="control-group" id="crop-aspect-selector">
+                  <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
+                    <div class="layout-top-row">
+                      <div class="control-group" id="crop-aspect-selector">
                       <label class="text-white-50 d-flex align-items-center gap-2">Format</label>
                       <div class="controls" role="group" aria-label="Crop aspect ratio">
                         <button type="button" class="aspect-card" data-crop-aspect="portrait">
@@ -3502,8 +3576,8 @@
                           <span><div class="aspect-title text-white">Fit</div></span>
                         </button>
                       </div>
-                    </div>
-                    <div class="control-group subscribe-visual-selector">
+                      </div>
+                      <div class="control-group subscribe-visual-selector">
                       <label class="text-white-50">Subscribe Animation</label>
                       <div class="background-selected-card" id="subscribe-selected-card">
                         <div class="subscribe-selected-media" id="subscribe-selected-media" aria-hidden="true"></div>
@@ -3548,14 +3622,15 @@
                       {% if not brand_subscribe_overlay_available %}
                         <div class="crop-toggle-note">No subscribe animations are available for this workspace.</div>
                       {% endif %}
-                    </div>
-                    <div class="crop-toggle-card">
-                      <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
-                        <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+                      </div>
+                      <div class="crop-toggle-card">
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" name="enable_subscribe_overlay" id="subscribeOverlayToggle" {% if selected_subscribe_overlay %}checked{% endif %}>
+                          <label class="form-check-label" for="subscribeOverlayToggle">Show subscribe animation</label>
+                        </div>
                       </div>
                     </div>
-                    <div class="input-group-inline compact" data-preview-control="video-position">
+                    <div class="input-group-inline compact layout-video-position-row" data-preview-control="video-position">
                       <span class="advanced-field-label">
                         <span class="advanced-field-label-main">Video position</span>
                         <span class="advanced-field-label-direction">from top</span>
@@ -3653,7 +3728,9 @@
                       <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
                     </div>
                     <div class="crop-modal-reframe-section">
-                      <div class="small text-muted mb-2">Drag to reframe</div>
+                      <div class="crop-modal-reframe-head">
+                        <div class="small text-muted">Drag to reframe</div>
+                      </div>
                       <div class="cropper-loader" id="cropper-loader">
                         <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
                         <span>Loading frame…</span>
@@ -3994,6 +4071,7 @@
               <div class="shorts-preview-date crop-preview-selectable{% if not selected_video_date %} is-hidden{% endif %}" id="shorts-preview-date" data-preview-element="date">{{ selected_video_date or "Date" }}</div>
               <div class="shorts-preview-subtitle-band crop-preview-selectable" id="shorts-preview-subtitle-band" data-preview-element="subtitle">Sample subtitle line</div>
             </div>
+          </div>
           </div>
         </div>
         <div class="mt-3 d-flex flex-wrap align-items-center gap-3"></div>
@@ -8027,6 +8105,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const showTitleToggle = modalEl.querySelector('[name="show_title"]');
   const showSubtitleToggle = modalEl.querySelector('[name="show_subtitle"]');
   const videoOverlayOffsetInput = settingsContainer?.querySelector('[name="video_overlay_offset"]');
+  const layoutVideoPositionRow = settingsContainer?.querySelector(".layout-video-position-row");
   const videoDateTopInput = settingsContainer?.querySelector('[name="video_date_top"]');
   const videoDateTextInput = settingsContainer?.querySelector('[name="video_date_text"]');
   const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
@@ -8520,7 +8599,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const syncOverlayVisibilityUi = () => {
     const titleVisible = isTitleVisible();
     const subtitleVisible = isSubtitleVisible();
-    const showVideoPositionControl = !isPortraitCropAspect();
+    const showVideoPositionControl = activeCropAspect === "landscape" && !getEffectiveSplitEnabled();
     previewTitle?.classList.toggle("is-hidden", !titleVisible);
     previewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
@@ -8528,6 +8607,7 @@ document.addEventListener("DOMContentLoaded", () => {
     titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
     subtitleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !subtitleVisible));
     videoPositionAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !showVideoPositionControl));
+    layoutVideoPositionRow?.classList.toggle("is-hidden", !showVideoPositionControl);
     if ((selectedPreviewElement === "title" && !titleVisible) || (selectedPreviewElement === "subtitle" && !subtitleVisible)) {
       setSelectedPreviewElement("");
     }
