@@ -2017,6 +2017,95 @@
   .crop-modal-tab.is-active::after {
     transform: scaleX(1);
   }
+  .crop-modal-tab-panels {
+    margin-bottom: 16px;
+  }
+  .crop-modal-tab-panel[hidden] {
+    display: none !important;
+  }
+  .caption-tab-panel {
+    display: grid;
+    gap: 18px;
+    padding: 18px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  .caption-tab-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .caption-tab-toggle-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.92);
+  }
+  .caption-tab-toggle-row .crop-toggle-card {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .caption-tab-toggle-row .form-check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+  }
+  .caption-tab-toggle-row .form-check-label {
+    display: none;
+  }
+  .caption-tab-section-heading {
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.66);
+  }
+  .caption-tab-panel .subtitle-preset-section {
+    min-width: 0;
+    gap: 10px;
+  }
+  .caption-tab-panel .subtitle-preset-grid {
+    gap: 10px;
+  }
+  .caption-tab-panel .subtitle-preset-card {
+    min-height: 96px;
+    padding: 14px 16px;
+  }
+  .caption-tab-font-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 12px;
+    align-items: center;
+  }
+  .caption-tab-font-field,
+  .caption-tab-size-field {
+    display: grid;
+    gap: 8px;
+  }
+  .caption-tab-font-field .form-select,
+  .caption-tab-size-field .form-control {
+    min-height: 46px;
+    background: rgba(15, 23, 42, 0.7);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
+  .caption-tab-size-field .form-control {
+    text-align: center;
+    font-weight: 700;
+  }
+  .caption-tab-font-field .form-select:focus,
+  .caption-tab-size-field .form-control:focus {
+    border-color: rgba(255, 255, 255, 0.24);
+    box-shadow: 0 0 0 0.18rem rgba(255, 255, 255, 0.08);
+  }
   .subtitle-style-hidden {
     display: none;
   }
@@ -2030,6 +2119,12 @@
     }
     .crop-modal-tab-nav {
       gap: 16px;
+    }
+    .caption-tab-panel {
+      padding: 16px 14px;
+    }
+    .caption-tab-font-row {
+      grid-template-columns: 1fr;
     }
   }
   .shorts-preview-frame {
@@ -3285,10 +3380,10 @@
             </div>
           </div>
           <div class="crop-modal-tab-nav" role="tablist" aria-label="Crop editor sections">
-            <button type="button" class="crop-modal-tab is-active" data-crop-modal-tab role="tab" aria-selected="true">Layout</button>
-            <button type="button" class="crop-modal-tab" data-crop-modal-tab role="tab" aria-selected="false">Background</button>
-            <button type="button" class="crop-modal-tab" data-crop-modal-tab role="tab" aria-selected="false">Caption</button>
-            <button type="button" class="crop-modal-tab" data-crop-modal-tab role="tab" aria-selected="false">Title</button>
+            <button type="button" class="crop-modal-tab is-active" data-crop-modal-tab data-crop-modal-tab-target="layout" role="tab" aria-selected="true">Layout</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="background" role="tab" aria-selected="false">Background</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="caption" role="tab" aria-selected="false">Caption</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
           </div>
         </div>
         <div class="top-controls mb-3 advanced-settings-block is-collapsed" data-advanced-block>
@@ -3442,12 +3537,6 @@
               <label class="form-check-label" for="showTitleToggle">Show title</label>
             </div>
           </div>
-          <div class="crop-toggle-card">
-            <div class="form-check form-switch mb-0">
-              <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
-              <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
-            </div>
-          </div>
         </div>
         <div class="visual-mode-detail-panel advanced-settings-block is-collapsed" data-advanced-block>
           <div id="podcast-audio-card" class="mt-2 border rounded p-2 d-none" style="border-color: rgba(255,255,255,.10) !important; background: rgba(255,255,255,.02);">
@@ -3528,6 +3617,67 @@
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
+            <div class="crop-modal-tab-panels">
+              <div class="crop-modal-tab-panel" data-crop-modal-panel="layout" hidden></div>
+              <div class="crop-modal-tab-panel" data-crop-modal-panel="background" hidden></div>
+              <div class="crop-modal-tab-panel caption-tab-panel" data-crop-modal-panel="caption" hidden>
+                <div class="caption-tab-toggle-row">
+                  <div class="caption-tab-toggle-label">Show subtitles</div>
+                  <div class="crop-toggle-card">
+                    <div class="form-check form-switch mb-0">
+                      <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
+                      <label class="form-check-label" for="showSubtitleToggle">Show subtitles</label>
+                    </div>
+                  </div>
+                </div>
+                <div class="subtitle-preset-section">
+                  <div class="caption-tab-section-heading">Subtitle preset</div>
+                  <div class="subtitle-preset-grid" data-subtitle-preset-grid>
+                    {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
+                    {% set subtitle_preset_cards = [
+                      {'value': 'classic_yellow', 'label': 'Classic', 'note': 'Yellow active word'},
+                      {'value': 'pop_green', 'label': 'Pop Green', 'note': 'Green highlight, bold'},
+                      {'value': 'pop_pink', 'label': 'Pop Pink', 'note': 'Pink highlight, bold'}
+                    ] %}
+                    {% for preset in subtitle_preset_cards %}
+                      <button
+                        type="button"
+                        class="subtitle-preset-card{% if subtitle_preset_value == preset.value %} is-active{% endif %}"
+                        data-subtitle-preset-card
+                        data-subtitle-preset-value="{{ preset.value }}"
+                        aria-pressed="{{ 'true' if subtitle_preset_value == preset.value else 'false' }}"
+                      >
+                        <span class="subtitle-preset-card-title">{{ preset.label }}</span>
+                        <span class="subtitle-preset-card-note">{{ preset.note }}</span>
+                      </button>
+                    {% endfor %}
+                  </div>
+                  <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
+                </div>
+                <div class="caption-tab-font-row">
+                  <div class="caption-tab-font-field">
+                    <div class="caption-tab-section-heading">Font</div>
+                    <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
+                      {% for f in sub_fonts %}
+                        <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="caption-tab-size-field">
+                    <div class="caption-tab-section-heading">Size</div>
+                    <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
+                  </div>
+                </div>
+                <div class="input-group-inline compact subtitle-style-hidden">
+                  <span>Style</span>
+                  <select name="subtitle_style" id="subtitleStyleField" class="form-select form-select-sm short-input-medium">
+                    <option value="plain" {% if selected_subtitle_style == "plain" %}selected{% endif %}>Plain</option>
+                    <option value="karaoke" {% if selected_subtitle_style == "karaoke" %}selected{% endif %}>Karaoke</option>
+                  </select>
+                </div>
+              </div>
+              <div class="crop-modal-tab-panel" data-crop-modal-panel="title" hidden></div>
+            </div>
             <button
               type="button"
               class="advanced-settings-toggle"
@@ -3630,11 +3780,7 @@
                       <div id="subtitlePreview" class="short-font-preview">Sample subtitle line</div>
                     </div>
                     <div class="font-preview-group tight">
-                      <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
-                        {% for f in sub_fonts %}
-                          <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
-                        {% endfor %}
-                      </select>
+                      <div class="small text-white-50">Use Caption tab to change font and preset.</div>
                     </div>
                     <div class="short-bg-trigger" id="subtitleTextColorTrigger">
                       <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
@@ -3693,41 +3839,6 @@
                     <div class="input-group-inline compact short-alpha-control">
                       <span>BG alpha</span>
                       <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
-                    </div>
-                    <div class="subtitle-preset-section">
-                      <div class="subtitle-preset-label">Subtitle preset</div>
-                      <div class="subtitle-preset-grid" data-subtitle-preset-grid>
-                        {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
-                        {% set subtitle_preset_cards = [
-                          {'value': 'classic_yellow', 'label': 'Classic', 'note': 'Yellow active word'},
-                          {'value': 'pop_green', 'label': 'Pop Green', 'note': 'Green highlight, bold'},
-                          {'value': 'pop_pink', 'label': 'Pop Pink', 'note': 'Pink highlight, bold'}
-                        ] %}
-                        {% for preset in subtitle_preset_cards %}
-                          <button
-                            type="button"
-                            class="subtitle-preset-card{% if subtitle_preset_value == preset.value %} is-active{% endif %}"
-                            data-subtitle-preset-card
-                            data-subtitle-preset-value="{{ preset.value }}"
-                            aria-pressed="{{ 'true' if subtitle_preset_value == preset.value else 'false' }}"
-                          >
-                            <span class="subtitle-preset-card-title">{{ preset.label }}</span>
-                            <span class="subtitle-preset-card-note">{{ preset.note }}</span>
-                          </button>
-                        {% endfor %}
-                      </div>
-                      <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
-                    </div>
-                    <div class="input-group-inline compact subtitle-style-hidden">
-                      <span>Style</span>
-                      <select name="subtitle_style" id="subtitleStyleField" class="form-select form-select-sm short-input-medium">
-                        <option value="plain" {% if selected_subtitle_style == "plain" %}selected{% endif %}>Plain</option>
-                        <option value="karaoke" {% if selected_subtitle_style == "karaoke" %}selected{% endif %}>Karaoke</option>
-                      </select>
-                    </div>
-                    <div class="input-group-inline compact">
-                      <span class="icon-label" title="Font size" aria-label="Font size"><i class="bi bi-type"></i></span>
-                      <input type="number" name="sub_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
                     </div>
                   </div>
                 </div>
@@ -9685,6 +9796,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
   const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
+  const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
 
   const updateTitleFont = () => {
     if (titleFont) {
@@ -9959,13 +10071,20 @@ document.addEventListener("DOMContentLoaded", function () {
       applyStyleTemplate(card);
     });
   });
+  const setActiveCropModalTab = (nextTab) => {
+    const target = String(nextTab?.dataset.cropModalTabTarget || "").trim().toLowerCase();
+    cropModalTabs.forEach((candidate) => {
+      const isActive = candidate === nextTab;
+      candidate.classList.toggle("is-active", isActive);
+      candidate.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    cropModalPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.cropModalPanel !== target;
+    });
+  };
   cropModalTabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      cropModalTabs.forEach((candidate) => {
-        const isActive = candidate === tab;
-        candidate.classList.toggle("is-active", isActive);
-        candidate.setAttribute("aria-selected", isActive ? "true" : "false");
-      });
+      setActiveCropModalTab(tab);
     });
   });
   [titleFont, titleFontSizeInput, titleTextColorField, titleBgColorField, subtitlePresetField].forEach((field) => {
@@ -9976,6 +10095,10 @@ document.addEventListener("DOMContentLoaded", function () {
   applyTitleBgPreview();
   applySubtitlePreview();
   syncStyleTemplateCards();
+  const initialActiveTab = cropModalTabs.find((tab) => tab.classList.contains("is-active")) || cropModalTabs[0];
+  if (initialActiveTab) {
+    setActiveCropModalTab(initialActiveTab);
+  }
 });
 </script>
 {% endblock %}
