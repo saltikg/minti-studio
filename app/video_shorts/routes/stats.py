@@ -259,7 +259,28 @@ def _brand_scope_clause(
     scoped_brand_id = brand_id if brand_id is not None else current_brand_id()
     if not scoped_brand_id:
         return " AND 1 = 0", []
-    if "brand_id" not in table_columns(conn, table_name):
+    normalized_table_name = str(table_name or "").strip()
+    schema_name: Optional[str] = None
+    relation_name = normalized_table_name
+    if "." in normalized_table_name:
+        schema_name, relation_name = normalized_table_name.split(".", 1)
+    brand_id_exists = False
+    if schema_name:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = ?
+              AND table_name = ?
+              AND column_name = 'brand_id'
+            LIMIT 1
+            """,
+            [schema_name, relation_name],
+        ).fetchone()
+        brand_id_exists = row is not None
+    else:
+        brand_id_exists = "brand_id" in table_columns(conn, relation_name)
+    if not brand_id_exists:
         return " AND 1 = 0", []
     prefix = f"{alias}." if alias else ""
     return f" AND {prefix}brand_id = ?", [scoped_brand_id]
