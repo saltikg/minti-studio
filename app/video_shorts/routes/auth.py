@@ -53,6 +53,7 @@ from app.video_shorts.services.email_verification import (
     generate_email_verification_token,
     hash_email_verification_token,
     password_reset_token_expiry,
+    send_membership_activated_emails,
     send_verification_email,
     send_password_reset_email,
     send_contact_email,
@@ -1124,6 +1125,10 @@ def verify_email():
         conn.commit()
     finally:
         conn.close()
+    try:
+        send_membership_activated_emails(user_id=row[0], signup_method="Email")
+    except Exception:
+        logger.exception("Membership activation email orchestration failed after verify_email for user=%s", row[0])
     flash("Email verified. You can sign in.", "success")
     return redirect(url_for("video_shorts_bp.login", email=_normalize_auth_email(row[1] or row[2] or "")))
 
@@ -1599,6 +1604,10 @@ def google_oauth_callback():
     conn.close()
     if created_new_user:
         track_event(user_id, "signup")
+        try:
+            send_membership_activated_emails(user_id=user_id, signup_method="Google")
+        except Exception:
+            logger.exception("Membership activation email orchestration failed after Google signup for user=%s", user_id)
     session["vs_user_id"] = user_id
     if brand:
         session["vs_brand_id"] = brand["id"]
