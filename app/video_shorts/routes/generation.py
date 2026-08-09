@@ -60,6 +60,8 @@ from app.video_shorts.config import (
     IG_REDIRECT_URI,
     IG_OAUTH_SCOPES,
     OPENAI_MODEL,
+    CLIP_PLAN_COOLDOWN_SECONDS,
+    CLIP_PLAN_MAX_RUNS_PER_VIDEO,
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
     SIGNUPS_ENABLED,
@@ -346,6 +348,73 @@ def _load_plan_job_state(video_pk: int) -> Dict[str, Any]:
         return json.loads(target.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _parse_plan_state_datetime(raw_value: Any) -> Optional[datetime]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _clip_plan_cap_message() -> str:
+    return (
+        f"You've already generated AI suggestions for this video {CLIP_PLAN_MAX_RUNS_PER_VIDEO} times. "
+        "Remove the existing ones and refine manually, or edit clips directly."
+    )
+
+
+def _clip_plan_cooldown_message() -> str:
+    return "Suggestions were just generated — give it a moment before regenerating."
+
+
+def _clip_plan_block_info(state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    normalized = dict(state or {})
+    run_count = int(normalized.get("run_count") or 0)
+    if run_count >= CLIP_PLAN_MAX_RUNS_PER_VIDEO:
+        return {
+            "reason": "cap",
+            "message": _clip_plan_cap_message(),
+            "run_count": run_count,
+        }
+    completed_at = _parse_plan_state_datetime(normalized.get("completed_at"))
+    if completed_at is not None and CLIP_PLAN_COOLDOWN_SECONDS > 0:
+        elapsed = (datetime.utcnow() - completed_at).total_seconds()
+        if elapsed < CLIP_PLAN_COOLDOWN_SECONDS:
+            return {
+                "reason": "cooldown",
+                "message": _clip_plan_cooldown_message(),
+                "run_count": run_count,
+                "cooldown_remaining_seconds": max(0, int(CLIP_PLAN_COOLDOWN_SECONDS - elapsed)),
+            }
+    if normalized.get("running"):
+        return {
+            "reason": "running",
+            "message": "Clip plan generation already running.",
+            "run_count": run_count,
+        }
+    return None
+
+
+def _current_plan_job_state(video_pk: int) -> Dict[str, Any]:
+    state = _load_plan_job_state(video_pk)
+    if state:
+        return _sanitize_plan_state(state)
+    with _PLAN_JOB_LOCK:
+        return dict(_PLAN_JOB_STATE.get(video_pk) or {})
+
+
+def _set_plan_job_state_locked(video_pk: int, state: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _sanitize_plan_state(state)
+    _PLAN_JOB_STATE[video_pk] = normalized
+    _persist_plan_job_state(video_pk, normalized)
+    return normalized
 
 
 def local_to_utc_rfc3339(local_str: str, tz_name: Optional[str] = None) -> str:
@@ -4696,6 +4765,11 @@ def generate_short(video_pk):
     plan_exists = bool(plan_by_index)
     plan_clip_count = len(plan_by_index)
     ai_suggested_clip_count = sum(1 for entry in plan_entries if _is_removable_ai_suggestion(entry))
+    plan_job_state = _current_plan_job_state(video_pk)
+    plan_job_block = _clip_plan_block_info(plan_job_state)
+    plan_generation_block_reason = (plan_job_block or {}).get("reason") or ""
+    plan_generation_block_message = (plan_job_block or {}).get("message") or ""
+    plan_generation_run_count = int(plan_job_state.get("run_count") or 0)
     generated_clip_entries = []
     for entry in plan_entries:
         if entry.get("status") != "created":
@@ -5329,6 +5403,9 @@ def generate_short(video_pk):
         debug_info=debug_info,
         clip_rows=clip_rows,
         ai_suggested_clip_count=ai_suggested_clip_count,
+        plan_generation_block_reason=plan_generation_block_reason,
+        plan_generation_block_message=plan_generation_block_message,
+        plan_generation_run_count=plan_generation_run_count,
         focus_category_options=get_focus_category_options(transcript_language or "tr"),
         selected_focus_categories=selected_focus_categories,
         transcript_player_source=transcript_player_source,
@@ -11153,9 +11230,7 @@ def _set_plan_job_state(video_pk: int, **updates: Any) -> Dict[str, Any]:
         state = dict(_PLAN_JOB_STATE.get(video_pk) or {})
         state.update(updates)
         state["updated_at"] = datetime.utcnow().isoformat()
-        state = _sanitize_plan_state(state)
-        _PLAN_JOB_STATE[video_pk] = state
-    _persist_plan_job_state(video_pk, state)
+        state = _set_plan_job_state_locked(video_pk, state)
     return state
 
 
@@ -11380,6 +11455,9 @@ def _run_plan_job(video_pk: int, form_data: Dict[str, Any], app_obj) -> None:
                 preloaded_video_info=preloaded_video_info,
             )
             elapsed = round(time.monotonic() - start_ts, 1)
+            latest_state = _current_plan_job_state(video_pk)
+            next_run_count = int(latest_state.get("run_count") or 0) + 1
+            completed_at = datetime.utcnow().isoformat()
             _set_plan_job_state(
                 video_pk,
                 status="completed",
@@ -11388,6 +11466,8 @@ def _run_plan_job(video_pk: int, form_data: Dict[str, Any], app_obj) -> None:
                 message=result.get("message") or "Clip plan created.",
                 clip_count=result.get("clip_count"),
                 elapsed_seconds=elapsed,
+                run_count=next_run_count,
+                completed_at=completed_at,
                 finished_at=datetime.utcnow().isoformat(),
                 error=None,
             )
@@ -11433,37 +11513,40 @@ def create_clip_plan_start(video_pk):
         if not video_info:
             return jsonify({"ok": False, "message": "Video not found."}), 404
 
-        existing = _load_plan_job_state(video_pk)
-        if not existing:
-            with _PLAN_JOB_LOCK:
-                existing = dict(_PLAN_JOB_STATE.get(video_pk) or {})
-        if existing.get("running"):
-            return jsonify(
-                {
-                    "ok": True,
-                    "started": False,
-                    "state": _sanitize_plan_state(existing),
-                    "message": "Clip plan generation already running.",
-                }
-            )
-
         current_user = getattr(g, "vs_current_user", None) or {}
         form_data = dict(request.form.items())
         form_data["_owner_user_id"] = current_user.get("id")
         form_data["_brand_id"] = current_brand_id()
+        with _PLAN_JOB_LOCK:
+            existing = dict(_PLAN_JOB_STATE.get(video_pk) or _load_plan_job_state(video_pk) or {})
+            blocked = _clip_plan_block_info(existing)
+            if blocked:
+                return jsonify(
+                    {
+                        "ok": True,
+                        "started": False,
+                        "state": _sanitize_plan_state(existing),
+                        "message": blocked["message"],
+                        "reason": blocked["reason"],
+                    }
+                )
+            next_state = dict(existing)
+            next_state.update(
+                {
+                    "status": "running",
+                    "running": True,
+                    "stage": "starting",
+                    "message": "Starting clip plan generation...",
+                    "started_at": datetime.utcnow().isoformat(),
+                    "error": None,
+                    "elapsed_seconds": 0.0,
+                    "form_data": form_data,
+                }
+            )
+            next_state.pop("cooldown_remaining_seconds", None)
+            _set_plan_job_state_locked(video_pk, next_state)
         prefetched = current_app.config.setdefault("_plan_prefetched_video_info", {})
         prefetched[video_pk] = video_info
-        _set_plan_job_state(
-            video_pk,
-            status="running",
-            running=True,
-            stage="starting",
-            message="Starting clip plan generation...",
-            started_at=datetime.utcnow().isoformat(),
-            error=None,
-            elapsed_seconds=0.0,
-            form_data=form_data,
-        )
         thread = threading.Thread(
             target=_run_plan_job,
             args=(video_pk, form_data, current_app._get_current_object()),

@@ -2810,7 +2810,9 @@
           method="post"
           action="{{ url_for('video_shorts_bp.create_clip_plan', video_pk=video.id) }}"
           data-plan-start-url="{{ url_for('video_shorts_bp.create_clip_plan_start', video_pk=video.id) }}"
-          data-plan-status-url="{{ url_for('video_shorts_bp.create_clip_plan_status', video_pk=video.id) }}">
+          data-plan-status-url="{{ url_for('video_shorts_bp.create_clip_plan_status', video_pk=video.id) }}"
+          data-plan-block-reason="{{ plan_generation_block_reason }}"
+          data-plan-block-message="{{ plan_generation_block_message }}">
       <input type="hidden" name="focus_categories" id="ai-focus-categories-input" value="{{ selected_focus_categories|join(',') }}">
     </form>
   </div>
@@ -2902,11 +2904,11 @@
                       form="step2-form"
                       class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
                       id="ai-generate-btn"
-                      {% if not has_transcript %}disabled{% endif %}>
+                      {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
                       <i class="bi bi-stars" aria-hidden="true"></i>
                       Suggest clips with AI
                     </button>
-                    <div id="plan-live-status" class="ai-plan-inline-status d-none small mt-2 text-end" role="status" aria-live="polite"></div>
+                    <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
                   </div>
                   {% if ai_suggested_clip_count %}
                     <form method="post" action="{{ url_for('video_shorts_bp.delete_ai_suggestions', video_pk=video.id) }}" onsubmit="return window.confirm('Remove all AI-suggested clips?');">
@@ -4614,6 +4616,8 @@ document.addEventListener("DOMContentLoaded", () => {
 document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("step2-form");
   const statusBox = document.getElementById("plan-live-status");
+  const initialBlockReason = String(form?.dataset.planBlockReason || "").trim();
+  const initialBlockMessage = String(form?.dataset.planBlockMessage || "").trim();
   const focusInput = document.getElementById("ai-focus-categories-input");
   const focusCheckboxes = Array.from(document.querySelectorAll(".ai-focus-category-checkbox"));
   if (!form || !statusBox) {
@@ -4719,6 +4723,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
+  if (initialBlockReason === "cap" && initialBlockMessage) {
+    showStatus(initialBlockMessage, false, initialBlockReason === "running");
+  }
+
   const pollStatus = async () => {
     try {
       const response = await fetch(statusUrl, {
@@ -4812,6 +4820,19 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (!response.ok || !payload.ok) {
         throw new Error(payload.message || "Could not start clip plan generation.");
+      }
+      if (payload.started === false) {
+        if (payload.state?.running) {
+          showStatus(payload.message || "Clip plan generation already running.", false, true);
+          await pollStatus();
+          if (running) {
+            pollingTimer = window.setInterval(pollStatus, 1500);
+          }
+          return;
+        }
+        stopPolling();
+        showStatus(payload.message || "Clip plan generation is unavailable right now.", false);
+        return;
       }
       showStatus(payload.message || "Clip plan generation started.", false, true);
       await pollStatus();

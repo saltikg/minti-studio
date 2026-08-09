@@ -259,6 +259,8 @@ MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip 
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL_GPT", "gpt-4.1-mini")
+CLIP_PLAN_MAX_RUNS_PER_VIDEO = max(1, int(os.getenv("CLIP_PLAN_MAX_RUNS_PER_VIDEO", "2") or "2"))
+CLIP_PLAN_COOLDOWN_SECONDS = max(0, int(os.getenv("CLIP_PLAN_COOLDOWN_SECONDS", "90") or "90"))
 
 _openai_api_key = os.getenv("OPENAI_API_KEY")
 _openai_client = OpenAI(api_key=_openai_api_key) if (OPENAI_MODEL and _openai_api_key and OpenAI) else None
