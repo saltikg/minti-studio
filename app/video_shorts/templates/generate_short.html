@@ -4634,6 +4634,40 @@ document.addEventListener("DOMContentLoaded", () => {
     statusBox.innerHTML = `<span>${esc(text || "Done.")}</span>`;
   };
 
+  const formatPlanStatus = (payload) => {
+    const stage = String(payload.stage || "").trim().toLowerCase();
+    const rawMessage = String(payload.message || "").trim();
+    const running = payload.status === "running" || payload.running === true;
+
+    const stageMessages = {
+      idle: "No active plan job.",
+      starting: "Getting started…",
+      queued: "Waiting in queue…",
+      load_video: "Loading your video and transcript…",
+      llm_plan: "Analyzing your video to find the best moments…",
+      fallback: "Refining the clip plan…",
+      prepare_plan: "Preparing your clip suggestions…",
+      save_plan: "Finalizing…",
+    };
+
+    if (stage === "completed") {
+      return {
+        text: rawMessage || "Clip plan created.",
+        spinning: false,
+      };
+    }
+    if (stage === "failed") {
+      return {
+        text: rawMessage || "We couldn't create clip suggestions.",
+        spinning: false,
+      };
+    }
+    return {
+      text: stageMessages[stage] || "Working…",
+      spinning: running,
+    };
+  };
+
   const stopPolling = () => {
     if (pollingTimer) {
       window.clearInterval(pollingTimer);
@@ -4671,11 +4705,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const stage = payload.stage || "unknown";
-      const message = payload.message || "";
-      const elapsed = Number(payload.elapsed_seconds || 0);
       const stillRunning = payload.status === "running" || payload.running === true;
-      showStatus(`Stage: ${stage} | ${message} | ${elapsed.toFixed(1)}s`, false, stillRunning);
+      const formatted = formatPlanStatus(payload);
+      showStatus(formatted.text, false, stillRunning && formatted.spinning);
 
       if (payload.status === "completed") {
         stopPolling();
@@ -4685,7 +4717,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (payload.status === "failed") {
         stopPolling();
-        showStatus(`Failed at stage "${stage}": ${payload.error || payload.message || "Unknown error"}`, true);
+        showStatus(payload.error || payload.message || "Unknown error", true);
       }
     } catch (err) {
       consecutivePollFailures += 1;
