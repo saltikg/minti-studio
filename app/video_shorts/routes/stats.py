@@ -82,8 +82,21 @@ def _resolve_owned_brand_for_stats(conn, *, user_id: Optional[str]) -> Optional[
     owner_user_id = str(user_id or "").strip()
     if not owner_user_id:
         g.vs_current_brand = None
+        g.vs_brands = []
         session.pop("vs_brand_id", None)
         return None
+
+    brand_rows = conn.execute(
+        """
+        SELECT id, owner_user_id, name, slug, COALESCE(is_default, FALSE), created_at, updated_at
+        FROM shorts_brands
+        WHERE owner_user_id = ?
+        ORDER BY COALESCE(is_default, FALSE) DESC, created_at ASC, id ASC
+        """,
+        [owner_user_id],
+    ).fetchall()
+    owned_brands = [brand for brand in (_row_to_brand_dict(row) for row in brand_rows) if brand]
+    g.vs_brands = owned_brands
 
     requested_brand_id = (
         str((request.args.get("brand_id") or "").strip())
@@ -92,17 +105,7 @@ def _resolve_owned_brand_for_stats(conn, *, user_id: Optional[str]) -> Optional[
     )
     brand = _load_owned_brand(conn, user_id=owner_user_id, brand_id=requested_brand_id)
     if brand is None:
-        row = conn.execute(
-            """
-            SELECT id, owner_user_id, name, slug, COALESCE(is_default, FALSE), created_at, updated_at
-            FROM shorts_brands
-            WHERE owner_user_id = ?
-            ORDER BY COALESCE(is_default, FALSE) DESC, created_at ASC, id ASC
-            LIMIT 1
-            """,
-            [owner_user_id],
-        ).fetchone()
-        brand = _row_to_brand_dict(row)
+        brand = owned_brands[0] if owned_brands else None
 
     g.vs_current_brand = brand
     if brand:
@@ -1007,7 +1010,7 @@ def _fetch_stats_video_rows(
 ) -> Tuple[List[Mapping[str, object]], int]:
     base_brand_clause, base_brand_params = _brand_scope_clause(
         conn,
-        "dim_generated_videos",
+        "analytics.dim_generated_videos",
         alias="gv",
         brand_id=brand_id,
     )
