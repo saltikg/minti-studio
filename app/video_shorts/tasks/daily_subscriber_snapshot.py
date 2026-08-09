@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 from app.video_shorts.config import FB_API_BASE, TIKTOK_API_BASE
-from app.video_shorts.services.db import get_db, get_db_readonly
+from app.video_shorts.services.db import get_db
 from app.video_shorts.services.instagram_api import InstagramActionError, fetch_instagram_follower_count
 from app.video_shorts.services.subscriber_metrics import (
     ensure_subscriber_snapshot_table,
@@ -234,10 +234,6 @@ def capture_daily_subscriber_snapshot(target_date: Optional[date] = None) -> int
     now = datetime.utcnow()
     youtube_records: List[Dict[str, object]] = []
     youtube_channels_for_backfill: List[Tuple[Optional[str], Optional[str], Optional[Dict[str, object]]]] = []
-    try:
-        readonly_conn = get_db_readonly()
-    except Exception:
-        readonly_conn = None
     for token_info in list_stored_refresh_tokens():
         if token_info.get("reauth_required"):
             continue
@@ -257,6 +253,8 @@ def capture_daily_subscriber_snapshot(target_date: Optional[date] = None) -> int
             snapshot_date,
             refresh_token=refresh_token,
             user_id=scoped_user_id,
+            brand_id=brand_id,
+            expected_channel_id=str(youtube_channel.get("channel_id") or "").strip() or None,
         )
         gained = None
         lost = None
@@ -268,15 +266,6 @@ def capture_daily_subscriber_snapshot(target_date: Optional[date] = None) -> int
                 net = (gained or 0) - (lost or 0)
         subscriber_count = api_subscriber_count
         channel_id = youtube_channel.get("channel_id")
-        if readonly_conn and channel_id:
-            previous_count = _fetch_previous_youtube_subscriber_count(
-                readonly_conn,
-                channel_id=str(channel_id),
-                snapshot_date=snapshot_date,
-                brand_id=brand_id,
-            )
-            if previous_count is not None:
-                subscriber_count = previous_count + (net or 0)
         if subscriber_count is None:
             continue
         youtube_records.append(
@@ -296,8 +285,6 @@ def capture_daily_subscriber_snapshot(target_date: Optional[date] = None) -> int
                 "stats_source": "youtube_data_api",
             }
         )
-    if readonly_conn:
-        readonly_conn.close()
 
     instagram_records = _build_instagram_records(snapshot_date, now)
     facebook_records = _build_facebook_records(snapshot_date, now)
@@ -355,9 +342,13 @@ def _backfill_youtube_daily_metrics(
         brand_filter_sql = "brand_id = ?"
         brand_filter_params = [brand_id]
     while current <= end_date:
-        metrics = fetch_daily_subscriber_metrics(current, refresh_token=refresh_token)
-        if not metrics and user_id:
-            metrics = fetch_daily_subscriber_metrics(current, refresh_token=refresh_token, user_id=user_id)
+        metrics = fetch_daily_subscriber_metrics(
+            current,
+            refresh_token=refresh_token,
+            user_id=user_id,
+            brand_id=brand_id,
+            expected_channel_id=str(channel_id),
+        )
         if not metrics:
             current += timedelta(days=1)
             continue
