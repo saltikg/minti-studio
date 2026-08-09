@@ -80,6 +80,82 @@ def _normalize_user_id(user_id: Optional[str] = None, brand_id: Optional[str] = 
     return text
 
 
+def split_scoped_user_id(value: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    if "::" not in text:
+        return text, None
+    user_id, brand_id = text.split("::", 1)
+    return (str(user_id or "").strip() or None, str(brand_id or "").strip() or None)
+
+
+def resolve_stored_token_owner_brand(
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    clean_user_id = str(user_id or "").strip() or None
+    clean_brand_id = str(brand_id or "").strip() or None
+    normalized_user_id = _normalize_user_id(clean_user_id, clean_brand_id)
+    try:
+        conn = get_db_readonly()
+    except Exception as exc:
+        if "lock" in str(exc).lower():
+            return clean_user_id, clean_brand_id
+        raise
+    try:
+        try:
+            _ensure_token_tables(conn)
+        except Exception as exc:
+            if "read-only" in str(exc).lower():
+                return clean_user_id, clean_brand_id
+            raise
+        token_row = None
+        if normalized_user_id:
+            token_row = conn.execute(
+                f"""
+                SELECT user_id
+                FROM {TOKEN_TABLE}
+                WHERE user_id = ?
+                LIMIT 1
+                """,
+                [normalized_user_id],
+            ).fetchone()
+        if not token_row and clean_user_id:
+            token_row = conn.execute(
+                f"""
+                SELECT user_id
+                FROM {TOKEN_TABLE}
+                WHERE user_id = ?
+                   OR user_id LIKE ?
+                ORDER BY
+                    CASE
+                        WHEN user_id = ? THEN 0
+                        WHEN user_id LIKE ? THEN 1
+                        ELSE 2
+                    END,
+                    updated_at DESC
+                LIMIT 1
+                """,
+                [
+                    clean_user_id,
+                    f"{clean_user_id}::%",
+                    normalized_user_id or clean_user_id,
+                    f"{clean_user_id}::%",
+                ],
+            ).fetchone()
+    except Exception as exc:
+        if TOKEN_TABLE in str(exc).lower():
+            return clean_user_id, clean_brand_id
+        raise
+    finally:
+        conn.close()
+    if not token_row or not token_row[0]:
+        return clean_user_id, clean_brand_id
+    token_owner_user_id, token_brand_id = split_scoped_user_id(token_row[0])
+    return token_owner_user_id or clean_user_id, token_brand_id or clean_brand_id
+
+
 def _ensure_token_tables(conn):
     if getattr(conn, "backend_name", "") == "postgres":
         return

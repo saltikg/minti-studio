@@ -28,7 +28,6 @@ VALUES ({', '.join('?' for _ in SUBSCRIBER_SNAPSHOT_COLUMNS)})
 ON CONFLICT (channel_type, channel_id, snapshot_date)
 DO UPDATE SET
     effective_at = EXCLUDED.effective_at,
-    brand_id = EXCLUDED.brand_id,
     channel_name = EXCLUDED.channel_name,
     subscriber_count = EXCLUDED.subscriber_count,
     subscriber_count_exact = EXCLUDED.subscriber_count_exact,

@@ -266,10 +266,9 @@ def _normalize_generation_status(
     return None
 
 
-def _resolve_brand_id(conn, source_video_id: Optional[str], brand_id: Optional[str]) -> Optional[str]:
-    clean_brand_id = str(brand_id or "").strip() or None
-    if clean_brand_id or not source_video_id:
-        return clean_brand_id
+def _resolve_source_brand_id(conn, source_video_id: Optional[str]) -> Optional[str]:
+    if not source_video_id:
+        return None
     try:
         row = conn.execute(
             """
@@ -286,14 +285,84 @@ def _resolve_brand_id(conn, source_video_id: Optional[str], brand_id: Optional[s
     return str((row[0] if row else "") or "").strip() or None
 
 
+def _resolve_source_user_id(conn, source_video_id: Optional[str]) -> Optional[str]:
+    if not source_video_id:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT CAST(owner_user_id AS VARCHAR)
+            FROM youtube_videos
+            WHERE video_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [source_video_id],
+        ).fetchone()
+    except Exception:
+        return None
+    return str((row[0] if row else "") or "").strip() or None
+
+
+def _has_publish_target_binding(
+    *,
+    publish_status: Optional[str],
+    primary_publish_platform: Optional[str],
+    youtube_video_id: Optional[str],
+    instagram_media_id: Optional[str],
+    facebook_video_id: Optional[str],
+    tiktok_video_id: Optional[str],
+    youtube_published_at: Optional[str],
+    instagram_published_at: Optional[str],
+    facebook_published_at: Optional[str],
+    tiktok_published_at: Optional[str],
+) -> bool:
+    status = (publish_status or "").strip().lower()
+    if status in {"queued", "scheduled", "uploaded", "published"}:
+        return True
+    if _normalize_platform(primary_publish_platform):
+        return True
+    return any(
+        _clean_text(value)
+        for value in (
+            youtube_video_id,
+            instagram_media_id,
+            facebook_video_id,
+            tiktok_video_id,
+            youtube_published_at,
+            instagram_published_at,
+            facebook_published_at,
+            tiktok_published_at,
+        )
+    )
+
+
+def _resolve_brand_id(
+    conn,
+    source_video_id: Optional[str],
+    brand_id: Optional[str],
+    *,
+    prefer_publish_brand: bool,
+) -> Optional[str]:
+    clean_brand_id = str(brand_id or "").strip() or None
+    if prefer_publish_brand and clean_brand_id:
+        return clean_brand_id
+    source_brand_id = _resolve_source_brand_id(conn, source_video_id)
+    if source_brand_id:
+        return source_brand_id
+    return clean_brand_id
+
+
 def _resolve_user_id(
     conn,
     source_video_id: Optional[str],
     brand_id: Optional[str],
     user_id: Optional[str],
+    *,
+    prefer_publish_user: bool,
 ) -> Optional[str]:
     clean_user_id = str(user_id or "").strip() or None
-    if clean_user_id:
+    if prefer_publish_user and clean_user_id:
         return clean_user_id
     clean_brand_id = str(brand_id or "").strip() or None
     if clean_brand_id:
@@ -312,22 +381,10 @@ def _resolve_user_id(
         owner_user_id = str((row[0] if row else "") or "").strip() or None
         if owner_user_id:
             return owner_user_id
-    if not source_video_id:
-        return None
-    try:
-        row = conn.execute(
-            """
-            SELECT CAST(owner_user_id AS VARCHAR)
-            FROM youtube_videos
-            WHERE video_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            [source_video_id],
-        ).fetchone()
-    except Exception:
-        return None
-    return str((row[0] if row else "") or "").strip() or None
+    source_user_id = _resolve_source_user_id(conn, source_video_id)
+    if source_user_id:
+        return source_user_id
+    return clean_user_id
 
 
 def upsert_generated_video_record(
@@ -364,8 +421,31 @@ def upsert_generated_video_record(
     conn = get_db()
     try:
         ensure_generated_videos_schema(conn)
-        resolved_brand_id = _resolve_brand_id(conn, source_video_id, brand_id)
-        resolved_user_id = _resolve_user_id(conn, source_video_id, resolved_brand_id, user_id)
+        prefer_publish_binding = _has_publish_target_binding(
+            publish_status=publish_status,
+            primary_publish_platform=primary_publish_platform,
+            youtube_video_id=youtube_video_id,
+            instagram_media_id=instagram_media_id,
+            facebook_video_id=facebook_video_id,
+            tiktok_video_id=tiktok_video_id,
+            youtube_published_at=youtube_published_at,
+            instagram_published_at=instagram_published_at,
+            facebook_published_at=facebook_published_at,
+            tiktok_published_at=tiktok_published_at,
+        )
+        resolved_brand_id = _resolve_brand_id(
+            conn,
+            source_video_id,
+            brand_id,
+            prefer_publish_brand=prefer_publish_binding,
+        )
+        resolved_user_id = _resolve_user_id(
+            conn,
+            source_video_id,
+            resolved_brand_id,
+            user_id,
+            prefer_publish_user=prefer_publish_binding,
+        )
         raw_plan_entry_json = _serialize_raw_plan_entry(raw_plan_entry)
         normalized_generation_status = _normalize_generation_status(generation_status, publish_status)
         content_fields = _extract_content_fields(raw_plan_entry)

@@ -214,6 +214,7 @@ from app.video_shorts.services.youtube_oauth import (
     get_connected_channel_info,
     has_refresh_token,
     is_reauth_required,
+    resolve_stored_token_owner_brand,
     store_refresh_token,
     update_video_with_refresh_token,
     upload_video_with_refresh_token,
@@ -3871,8 +3872,13 @@ def _update_plan_entry_publish_state(
                 if publish_status == "published"
                 else None
             )
+            publish_owner_user_id, publish_brand_id = resolve_stored_token_owner_brand(
+                getattr(g, "vs_current_user", {}).get("id"),
+                current_brand_id(),
+            )
             upsert_generated_video_record(
-                brand_id=current_brand_id(),
+                user_id=publish_owner_user_id,
+                brand_id=publish_brand_id,
                 source_video_id=video_id,
                 source_channel_type="youtube",
                 clip_filename=clip_name,
@@ -3916,8 +3922,16 @@ def _sync_generated_video_from_plan_entry(
     if str(effective_publish_status or "").strip().lower() == "published":
         published_at = datetime.utcnow().replace(microsecond=0).isoformat()
         youtube_published_at = published_at
+    publish_owner_user_id = None
+    publish_brand_id = None
+    if youtube_published_at or entry.get("yt_video_id") or str(effective_publish_status or "").strip().lower() in {"queued", "scheduled", "uploaded", "published"}:
+        publish_owner_user_id, publish_brand_id = resolve_stored_token_owner_brand(
+            getattr(g, "vs_current_user", {}).get("id"),
+            current_brand_id(),
+        )
     upsert_generated_video_record(
-        brand_id=current_brand_id(),
+        user_id=publish_owner_user_id,
+        brand_id=publish_brand_id,
         source_video_id=source_video_id,
         source_channel_type="youtube",
         clip_filename=clip_filename,

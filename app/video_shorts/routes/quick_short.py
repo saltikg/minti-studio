@@ -59,7 +59,7 @@ from app.video_shorts.services.storage import (
     public_url_for_stored_media,
 )
 from app.video_shorts.services.user_events import track_event
-from app.video_shorts.services.youtube_oauth import has_refresh_token
+from app.video_shorts.services.youtube_oauth import has_refresh_token, resolve_stored_token_owner_brand
 from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
@@ -82,10 +82,33 @@ def _get_or_create_channel(conn, meta, owner_id, brand_id):
     if not channel_key:
         return None
     row = conn.execute(
-        "SELECT channel_id FROM youtube_channels WHERE youtube_channel_id = ? AND brand_id = ?",
-        [channel_key, brand_id],
+        """
+        SELECT channel_id, owner_user_id, brand_id
+        FROM youtube_channels
+        WHERE youtube_channel_id = ?
+        ORDER BY channel_id ASC
+        LIMIT 1
+        """,
+        [channel_key],
     ).fetchone()
     if row:
+        existing_owner_id = str(row[1] or "").strip() or None
+        existing_brand_id = str(row[2] or "").strip() or None
+        requested_owner_id = str(owner_id or "").strip() or None
+        requested_brand_id = str(brand_id or "").strip() or None
+        if (
+            requested_owner_id
+            and requested_brand_id
+            and (existing_owner_id != requested_owner_id or existing_brand_id != requested_brand_id)
+        ):
+            current_app.logger.warning(
+                "Refusing to overwrite youtube_channels ownership for %s: existing owner=%s brand=%s requested owner=%s brand=%s",
+                channel_key,
+                existing_owner_id,
+                existing_brand_id,
+                requested_owner_id,
+                requested_brand_id,
+            )
         return row[0]
 
     channel_name = meta.get("channel_title") or "YouTube Channel"
@@ -100,8 +123,8 @@ def _get_or_create_channel(conn, meta, owner_id, brand_id):
         [next_channel_id, channel_name, channel_url, notes, owner_id, channel_key, True, brand_id],
     )
     row = conn.execute(
-        "SELECT channel_id FROM youtube_channels WHERE youtube_channel_id = ? AND brand_id = ?",
-        [channel_key, brand_id],
+        "SELECT channel_id FROM youtube_channels WHERE youtube_channel_id = ? LIMIT 1",
+        [channel_key],
     ).fetchone()
     return row[0] if row else None
 
@@ -723,7 +746,8 @@ def quick_short_ingest_youtube():
     conn = get_db()
     try:
         ensure_brand_schema(conn)
-        channel_id = _get_or_create_channel(conn, meta, current_user.get("id"), brand_id)
+        channel_owner_id, channel_brand_id = resolve_stored_token_owner_brand(current_user.get("id"), brand_id)
+        channel_id = _get_or_create_channel(conn, meta, channel_owner_id, channel_brand_id)
         if not channel_id:
             return _json_error("Channel details could not be prepared.")
         video_pk = _upsert_video(conn, meta, channel_id, current_user.get("id"), brand_id)

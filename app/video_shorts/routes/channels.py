@@ -18,6 +18,7 @@ from app.video_shorts.services.generated_video_lifecycle import ensure_generated
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
+from app.video_shorts.services.youtube_oauth import resolve_stored_token_owner_brand
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
@@ -607,6 +608,7 @@ def channels_page():
 
         conn = get_db()
         owner_id = current_user["id"] if current_user else None
+        resolved_owner_id, resolved_brand_id = resolve_stored_token_owner_brand(owner_id, brand_id)
         existing = conn.execute(
             """
             SELECT channel_id
@@ -619,7 +621,7 @@ def channels_page():
               )
             LIMIT 1
             """,
-            [owner_id, brand_id, channel_url, channel_name],
+            [resolved_owner_id, resolved_brand_id, channel_url, channel_name],
         ).fetchone()
         if existing:
             conn.close()
@@ -632,7 +634,7 @@ def channels_page():
             INSERT INTO youtube_channels (channel_id, channel_name, channel_url, notes, owner_user_id, brand_id, is_active)
             VALUES (?, ?, ?, ?, ?, ?, true)
             """,
-            [next_channel_id, channel_name, channel_url, notes, owner_id, brand_id],
+            [next_channel_id, channel_name, channel_url, notes, resolved_owner_id, resolved_brand_id],
         )
         conn.commit()
         conn.close()
