@@ -1426,6 +1426,28 @@
     overflow: hidden;
     box-sizing: border-box;
   }
+  .clip-card.is-ai-suggestion {
+    border: 1px dashed rgba(125, 211, 252, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.14);
+  }
+  .clip-card.is-ai-suggestion .clip-card-body {
+    background: linear-gradient(180deg, rgba(125, 211, 252, 0.08), rgba(15, 23, 36, 0));
+  }
+  .clip-card-suggestion-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    background: rgba(125, 211, 252, 0.14);
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    color: #d6f4ff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
   .clip-rail-detail .clip-card.is-active {
     display: block;
   }
@@ -2857,7 +2879,7 @@
                         type="submit"
                         class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1">
                         <i class="bi bi-trash3" aria-hidden="true"></i>
-                        Remove AI suggestions
+                        Remove {{ ai_suggested_clip_count }} AI suggestions
                       </button>
                     </form>
                   {% endif %}
@@ -3015,8 +3037,10 @@
                 {% set modal_fb_tooltip_label = "Published date" if "published" in modal_fb_label_lower else "Schedule date" %}
                 {% set modal_fb_tooltip = modal_fb_tooltip_label ~ ": " ~ modal_fb_tooltip %}
               {% endif %}
-            <div class="clip-card"
+            <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
+                 data-origin="{{ row.origin }}"
+                 data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}"
                  data-status="{{ row.status }}"
                  data-render-job-id="{{ row.render_job_id or '' }}"
                  data-render-error="{{ row.render_error or '' }}"
@@ -3036,6 +3060,9 @@
                 </div>
                 <div class="clip-card-meta-status">
                   <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
+                    {% if row.is_ai_suggestion %}
+                      <span class="clip-card-suggestion-badge">AI · Suggested</span>
+                    {% endif %}
                     {% if row.publish_display %}
                       {% if row.publish_status == "published" %}
                         {% set yt_icon_class = "text-success" %}

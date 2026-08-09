@@ -2982,6 +2982,11 @@ def _plan_entry_has_stable_identity(entry: Dict[str, Any]) -> bool:
     return publish_status in {"scheduled", "published"}
 
 
+def _is_removable_ai_suggestion(entry: Dict[str, Any]) -> bool:
+    origin = str(entry.get("origin") or "").strip().lower()
+    return origin == "ai" and not _plan_entry_has_stable_identity(entry)
+
+
 def _choose_plan_index(preferred: Optional[int], used: set[int], next_candidate: int) -> Tuple[int, int]:
     if preferred is not None and preferred > 0 and preferred not in used:
         used.add(preferred)
@@ -4690,9 +4695,7 @@ def generate_short(video_pk):
         plan_by_index[pi] = entry
     plan_exists = bool(plan_by_index)
     plan_clip_count = len(plan_by_index)
-    ai_suggested_clip_count = sum(
-        1 for entry in plan_entries if str(entry.get("origin") or "").strip().lower() == "ai"
-    )
+    ai_suggested_clip_count = sum(1 for entry in plan_entries if _is_removable_ai_suggestion(entry))
     generated_clip_entries = []
     for entry in plan_entries:
         if entry.get("status") != "created":
@@ -4780,6 +4783,8 @@ def generate_short(video_pk):
             pi = int(pi)
         except Exception:
             continue
+        origin = str(entry.get("origin") or "manual").strip().lower() or "manual"
+        is_ai_suggestion = _is_removable_ai_suggestion(entry)
         start = entry.get("start")
         end = entry.get("end")
         try:
@@ -4983,7 +4988,8 @@ def generate_short(video_pk):
 
         clip_rows.append({
             "plan_index": pi,
-            "origin": str(entry.get("origin") or "manual").strip().lower() or "manual",
+            "origin": origin,
+            "is_ai_suggestion": is_ai_suggestion,
             "title": entry.get("title") or "",
             "start": start,
             "end": end,
@@ -8125,12 +8131,12 @@ def delete_ai_suggestions(video_pk):
         flash("Plan data not found.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
-    removed_entries = [entry for entry in plan_entries if str(entry.get("origin") or "").strip().lower() == "ai"]
+    removed_entries = [entry for entry in plan_entries if _is_removable_ai_suggestion(entry)]
     if not removed_entries:
         flash("No AI suggestions to remove.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
-    remaining_entries = [entry for entry in plan_entries if str(entry.get("origin") or "").strip().lower() != "ai"]
+    remaining_entries = [entry for entry in plan_entries if not _is_removable_ai_suggestion(entry)]
     remaining_entries = _reindex_v1_plan_entries(video_id, remaining_entries)
     try:
         _write_plan_entries(video_id, remaining_entries)
