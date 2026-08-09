@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from flask import g, jsonify, render_template, request
+from flask import g, jsonify, render_template, request, session
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.video_shorts import video_shorts_bp
@@ -39,6 +39,77 @@ VIDEO_LIST_PAGE_SIZE = 20
 def _rows_to_dict(cursor) -> List[Mapping[str, object]]:
     cols = [desc[0] for desc in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def _row_to_brand_dict(row: Optional[Sequence[object]]) -> Optional[Dict[str, object]]:
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "owner_user_id": row[1],
+        "name": row[2],
+        "slug": row[3],
+        "is_default": bool(row[4]),
+        "created_at": row[5],
+        "updated_at": row[6],
+    }
+
+
+def _load_owned_brand(
+    conn,
+    *,
+    user_id: Optional[str],
+    brand_id: Optional[str],
+) -> Optional[Dict[str, object]]:
+    owner_user_id = str(user_id or "").strip()
+    requested_brand_id = str(brand_id or "").strip()
+    if not owner_user_id or not requested_brand_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT id, owner_user_id, name, slug, COALESCE(is_default, FALSE), created_at, updated_at
+        FROM shorts_brands
+        WHERE owner_user_id = ?
+          AND id = ?
+        LIMIT 1
+        """,
+        [owner_user_id, requested_brand_id],
+    ).fetchone()
+    return _row_to_brand_dict(row)
+
+
+def _resolve_owned_brand_for_stats(conn, *, user_id: Optional[str]) -> Optional[Dict[str, object]]:
+    owner_user_id = str(user_id or "").strip()
+    if not owner_user_id:
+        g.vs_current_brand = None
+        session.pop("vs_brand_id", None)
+        return None
+
+    requested_brand_id = (
+        str((request.args.get("brand_id") or "").strip())
+        or str((((getattr(g, "vs_current_brand", None) or {}).get("id")) or "")).strip()
+        or str((session.get("vs_brand_id") or "")).strip()
+    )
+    brand = _load_owned_brand(conn, user_id=owner_user_id, brand_id=requested_brand_id)
+    if brand is None:
+        row = conn.execute(
+            """
+            SELECT id, owner_user_id, name, slug, COALESCE(is_default, FALSE), created_at, updated_at
+            FROM shorts_brands
+            WHERE owner_user_id = ?
+            ORDER BY COALESCE(is_default, FALSE) DESC, created_at ASC, id ASC
+            LIMIT 1
+            """,
+            [owner_user_id],
+        ).fetchone()
+        brand = _row_to_brand_dict(row)
+
+    g.vs_current_brand = brand
+    if brand:
+        session["vs_brand_id"] = brand["id"]
+    else:
+        session.pop("vs_brand_id", None)
+    return brand
 
 
 def _channel_filter_clause(channel_type: Optional[str]) -> Tuple[str, List[object]]:
@@ -187,9 +258,9 @@ def _brand_scope_clause(
 ) -> Tuple[str, List[object]]:
     scoped_brand_id = brand_id if brand_id is not None else current_brand_id()
     if not scoped_brand_id:
-        return "", []
+        return " AND 1 = 0", []
     if "brand_id" not in table_columns(conn, table_name):
-        return "", []
+        return " AND 1 = 0", []
     prefix = f"{alias}." if alias else ""
     return f" AND {prefix}brand_id = ?", [scoped_brand_id]
 
@@ -304,13 +375,20 @@ def _populate_thumbnails(rows: Sequence[Mapping[str, object]]) -> None:
         row["video_url"] = _video_url_for_row(row)
 
 
-def _build_filters(conn, channel_type: str, start: date, end: date):
+def _build_filters(
+    conn,
+    channel_type: str,
+    start: date,
+    end: date,
+    *,
+    brand_id: Optional[str] = None,
+):
     clause = ""
     params: List[object] = [start.isoformat(), end.isoformat()]
     if channel_type and channel_type != "all":
         clause = " AND channel_type = ?"
         params.append(channel_type)
-    brand_clause, brand_params = _brand_scope_clause(conn, SNAPSHOT_TABLE)
+    brand_clause, brand_params = _brand_scope_clause(conn, SNAPSHOT_TABLE, brand_id=brand_id)
     clause += brand_clause
     params.extend(brand_params)
     return clause, params
@@ -906,9 +984,18 @@ def _fetch_stats_video_rows(
     page: int,
     page_size: int = VIDEO_LIST_PAGE_SIZE,
 ) -> Tuple[List[Mapping[str, object]], int]:
-    base_brand_clause = " AND gv.brand_id = ?" if brand_id else ""
-    snapshot_brand_clause = " AND s.brand_id = ?" if brand_id else ""
-    brand_params = [brand_id] if brand_id else []
+    base_brand_clause, base_brand_params = _brand_scope_clause(
+        conn,
+        "dim_generated_videos",
+        alias="gv",
+        brand_id=brand_id,
+    )
+    snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
+        conn,
+        SNAPSHOT_TABLE,
+        alias="s",
+        brand_id=brand_id,
+    )
     offset = (page - 1) * page_size
 
     count_row = conn.execute(
@@ -922,7 +1009,7 @@ def _fetch_stats_video_rows(
         [
             start_date.isoformat(),
             end_date.isoformat(),
-            *brand_params,
+            *base_brand_params,
         ],
     ).fetchone()
     total_count = int((count_row or [0])[0] or 0)
@@ -988,9 +1075,9 @@ def _fetch_stats_video_rows(
         [
             start_date.isoformat(),
             end_date.isoformat(),
-            *brand_params,
-            *brand_params,
-            *brand_params,
+            *base_brand_params,
+            *snapshot_brand_params,
+            *snapshot_brand_params,
             page_size,
             offset,
         ],
@@ -1054,7 +1141,9 @@ def video_stats_page():
     try:
         ensure_snapshot_table(conn)
         ensure_subscriber_snapshot_table(conn)
-        active_brand_id = current_brand_id()
+        current_user = getattr(g, "vs_current_user", None) or {}
+        resolved_brand = _resolve_owned_brand_for_stats(conn, user_id=current_user.get("id"))
+        active_brand_id = str((resolved_brand or {}).get("id") or "").strip() or None
         snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
             conn,
             SNAPSHOT_TABLE,
@@ -1124,7 +1213,13 @@ def video_stats_page():
             for date_key, count in platform_counts.items():
                 comment_counts_all[date_key] = comment_counts_all.get(date_key, 0) + (count or 0)
 
-        filter_clause, params = _build_filters(conn, channel_type, start_date, end_date)
+        filter_clause, params = _build_filters(
+            conn,
+            channel_type,
+            start_date,
+            end_date,
+            brand_id=active_brand_id,
+        )
         chart_clause = filter_clause
         chart_params = list(params)
         daily_cursor = conn.execute(
