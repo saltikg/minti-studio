@@ -289,14 +289,16 @@
     {% endfor %}
   </div>
 
-  <section class="vs-blog-sources" aria-labelledby="article-sources-title">
-    <h2 id="article-sources-title">Sources</h2>
-    <ul>
-      {% for source in article.sources %}
-        <li><a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.label }}</a></li>
-      {% endfor %}
-    </ul>
-  </section>
+  {% if article.sources %}
+    <section class="vs-blog-sources" aria-labelledby="article-sources-title">
+      <h2 id="article-sources-title">Sources</h2>
+      <ul>
+        {% for source in article.sources %}
+          <li><a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.label }}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
 
   <section class="vs-blog-cta-card" aria-labelledby="article-cta-title">
     <h2 id="article-cta-title">{{ article.cta_title }}</h2>
