@@ -830,6 +830,8 @@ def _guard_video_shorts():
         "video_shorts_bp.serve_media",
         "video_shorts_bp.serve_instagram_media_proxy",
         "video_shorts_bp.home",
+        "video_shorts_bp.blog_index",
+        "video_shorts_bp.blog_article",
         "video_shorts_bp.switch_brand",
         "video_shorts_bp.set_default_brand",
         "video_shorts_bp.create_brand",
