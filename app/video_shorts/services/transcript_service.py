@@ -444,11 +444,14 @@ def _build_active_word_text(
     active_index: int,
     *,
     active_word_tags: str,
+    padding_spaces: int = 0,
 ) -> str:
     parts: List[str] = []
+    active_word_padding = "\\h" * max(0, int(padding_spaces))
     for index, word in enumerate(words):
         if index == active_index:
-            parts.append(f"{{\\rActiveWord{active_word_tags}}}{word}{{\\rDefault}}")
+            padded_word = f"{active_word_padding}{word}{active_word_padding}" if active_word_padding else word
+            parts.append(f"{{\\rActiveWord{active_word_tags}}}{padded_word}{{\\rDefault}}")
         else:
             parts.append(word)
     return " ".join(parts)
@@ -490,6 +493,10 @@ def _build_ass_karaoke_for_clip(
         active_box_border_style = int(preset.get("active_box_border_style", 4) or 4)
     except Exception:
         active_box_border_style = 4
+    try:
+        active_box_padding_spaces = max(0, int(preset.get("active_box_padding_spaces", 0) or 0))
+    except Exception:
+        active_box_padding_spaces = 0
     show_box = bool(preset.get("box", True))
     use_active_word_style = bool(active_box_color)
     try:
@@ -592,6 +599,7 @@ def _build_ass_karaoke_for_clip(
                                     word_tokens,
                                     index,
                                     active_word_tags=active_word_tags,
+                                    padding_spaces=active_box_padding_spaces,
                                 ),
                             )
                         )
@@ -637,6 +645,7 @@ def _build_ass_karaoke_for_clip(
                                 words,
                                 index,
                                 active_word_tags=active_word_tags,
+                                padding_spaces=active_box_padding_spaces,
                             ),
                         )
                     )

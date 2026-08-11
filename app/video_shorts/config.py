@@ -222,6 +222,7 @@ SUBTITLE_PRESETS = {
         "active_box_outline_color": "#FFD84D",
         "active_box_outline_width": 10,
         "active_box_border_style": 4,
+        "active_box_padding_spaces": 1,
     },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
