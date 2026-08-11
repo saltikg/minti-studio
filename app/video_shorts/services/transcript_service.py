@@ -439,6 +439,21 @@ def _resolve_subtitle_preset(subtitle_preset: Optional[str]) -> Dict[str, Any]:
     return SUBTITLE_PRESETS.get(preset_key, SUBTITLE_PRESETS[DEFAULT_SUBTITLE_PRESET])
 
 
+def _build_active_word_text(
+    words: List[str],
+    active_index: int,
+    *,
+    active_word_tags: str,
+) -> str:
+    parts: List[str] = []
+    for index, word in enumerate(words):
+        if index == active_index:
+            parts.append(f"{{\\rActiveWord{active_word_tags}}}{word}{{\\rDefault}}")
+        else:
+            parts.append(word)
+    return " ".join(parts)
+
+
 def _build_ass_karaoke_for_clip(
     segments: List[Dict[str, Any]],
     clip_start: float,
@@ -453,6 +468,43 @@ def _build_ass_karaoke_for_clip(
     subtitle_bg_alpha: Optional[int],
     subtitle_preset: Optional[str] = None,
 ) -> Path | None:
+    preset = _resolve_subtitle_preset(subtitle_preset)
+    active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
+    inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
+    outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
+    active_box_color = str(preset.get("active_box_color") or "").strip()
+    active_box_outline_color = str(preset.get("active_box_outline_color") or active_box_color or outline_color).strip() or outline_color
+    try:
+        outline_width = max(0, int(preset.get("outline_width", 1) or 1))
+    except Exception:
+        outline_width = 1
+    try:
+        active_box_outline_width = max(0, int(preset.get("active_box_outline_width", outline_width) or outline_width))
+    except Exception:
+        active_box_outline_width = outline_width
+    try:
+        border_style = int(preset.get("border_style", 4) or 4)
+    except Exception:
+        border_style = 4
+    try:
+        active_box_border_style = int(preset.get("active_box_border_style", 4) or 4)
+    except Exception:
+        active_box_border_style = 4
+    show_box = bool(preset.get("box", True))
+    use_active_word_style = bool(active_box_color)
+    try:
+        active_scale = max(1, int(preset.get("active_scale", 100) or 100))
+    except Exception:
+        active_scale = 100
+    bold = -1 if bool(preset.get("bold")) else 0
+    preset_font = str(preset.get("font") or "").strip()
+    resolved_font = subtitle_font
+    if preset_font and str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() != DEFAULT_SUBTITLE_PRESET:
+        resolved_font = preset_font
+    active_word_tags = ""
+    if active_scale != 100:
+        active_word_tags = f"\\fscx{active_scale}\\fscy{active_scale}"
+
     events: List[Tuple[float, float, str]] = []
 
     for seg in segments:
@@ -523,6 +575,27 @@ def _build_ass_karaoke_for_clip(
                 chunk_rel_end = max(chunk_rel_start + 0.1, float(chunk_words[-1]["end"]) - clip_start)
                 if (s < clip_start or e > clip_end) and (chunk_rel_end - chunk_rel_start) < _MIN_BOUNDARY_CUE_SECONDS:
                     continue
+                if use_active_word_style:
+                    word_tokens = [str(item["word"]).strip() for item in chunk_words if str(item.get("word") or "").strip()]
+                    for index, item in enumerate(chunk_words):
+                        item_start = max(0.0, float(item["start"]) - clip_start)
+                        next_start = (
+                            max(0.0, float(chunk_words[index + 1]["start"]) - clip_start)
+                            if index + 1 < len(chunk_words)
+                            else chunk_rel_end
+                        )
+                        events.append(
+                            (
+                                item_start,
+                                max(item_start + 0.01, next_start),
+                                _build_active_word_text(
+                                    word_tokens,
+                                    index,
+                                    active_word_tags=active_word_tags,
+                                ),
+                            )
+                        )
+                    continue
                 parts: List[str] = []
                 for item in chunk_words:
                     duration_cs = max(1, int(round(max(float(item["end"]) - float(item["start"]), 0.01) * 100)))
@@ -551,6 +624,23 @@ def _build_ass_karaoke_for_clip(
             words = [token for token in re.findall(r"\S+", chunk_text) if token]
             if not words:
                 continue
+            if use_active_word_style:
+                per_word = max((end - start) / len(words), 0.01)
+                for index in range(len(words)):
+                    word_start = start + (per_word * index)
+                    word_end = end if index == len(words) - 1 else start + (per_word * (index + 1))
+                    events.append(
+                        (
+                            word_start,
+                            max(word_start + 0.01, word_end),
+                            _build_active_word_text(
+                                words,
+                                index,
+                                active_word_tags=active_word_tags,
+                            ),
+                        )
+                    )
+                continue
             total_cs = max(1, int(round(max(end - start, 0.01) * 100)))
             base_cs = max(1, total_cs // len(words))
             remaining = total_cs - (base_cs * len(words))
@@ -562,32 +652,6 @@ def _build_ass_karaoke_for_clip(
 
     if not events:
         return None
-
-    preset = _resolve_subtitle_preset(subtitle_preset)
-    active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
-    inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
-    outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
-    try:
-        outline_width = max(0, int(preset.get("outline_width", 1) or 1))
-    except Exception:
-        outline_width = 1
-    try:
-        border_style = int(preset.get("border_style", 4) or 4)
-    except Exception:
-        border_style = 4
-    show_box = bool(preset.get("box", True))
-    try:
-        active_scale = max(1, int(preset.get("active_scale", 100) or 100))
-    except Exception:
-        active_scale = 100
-    bold = -1 if bool(preset.get("bold")) else 0
-    preset_font = str(preset.get("font") or "").strip()
-    resolved_font = subtitle_font
-    if preset_font and str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() != DEFAULT_SUBTITLE_PRESET:
-        resolved_font = preset_font
-    active_word_tags = ""
-    if active_scale != 100:
-        active_word_tags = f"\\fscx{active_scale}\\fscy{active_scale}"
     if show_box:
         back_color = _hex_to_ass_color_with_alpha(
             subtitle_bg_color,
@@ -613,18 +677,32 @@ def _build_ass_karaoke_for_clip(
         "Style: Default,"
         f"{resolved_font},"
         f"{int(subtitle_font_size)},"
-        f"{_hex_to_ass_color_with_alpha(active_color, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
+        f"{_hex_to_ass_color_with_alpha(inactive_color if use_active_word_style else active_color, 100, SUBTITLE_HIGHLIGHT_COLOR, 100)},"
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{back_color},"
         f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,2,40,40,"
         f"{int(subtitle_margin)},1",
+    ]
+    if use_active_word_style:
+        lines.append(
+            "Style: ActiveWord,"
+            f"{resolved_font},"
+            f"{int(subtitle_font_size)},"
+            f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_outline_color, 100, '#FFD84D', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
+            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,2,40,40,"
+            f"{int(subtitle_margin)},1"
+        )
+    lines.extend([
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-    ]
+    ])
     for start, end, text in events:
-        if active_word_tags:
+        if active_word_tags and not use_active_word_style:
             text = re.sub(
                 r"\{\\k(\d+)\}([^\s]+)",
                 lambda match: f"{{\\k{match.group(1)}{active_word_tags}}}{match.group(2)}{{\\rDefault}}",

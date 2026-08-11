@@ -2134,6 +2134,34 @@
       -1px 1px 0 rgba(0, 0, 0, 0.96),
       1px 1px 0 rgba(0, 0, 0, 0.96);
   }
+  .style-template-card-preview--word-highlight::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--word-highlight .style-template-card-preview-title {
+    background: #111827;
+    color: #ffffff;
+    font-family: "Anton", sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+  }
+  .style-template-card-preview--word-highlight .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Open Sans", sans-serif;
+    font-weight: 700;
+    text-shadow:
+      -2px -2px 0 rgba(0, 0, 0, 0.98),
+      2px -2px 0 rgba(0, 0, 0, 0.98),
+      -2px 2px 0 rgba(0, 0, 0, 0.98),
+      2px 2px 0 rgba(0, 0, 0, 0.98);
+  }
+  .style-template-card-preview--word-highlight .style-template-card-preview-word.is-active {
+    color: #111827;
+    background: #ffd84d;
+    padding: 3px 6px;
+    border-radius: 999px;
+    text-shadow: none;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
@@ -2516,6 +2544,37 @@
   }
   .shorts-preview-subtitle-band {
     z-index: 3;
+  }
+  .shorts-preview-subtitle-band.is-word-highlight,
+  .short-font-preview.is-word-highlight {
+    background: transparent !important;
+    box-shadow: none;
+  }
+  .shorts-preview-subtitle-band.is-word-highlight {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .short-font-preview.is-word-highlight {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .word-highlight-preview-word {
+    color: #ffffff;
+    font-weight: 700;
+    text-shadow:
+      -2px -2px 0 rgba(0, 0, 0, 0.98),
+      2px -2px 0 rgba(0, 0, 0, 0.98),
+      -2px 2px 0 rgba(0, 0, 0, 0.98),
+      2px 2px 0 rgba(0, 0, 0, 0.98);
+  }
+  .word-highlight-preview-word.is-active {
+    color: #111827;
+    background: #ffd84d;
+    padding: 0.14em 0.48em;
+    border-radius: 999px;
+    text-shadow: none;
   }
   .shorts-preview-video canvas {
     display: block;
@@ -10351,6 +10410,16 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
+  const WORD_HIGHLIGHT_PRESET = "word_highlight";
+  const wordHighlightSampleMarkup = `
+    <span class="word-highlight-preview-word">EXACTLY.</span>
+    <span class="word-highlight-preview-word">SO</span>
+    <span class="word-highlight-preview-word">IT</span>
+    <span class="word-highlight-preview-word is-active">PUTS</span>
+    <span class="word-highlight-preview-word">THEM</span>
+    <span class="word-highlight-preview-word">FOR</span>
+    <span class="word-highlight-preview-word">BOTH</span>
+  `;
   const titleFontSizeInput = document.querySelector('.short-video-body [name="title_font_size"]');
   const titleTextColorField = document.getElementById("titleTextColorValue");
   const titleTextColorCustomInput = document.getElementById("titleTextCustomColor");
@@ -10499,13 +10568,23 @@ document.addEventListener("DOMContentLoaded", function () {
     const bgHex = normalize(subtitleBgHidden?.value || "#000000");
     const textRgba = hexToRgba(textHex, textAlpha);
     const bgRgba = hexToRgba(bgHex, bgAlpha);
+    const activePreset = String(subtitlePresetField?.value || "").trim();
+    const isWordHighlight = activePreset === WORD_HIGHLIGHT_PRESET;
+    if (subtitlePreview) {
+      subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
+      subtitlePreview.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
+    }
+    if (previewSubtitle) {
+      previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
+      previewSubtitle.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
+    }
     if (subtitlePreview) {
       subtitlePreview.style.color = textRgba;
-      subtitlePreview.style.backgroundColor = bgRgba;
+      subtitlePreview.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
-      previewSubtitle.style.backgroundColor = bgRgba;
+      previewSubtitle.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
     }
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;

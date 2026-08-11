@@ -208,6 +208,21 @@ SUBTITLE_PRESETS = {
         "active_scale": 100,
         "font": "Open Sans",
     },
+    "word_highlight": {
+        "active_color": "#111827",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 3,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Open Sans",
+        "active_box_color": "#FFD84D",
+        "active_box_outline_color": "#FFD84D",
+        "active_box_outline_width": 1,
+        "active_box_border_style": 4,
+    },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
 DEFAULT_TITLE_BG_ALPHA = 92
@@ -411,6 +426,16 @@ STYLE_TEMPLATES = [
         "subtitle_preset": "clean_black",
         "title_font": "Open Sans",
         "title_font_key": "open_sans",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#111827",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "word_highlight",
+        "label": "Word Highlight",
+        "subtitle_preset": "word_highlight",
+        "title_font": "Anton",
+        "title_font_key": "anton",
         "title_text_color": "#FFFFFF",
         "title_bg_color": "#111827",
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
