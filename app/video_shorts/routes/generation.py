@@ -220,6 +220,7 @@ from app.video_shorts.services.youtube_oauth import (
     upload_video_with_refresh_token,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
+from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
     build_input_hash,
     cancel_job,
@@ -257,19 +258,9 @@ from src.trends.facebook_page_tokens import (
 )
 from app.video_shorts.youtube_api import fetch_video_stats
 
-
-DEFAULT_TIME_ZONE = "America/Los_Angeles"
 PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
 HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
-TIMEZONE_LABELS = {
-    "America/Los_Angeles": "Pacific (PST/PDT)",
-    "America/Denver": "Mountain (MST/MDT)",
-    "America/Chicago": "Central (CST/CDT)",
-    "America/New_York": "Eastern (EST/EDT)",
-    "UTC": "UTC",
-    "Europe/Istanbul": "Turkey (TRT)",
-}
 
 _TRANSCRIBE_JOB_LOCK = threading.Lock()
 _TRANSCRIBE_JOB_STATE: Dict[int, Dict[str, Any]] = {}
@@ -5462,6 +5453,9 @@ def generate_short(video_pk):
         facebook_connected=facebook_connected,
         user_time_zone_label=user_tz_label,
         user_time_zone=user_tz,
+        timezone_options=TIMEZONE_OPTIONS,
+        timezone_label_map=TIMEZONE_LABELS,
+        timezone_update_url=url_for("video_shorts_bp.profile"),
         published_created_clip_count=published_created_clip_count,
         suggested_long_video_title=suggested_long_video_title,
         long_compilation_videos=long_compilation_videos,

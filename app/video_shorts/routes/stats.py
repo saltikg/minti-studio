@@ -21,7 +21,7 @@ from app.video_shorts.services.subscriber_metrics import (
     ensure_subscriber_snapshot_table,
 )
 from app.video_shorts.services.youtube_oauth import is_reauth_required
-from app.video_shorts.routes.auth import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
+from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
 
 
 CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [

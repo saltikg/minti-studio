@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timezone
 from functools import wraps
 
-from flask import abort, current_app, g, redirect, render_template, request, session, url_for, flash
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from google_auth_oauthlib.flow import Flow
 from google.oauth2 import id_token
@@ -77,18 +77,10 @@ from app.video_shorts.services.youtube_oauth import (
     is_reauth_required,
     store_refresh_token,
 )
+from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from src.trends.instagram_tokens import get_instagram_credentials
 
-DEFAULT_TIME_ZONE = "America/Los_Angeles"
 logger = logging.getLogger(__name__)
-TIMEZONE_OPTIONS = [
-    ("America/Los_Angeles", "Pacific (PST/PDT)"),
-    ("America/Denver", "Mountain (MST/MDT)"),
-    ("America/Chicago", "Central (CST/CDT)"),
-    ("America/New_York", "Eastern (EST/EDT)"),
-    ("UTC", "UTC"),
-    ("Europe/Istanbul", "Turkey (TRT)"),
-]
 
 COMMON_WEAK_PASSWORDS = {
     "12345678",
@@ -1297,12 +1289,35 @@ def profile():
 
     if request.method == "POST":
         form_type = request.form.get("form_type")
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        explicit_time_zone = (request.form.get("time_zone") or "").strip()
+        valid_timezones = {value for value, _ in TIMEZONE_OPTIONS}
+        timezone_only_update = bool(explicit_time_zone) and form_type in {None, "", "profile"}
+        if timezone_only_update and is_xhr:
+            browser_time_zone = (request.form.get("browser_time_zone") or "").strip()
+            time_zone = explicit_time_zone
+            if time_zone not in valid_timezones:
+                time_zone = browser_time_zone if browser_time_zone in valid_timezones else DEFAULT_TIME_ZONE
+            conn.execute(
+                "UPDATE shorts_users SET time_zone = ?, updated_at = now() WHERE id = ?",
+                [time_zone, user["id"]],
+            )
+            conn.commit()
+            user["time_zone"] = time_zone
+            g.vs_current_user = user
+            return jsonify(
+                {
+                    "success": True,
+                    "time_zone": time_zone,
+                    "time_zone_label": TIMEZONE_LABELS.get(time_zone, time_zone),
+                    "message": "Time zone updated.",
+                }
+            )
         if form_type == "profile":
             name = (request.form.get("name") or "").strip()
             email = (request.form.get("email") or "").strip()
             time_zone = (request.form.get("time_zone") or "").strip()
             browser_time_zone = (request.form.get("browser_time_zone") or "").strip()
-            valid_timezones = {value for value, _ in TIMEZONE_OPTIONS}
             if time_zone not in valid_timezones:
                 time_zone = browser_time_zone if browser_time_zone in valid_timezones else DEFAULT_TIME_ZONE
             if not name:

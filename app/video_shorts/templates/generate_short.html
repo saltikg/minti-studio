@@ -3490,8 +3490,28 @@
                   </div>
                 </div>
                 <div class="card-body pt-0">
-                  <div class="d-flex align-items-center gap-2 mb-2">
-                    <label class="form-label fw-semibold text-white mb-0">Publish time ({{ user_time_zone_label }})</label>
+                  <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    <label class="form-label fw-semibold text-white mb-0">Publish time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+                    <button
+                      type="button"
+                      class="btn btn-link btn-sm text-white-50 p-0"
+                      data-timezone-editor-trigger="youtube-timezone-editor"
+                      aria-label="Edit timezone for scheduling"
+                    >
+                      <i class="bi bi-pencil"></i>
+                    </button>
+                    <div
+                      class="d-none align-items-center gap-2 flex-wrap"
+                      id="youtube-timezone-editor"
+                      data-timezone-editor
+                    >
+                      <select class="form-select form-select-sm vs-select" data-timezone-select>
+                        {% for tz_value, tz_label in timezone_options %}
+                          <option value="{{ tz_value }}" {% if tz_value == user_time_zone %}selected{% endif %}>{{ tz_label }}</option>
+                        {% endfor %}
+                      </select>
+                      <span class="small text-white-50 d-none" data-timezone-feedback></span>
+                    </div>
                   </div>
                   <input type="datetime-local" name="publish_at" class="form-control mb-2">
                   <div class="form-text text-white-50" id="youtube-latest-scheduled">
@@ -3544,7 +3564,29 @@
                       </div>
                     </div>
                     <div id="instagramScheduleGroup" class="mt-3 d-none">
-                      <label class="form-label mb-1">Instagram publish time ({{ user_time_zone_label }})</label>
+                      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                        <label class="form-label mb-0">Instagram publish time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+                        <button
+                          type="button"
+                          class="btn btn-link btn-sm text-white-50 p-0"
+                          data-timezone-editor-trigger="instagram-timezone-editor"
+                          aria-label="Edit timezone for Instagram scheduling"
+                        >
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                        <div
+                          class="d-none align-items-center gap-2 flex-wrap"
+                          id="instagram-timezone-editor"
+                          data-timezone-editor
+                        >
+                          <select class="form-select form-select-sm vs-select" data-timezone-select>
+                            {% for tz_value, tz_label in timezone_options %}
+                              <option value="{{ tz_value }}" {% if tz_value == user_time_zone %}selected{% endif %}>{{ tz_label }}</option>
+                            {% endfor %}
+                          </select>
+                          <span class="small text-white-50 d-none" data-timezone-feedback></span>
+                        </div>
+                      </div>
                       <input type="datetime-local" name="instagram_publish_at" class="form-control">
                     </div>
                   </div>
@@ -3593,7 +3635,29 @@
                       </div>
                     </div>
                     <div id="facebookScheduleGroup" class="mt-3 d-none">
-                      <label class="form-label mb-1">Facebook publish time ({{ user_time_zone_label }})</label>
+                      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                        <label class="form-label mb-0">Facebook publish time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+                        <button
+                          type="button"
+                          class="btn btn-link btn-sm text-white-50 p-0"
+                          data-timezone-editor-trigger="facebook-timezone-editor"
+                          aria-label="Edit timezone for Facebook scheduling"
+                        >
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                        <div
+                          class="d-none align-items-center gap-2 flex-wrap"
+                          id="facebook-timezone-editor"
+                          data-timezone-editor
+                        >
+                          <select class="form-select form-select-sm vs-select" data-timezone-select>
+                            {% for tz_value, tz_label in timezone_options %}
+                              <option value="{{ tz_value }}" {% if tz_value == user_time_zone %}selected{% endif %}>{{ tz_label }}</option>
+                            {% endfor %}
+                          </select>
+                          <span class="small text-white-50 d-none" data-timezone-feedback></span>
+                        </div>
+                      </div>
                       <input type="datetime-local" name="facebook_publish_at" class="form-control">
                     </div>
                   </div>
@@ -3641,7 +3705,29 @@
                       </div>
                     </div>
                     <div id="tiktokScheduleGroup" class="mt-3 d-none">
-                      <label class="form-label mb-1">TikTok publish time ({{ user_time_zone_label }})</label>
+                      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                        <label class="form-label mb-0">TikTok publish time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+                        <button
+                          type="button"
+                          class="btn btn-link btn-sm text-white-50 p-0"
+                          data-timezone-editor-trigger="tiktok-timezone-editor"
+                          aria-label="Edit timezone for TikTok scheduling"
+                        >
+                          <i class="bi bi-pencil"></i>
+                        </button>
+                        <div
+                          class="d-none align-items-center gap-2 flex-wrap"
+                          id="tiktok-timezone-editor"
+                          data-timezone-editor
+                        >
+                          <select class="form-select form-select-sm vs-select" data-timezone-select>
+                            {% for tz_value, tz_label in timezone_options %}
+                              <option value="{{ tz_value }}" {% if tz_value == user_time_zone %}selected{% endif %}>{{ tz_label }}</option>
+                            {% endfor %}
+                          </select>
+                          <span class="small text-white-50 d-none" data-timezone-feedback></span>
+                        </div>
+                      </div>
                       <input type="datetime-local" name="tiktok_publish_at" class="form-control">
                     </div>
                   </div>
@@ -7282,7 +7368,119 @@ const youtubeModalContext = (() => {
   const defaultSubmitLabel = "Schedule & publish";
   const queueOnlyLabel = "Queue only";
   const defaultUploadUrl = form.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
-  const userTimeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
+  const timeZoneUpdateUrl = {{ timezone_update_url | tojson }};
+  let userTimeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
+  const timezoneLabels = {{ timezone_label_map | tojson }};
+  const timezoneLabelEls = Array.from(form.querySelectorAll("[data-timezone-label]"));
+  const timezoneEditorEls = Array.from(form.querySelectorAll("[data-timezone-editor]"));
+  const timezoneTriggerEls = Array.from(form.querySelectorAll("[data-timezone-editor-trigger]"));
+  const hideTimezoneEditors = () => {
+    timezoneEditorEls.forEach((editor) => {
+      editor.classList.add("d-none");
+      editor.classList.remove("d-flex");
+    });
+  };
+  const syncTimezoneSelections = (value) => {
+    timezoneEditorEls.forEach((editor) => {
+      const select = editor.querySelector("[data-timezone-select]");
+      if (select) {
+        select.value = value;
+      }
+    });
+  };
+  const updateTimezoneLabels = (value, label) => {
+    const nextLabel = label || timezoneLabels[value] || value;
+    timezoneLabelEls.forEach((el) => {
+      el.textContent = nextLabel;
+    });
+  };
+  const browserTimeZone = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch (error) {
+      return "";
+    }
+  })();
+  timezoneTriggerEls.forEach((trigger) => {
+    trigger.addEventListener("click", () => {
+      const targetId = trigger.getAttribute("data-timezone-editor-trigger");
+      const editor = targetId ? document.getElementById(targetId) : null;
+      if (!editor) {
+        return;
+      }
+      const shouldOpen = editor.classList.contains("d-none");
+      hideTimezoneEditors();
+      if (shouldOpen) {
+        editor.classList.remove("d-none");
+        editor.classList.add("d-flex");
+        const select = editor.querySelector("[data-timezone-select]");
+        select?.focus();
+      }
+    });
+  });
+  timezoneEditorEls.forEach((editor) => {
+    const select = editor.querySelector("[data-timezone-select]");
+    const feedback = editor.querySelector("[data-timezone-feedback]");
+    if (!select) {
+      return;
+    }
+    select.addEventListener("change", async () => {
+      const nextTimeZone = select.value;
+      const body = new URLSearchParams();
+      body.set("form_type", "profile");
+      body.set("time_zone", nextTimeZone);
+      if (browserTimeZone) {
+        body.set("browser_time_zone", browserTimeZone);
+      }
+      select.disabled = true;
+      if (feedback) {
+        feedback.textContent = "Saving...";
+        feedback.classList.remove("d-none", "text-danger", "text-success");
+        feedback.classList.add("text-white-50");
+      }
+      try {
+        const response = await fetch(timeZoneUpdateUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: body.toString(),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || "Time zone could not be updated.");
+        }
+        userTimeZone = payload.time_zone || nextTimeZone;
+        syncTimezoneSelections(userTimeZone);
+        updateTimezoneLabels(userTimeZone, payload.time_zone_label);
+        if (feedback) {
+          feedback.textContent = payload.message || "Time zone updated.";
+          feedback.classList.remove("text-white-50", "text-danger", "d-none");
+          feedback.classList.add("text-success");
+        }
+        window.setTimeout(() => {
+          hideTimezoneEditors();
+        }, 600);
+      } catch (error) {
+        syncTimezoneSelections(userTimeZone);
+        if (feedback) {
+          feedback.textContent = error?.message || "Failed to update time zone.";
+          feedback.classList.remove("text-white-50", "text-success", "d-none");
+          feedback.classList.add("text-danger");
+        }
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-timezone-editor]") || event.target.closest("[data-timezone-editor-trigger]")) {
+      return;
+    }
+    hideTimezoneEditors();
+  });
   const normalizeForDatetimeLocal = (value) => {
     if (!value) {
       return "";

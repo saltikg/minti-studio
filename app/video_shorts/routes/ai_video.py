@@ -11,9 +11,8 @@ from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import SHORTS_DIR
+from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS
 from app.video_shorts.routes.generation import (
-    DEFAULT_TIME_ZONE,
-    TIMEZONE_LABELS,
     _find_latest_publish,
     _format_publish_display,
     _is_token_expired,
