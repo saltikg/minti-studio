@@ -1,0 +1,92 @@
+{% extends "vs_base.html" %}
+
+{% block title %}FAQ{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .vs-help-page {
+      max-width: 1140px;
+    }
+    .vs-help-subtitle {
+      color: rgba(255, 255, 255, 0.68);
+      max-width: 760px;
+    }
+    .vs-help-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .vs-help-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 220px;
+      padding: 22px;
+      border-radius: 22px;
+      text-decoration: none;
+      color: inherit;
+      background:
+        radial-gradient(circle at top right, rgba(45, 212, 191, 0.14), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.08);
+      transition: transform .16s ease, border-color .16s ease;
+    }
+    .vs-help-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(45, 212, 191, 0.35);
+      color: inherit;
+    }
+    .vs-help-card-icon {
+      width: 52px;
+      height: 52px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      background: rgba(45, 212, 191, 0.12);
+      color: #9ff5e1;
+    }
+    .vs-help-card-title {
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .vs-help-card-text {
+      color: rgba(255,255,255,0.72);
+      line-height: 1.55;
+    }
+    .vs-help-card-cta {
+      margin-top: auto;
+      color: #9ff5e1;
+      font-size: 0.88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="vs-help-page">
+    <div class="mb-4">
+      <h1 class="page-title mb-2">{{ page_title }}</h1>
+      <p class="vs-help-subtitle mb-0">{{ page_subtitle }}</p>
+    </div>
+
+    <div class="vs-help-grid">
+      {% for entry in faq_entries %}
+        <a href="{{ url_for('video_shorts_bp.help_faq_article', slug=entry.slug) }}" class="vs-help-card">
+          <div class="vs-help-card-icon">
+            <span class="material-symbols-outlined">help</span>
+          </div>
+          <div class="vs-help-card-title">{{ entry.title }}</div>
+          {% if entry.description %}
+            <div class="vs-help-card-text">{{ entry.description }}</div>
+          {% endif %}
+          <div class="vs-help-card-cta">Open FAQ →</div>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

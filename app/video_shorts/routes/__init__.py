@@ -17,6 +17,7 @@ from . import blog  # noqa: F401
 from . import image_to_video  # noqa: F401
 from . import monthly_top_video  # noqa: F401
 from . import knowledge_base  # noqa: F401
+from . import help  # noqa: F401
 from . import ai_video  # noqa: F401
 from . import interview  # noqa: F401
 from . import billing  # noqa: F401

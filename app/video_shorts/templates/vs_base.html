@@ -309,6 +309,15 @@
           </a>
           {% endif %}
 
+          <div class="sidebar-section-label">HELP</div>
+
+          <a href="{{ url_for('video_shorts_bp.help_faq_index') }}"
+             class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                    {% if '/video_shorts/help/faq' in request.path %}active{% endif %}">
+            <span class="material-symbols-outlined">help</span>
+            <span>FAQ</span>
+          </a>
+
           <div class="sidebar-section-label">WORKSPACE</div>
 
           <a href="{{ url_for('video_shorts_bp.account_page') }}"

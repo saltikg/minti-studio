@@ -1,0 +1,99 @@
+{% extends "vs_base.html" %}
+
+{% block title %}{{ entry.title }}{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .vs-help-article-page {
+      max-width: 920px;
+    }
+    .vs-help-backlink {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #9ff5e1;
+      text-decoration: none;
+      font-weight: 600;
+      margin-bottom: 18px;
+    }
+    .vs-help-backlink:hover {
+      color: #c9fff4;
+    }
+    .vs-help-article-subtitle {
+      color: rgba(255, 255, 255, 0.68);
+      max-width: 760px;
+      margin-bottom: 24px;
+    }
+    .vs-help-article-shell {
+      padding: 28px;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top right, rgba(45, 212, 191, 0.09), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .vs-help-question {
+      margin-top: 1.65rem;
+      margin-bottom: 0.7rem;
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .vs-help-heading {
+      margin-top: 1.2rem;
+      margin-bottom: 0.75rem;
+      color: #fff;
+      font-size: 1.12rem;
+      font-weight: 700;
+    }
+    .vs-help-paragraph {
+      color: rgba(255,255,255,0.82);
+      line-height: 1.7;
+      margin-bottom: 1rem;
+    }
+    .vs-help-list {
+      margin: 0 0 1rem 1.15rem;
+      padding: 0;
+      color: rgba(255,255,255,0.82);
+    }
+    .vs-help-list li {
+      margin-bottom: 0.45rem;
+      line-height: 1.6;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="vs-help-article-page">
+    <a href="{{ back_href }}" class="vs-help-backlink">
+      <span class="material-symbols-outlined">arrow_back</span>
+      <span>Back to FAQ</span>
+    </a>
+
+    <div class="mb-4">
+      <h1 class="page-title mb-2">{{ entry.title }}</h1>
+      {% if entry.description %}
+        <p class="vs-help-article-subtitle mb-0">{{ entry.description }}</p>
+      {% endif %}
+    </div>
+
+    <div class="vs-help-article-shell">
+      {% for block in entry.blocks %}
+        {% if block.type == 'question' %}
+          <h2 class="vs-help-question">{{ block.text }}</h2>
+        {% elif block.type == 'heading' %}
+          <h2 class="vs-help-heading">{{ block.text }}</h2>
+        {% elif block.type == 'paragraph' %}
+          <p class="vs-help-paragraph">{{ block.html | safe }}</p>
+        {% elif block.type == 'list' %}
+          <ul class="vs-help-list">
+            {% for item in block.items %}
+              <li>{{ item | safe }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}
