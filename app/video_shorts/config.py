@@ -220,7 +220,7 @@ SUBTITLE_PRESETS = {
         "font": "Open Sans",
         "active_box_color": "#FFD84D",
         "active_box_outline_color": "#FFD84D",
-        "active_box_outline_width": 1,
+        "active_box_outline_width": 10,
         "active_box_border_style": 4,
     },
 }
