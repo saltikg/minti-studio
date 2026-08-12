@@ -209,6 +209,52 @@ def _subtitle_force_style(
     )
 
 
+def _normalize_subtitle_overlay_specs(
+    subtitle_overlay_specs: Optional[list[Dict[str, Any]]],
+) -> list[Dict[str, Any]]:
+    normalized: list[Dict[str, Any]] = []
+    for spec in subtitle_overlay_specs or []:
+        if not isinstance(spec, dict):
+            continue
+        raw_path = spec.get("path")
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        try:
+            start = max(0.0, float(spec.get("start") or 0.0))
+            end = max(start + 0.01, float(spec.get("end") or 0.0))
+        except Exception:
+            continue
+        normalized.append({"path": path, "start": start, "end": end})
+    return normalized
+
+
+def _append_timed_subtitle_overlay_filters(
+    filter_parts: list[str],
+    final_label: str,
+    *,
+    start_input_index: int,
+    overlay_specs: list[Dict[str, Any]],
+    label_prefix: str,
+) -> tuple[str, int]:
+    next_input_index = start_input_index
+    current_label = final_label
+    for spec_index, spec in enumerate(overlay_specs):
+        src_label = f"[{label_prefix}_src_{spec_index}]"
+        out_label = f"[{label_prefix}_out_{spec_index}]"
+        start = float(spec["start"])
+        end = float(spec["end"])
+        filter_parts.append(f"[{next_input_index}:v]format=rgba{src_label}")
+        filter_parts.append(
+            f"{current_label}{src_label}overlay=0:0:enable='between(t,{start:.6f},{end:.6f})'{out_label}"
+        )
+        current_label = out_label
+        next_input_index += 1
+    return current_label, next_input_index
+
+
 def _pick_font():
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -584,6 +630,7 @@ def _compose_trimmed_with_background(
     title_font_name: str = None,
     subtitle_path: Path = None,
     subtitle_overlay_video_path: Optional[Path] = None,
+    subtitle_overlay_specs: Optional[list[Dict[str, Any]]] = None,
     subtitle_font: str = "DejaVu Sans",
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
@@ -672,6 +719,11 @@ def _compose_trimmed_with_background(
             if show_subtitle and subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists()
             else None
         )
+        effective_subtitle_overlay_specs = (
+            _normalize_subtitle_overlay_specs(subtitle_overlay_specs)
+            if show_subtitle
+            else []
+        )
         final_label = "[base]"
         filter_parts = [
             f"[0:v]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
@@ -754,7 +806,15 @@ def _compose_trimmed_with_background(
             )
             final_label = "[subout]"
         next_video_input_index = 2 + len(overlay_sources)
-        if effective_subtitle_overlay_path:
+        if effective_subtitle_overlay_specs:
+            final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
+                filter_parts,
+                final_label,
+                start_input_index=next_video_input_index,
+                overlay_specs=effective_subtitle_overlay_specs,
+                label_prefix="pod_caption",
+            )
+        elif effective_subtitle_overlay_path:
             filter_parts.append(f"[{next_video_input_index}:v]format=rgba[pod_caption_src]")
             filter_parts.append(
                 f"{final_label}[pod_caption_src]overlay=0:0:shortest=1[pod_caption_out]"
@@ -809,7 +869,10 @@ def _compose_trimmed_with_background(
         ]
         for source in overlay_sources:
             cmd.extend(["-stream_loop", "-1", "-i", str(source)])
-        if effective_subtitle_overlay_path:
+        if effective_subtitle_overlay_specs:
+            for spec in effective_subtitle_overlay_specs:
+                cmd.extend(["-loop", "1", "-i", str(spec["path"])])
+        elif effective_subtitle_overlay_path:
             cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
@@ -1244,6 +1307,11 @@ def _compose_trimmed_with_background(
         if show_subtitle and subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists()
         else None
     )
+    effective_subtitle_overlay_specs = (
+        _normalize_subtitle_overlay_specs(subtitle_overlay_specs)
+        if show_subtitle
+        else []
+    )
     try:
         safe_title_line_spacing_main = int(title_line_spacing if title_line_spacing is not None else -4)
     except (TypeError, ValueError):
@@ -1417,7 +1485,15 @@ def _compose_trimmed_with_background(
         )
         final_label = "[subout]"
     next_video_input_index = 3 if direct_audio_source else 2
-    if effective_subtitle_overlay_path:
+    if effective_subtitle_overlay_specs:
+        final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
+            filter_parts,
+            final_label,
+            start_input_index=next_video_input_index,
+            overlay_specs=effective_subtitle_overlay_specs,
+            label_prefix="caption",
+        )
+    elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
         filter_parts.append(
             f"{final_label}[caption_src]overlay=0:0:shortest=1[caption_out]"
@@ -1494,7 +1570,10 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = "2:a"
-    if effective_subtitle_overlay_path:
+    if effective_subtitle_overlay_specs:
+        for spec in effective_subtitle_overlay_specs:
+            cmd.extend(["-loop", "1", "-i", str(spec["path"])])
+    elif effective_subtitle_overlay_path:
         cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
     if overlay_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
@@ -1546,7 +1625,10 @@ def _compose_trimmed_with_background(
                 ]
             )
             audio_map_music_only = "2:a"
-        if effective_subtitle_overlay_path:
+        if effective_subtitle_overlay_specs:
+            for spec in effective_subtitle_overlay_specs:
+                cmd.extend(["-loop", "1", "-i", str(spec["path"])])
+        elif effective_subtitle_overlay_path:
             cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])

@@ -1486,42 +1486,7 @@ def _build_word_highlight_caption_overlay(
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None, [], {"reason": "no_specs"}
 
-    concat_path = temp_dir / "captions.ffconcat"
-    concat_lines = ["ffconcat version 1.0"]
-    for index, spec in enumerate(overlay_specs):
-        duration = max(0.01, float(spec["end"]) - float(spec["start"]))
-        concat_lines.append(f"file '{spec['path'].name}'")
-        concat_lines.append(f"duration {duration:.6f}")
-        if index == len(overlay_specs) - 1:
-            concat_lines.append(f"file '{spec['path'].name}'")
-    concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
-
-    overlay_video_path = temp_dir / "caption_overlay.mov"
-    ffmpeg = _resolve_ffmpeg()
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_path),
-        "-c:v",
-        "qtrle",
-        "-pix_fmt",
-        "argb",
-        str(overlay_video_path),
-    ]
-    run_media_subprocess(
-        cmd,
-        operation="build_word_highlight_overlay",
-        context=f"clip={clip_start:.2f}-{clip_end:.2f}",
-        output_paths=[overlay_video_path],
-        check=True,
-        timeout=FFMPEG_RENDER_TIMEOUT,
-    )
-    return overlay_video_path, cleanup_paths, {"specs": overlay_specs, "temp_dir": str(temp_dir)}
+    return None, cleanup_paths, {"specs": overlay_specs, "temp_dir": str(temp_dir)}
 
 
 def _build_srt_from_text(text: str, clip_start: float, clip_end: float) -> Path | None:

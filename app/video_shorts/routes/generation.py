@@ -13141,6 +13141,7 @@ def autoclip_video(video_pk):
     subscribe_overlay_path = None
     subscribe_overlay_path_is_temp = False
     subtitle_overlay_video_path = None
+    subtitle_overlay_specs: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
     made = 0
     missing_outputs = 0
@@ -13199,12 +13200,12 @@ def autoclip_video(video_pk):
                         subtitle_margin=sub_margin,
                         subtitle_preset=video_subtitle_preset,
                     )
-                    if subtitle_overlay_video_path:
+                    subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
+                    if subtitle_overlay_specs:
                         current_app.logger.info(
-                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s overlay=%s",
+                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps",
                             clip_filename,
-                            len((overlay_meta or {}).get("specs") or []),
-                            subtitle_overlay_video_path,
+                            len(subtitle_overlay_specs),
                         )
                     else:
                         current_app.logger.warning(
@@ -13519,6 +13520,7 @@ def autoclip_video(video_pk):
                 title_font_name,
                 subtitle_srt,
                 subtitle_overlay_video_path=subtitle_overlay_video_path,
+                subtitle_overlay_specs=subtitle_overlay_specs,
                 subtitle_font=sub_font_name,
                 title_font_size=title_font_size,
                 title_margin=title_margin,
