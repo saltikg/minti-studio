@@ -1337,7 +1337,8 @@ def _render_word_highlight_caption_frame(
     outline_rgba = _hex_to_rgba(outline_color)
 
     for word in layout["words"]:
-        fill = active_rgba if word["global_index"] == active_index else inactive_rgba
+        is_active_word = int(word["global_index"]) == int(active_index)
+        fill = active_rgba if is_active_word else inactive_rgba
         _draw_outlined_text(
             draw,
             int(word["x"]),
@@ -1346,7 +1347,7 @@ def _render_word_highlight_caption_frame(
             font=font,
             fill=fill,
             stroke_fill=outline_rgba,
-            stroke_width=outline_width,
+            stroke_width=0 if is_active_word else outline_width,
         )
 
     image.save(out_path)
