@@ -1,9 +1,12 @@
 import json
+import math
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from PIL import Image, ImageDraw, ImageFont
 
 from flask import current_app
 
@@ -15,6 +18,7 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFPROBE_TIMEOUT,
     OPENAI_MODEL,
+    SUBTITLE_PILL_FONT_MAP,
     SUBTITLE_PRESETS,
     SUBTITLE_HIGHLIGHT_COLOR,
     WHISPER_MODEL,
@@ -37,6 +41,13 @@ _TR_STOPWORDS = {
 }
 _MIN_BOUNDARY_CUE_SECONDS = 0.7
 KARAOKE_MAX_WORDS = 4
+_ASS_RENDER_WIDTH = 720
+_ASS_RENDER_HEIGHT = 1280
+_ASS_MARGIN_L = 40
+_ASS_MARGIN_R = 40
+_PILL_CURVE_FACTOR = 0.55228475
+_PILLOW_CAPTION_WIDTH = 720
+_PILLOW_CAPTION_HEIGHT = 1280
 
 
 def _normalize_whisper_language(raw: Any) -> str:
@@ -439,11 +450,155 @@ def _resolve_subtitle_preset(subtitle_preset: Optional[str]) -> Dict[str, Any]:
     return SUBTITLE_PRESETS.get(preset_key, SUBTITLE_PRESETS[DEFAULT_SUBTITLE_PRESET])
 
 
+def _pill_font_metrics(
+    preset_key: str,
+    resolved_font: str,
+    subtitle_font_size: int,
+) -> tuple[ImageFont.FreeTypeFont, str] | None:
+    entry = SUBTITLE_PILL_FONT_MAP.get(preset_key)
+    if not entry:
+        return None
+    expected_font_name = str(entry.get("ass_font_name") or "").strip()
+    font_path = Path(entry.get("font_path") or "")
+    if not expected_font_name or not font_path.exists():
+        current_app.logger.warning(
+            "pill_font_missing preset=%s expected=%r path=%s",
+            preset_key,
+            expected_font_name,
+            font_path,
+        )
+        return None
+    if resolved_font != expected_font_name:
+        current_app.logger.warning(
+            "pill_font_mismatch preset=%s resolved=%r expected=%r; falling back to box highlight",
+            preset_key,
+            resolved_font,
+            expected_font_name,
+        )
+        return None
+    try:
+        font = ImageFont.truetype(str(font_path), int(subtitle_font_size))
+    except Exception as exc:
+        current_app.logger.warning(
+            "pill_font_load_failed preset=%s path=%s size=%s error=%s",
+            preset_key,
+            font_path,
+            subtitle_font_size,
+            exc,
+        )
+        return None
+    return font, expected_font_name
+
+
+def _measure_text_width(font: ImageFont.FreeTypeFont, text: str) -> int:
+    if not text:
+        return 0
+    try:
+        return int(round(float(font.getlength(text))))
+    except Exception:
+        bbox = font.getbbox(text)
+        return int(max(0, bbox[2] - bbox[0]))
+
+
+def _measure_line_height(font: ImageFont.FreeTypeFont) -> int:
+    try:
+        ascent, descent = font.getmetrics()
+        return int(max(1, ascent + descent))
+    except Exception:
+        bbox = font.getbbox("Ag")
+        return int(max(1, bbox[3] - bbox[1]))
+
+
+def _build_ass_pill_shape(width: float, height: float) -> str:
+    safe_width = max(1.0, float(width))
+    safe_height = max(1.0, float(height))
+    radius = max(1.0, min(safe_height / 2.0, safe_width / 2.0))
+    curve = radius * _PILL_CURVE_FACTOR
+    right = safe_width
+    bottom = safe_height
+    return (
+        f"m {radius:.2f} 0 "
+        f"l {right - radius:.2f} 0 "
+        f"b {right - radius + curve:.2f} 0 {right:.2f} {radius - curve:.2f} {right:.2f} {radius:.2f} "
+        f"l {right:.2f} {bottom - radius:.2f} "
+        f"b {right:.2f} {bottom - radius + curve:.2f} {right - radius + curve:.2f} {bottom:.2f} {right - radius:.2f} {bottom:.2f} "
+        f"l {radius:.2f} {bottom:.2f} "
+        f"b {radius - curve:.2f} {bottom:.2f} 0 {bottom - radius + curve:.2f} 0 {bottom - radius:.2f} "
+        f"l 0 {radius:.2f} "
+        f"b 0 {radius - curve:.2f} {radius - curve:.2f} 0 {radius:.2f} 0"
+    )
+
+
+def _rendered_active_token(word: str, padding_spaces: int) -> str:
+    hard_padding = " " * max(0, int(padding_spaces))
+    return f"{hard_padding}{word}{hard_padding}" if hard_padding else word
+
+
+def _rendered_line_parts(words: List[str], active_index: int, padding_spaces: int) -> tuple[str, str, str]:
+    rendered_words: List[str] = []
+    for index, word in enumerate(words):
+        if index == active_index:
+            rendered_words.append(_rendered_active_token(word, padding_spaces))
+        else:
+            rendered_words.append(word)
+    full_line = " ".join(rendered_words)
+    before_parts = rendered_words[:active_index]
+    before_text = " ".join(before_parts)
+    if before_text:
+        before_text += " "
+    active_token = rendered_words[active_index]
+    return full_line, before_text, active_token
+
+
+def _compute_single_line_pill_layout(
+    font: ImageFont.FreeTypeFont,
+    words: List[str],
+    *,
+    active_index: int,
+    pad_x: int,
+    subtitle_margin: int,
+    pad_y: int,
+    effective_line_width: int,
+) -> Dict[str, int] | None:
+    full_line = " ".join(words)
+    before_text = " ".join(words[:active_index])
+    if before_text:
+        before_text += " "
+    line_width = _measure_text_width(font, full_line)
+    if line_width > effective_line_width:
+        return None
+    line_height = _measure_line_height(font)
+    text_top = max(0, _ASS_RENDER_HEIGHT - int(subtitle_margin) - line_height)
+    x0 = max(_ASS_MARGIN_L, int(round((_ASS_RENDER_WIDTH - line_width) / 2)))
+    before_width = _measure_text_width(font, before_text)
+    active_word_width = _measure_text_width(font, words[active_index])
+    pill_height = line_height + (pad_y * 2)
+    pill_width = max(active_word_width + (pad_x * 2), pill_height + 2)
+    word_left = x0 + before_width
+    pill_left = int(round(word_left - pad_x))
+    pill_top = text_top - pad_y
+    return {
+        "x0": x0,
+        "text_top": text_top,
+        "line_width": line_width,
+        "line_height": line_height,
+        "before_width": before_width,
+        "active_word_width": active_word_width,
+        "word_left": int(round(word_left)),
+        "pill_left": pill_left,
+        "pill_top": pill_top,
+        "pill_width": int(round(pill_width)),
+        "pill_height": pill_height,
+    }
+
+
 def _build_active_word_text(
     words: List[str],
     active_index: int,
     *,
     active_word_tags: str,
+    active_style_name: str = "ActiveWord",
+    reset_style_name: str = "Default",
     padding_spaces: int = 0,
 ) -> str:
     parts: List[str] = []
@@ -451,7 +606,7 @@ def _build_active_word_text(
     for index, word in enumerate(words):
         if index == active_index:
             padded_word = f"{active_word_padding}{word}{active_word_padding}" if active_word_padding else word
-            parts.append(f"{{\\rActiveWord{active_word_tags}}}{padded_word}{{\\rDefault}}")
+            parts.append(f"{{\\r{active_style_name}{active_word_tags}}}{padded_word}{{\\r{reset_style_name}}}")
         else:
             parts.append(word)
     return " ".join(parts)
@@ -472,6 +627,7 @@ def _build_ass_karaoke_for_clip(
     subtitle_preset: Optional[str] = None,
 ) -> Path | None:
     preset = _resolve_subtitle_preset(subtitle_preset)
+    preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
     inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
@@ -497,6 +653,7 @@ def _build_ass_karaoke_for_clip(
         active_box_padding_spaces = max(0, int(preset.get("active_box_padding_spaces", 0) or 0))
     except Exception:
         active_box_padding_spaces = 0
+    pill_enabled = bool(preset.get("active_pill"))
     show_box = bool(preset.get("box", True))
     use_active_word_style = bool(active_box_color)
     try:
@@ -508,11 +665,19 @@ def _build_ass_karaoke_for_clip(
     resolved_font = subtitle_font
     if preset_font and str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() != DEFAULT_SUBTITLE_PRESET:
         resolved_font = preset_font
+    pill_metrics = _pill_font_metrics(preset_key, resolved_font, subtitle_font_size) if pill_enabled else None
+    pill_font = pill_metrics[0] if pill_metrics else None
+    pill_padding_x = max(10, int(round(float(subtitle_font_size) * 0.48)))
+    pill_padding_y = max(4, int(round(float(subtitle_font_size) * 0.14)))
+    effective_line_width = _ASS_RENDER_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R
+    pill_single_line_count = 0
+    pill_wrap_fallback_count = 0
+    pill_font_fallback_count = 0
     active_word_tags = ""
     if active_scale != 100:
         active_word_tags = f"\\fscx{active_scale}\\fscy{active_scale}"
 
-    events: List[Tuple[float, float, str]] = []
+    events: List[Dict[str, Any]] = []
 
     for seg in segments:
         try:
@@ -584,6 +749,79 @@ def _build_ass_karaoke_for_clip(
                     continue
                 if use_active_word_style:
                     word_tokens = [str(item["word"]).strip() for item in chunk_words if str(item.get("word") or "").strip()]
+                    if pill_enabled and pill_font and word_tokens:
+                        layout_probe = _compute_single_line_pill_layout(
+                            pill_font,
+                            word_tokens,
+                            active_index=0,
+                            pad_x=pill_padding_x,
+                            subtitle_margin=subtitle_margin,
+                            pad_y=pill_padding_y,
+                            effective_line_width=effective_line_width,
+                        )
+                        if layout_probe is not None:
+                            for index, item in enumerate(chunk_words):
+                                item_start = max(0.0, float(item["start"]) - clip_start)
+                                next_start = (
+                                    max(0.0, float(chunk_words[index + 1]["start"]) - clip_start)
+                                    if index + 1 < len(chunk_words)
+                                    else chunk_rel_end
+                                )
+                                layout = _compute_single_line_pill_layout(
+                                    pill_font,
+                                    word_tokens,
+                                    active_index=index,
+                                    pad_x=pill_padding_x,
+                                    subtitle_margin=subtitle_margin,
+                                    pad_y=pill_padding_y,
+                                    effective_line_width=effective_line_width,
+                                )
+                                if layout is None:
+                                    pill_wrap_fallback_count += (len(chunk_words) - index)
+                                    break
+                                events.append(
+                                    {
+                                        "layer": 0,
+                                        "start": item_start,
+                                        "end": max(item_start + 0.01, next_start),
+                                        "style": "PillShape",
+                                        "text": f"{{\\an7\\pos({layout['pill_left']},{layout['pill_top']})\\bord0\\shad0\\fscx100\\fscy100\\p1}}{_build_ass_pill_shape(layout['pill_width'], layout['pill_height'])}{{\\p0}}",
+                                    }
+                                )
+                                events.append(
+                                    {
+                                        "layer": 1,
+                                        "start": item_start,
+                                        "end": max(item_start + 0.01, next_start),
+                                        "style": "Default",
+                                        "text": (
+                                            f"{{\\an7\\pos({layout['x0']},{layout['text_top']})}}"
+                                            + _build_active_word_text(
+                                                word_tokens,
+                                                index,
+                                                active_word_tags="",
+                                                active_style_name="GhostWord",
+                                                reset_style_name="Default",
+                                                padding_spaces=0,
+                                            )
+                                        ),
+                                    }
+                                )
+                                events.append(
+                                    {
+                                        "layer": 2,
+                                        "start": item_start,
+                                        "end": max(item_start + 0.01, next_start),
+                                        "style": "ActiveWordText",
+                                        "text": f"{{\\an7\\pos({layout['word_left']},{layout['text_top']}){active_word_tags}}}{word_tokens[index]}",
+                                    }
+                                )
+                                pill_single_line_count += 1
+                            else:
+                                continue
+                        pill_wrap_fallback_count += len(chunk_words)
+                    elif pill_enabled and not pill_font:
+                        pill_font_fallback_count += len(chunk_words)
                     for index, item in enumerate(chunk_words):
                         item_start = max(0.0, float(item["start"]) - clip_start)
                         next_start = (
@@ -592,23 +830,35 @@ def _build_ass_karaoke_for_clip(
                             else chunk_rel_end
                         )
                         events.append(
-                            (
-                                item_start,
-                                max(item_start + 0.01, next_start),
-                                _build_active_word_text(
+                            {
+                                "layer": 0,
+                                "start": item_start,
+                                "end": max(item_start + 0.01, next_start),
+                                "style": "Default",
+                                "text": _build_active_word_text(
                                     word_tokens,
                                     index,
                                     active_word_tags=active_word_tags,
+                                    active_style_name="ActiveWord",
+                                    reset_style_name="Default",
                                     padding_spaces=active_box_padding_spaces,
                                 ),
-                            )
+                            }
                         )
                     continue
                 parts: List[str] = []
                 for item in chunk_words:
                     duration_cs = max(1, int(round(max(float(item["end"]) - float(item["start"]), 0.01) * 100)))
                     parts.append(f"{{\\k{duration_cs}}}{item['word']}")
-                events.append((chunk_rel_start, chunk_rel_end, "{\\k0}" + " ".join(parts)))
+                events.append(
+                    {
+                        "layer": 0,
+                        "start": chunk_rel_start,
+                        "end": chunk_rel_end,
+                        "style": "Default",
+                        "text": "{\\k0}" + " ".join(parts),
+                    }
+                )
             continue
 
         text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
@@ -634,20 +884,93 @@ def _build_ass_karaoke_for_clip(
                 continue
             if use_active_word_style:
                 per_word = max((end - start) / len(words), 0.01)
+                if pill_enabled and pill_font:
+                    layout_probe = _compute_single_line_pill_layout(
+                        pill_font,
+                        words,
+                        active_index=0,
+                        pad_x=pill_padding_x,
+                        subtitle_margin=subtitle_margin,
+                        pad_y=pill_padding_y,
+                        effective_line_width=effective_line_width,
+                    )
+                    if layout_probe is not None:
+                        for index in range(len(words)):
+                            word_start = start + (per_word * index)
+                            word_end = end if index == len(words) - 1 else start + (per_word * (index + 1))
+                            layout = _compute_single_line_pill_layout(
+                                pill_font,
+                                words,
+                                active_index=index,
+                                pad_x=pill_padding_x,
+                                subtitle_margin=subtitle_margin,
+                                pad_y=pill_padding_y,
+                                effective_line_width=effective_line_width,
+                            )
+                            if layout is None:
+                                pill_wrap_fallback_count += (len(words) - index)
+                                break
+                            events.append(
+                                {
+                                    "layer": 0,
+                                    "start": word_start,
+                                    "end": max(word_start + 0.01, word_end),
+                                    "style": "PillShape",
+                                    "text": f"{{\\an7\\pos({layout['pill_left']},{layout['pill_top']})\\bord0\\shad0\\fscx100\\fscy100\\p1}}{_build_ass_pill_shape(layout['pill_width'], layout['pill_height'])}{{\\p0}}",
+                                }
+                            )
+                            events.append(
+                                {
+                                    "layer": 1,
+                                    "start": word_start,
+                                    "end": max(word_start + 0.01, word_end),
+                                    "style": "Default",
+                                    "text": (
+                                        f"{{\\an7\\pos({layout['x0']},{layout['text_top']})}}"
+                                        + _build_active_word_text(
+                                            words,
+                                            index,
+                                            active_word_tags="",
+                                            active_style_name="GhostWord",
+                                            reset_style_name="Default",
+                                            padding_spaces=0,
+                                        )
+                                    ),
+                                }
+                            )
+                            events.append(
+                                {
+                                    "layer": 2,
+                                    "start": word_start,
+                                    "end": max(word_start + 0.01, word_end),
+                                    "style": "ActiveWordText",
+                                    "text": f"{{\\an7\\pos({layout['word_left']},{layout['text_top']}){active_word_tags}}}{words[index]}",
+                                }
+                            )
+                            pill_single_line_count += 1
+                        else:
+                            continue
+                    pill_wrap_fallback_count += len(words)
+                elif pill_enabled and not pill_font:
+                    pill_font_fallback_count += len(words)
                 for index in range(len(words)):
                     word_start = start + (per_word * index)
                     word_end = end if index == len(words) - 1 else start + (per_word * (index + 1))
                     events.append(
-                        (
-                            word_start,
-                            max(word_start + 0.01, word_end),
-                            _build_active_word_text(
+                        {
+                            "layer": 0,
+                            "start": word_start,
+                            "end": max(word_start + 0.01, word_end),
+                            "style": "Default",
+                            "text": _build_active_word_text(
                                 words,
                                 index,
                                 active_word_tags=active_word_tags,
+                                active_style_name="ActiveWord",
+                                reset_style_name="Default",
                                 padding_spaces=active_box_padding_spaces,
                             ),
-                        )
+                        }
                     )
                 continue
             total_cs = max(1, int(round(max(end - start, 0.01) * 100)))
@@ -657,7 +980,7 @@ def _build_ass_karaoke_for_clip(
             for idx, token in enumerate(words):
                 duration_cs = max(1, base_cs + (1 if idx < remaining else 0))
                 parts.append(f"{{\\k{duration_cs}}}{token}")
-            events.append((start, end, "{\\k0}" + " ".join(parts)))
+            events.append({"layer": 0, "start": start, "end": end, "style": "Default", "text": "{\\k0}" + " ".join(parts)})
 
     if not events:
         return None
@@ -705,12 +1028,43 @@ def _build_ass_karaoke_for_clip(
             f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,2,40,40,"
             f"{int(subtitle_margin)},1"
         )
+        lines.append(
+            "Style: ActiveWordText,"
+            f"{resolved_font},"
+            f"{int(subtitle_font_size)},"
+            f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
+            f"{_hex_to_ass_color_with_alpha(outline_color, 0, '#000000', 0)},"
+            f"{_hex_to_ass_color_with_alpha('#000000', 0, '#000000', 0)},"
+            f"{bold},0,0,0,100,100,0,0,1,0,0,7,0,0,0,1"
+        )
+        lines.append(
+            "Style: GhostWord,"
+            f"{resolved_font},"
+            f"{int(subtitle_font_size)},"
+            "&HFF000000,"
+            "&HFF000000,"
+            "&HFF000000,"
+            "&HFF000000,"
+            f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,2,40,40,{int(subtitle_margin)},1"
+        )
+        lines.append(
+            "Style: PillShape,"
+            f"{resolved_font},"
+            f"{int(subtitle_font_size)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
+            f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
+            "0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1"
+        )
     lines.extend([
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ])
-    for start, end, text in events:
+    for event in events:
+        text = str(event["text"])
         if active_word_tags and not use_active_word_style:
             text = re.sub(
                 r"\{\\k(\d+)\}([^\s]+)",
@@ -718,7 +1072,15 @@ def _build_ass_karaoke_for_clip(
                 text,
             )
         lines.append(
-            f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Default,,0,0,0,,{text}"
+            f"Dialogue: {int(event.get('layer', 0))},{_format_ass_time(float(event['start']))},{_format_ass_time(float(event['end']))},{event.get('style', 'Default')},,0,0,0,,{text}"
+        )
+    if pill_enabled:
+        current_app.logger.info(
+            "subtitle_pill_stats preset=%s single_line=%s wrap_fallback=%s font_fallback=%s",
+            preset_key,
+            pill_single_line_count,
+            pill_wrap_fallback_count,
+            pill_font_fallback_count,
         )
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ass")
@@ -726,6 +1088,440 @@ def _build_ass_karaoke_for_clip(
     tmp.write("\n".join(lines).encode("utf-8"))
     tmp.close()
     return tmp_path
+
+
+def _hex_to_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
+    value = str(color or "").strip()
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        value = "#FFFFFF"
+    return (
+        int(value[1:3], 16),
+        int(value[3:5], 16),
+        int(value[5:7], 16),
+        max(0, min(255, int(alpha))),
+    )
+
+
+def _wrap_words_to_lines(
+    words: List[str],
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    slot_widths: Optional[List[int]] = None,
+) -> List[List[Dict[str, Any]]]:
+    lines: List[List[Dict[str, Any]]] = []
+    current_line: List[Dict[str, Any]] = []
+    current_width = 0
+    space_width = _measure_text_width(font, " ")
+
+    for index, word in enumerate(words):
+        word_width = _measure_text_width(font, word)
+        slot_width = max(word_width, int((slot_widths or [])[index])) if slot_widths and index < len(slot_widths) else word_width
+        candidate_width = slot_width if not current_line else current_width + space_width + slot_width
+        if current_line and candidate_width > max_width:
+            lines.append(current_line)
+            current_line = [{"word": word, "width": word_width, "slot_width": slot_width}]
+            current_width = slot_width
+            continue
+        current_line.append({"word": word, "width": word_width, "slot_width": slot_width})
+        current_width = candidate_width
+
+    if current_line:
+        lines.append(current_line)
+    return lines
+
+
+def _layout_wrapped_caption(
+    words: List[str],
+    *,
+    font: ImageFont.FreeTypeFont,
+    subtitle_margin: int,
+    max_width: int,
+    canvas_width: int,
+    canvas_height: int,
+    slot_widths: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    lines = _wrap_words_to_lines(words, font, max_width, slot_widths=slot_widths)
+    space_width = _measure_text_width(font, " ")
+    line_height = _measure_line_height(font)
+    line_gap = max(4, int(round(line_height * 0.18)))
+    total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
+    block_top = max(0, canvas_height - int(subtitle_margin) - total_height)
+
+    positioned_lines: List[Dict[str, Any]] = []
+    flat_words: List[Dict[str, Any]] = []
+    word_index = 0
+    for line_number, line_words in enumerate(lines):
+        line_width = sum(int(item.get("slot_width") or item["width"]) for item in line_words)
+        if len(line_words) > 1:
+            line_width += space_width * (len(line_words) - 1)
+        line_x = int(round((canvas_width - line_width) / 2))
+        line_y = block_top + (line_number * (line_height + line_gap))
+        slot_x = line_x
+        positioned_words: List[Dict[str, Any]] = []
+        for pos, item in enumerate(line_words):
+            slot_width = int(item.get("slot_width") or item["width"])
+            word_x = int(round(slot_x + max(0, (slot_width - item["width"]) / 2.0)))
+            entry = {
+                "word": item["word"],
+                "width": item["width"],
+                "slot_width": slot_width,
+                "slot_x": slot_x,
+                "x": word_x,
+                "y": line_y,
+                "line_index": line_number,
+                "line_width": line_width,
+                "global_index": word_index,
+            }
+            positioned_words.append(entry)
+            flat_words.append(entry)
+            word_index += 1
+            slot_x += slot_width
+            if pos < len(line_words) - 1:
+                slot_x += space_width
+        positioned_lines.append(
+            {
+                "x": line_x,
+                "y": line_y,
+                "width": line_width,
+                "words": positioned_words,
+            }
+        )
+
+    return {
+        "lines": positioned_lines,
+        "words": flat_words,
+        "line_height": line_height,
+        "line_gap": line_gap,
+        "total_height": total_height,
+    }
+
+
+def _draw_outlined_text(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    text: str,
+    *,
+    font: ImageFont.FreeTypeFont,
+    fill: tuple[int, int, int, int],
+    stroke_fill: tuple[int, int, int, int],
+    stroke_width: int,
+) -> None:
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill,
+        stroke_fill=stroke_fill,
+        stroke_width=stroke_width,
+        anchor="la",
+    )
+
+
+def _render_word_highlight_caption_frame(
+    words: List[str],
+    *,
+    active_index: int,
+    font: ImageFont.FreeTypeFont,
+    subtitle_margin: int,
+    font_size: int,
+    inactive_color: str,
+    active_color: str,
+    outline_color: str,
+    outline_width: int,
+    pill_color: str,
+    out_path: Path,
+) -> Dict[str, Any]:
+    probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe_image)
+    base_pad_x = max(10, int(round(float(font_size) * 0.48)))
+    pad_y = max(4, int(round(float(font_size) * 0.14)))
+    word_metrics: List[Dict[str, int]] = []
+    for word in words:
+        bbox = probe_draw.textbbox(
+            (0, 0),
+            str(word),
+            font=font,
+            anchor="la",
+            stroke_width=outline_width,
+        )
+        text_w = max(1, int(bbox[2] - bbox[0]))
+        text_h = max(1, int(bbox[3] - bbox[1]))
+        pill_h = text_h + (pad_y * 2)
+        desired_pill_w = max(text_w + (base_pad_x * 2), int(round(pill_h * 2.0)))
+        word_metrics.append(
+            {
+                "text_w": text_w,
+                "text_h": text_h,
+                "pill_h": pill_h,
+                "desired_pill_w": desired_pill_w,
+            }
+        )
+
+    slot_widths = [metric["text_w"] for metric in word_metrics]
+    slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
+    layout = _layout_wrapped_caption(
+        words,
+        font=font,
+        subtitle_margin=subtitle_margin,
+        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
+        canvas_width=_PILLOW_CAPTION_WIDTH,
+        canvas_height=_PILLOW_CAPTION_HEIGHT,
+        slot_widths=slot_widths,
+    )
+    image = Image.new("RGBA", (_PILLOW_CAPTION_WIDTH, _PILLOW_CAPTION_HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    active_word = layout["words"][active_index]
+    active_bbox = draw.textbbox(
+        (int(active_word["x"]), int(active_word["y"])),
+        str(active_word["word"]),
+        font=font,
+        anchor="la",
+        stroke_width=outline_width,
+    )
+    active_text_w = max(1, int(active_bbox[2] - active_bbox[0]))
+    active_text_h = max(1, int(active_bbox[3] - active_bbox[1]))
+    pill_h = active_text_h + (pad_y * 2)
+    radius = pill_h // 2
+    min_pill_w = int(round(pill_h * 2.0))
+    slot_width = max(int(active_word.get("slot_width") or active_text_w), min_pill_w)
+
+    line_words = layout["lines"][int(active_word["line_index"])]["words"]
+    line_index = next(
+        (
+            idx
+            for idx, candidate in enumerate(line_words)
+            if int(candidate["global_index"]) == int(active_word["global_index"])
+        ),
+        0,
+    )
+
+    left_gap = None
+    right_gap = None
+    if line_index > 0:
+        prev_word = line_words[line_index - 1]
+        prev_bbox = draw.textbbox(
+            (int(prev_word["x"]), int(prev_word["y"])),
+            str(prev_word["word"]),
+            font=font,
+            anchor="la",
+            stroke_width=outline_width,
+        )
+        left_gap = max(0, int(active_bbox[0] - prev_bbox[2]))
+    if line_index + 1 < len(line_words):
+        next_word = line_words[line_index + 1]
+        next_bbox = draw.textbbox(
+            (int(next_word["x"]), int(next_word["y"])),
+            str(next_word["word"]),
+            font=font,
+            anchor="la",
+            stroke_width=outline_width,
+        )
+        right_gap = max(0, int(next_bbox[0] - active_bbox[2]))
+
+    pill_w = slot_width
+    pill_left = int(round((int(active_word.get("slot_x") or active_bbox[0]) + (slot_width / 2.0)) - (pill_w / 2.0)))
+    pill_top = int(active_bbox[1] - pad_y)
+    pad_left = int(active_bbox[0] - pill_left)
+    pad_right = int((pill_left + pill_w) - active_bbox[2])
+    draw.rounded_rectangle(
+        [pill_left, pill_top, pill_left + pill_w, pill_top + pill_h],
+        radius=radius,
+        fill=_hex_to_rgba(pill_color),
+    )
+
+    inactive_rgba = _hex_to_rgba(inactive_color)
+    active_rgba = _hex_to_rgba(active_color)
+    outline_rgba = _hex_to_rgba(outline_color)
+
+    for word in layout["words"]:
+        fill = active_rgba if word["global_index"] == active_index else inactive_rgba
+        _draw_outlined_text(
+            draw,
+            int(word["x"]),
+            int(word["y"]),
+            str(word["word"]),
+            font=font,
+            fill=fill,
+            stroke_fill=outline_rgba,
+            stroke_width=outline_width,
+        )
+
+    image.save(out_path)
+    return {
+        "layout": layout,
+        "active_word": active_word,
+        "active_text_bbox": [int(active_bbox[0]), int(active_bbox[1]), int(active_bbox[2]), int(active_bbox[3])],
+        "active_text_w": active_text_w,
+        "active_text_h": active_text_h,
+        "pad_left": pad_left,
+        "pad_right": pad_right,
+        "pad_y": pad_y,
+        "left_gap": left_gap,
+        "right_gap": right_gap,
+        "pill_left": pill_left,
+        "pill_top": pill_top,
+        "pill_w": pill_w,
+        "pill_h": pill_h,
+        "delta_px": round(abs((active_word["x"] + (active_word["width"] / 2.0)) - (pill_left + (pill_w / 2.0))), 2),
+    }
+
+
+def _build_word_highlight_caption_overlay(
+    segments: List[Dict[str, Any]],
+    clip_start: float,
+    clip_end: float,
+    *,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_preset: Optional[str],
+) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
+    preset = _resolve_subtitle_preset(subtitle_preset)
+    preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
+    font_info = SUBTITLE_PILL_FONT_MAP.get(preset_key)
+    if not font_info:
+        return None, [], {"reason": "missing_font_map"}
+    font_path = Path(font_info.get("font_path") or "")
+    if not font_path.exists():
+        return None, [], {"reason": "missing_font_file", "font_path": str(font_path)}
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="word_highlight_overlay_"))
+    cleanup_paths: List[Path] = [temp_dir]
+    font = ImageFont.truetype(str(font_path), int(subtitle_font_size))
+    inactive_color = str(preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
+    active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
+    outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
+    pill_color = str(preset.get("active_box_color") or "#FFD84D").strip() or "#FFD84D"
+    try:
+        outline_width = max(0, int(preset.get("outline_width", 3) or 3))
+    except Exception:
+        outline_width = 3
+
+    overlay_specs: List[Dict[str, Any]] = []
+
+    for seg in segments:
+        try:
+            s = float(seg.get("start", 0.0) or 0.0)
+        except Exception:
+            continue
+        try:
+            e_val = seg.get("end")
+            e = float(e_val) if e_val is not None else None
+        except Exception:
+            e = None
+        if e is None:
+            try:
+                d = float(seg.get("duration") or 0.0)
+            except Exception:
+                d = 0.0
+            e = s + max(d, 0.0)
+        if e <= clip_start or s >= clip_end:
+            continue
+
+        words_raw = seg.get("words") or []
+        karaoke_words: List[Dict[str, Any]] = []
+        if isinstance(words_raw, list):
+            for word in words_raw:
+                if not isinstance(word, dict):
+                    continue
+                word_text = str(word.get("word") or "").strip()
+                if not word_text:
+                    continue
+                try:
+                    word_start = float(word.get("start"))
+                    word_end = float(word.get("end"))
+                except Exception:
+                    continue
+                if word_end <= clip_start or word_start >= clip_end:
+                    continue
+                karaoke_words.append(
+                    {
+                        "word": word_text,
+                        "start": max(word_start, clip_start),
+                        "end": min(word_end, clip_end),
+                    }
+                )
+        if not karaoke_words:
+            continue
+
+        chunk_start = 0
+        while chunk_start < len(karaoke_words):
+            chunk_words = karaoke_words[chunk_start:chunk_start + KARAOKE_MAX_WORDS]
+            chunk_start += KARAOKE_MAX_WORDS
+            word_tokens = [str(item["word"]).strip() for item in chunk_words if str(item.get("word") or "").strip()]
+            if not word_tokens:
+                continue
+            for index, item in enumerate(chunk_words):
+                item_start = max(0.0, float(item["start"]) - clip_start)
+                next_start = (
+                    max(0.0, float(chunk_words[index + 1]["start"]) - clip_start)
+                    if index + 1 < len(chunk_words)
+                    else max(item_start + 0.01, float(chunk_words[-1]["end"]) - clip_start)
+                )
+                frame_path = temp_dir / f"caption_{len(overlay_specs):04d}.png"
+                metrics = _render_word_highlight_caption_frame(
+                    word_tokens,
+                    active_index=index,
+                    font=font,
+                    subtitle_margin=subtitle_margin,
+                    font_size=subtitle_font_size,
+                    inactive_color=inactive_color,
+                    active_color=active_color,
+                    outline_color=outline_color,
+                    outline_width=outline_width,
+                    pill_color=pill_color,
+                    out_path=frame_path,
+                )
+                overlay_specs.append(
+                    {
+                        "path": frame_path,
+                        "start": item_start,
+                        "end": max(item_start + 0.01, next_start),
+                        "metrics": metrics,
+                    }
+                )
+
+    if not overlay_specs:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return None, [], {"reason": "no_specs"}
+
+    concat_path = temp_dir / "captions.ffconcat"
+    concat_lines = ["ffconcat version 1.0"]
+    for index, spec in enumerate(overlay_specs):
+        duration = max(0.01, float(spec["end"]) - float(spec["start"]))
+        concat_lines.append(f"file '{spec['path'].name}'")
+        concat_lines.append(f"duration {duration:.6f}")
+        if index == len(overlay_specs) - 1:
+            concat_lines.append(f"file '{spec['path'].name}'")
+    concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+
+    overlay_video_path = temp_dir / "caption_overlay.mov"
+    ffmpeg = _resolve_ffmpeg()
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_path),
+        "-c:v",
+        "qtrle",
+        "-pix_fmt",
+        "argb",
+        str(overlay_video_path),
+    ]
+    run_media_subprocess(
+        cmd,
+        operation="build_word_highlight_overlay",
+        context=f"clip={clip_start:.2f}-{clip_end:.2f}",
+        output_paths=[overlay_video_path],
+        check=True,
+        timeout=FFMPEG_RENDER_TIMEOUT,
+    )
+    return overlay_video_path, cleanup_paths, {"specs": overlay_specs, "temp_dir": str(temp_dir)}
 
 
 def _build_srt_from_text(text: str, clip_start: float, clip_end: float) -> Path | None:

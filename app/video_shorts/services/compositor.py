@@ -195,7 +195,6 @@ def _subtitle_force_style(
             base
             + f"MarginV={subtitle_margin},"
             + "Alignment=2,"
-            + f"FontName={clean_font}"
         )
     return (
         base
@@ -584,6 +583,7 @@ def _compose_trimmed_with_background(
     font_path: str = None,
     title_font_name: str = None,
     subtitle_path: Path = None,
+    subtitle_overlay_video_path: Optional[Path] = None,
     subtitle_font: str = "DejaVu Sans",
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
@@ -667,6 +667,11 @@ def _compose_trimmed_with_background(
         title_txt = _sanitize_text_for_overlay(title or "", 140)
         title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
         effective_subtitle_path = subtitle_path if show_subtitle else None
+        effective_subtitle_overlay_path = (
+            Path(subtitle_overlay_video_path)
+            if show_subtitle and subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists()
+            else None
+        )
         final_label = "[base]"
         filter_parts = [
             f"[0:v]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
@@ -748,6 +753,14 @@ def _compose_trimmed_with_background(
                 f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
             )
             final_label = "[subout]"
+        next_video_input_index = 2 + len(overlay_sources)
+        if effective_subtitle_overlay_path:
+            filter_parts.append(f"[{next_video_input_index}:v]format=rgba[pod_caption_src]")
+            filter_parts.append(
+                f"{final_label}[pod_caption_src]overlay=0:0:shortest=1[pod_caption_out]"
+            )
+            final_label = "[pod_caption_out]"
+            next_video_input_index += 1
         if video_date_text:
             date_txt = _sanitize_text_for_overlay(video_date_text, 160)
             if date_txt:
@@ -775,7 +788,7 @@ def _compose_trimmed_with_background(
         overlay_asset_path = subscribe_overlay_path if subscribe_overlay_path and Path(subscribe_overlay_path).exists() else None
         overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
         if overlay_enabled:
-            subscribe_input_index = 2 + len(overlay_sources)
+            subscribe_input_index = next_video_input_index
             filter_parts.append(f"[{subscribe_input_index}:v]format=rgba[ov_sub_src]")
             filter_parts.append(
                 f"{final_label}[ov_sub_src]overlay=(W-w)/2:H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}:shortest=1[ov_sub]"
@@ -796,6 +809,8 @@ def _compose_trimmed_with_background(
         ]
         for source in overlay_sources:
             cmd.extend(["-stream_loop", "-1", "-i", str(source)])
+        if effective_subtitle_overlay_path:
+            cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
         cmd.extend(
@@ -1224,6 +1239,11 @@ def _compose_trimmed_with_background(
     title_txt = _sanitize_text_for_overlay(title or "", 140)
     title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
     effective_subtitle_path = subtitle_path if show_subtitle else None
+    effective_subtitle_overlay_path = (
+        Path(subtitle_overlay_video_path)
+        if show_subtitle and subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists()
+        else None
+    )
     try:
         safe_title_line_spacing_main = int(title_line_spacing if title_line_spacing is not None else -4)
     except (TypeError, ValueError):
@@ -1396,6 +1416,14 @@ def _compose_trimmed_with_background(
             f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
         )
         final_label = "[subout]"
+    next_video_input_index = 3 if direct_audio_source else 2
+    if effective_subtitle_overlay_path:
+        filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
+        filter_parts.append(
+            f"{final_label}[caption_src]overlay=0:0:shortest=1[caption_out]"
+        )
+        final_label = "[caption_out]"
+        next_video_input_index += 1
     current_app.logger.info("video_date_text=%r", video_date_text)
     if video_date_text:
         date_txt = _sanitize_text_for_overlay(video_date_text, 160)
@@ -1425,8 +1453,8 @@ def _compose_trimmed_with_background(
             )
             filter_parts.append(date_drawtext)
             final_label = "[ov_date]"
-    subscribe_input_index = 3 if direct_audio_source else 2
     if overlay_enabled:
+        subscribe_input_index = next_video_input_index
         overlay_src_label = "[ov_sub_src]"
         overlay_out_label = "[ov_sub]"
         filter_parts.append(
@@ -1466,6 +1494,8 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = "2:a"
+    if effective_subtitle_overlay_path:
+        cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
     if overlay_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
     cmd.extend(
@@ -1516,6 +1546,8 @@ def _compose_trimmed_with_background(
                 ]
             )
             audio_map_music_only = "2:a"
+        if effective_subtitle_overlay_path:
+            cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
         cmd.extend(

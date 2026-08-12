@@ -217,12 +217,13 @@ SUBTITLE_PRESETS = {
         "box": False,
         "bold": True,
         "active_scale": 100,
-        "font": "Open Sans",
+        "font": "Open Sans SemiCondensed Medium",
         "active_box_color": "#FFD84D",
         "active_box_outline_color": "#FFD84D",
         "active_box_outline_width": 10,
         "active_box_border_style": 4,
         "active_box_padding_spaces": 1,
+        "active_pill": True,
     },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
@@ -557,6 +558,21 @@ SUB_FONT_CHOICES = [
     ("oswald_regular", "Oswald Regular", str(STATIC_FONTS_DIR / "Oswald-Regular.ttf"), "Oswald"),
     ("oswald_bold", "Oswald Bold", str(STATIC_FONTS_DIR / "Oswald-Bold.ttf"), "Oswald"),
 ]
+
+SUBTITLE_PILL_FONT_MAP = {
+    "classic_yellow": {
+        "ass_font_name": "Arimo",
+        "font_path": STATIC_FONTS_DIR / "Arimo-Regular.ttf",
+    },
+    "word_highlight": {
+        "ass_font_name": "Open Sans SemiCondensed Medium",
+        "font_path": STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf",
+    },
+    "deep_blue": {
+        "ass_font_name": "Anton",
+        "font_path": STATIC_FONTS_DIR / "Anton-Regular.ttf",
+    },
+}
 
 TITLE_FONT_SIZES = [8, 20, 24, 28, 30, 34, 40, 44]
 SUB_FONT_SIZES = [8, 9, 10, 12, 14, 16]

@@ -171,6 +171,7 @@ from app.video_shorts.services.storage import (
 )
 from app.video_shorts.services.transcript_service import (
     _build_ass_karaoke_for_clip,
+    _build_word_highlight_caption_overlay,
     _build_srt_for_clip,
     _build_srt_from_text,
     _fetch_transcript,
@@ -13139,6 +13140,8 @@ def autoclip_video(video_pk):
     bg_path_is_temp = False
     subscribe_overlay_path = None
     subscribe_overlay_path_is_temp = False
+    subtitle_overlay_video_path = None
+    subtitle_overlay_cleanup_paths: List[Path] = []
     made = 0
     missing_outputs = 0
     clip_filename = plan_entry.get("clip_filename") or f"{plan_index}_{vid}.mp4"
@@ -13187,19 +13190,55 @@ def autoclip_video(video_pk):
             clip_text = build_transcript_for_range(segments, start, end, prefer_tr=True)
             subtitle_text = _sanitize_text_for_overlay(" ".join(sub_segments), 400)
             if video_subtitle_style == "karaoke":
-                subtitle_srt = _build_ass_karaoke_for_clip(
-                    segments,
-                    adj_start,
-                    adj_end,
-                    subtitle_font=sub_font_name,
-                    subtitle_font_size=sub_font_size,
-                    subtitle_margin=sub_margin,
-                    subtitle_text_color=subtitle_text_color,
-                    subtitle_text_alpha=subtitle_text_alpha,
-                    subtitle_bg_color=subtitle_bg_color,
-                    subtitle_bg_alpha=subtitle_bg_alpha,
-                    subtitle_preset=video_subtitle_preset,
-                )
+                if str(video_subtitle_preset or "").strip() == "word_highlight":
+                    subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
+                        segments,
+                        adj_start,
+                        adj_end,
+                        subtitle_font_size=sub_font_size,
+                        subtitle_margin=sub_margin,
+                        subtitle_preset=video_subtitle_preset,
+                    )
+                    if subtitle_overlay_video_path:
+                        current_app.logger.info(
+                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s overlay=%s",
+                            clip_filename,
+                            len((overlay_meta or {}).get("specs") or []),
+                            subtitle_overlay_video_path,
+                        )
+                    else:
+                        current_app.logger.warning(
+                            "Word highlight Pillow overlay unavailable; falling back to ASS clip=%s meta=%s",
+                            clip_filename,
+                            overlay_meta,
+                        )
+                        subtitle_srt = _build_ass_karaoke_for_clip(
+                            segments,
+                            adj_start,
+                            adj_end,
+                            subtitle_font=sub_font_name,
+                            subtitle_font_size=sub_font_size,
+                            subtitle_margin=sub_margin,
+                            subtitle_text_color=subtitle_text_color,
+                            subtitle_text_alpha=subtitle_text_alpha,
+                            subtitle_bg_color=subtitle_bg_color,
+                            subtitle_bg_alpha=subtitle_bg_alpha,
+                            subtitle_preset=video_subtitle_preset,
+                        )
+                else:
+                    subtitle_srt = _build_ass_karaoke_for_clip(
+                        segments,
+                        adj_start,
+                        adj_end,
+                        subtitle_font=sub_font_name,
+                        subtitle_font_size=sub_font_size,
+                        subtitle_margin=sub_margin,
+                        subtitle_text_color=subtitle_text_color,
+                        subtitle_text_alpha=subtitle_text_alpha,
+                        subtitle_bg_color=subtitle_bg_color,
+                        subtitle_bg_alpha=subtitle_bg_alpha,
+                        subtitle_preset=video_subtitle_preset,
+                    )
             else:
                 subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
             if subtitle_srt:
@@ -13479,7 +13518,8 @@ def autoclip_video(video_pk):
                 font_path,
                 title_font_name,
                 subtitle_srt,
-                sub_font_name,
+                subtitle_overlay_video_path=subtitle_overlay_video_path,
+                subtitle_font=sub_font_name,
                 title_font_size=title_font_size,
                 title_margin=title_margin,
                 title_line_spacing=video_title_line_spacing,
@@ -13773,6 +13813,15 @@ def autoclip_video(video_pk):
             except Exception:
                 pass
         temp_subs.clear()
+        for cleanup_path in subtitle_overlay_cleanup_paths:
+            try:
+                if cleanup_path.is_dir():
+                    shutil.rmtree(cleanup_path, ignore_errors=True)
+                else:
+                    cleanup_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        subtitle_overlay_cleanup_paths.clear()
         if static_clip_path:
             try:
                 static_clip_path.unlink()
