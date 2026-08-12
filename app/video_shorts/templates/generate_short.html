@@ -2161,6 +2161,45 @@
     text-shadow: none;
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
   }
+  .style-template-card-preview--word-highlight-flame::after,
+  .style-template-card-preview--word-highlight-ocean::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--word-highlight-flame .style-template-card-preview-title,
+  .style-template-card-preview--word-highlight-ocean .style-template-card-preview-title {
+    background: #111827;
+    color: #ffffff;
+    font-family: "Anton", sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+  }
+  .style-template-card-preview--word-highlight-flame .style-template-card-preview-word,
+  .style-template-card-preview--word-highlight-ocean .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Open Sans SemiCondensed", "Open Sans", sans-serif;
+    font-weight: 700;
+    text-shadow:
+      -2px -2px 0 rgba(0, 0, 0, 0.98),
+      2px -2px 0 rgba(0, 0, 0, 0.98),
+      -2px 2px 0 rgba(0, 0, 0, 0.98),
+      2px 2px 0 rgba(0, 0, 0, 0.98);
+  }
+  .style-template-card-preview--word-highlight-flame .style-template-card-preview-word.is-active {
+    color: #ffffff;
+    background: #f26522;
+    padding: 3px 6px;
+    border-radius: 999px;
+    text-shadow: none;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+  .style-template-card-preview--word-highlight-ocean .style-template-card-preview-word.is-active {
+    color: #ffffff;
+    background: #3b7ded;
+    padding: 3px 6px;
+    border-radius: 999px;
+    text-shadow: none;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
@@ -2569,8 +2608,8 @@
       2px 2px 0 rgba(0, 0, 0, 0.98);
   }
   .word-highlight-preview-word.is-active {
-    color: #111827;
-    background: #ffd84d;
+    color: var(--word-highlight-active-color, #111827);
+    background: var(--word-highlight-pill-color, #ffd84d);
     padding: 0.14em 0.48em;
     border-radius: 999px;
     text-shadow: none;
@@ -10409,7 +10448,23 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
-  const WORD_HIGHLIGHT_PRESET = "word_highlight";
+  const WORD_HIGHLIGHT_PRESETS = {
+    word_highlight: {
+      pillColor: "#FFD84D",
+      activeTextColor: "#111827",
+      inactiveTextColor: "#FFFFFF",
+    },
+    word_highlight_flame: {
+      pillColor: "#F26522",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+    },
+    word_highlight_ocean: {
+      pillColor: "#3B7DED",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+    },
+  };
   const wordHighlightSampleMarkup = `
     <span class="word-highlight-preview-word">Exactly.</span>
     <span class="word-highlight-preview-word">So</span>
@@ -10565,10 +10620,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const bgAlpha = alphaToOpacity(subtitleBgAlphaInput?.value, 85);
     const textHex = normalize(subtitleTextHidden?.value || "#FFFFFF");
     const bgHex = normalize(subtitleBgHidden?.value || "#000000");
-    const textRgba = hexToRgba(textHex, textAlpha);
-    const bgRgba = hexToRgba(bgHex, bgAlpha);
     const activePreset = String(subtitlePresetField?.value || "").trim();
-    const isWordHighlight = activePreset === WORD_HIGHLIGHT_PRESET;
+    const wordHighlightPreset = WORD_HIGHLIGHT_PRESETS[activePreset] || null;
+    const isWordHighlight = Boolean(wordHighlightPreset);
+    const effectiveTextHex = wordHighlightPreset?.inactiveTextColor || textHex;
+    const textRgba = hexToRgba(effectiveTextHex, textAlpha);
+    const bgRgba = hexToRgba(bgHex, bgAlpha);
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
@@ -10580,10 +10637,14 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitlePreview) {
       subtitlePreview.style.color = textRgba;
       subtitlePreview.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
+      subtitlePreview.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
+      subtitlePreview.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
       previewSubtitle.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
+      previewSubtitle.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
+      previewSubtitle.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
     }
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;

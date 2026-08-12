@@ -225,6 +225,40 @@ SUBTITLE_PRESETS = {
         "active_box_padding_spaces": 1,
         "active_pill": True,
     },
+    "word_highlight_flame": {
+        "active_color": "#FFFFFF",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 3,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Open Sans SemiCondensed Medium",
+        "active_box_color": "#F26522",
+        "active_box_outline_color": "#F26522",
+        "active_box_outline_width": 10,
+        "active_box_border_style": 4,
+        "active_box_padding_spaces": 1,
+        "active_pill": True,
+    },
+    "word_highlight_ocean": {
+        "active_color": "#FFFFFF",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 3,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Open Sans SemiCondensed Medium",
+        "active_box_color": "#3B7DED",
+        "active_box_outline_color": "#3B7DED",
+        "active_box_outline_width": 10,
+        "active_box_border_style": 4,
+        "active_box_padding_spaces": 1,
+        "active_pill": True,
+    },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
 DEFAULT_TITLE_BG_ALPHA = 92
@@ -442,6 +476,26 @@ STYLE_TEMPLATES = [
         "title_bg_color": "#111827",
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
     },
+    {
+        "key": "word_highlight_flame",
+        "label": "Flame Highlight",
+        "subtitle_preset": "word_highlight_flame",
+        "title_font": "Anton",
+        "title_font_key": "anton",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#111827",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "word_highlight_ocean",
+        "label": "Ocean Highlight",
+        "subtitle_preset": "word_highlight_ocean",
+        "title_font": "Anton",
+        "title_font_key": "anton",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#111827",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
 ]
 
 STATIC_FONTS_DIR = Path(__file__).resolve().parent / "static" / "fonts"
@@ -565,6 +619,14 @@ SUBTITLE_PILL_FONT_MAP = {
         "font_path": STATIC_FONTS_DIR / "Arimo-Regular.ttf",
     },
     "word_highlight": {
+        "ass_font_name": "Open Sans SemiCondensed Medium",
+        "font_path": STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf",
+    },
+    "word_highlight_flame": {
+        "ass_font_name": "Open Sans SemiCondensed Medium",
+        "font_path": STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf",
+    },
+    "word_highlight_ocean": {
         "ass_font_name": "Open Sans SemiCondensed Medium",
         "font_path": STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf",
     },
