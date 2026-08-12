@@ -13201,11 +13201,12 @@ def autoclip_video(video_pk):
                         subtitle_preset=video_subtitle_preset,
                     )
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
-                    if subtitle_overlay_specs:
+                    overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
+                    if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
                         current_app.logger.info(
-                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps",
+                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps mode=single_overlay_video",
                             clip_filename,
-                            len(subtitle_overlay_specs),
+                            overlay_frame_count,
                         )
                     else:
                         current_app.logger.warning(

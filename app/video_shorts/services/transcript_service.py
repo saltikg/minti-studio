@@ -48,6 +48,7 @@ _ASS_MARGIN_R = 40
 _PILL_CURVE_FACTOR = 0.55228475
 _PILLOW_CAPTION_WIDTH = 720
 _PILLOW_CAPTION_HEIGHT = 1280
+_WORD_HIGHLIGHT_OVERLAY_FPS = 30
 
 
 def _normalize_whisper_language(raw: Any) -> str:
@@ -1368,6 +1369,80 @@ def _render_word_highlight_caption_frame(
     }
 
 
+def _ffconcat_quote(path: Path) -> str:
+    return str(path).replace("\\", "\\\\").replace("'", r"'\''")
+
+
+def _build_word_highlight_overlay_video(
+    *,
+    temp_dir: Path,
+    overlay_specs: List[Dict[str, Any]],
+    clip_duration: float,
+) -> Path:
+    if not overlay_specs:
+        raise ValueError("overlay_specs required")
+
+    blank_frame = temp_dir / "caption_blank.png"
+    Image.new("RGBA", (_PILLOW_CAPTION_WIDTH, _PILLOW_CAPTION_HEIGHT), (0, 0, 0, 0)).save(blank_frame)
+
+    timeline: List[Tuple[Path, float]] = []
+    cursor = 0.0
+    clip_duration = max(float(clip_duration or 0.0), 0.01)
+    for spec in overlay_specs:
+        start = max(0.0, min(float(spec["start"]), clip_duration))
+        end = max(start + 0.01, min(float(spec["end"]), clip_duration))
+        if start > cursor:
+            timeline.append((blank_frame, start - cursor))
+        timeline.append((Path(spec["path"]), end - start))
+        cursor = end
+    if cursor < clip_duration:
+        timeline.append((blank_frame, clip_duration - cursor))
+    if not timeline:
+        timeline.append((blank_frame, clip_duration))
+
+    concat_file = temp_dir / "overlay.ffconcat"
+    concat_lines = ["ffconcat version 1.0"]
+    for frame_path, duration in timeline:
+        concat_lines.append(f"file '{_ffconcat_quote(frame_path)}'")
+        concat_lines.append(f"duration {max(float(duration), 0.01):.6f}")
+    concat_lines.append(f"file '{_ffconcat_quote(timeline[-1][0])}'")
+    concat_file.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+
+    overlay_path = temp_dir / "word_highlight_overlay.mov"
+    ffmpeg = _resolve_ffmpeg()
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_file),
+        "-vf",
+        f"fps={_WORD_HIGHLIGHT_OVERLAY_FPS},format=rgba",
+        "-an",
+        "-c:v",
+        "qtrle",
+        "-pix_fmt",
+        "argb",
+        str(overlay_path),
+    ]
+    run_media_subprocess(
+        cmd,
+        operation="build_word_highlight_overlay_video",
+        context=f"frames={len(overlay_specs)} duration={clip_duration:.3f}",
+        output_paths=[overlay_path],
+        check=True,
+        timeout=FFMPEG_RENDER_TIMEOUT,
+        capture_output=True,
+        text=True,
+    )
+    if not overlay_path.exists() or overlay_path.stat().st_size <= 0:
+        raise RuntimeError("word_highlight overlay video missing or empty")
+    return overlay_path
+
+
 def _build_word_highlight_caption_overlay(
     segments: List[Dict[str, Any]],
     clip_start: float,
@@ -1399,6 +1474,7 @@ def _build_word_highlight_caption_overlay(
         outline_width = 3
 
     overlay_specs: List[Dict[str, Any]] = []
+    clip_duration = max(float(clip_end) - float(clip_start), 0.01)
 
     for seg in segments:
         try:
@@ -1486,7 +1562,29 @@ def _build_word_highlight_caption_overlay(
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None, [], {"reason": "no_specs"}
 
-    return None, cleanup_paths, {"specs": overlay_specs, "temp_dir": str(temp_dir)}
+    overlay_path = _build_word_highlight_overlay_video(
+        temp_dir=temp_dir,
+        overlay_specs=overlay_specs,
+        clip_duration=clip_duration,
+    )
+    cleanup_paths.append(overlay_path)
+    return overlay_path, cleanup_paths, {
+        "specs": [],
+        "frame_count": len(overlay_specs),
+        "timeline_segments": len(overlay_specs),
+        "timing_events": [
+            {
+                "start": float(spec["start"]),
+                "end": float(spec["end"]),
+                "active_word": (((spec.get("metrics") or {}).get("active_word")) or {}).get("word"),
+                "line_count": len((((spec.get("metrics") or {}).get("layout")) or {}).get("lines") or []),
+                "metrics": spec.get("metrics") or {},
+            }
+            for spec in overlay_specs
+        ],
+        "temp_dir": str(temp_dir),
+        "overlay_path": str(overlay_path),
+    }
 
 
 def _build_srt_from_text(text: str, clip_start: float, clip_end: float) -> Path | None:

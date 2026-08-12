@@ -1,4 +1,5 @@
 import secrets
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -559,6 +560,7 @@ def _compose_with_background(
     filter_complex = ";".join(filter_parts)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_out_path = out_path.with_name(f"{out_path.stem}.compose-{secrets.token_hex(4)}{out_path.suffix}")
     cmd = [
         resolved_ffmpeg,
         "-y",
@@ -1543,6 +1545,7 @@ def _compose_trimmed_with_background(
     filter_complex = ";".join(filter_parts)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_out_path = out_path.with_name(f"{out_path.stem}.compose-{secrets.token_hex(4)}{out_path.suffix}")
     cmd = [
         resolved_ffmpeg,
         "-y",
@@ -1574,7 +1577,7 @@ def _compose_trimmed_with_background(
         for spec in effective_subtitle_overlay_specs:
             cmd.extend(["-loop", "1", "-i", str(spec["path"])])
     elif effective_subtitle_overlay_path:
-        cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
+        cmd.extend(["-i", str(effective_subtitle_overlay_path)])
     if overlay_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
     cmd.extend(
@@ -1596,7 +1599,7 @@ def _compose_trimmed_with_background(
             "libx264",
             "-movflags",
             "+faststart",
-            str(out_path),
+            str(temp_out_path),
         ]
     )
     if music_only:
@@ -1629,7 +1632,7 @@ def _compose_trimmed_with_background(
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
         elif effective_subtitle_overlay_path:
-            cmd.extend(["-stream_loop", "-1", "-i", str(effective_subtitle_overlay_path)])
+            cmd.extend(["-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
         cmd.extend(
@@ -1651,7 +1654,7 @@ def _compose_trimmed_with_background(
                 "libx264",
                 "-movflags",
                 "+faststart",
-                str(out_path),
+                str(temp_out_path),
             ]
         )
     current_app.logger.info("Compose ffmpeg command: %s", " ".join(cmd))
@@ -1660,8 +1663,8 @@ def _compose_trimmed_with_background(
         result = run_media_subprocess(
             cmd,
             operation="compose_trimmed_with_background",
-            context=f"output={out_path.name}",
-            output_paths=[out_path],
+            context=f"output={out_path.name} temp={temp_out_path.name}",
+            output_paths=[temp_out_path],
             check=True,
             timeout=scale_media_timeout(
                 FFMPEG_RENDER_TIMEOUT,
@@ -1674,13 +1677,16 @@ def _compose_trimmed_with_background(
         )
         current_app.logger.debug("Compose stdout: %s", result.stdout)
         current_app.logger.debug("Compose stderr: %s", result.stderr)
+        if not temp_out_path.exists() or temp_out_path.stat().st_size <= 0:
+            raise RuntimeError(f"FFmpeg compose output missing: {temp_out_path}")
+        shutil.move(str(temp_out_path), str(out_path))
     except subprocess.CalledProcessError as err:
         current_app.logger.error("Compose failed stdout=%s stderr=%s", err.stdout, err.stderr)
         raise RuntimeError(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()
