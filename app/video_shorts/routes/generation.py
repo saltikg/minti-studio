@@ -13191,7 +13191,9 @@ def autoclip_video(video_pk):
             clip_text = build_transcript_for_range(segments, start, end, prefer_tr=True)
             subtitle_text = _sanitize_text_for_overlay(" ".join(sub_segments), 400)
             if video_subtitle_style == "karaoke":
-                if str(video_subtitle_preset or "").strip() == "word_highlight":
+                active_subtitle_preset = str(video_subtitle_preset or "").strip()
+                active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
+                if bool(active_preset_config.get("active_pill")):
                     subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
                         segments,
                         adj_start,
