@@ -170,13 +170,6 @@
       color: #9ff5e1;
       flex: 0 0 auto;
     }
-    .vs-help-card-count {
-      color: rgba(255,255,255,0.56);
-      font-size: 0.79rem;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
     .vs-help-card-title {
       font-size: 1.02rem;
       font-weight: 700;
@@ -276,12 +269,6 @@
           <div class="vs-help-card-top">
             <div class="vs-help-card-icon">
               <span class="material-symbols-outlined">{{ category.icon }}</span>
-            </div>
-            <div class="vs-help-card-count">
-              {{ category.article_count }} article{% if category.article_count != 1 %}s{% endif %}
-              {% if category.question_count %}
-                · {{ category.question_count }} question{% if category.question_count != 1 %}s{% endif %}
-              {% endif %}
             </div>
           </div>
           <div class="vs-help-card-title">{{ category.title }}</div>
