@@ -137,7 +137,7 @@
           <p class="vs-help-intro">{{ block.html | safe }}</p>
         {% elif block.type == 'list' %}
           <ul class="vs-help-list">
-            {% for item in block.items %}
+            {% for item in block["items"] %}
               <li>{{ item | safe }}</li>
             {% endfor %}
           </ul>
@@ -167,7 +167,7 @@
                     <p class="vs-help-paragraph">{{ block.html | safe }}</p>
                   {% elif block.type == 'list' %}
                     <ul class="vs-help-list">
-                      {% for list_item in block.items %}
+                      {% for list_item in block["items"] %}
                         <li>{{ list_item | safe }}</li>
                       {% endfor %}
                     </ul>
