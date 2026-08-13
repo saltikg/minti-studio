@@ -127,13 +127,13 @@ The Social Connections page may show:
 
 `Connection expired - reconnect to keep publishing.`
 
-Use the `Reconnect` action for that platform before trying to publish again.
+Use the `Reconnect` action for that platform on the [Social Connections page](/video_shorts/social/connect) before trying to publish again.
 
 **Why can't I publish to YouTube?**
 
 YouTube publishing requires a valid YouTube connection and an available rendered Short.
 
-If the authorization has expired or become invalid, reconnect YouTube from Social Connections and try again.
+If the authorization has expired or become invalid, reconnect YouTube from the [Social Connections page](/video_shorts/social/connect) and try again.
 
 YouTube publishing does not have a confirmed automatic retry flow in the current application, so after fixing the connection or file issue, retry the publishing action.
 

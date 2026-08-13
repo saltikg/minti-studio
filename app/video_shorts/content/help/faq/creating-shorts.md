@@ -11,7 +11,7 @@ Turn source videos into Shorts with AI suggestions, manual clip selection, and t
 
 **How can I create a Short in MintiStudio?**
 
-You can create Shorts from videos connected or imported from YouTube, or from videos you upload to `My videos`.
+You can create Shorts from videos connected or imported from YouTube, or from videos you upload to [`My videos`](/video_shorts/my-videos).
 
 After the source video is ready and transcribed, you can either select your own clip manually or ask MintiStudio to suggest clips with AI.
 

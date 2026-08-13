@@ -17,11 +17,11 @@ MintiStudio currently supports connecting:
 - Instagram
 - Facebook Pages
 
-You can manage these connections from the Social Connections page in MintiStudio.
+You can manage these connections from the [Social Connections page](/video_shorts/social/connect) in MintiStudio.
 
 **How do I connect my YouTube channel?**
 
-Open the Social Connections page and choose the option to connect YouTube.
+Open the [Social Connections page](/video_shorts/social/connect) and choose the option to connect YouTube.
 
 You will be redirected to Google to authorize MintiStudio. After authorization is complete, MintiStudio can use the connected YouTube channel for publishing and scheduling your Shorts.
 
@@ -53,7 +53,7 @@ If a target Page has not been selected or configured, the connection may not be 
 
 Some social platforms may require you to authorize MintiStudio again if access expires or is revoked.
 
-When MintiStudio detects that a YouTube or Instagram connection needs authorization again, the Social Connections page may show:
+When MintiStudio detects that a YouTube or Instagram connection needs authorization again, the [Social Connections page](/video_shorts/social/connect) may show:
 
 `Connection expired - reconnect to keep publishing.`
 

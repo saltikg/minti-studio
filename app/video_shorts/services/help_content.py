@@ -3,10 +3,11 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 
 
 HELP_FAQ_DIR = Path(__file__).resolve().parent.parent / "content" / "help" / "faq"
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_INLINE_TOKEN_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|\*\*(.+?)\*\*")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 HELP_CATEGORY_DEFS = [
@@ -68,8 +69,38 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
 
 
 def _inline_html(text: str) -> str:
-    escaped = escape(text.strip())
-    return _BOLD_RE.sub(r"<strong>\1</strong>", escaped)
+    raw = text.strip()
+    if not raw:
+        return ""
+
+    parts: list[str] = []
+    last_index = 0
+    for match in _INLINE_TOKEN_RE.finditer(raw):
+        start, end = match.span()
+        if start > last_index:
+            parts.append(escape(raw[last_index:start]))
+
+        link_label, link_href, inline_code, bold_text = match.groups()
+        if link_label is not None and link_href is not None:
+            href = link_href.strip()
+            parsed = urlparse(href)
+            is_safe_href = href.startswith(("/", "#")) or parsed.scheme in {"http", "https", "mailto"}
+            if is_safe_href:
+                parts.append(
+                    f'<a href="{escape(href, quote=True)}">{escape(link_label.strip())}</a>'
+                )
+            else:
+                parts.append(escape(match.group(0)))
+        elif inline_code is not None:
+            parts.append(f"<code>{escape(inline_code.strip())}</code>")
+        elif bold_text is not None:
+            parts.append(f"<strong>{escape(bold_text.strip())}</strong>")
+
+        last_index = end
+
+    if last_index < len(raw):
+        parts.append(escape(raw[last_index:]))
+    return "".join(parts)
 
 
 def _slugify(text: str) -> str:

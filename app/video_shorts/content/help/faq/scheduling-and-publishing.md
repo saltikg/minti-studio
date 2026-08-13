@@ -13,7 +13,7 @@ Every scheduled time has to be anchored to a time zone, or "8:00 AM" is meaningl
 
 **How do I change my time zone?**
 
-Click the small edit icon next to the "Publish time" label in the Schedule & Publish window. Pick your zone from the list (US zones, UK, Central Europe, Turkey, UTC) and your account updates immediately — you don't have to leave the scheduling screen or visit your account page. You can also change it anytime under Account → Time zone.
+Click the small edit icon next to the "Publish time" label in the Schedule & Publish window. Pick your zone from the list (US zones, UK, Central Europe, Turkey, UTC) and your account updates immediately — you don't have to leave the scheduling screen or visit your [profile page](/video_shorts/profile). You can also change it anytime under [Account → Time zone](/video_shorts/profile).
 
 **If I change my time zone, does my typed publish time shift?**
 
@@ -45,4 +45,4 @@ YouTube's watch page shows the public date based on Pacific Time as a display co
 
 **How do I choose the best time to publish?**
 
-Check your Video Analytics for the publish windows that produced your strongest early views — traffic from the algorithm and your subscribers tends to build in the hours right after a clip goes live. Schedule new clips into those proven windows, and keep your time zone consistent so the comparison stays accurate over time.
+Check your [Video Analytics](/video_shorts/video-analytics) for the publish windows that produced your strongest early views — traffic from the algorithm and your subscribers tends to build in the hours right after a clip goes live. Schedule new clips into those proven windows, and keep your time zone consistent so the comparison stays accurate over time.

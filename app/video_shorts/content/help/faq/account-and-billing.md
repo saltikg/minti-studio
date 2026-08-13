@@ -20,7 +20,7 @@ MintiStudio currently offers four plans:
 
 Each plan includes different monthly export, transcription, and storage limits.
 
-You can compare plans and view your current plan from the `Plan & storage` page.
+You can compare plans and view your current plan from the [`Plan & storage` page](/video_shorts/shorts/storage/plans).
 
 **Does MintiStudio have a Free plan?**
 
@@ -32,7 +32,7 @@ The Free plan includes monthly usage allowances for exports, transcription, and 
 
 **Where can I see my current plan and usage?**
 
-Open the `Plan & storage` page.
+Open the [`Plan & storage` page](/video_shorts/shorts/storage/plans).
 
 There you can see your:
 
@@ -86,7 +86,7 @@ Do not claim that unused usage rolls over to the next month.
 
 **How do I upgrade my plan?**
 
-You can upgrade from the `Plan & storage` page.
+You can upgrade from the [`Plan & storage` page](/video_shorts/shorts/storage/plans).
 
 Paid plan upgrades use Stripe checkout inside MintiStudio.
 
@@ -138,4 +138,4 @@ From the account/profile area, you can currently manage settings including:
 - time zone
 - brands/workspaces
 
-Connected social platforms are managed separately from the Connections area.
+Connected social platforms are managed separately from the [Social Connections page](/video_shorts/social/connect).
