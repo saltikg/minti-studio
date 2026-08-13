@@ -16,7 +16,8 @@
       font-weight: 600;
       margin-bottom: 18px;
     }
-    .vs-help-backlink:hover {
+    .vs-help-backlink:hover,
+    .vs-help-backlink:focus-visible {
       color: #c9fff4;
     }
     .vs-help-article-subtitle {
@@ -32,28 +33,80 @@
         linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
       border: 1px solid rgba(255,255,255,0.08);
     }
-    .vs-help-question {
-      margin-top: 1.65rem;
-      margin-bottom: 0.7rem;
+    .vs-help-intro {
+      color: rgba(255,255,255,0.82);
+      line-height: 1.72;
+      margin-bottom: 1.2rem;
+    }
+    .vs-help-accordion {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .vs-help-accordion-item {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.03);
+      overflow: hidden;
+    }
+    .vs-help-accordion-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 1rem 1.05rem;
+      border: 0;
+      background: transparent;
       color: #fff;
-      font-size: 1.05rem;
+      text-align: left;
+      font-size: 1rem;
       font-weight: 700;
-      letter-spacing: -0.01em;
+      line-height: 1.4;
+      transition: background .16s ease, color .16s ease;
+    }
+    .vs-help-accordion-trigger:hover,
+    .vs-help-accordion-trigger:focus-visible {
+      background: rgba(45, 212, 191, 0.08);
+      outline: none;
+    }
+    .vs-help-accordion-trigger[aria-expanded="true"] {
+      color: #c9fff4;
+    }
+    .vs-help-accordion-icon {
+      flex: 0 0 auto;
+      color: rgba(159, 245, 225, 0.85);
+      transition: transform .18s ease;
+    }
+    .vs-help-accordion-trigger[aria-expanded="true"] .vs-help-accordion-icon {
+      transform: rotate(45deg);
+    }
+    .vs-help-accordion-panel {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height .22s ease;
+    }
+    .vs-help-accordion-panel[hidden] {
+      display: block;
+    }
+    .vs-help-accordion-panel-inner {
+      padding: 0 1.05rem 1rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
     }
     .vs-help-heading {
-      margin-top: 1.2rem;
+      margin-top: 1rem;
       margin-bottom: 0.75rem;
       color: #fff;
-      font-size: 1.12rem;
+      font-size: 1.02rem;
       font-weight: 700;
     }
     .vs-help-paragraph {
       color: rgba(255,255,255,0.82);
       line-height: 1.7;
-      margin-bottom: 1rem;
+      margin: 0.95rem 0 0;
     }
     .vs-help-list {
-      margin: 0 0 1rem 1.15rem;
+      margin: 0.95rem 0 0 1.15rem;
       padding: 0;
       color: rgba(255,255,255,0.82);
     }
@@ -79,21 +132,117 @@
     </div>
 
     <div class="vs-help-article-shell">
-      {% for block in entry.blocks %}
-        {% if block.type == 'question' %}
-          <h2 class="vs-help-question">{{ block.text }}</h2>
-        {% elif block.type == 'heading' %}
-          <h2 class="vs-help-heading">{{ block.text }}</h2>
-        {% elif block.type == 'paragraph' %}
-          <p class="vs-help-paragraph">{{ block.html | safe }}</p>
+      {% for block in entry.intro_blocks or [] %}
+        {% if block.type == 'paragraph' %}
+          <p class="vs-help-intro">{{ block.html | safe }}</p>
         {% elif block.type == 'list' %}
           <ul class="vs-help-list">
             {% for item in block.items %}
               <li>{{ item | safe }}</li>
             {% endfor %}
           </ul>
+        {% elif block.type == 'heading' %}
+          <h2 class="vs-help-heading">{{ block.text }}</h2>
         {% endif %}
       {% endfor %}
+
+      <div class="vs-help-accordion" id="faq-accordion">
+        {% for item in entry.question_items or [] %}
+          <div class="vs-help-accordion-item" id="{{ item.id }}">
+            <button
+              type="button"
+              class="vs-help-accordion-trigger"
+              aria-expanded="false"
+              aria-controls="{{ item.id }}-panel"
+              id="{{ item.id }}-trigger">
+              <span>{{ item.question }}</span>
+              <span class="material-symbols-outlined vs-help-accordion-icon" aria-hidden="true">add</span>
+            </button>
+            <div class="vs-help-accordion-panel" id="{{ item.id }}-panel" role="region" aria-labelledby="{{ item.id }}-trigger" hidden>
+              <div class="vs-help-accordion-panel-inner">
+                {% for block in item.blocks %}
+                  {% if block.type == 'heading' %}
+                    <h3 class="vs-help-heading">{{ block.text }}</h3>
+                  {% elif block.type == 'paragraph' %}
+                    <p class="vs-help-paragraph">{{ block.html | safe }}</p>
+                  {% elif block.type == 'list' %}
+                    <ul class="vs-help-list">
+                      {% for list_item in block.items %}
+                        <li>{{ list_item | safe }}</li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const triggers = Array.from(document.querySelectorAll(".vs-help-accordion-trigger"));
+      if (!triggers.length) return;
+
+      function openItem(trigger, shouldScroll) {
+        triggers.forEach((otherTrigger) => {
+          const otherPanel = document.getElementById(otherTrigger.getAttribute("aria-controls"));
+          const isTarget = otherTrigger === trigger;
+          otherTrigger.setAttribute("aria-expanded", isTarget ? "true" : "false");
+          if (!otherPanel) return;
+          if (isTarget) {
+            otherPanel.hidden = false;
+            otherPanel.style.maxHeight = otherPanel.scrollHeight + "px";
+          } else {
+            otherPanel.style.maxHeight = "0px";
+            otherPanel.hidden = true;
+          }
+        });
+
+        if (shouldScroll) {
+          const item = trigger.closest(".vs-help-accordion-item");
+          if (item) {
+            item.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      }
+
+      triggers.forEach((trigger) => {
+        trigger.addEventListener("click", function () {
+          const isExpanded = trigger.getAttribute("aria-expanded") === "true";
+          if (isExpanded) {
+            const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+            trigger.setAttribute("aria-expanded", "false");
+            if (panel) {
+              panel.style.maxHeight = "0px";
+              panel.hidden = true;
+            }
+            return;
+          }
+          openItem(trigger, false);
+        });
+      });
+
+      const params = new URLSearchParams(window.location.search);
+      const requestedId = params.get("question") || (window.location.hash ? window.location.hash.slice(1) : "");
+      if (requestedId) {
+        const item = document.getElementById(requestedId);
+        const trigger = item ? item.querySelector(".vs-help-accordion-trigger") : null;
+        if (trigger) {
+          openItem(trigger, true);
+        }
+      }
+
+      window.addEventListener("resize", function () {
+        const openTrigger = triggers.find((item) => item.getAttribute("aria-expanded") === "true");
+        if (!openTrigger) return;
+        const panel = document.getElementById(openTrigger.getAttribute("aria-controls"));
+        if (panel && !panel.hidden) {
+          panel.style.maxHeight = panel.scrollHeight + "px";
+        }
+      });
+    });
+  </script>
 {% endblock %}

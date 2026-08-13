@@ -11,58 +11,226 @@
       color: rgba(255, 255, 255, 0.68);
       max-width: 760px;
     }
+    .vs-help-search-shell {
+      position: relative;
+      margin-top: 24px;
+    }
+    .vs-help-search-input {
+      width: 100%;
+      min-height: 58px;
+      padding: 0.95rem 1.1rem 0.95rem 3.2rem;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.045);
+      color: #fff;
+      font-size: 1rem;
+      transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+    .vs-help-search-input::placeholder {
+      color: rgba(255, 255, 255, 0.42);
+    }
+    .vs-help-search-input:focus {
+      outline: none;
+      border-color: rgba(45, 212, 191, 0.5);
+      box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .vs-help-search-icon {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: rgba(159, 245, 225, 0.88);
+      pointer-events: none;
+    }
+    .vs-help-search-results {
+      position: absolute;
+      top: calc(100% + 10px);
+      left: 0;
+      right: 0;
+      z-index: 25;
+      border-radius: 18px;
+      overflow: hidden;
+      background: rgba(7, 15, 20, 0.98);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 16px 50px rgba(0, 0, 0, 0.34);
+    }
+    .vs-help-search-results[hidden] {
+      display: none !important;
+    }
+    .vs-help-search-result {
+      display: block;
+      padding: 0.9rem 1rem;
+      text-decoration: none;
+      color: inherit;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      transition: background .14s ease;
+    }
+    .vs-help-search-result:last-child {
+      border-bottom: 0;
+    }
+    .vs-help-search-result:hover,
+    .vs-help-search-result:focus-visible {
+      background: rgba(45, 212, 191, 0.1);
+      color: inherit;
+      outline: none;
+    }
+    .vs-help-search-result-title {
+      color: #fff;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+    .vs-help-search-result-meta {
+      margin-top: 0.2rem;
+      color: rgba(255,255,255,0.58);
+      font-size: 0.84rem;
+    }
+    .vs-help-search-empty {
+      padding: 0.95rem 1rem;
+      color: rgba(255,255,255,0.62);
+      font-size: 0.95rem;
+    }
+    .vs-help-topics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .vs-help-topic-chip {
+      border: 1px solid rgba(45, 212, 191, 0.18);
+      background: rgba(45, 212, 191, 0.08);
+      color: #aef7e6;
+      border-radius: 999px;
+      padding: 0.46rem 0.84rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      transition: background .14s ease, border-color .14s ease, transform .14s ease;
+    }
+    .vs-help-topic-chip:hover,
+    .vs-help-topic-chip:focus-visible {
+      background: rgba(45, 212, 191, 0.13);
+      border-color: rgba(45, 212, 191, 0.32);
+      transform: translateY(-1px);
+      outline: none;
+    }
     .vs-help-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 16px;
-      margin-top: 24px;
+      margin-top: 26px;
     }
     .vs-help-card {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      min-height: 220px;
-      padding: 22px;
-      border-radius: 22px;
+      gap: 10px;
+      min-height: 188px;
+      padding: 20px;
+      border-radius: 20px;
       text-decoration: none;
       color: inherit;
       background:
-        radial-gradient(circle at top right, rgba(45, 212, 191, 0.14), transparent 34%),
+        radial-gradient(circle at top right, rgba(45, 212, 191, 0.12), transparent 34%),
         linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
       border: 1px solid rgba(255,255,255,0.08);
-      transition: transform .16s ease, border-color .16s ease;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
     }
-    .vs-help-card:hover {
+    .vs-help-card:hover,
+    .vs-help-card:focus-visible {
       transform: translateY(-2px);
       border-color: rgba(45, 212, 191, 0.35);
       color: inherit;
+      outline: none;
+    }
+    .vs-help-card.is-disabled {
+      cursor: default;
+      opacity: 0.72;
+      background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015));
+    }
+    .vs-help-card.is-disabled:hover,
+    .vs-help-card.is-disabled:focus-visible {
+      transform: none;
+      border-color: rgba(255,255,255,0.08);
+    }
+    .vs-help-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
     .vs-help-card-icon {
-      width: 52px;
-      height: 52px;
+      width: 46px;
+      height: 46px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 16px;
+      border-radius: 14px;
       background: rgba(45, 212, 191, 0.12);
       color: #9ff5e1;
+      flex: 0 0 auto;
+    }
+    .vs-help-card-count {
+      color: rgba(255,255,255,0.56);
+      font-size: 0.79rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
     .vs-help-card-title {
-      font-size: 1.08rem;
+      font-size: 1.02rem;
       font-weight: 700;
       color: #fff;
+      line-height: 1.35;
     }
     .vs-help-card-text {
-      color: rgba(255,255,255,0.72);
+      color: rgba(255,255,255,0.7);
       line-height: 1.55;
+      font-size: 0.94rem;
     }
     .vs-help-card-cta {
       margin-top: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       color: #9ff5e1;
-      font-size: 0.88rem;
+      font-size: 0.86rem;
       font-weight: 700;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+    }
+    .vs-help-card-cta.is-muted {
+      color: rgba(255,255,255,0.46);
+    }
+    .vs-help-support {
+      margin-top: 28px;
+      padding: 20px 22px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .vs-help-support-title {
+      margin: 0;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .vs-help-support-text {
+      margin: 0.35rem 0 0;
+      color: rgba(255,255,255,0.66);
+    }
+    @media (max-width: 767.98px) {
+      .vs-help-search-input {
+        min-height: 54px;
+      }
+      .vs-help-support {
+        align-items: flex-start;
+      }
     }
   </style>
 {% endblock %}
@@ -74,19 +242,148 @@
       <p class="vs-help-subtitle mb-0">{{ page_subtitle }}</p>
     </div>
 
+    <div class="vs-help-search-shell" id="faq-search-shell">
+      <span class="material-symbols-outlined vs-help-search-icon" aria-hidden="true">search</span>
+      <input
+        id="faq-search-input"
+        class="vs-help-search-input"
+        type="search"
+        placeholder="Search help articles..."
+        autocomplete="off"
+        aria-label="Search help articles">
+      <div id="faq-search-results" class="vs-help-search-results" hidden></div>
+    </div>
+
+    {% if popular_topics %}
+      <div class="vs-help-topics" aria-label="Popular topics">
+        {% for topic in popular_topics %}
+          <button type="button" class="vs-help-topic-chip" data-topic="{{ topic }}">{{ topic }}</button>
+        {% endfor %}
+      </div>
+    {% endif %}
+
     <div class="vs-help-grid">
-      {% for entry in faq_entries %}
-        <a href="{{ url_for('video_shorts_bp.help_faq_article', slug=entry.slug) }}" class="vs-help-card">
-          <div class="vs-help-card-icon">
-            <span class="material-symbols-outlined">help</span>
+      {% for category in faq_categories %}
+        {% set primary_entry = category.primary_entry %}
+        {% if primary_entry %}
+          <a
+            href="{{ url_for('video_shorts_bp.help_faq_article', slug=primary_entry.slug) }}"
+            class="vs-help-card"
+            data-category-slug="{{ category.slug }}">
+        {% else %}
+          <div class="vs-help-card is-disabled" data-category-slug="{{ category.slug }}" aria-disabled="true">
+        {% endif %}
+          <div class="vs-help-card-top">
+            <div class="vs-help-card-icon">
+              <span class="material-symbols-outlined">{{ category.icon }}</span>
+            </div>
+            <div class="vs-help-card-count">
+              {{ category.article_count }} article{% if category.article_count != 1 %}s{% endif %}
+              {% if category.question_count %}
+                · {{ category.question_count }} question{% if category.question_count != 1 %}s{% endif %}
+              {% endif %}
+            </div>
           </div>
-          <div class="vs-help-card-title">{{ entry.title }}</div>
-          {% if entry.description %}
-            <div class="vs-help-card-text">{{ entry.description }}</div>
-          {% endif %}
-          <div class="vs-help-card-cta">Open FAQ →</div>
-        </a>
+          <div class="vs-help-card-title">{{ category.title }}</div>
+          <div class="vs-help-card-text">{{ category.description }}</div>
+          <div class="vs-help-card-cta{% if not primary_entry %} is-muted{% endif %}">
+            {% if primary_entry %}
+              <span>View articles</span>
+              <span aria-hidden="true">→</span>
+            {% else %}
+              <span>No articles yet</span>
+            {% endif %}
+          </div>
+        {% if primary_entry %}
+          </a>
+        {% else %}
+          </div>
+        {% endif %}
       {% endfor %}
     </div>
+
+    {% if support_href %}
+      <div class="vs-help-support">
+        <div>
+          <h2 class="vs-help-support-title">Can't find what you're looking for?</h2>
+          <p class="vs-help-support-text">Contact support and we'll help you figure it out.</p>
+        </div>
+        <a class="btn btn-sm vs-btn-outline" href="{{ support_href }}">Contact Support</a>
+      </div>
+    {% endif %}
   </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const searchInput = document.getElementById("faq-search-input");
+      const resultsEl = document.getElementById("faq-search-results");
+      const searchShell = document.getElementById("faq-search-shell");
+      const topicChips = Array.from(document.querySelectorAll("[data-topic]"));
+      const searchIndex = {{ faq_search_index | tojson }};
+
+      if (!searchInput || !resultsEl) return;
+
+      function hideResults() {
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = "";
+      }
+
+      function renderResults(query) {
+        const normalized = query.trim().toLowerCase();
+        if (!normalized) {
+          hideResults();
+          return;
+        }
+
+        const matches = searchIndex
+          .filter((item) => item.question.toLowerCase().includes(normalized))
+          .slice(0, 8);
+
+        if (!matches.length) {
+          resultsEl.innerHTML = '<div class="vs-help-search-empty">No results found.</div>';
+          resultsEl.hidden = false;
+          return;
+        }
+
+        resultsEl.innerHTML = matches.map((item) => `
+          <a class="vs-help-search-result" href="${item.href}">
+            <div class="vs-help-search-result-title">${item.question}</div>
+            <div class="vs-help-search-result-meta">${item.category_title}</div>
+          </a>
+        `).join("");
+        resultsEl.hidden = false;
+      }
+
+      searchInput.addEventListener("input", function () {
+        renderResults(searchInput.value);
+      });
+
+      searchInput.addEventListener("focus", function () {
+        if (searchInput.value.trim()) {
+          renderResults(searchInput.value);
+        }
+      });
+
+      topicChips.forEach((chip) => {
+        chip.addEventListener("click", function () {
+          searchInput.value = chip.dataset.topic || "";
+          renderResults(searchInput.value);
+          searchInput.focus();
+        });
+      });
+
+      document.addEventListener("click", function (event) {
+        if (!searchShell.contains(event.target)) {
+          hideResults();
+        }
+      });
+
+      searchInput.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          hideResults();
+          searchInput.blur();
+        }
+      });
+    });
+  </script>
 {% endblock %}
