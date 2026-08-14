@@ -5,9 +5,11 @@ import logging
 from datetime import datetime, timedelta
 
 
-from flask import Flask, redirect, url_for
+from flask import Flask, jsonify, redirect, g, url_for
 from dotenv import load_dotenv
+from werkzeug.exceptions import HTTPException, InternalServerError
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir_on_startup
+from app.video_shorts.services.error_capture import capture_server_error, wants_json_error_response
 
 # .env yükle
 load_dotenv()
@@ -109,6 +111,32 @@ def create_app():
         @app.get("/")
         def legacy_root_redirect():
             return redirect(url_for("video_shorts_bp.home"))
+
+    @app.errorhandler(Exception)
+    def handle_application_exception(exc):
+        status_code = 500
+        if isinstance(exc, HTTPException):
+            status_code = int(exc.code or 500)
+        capture_server_error(
+            status_code=status_code,
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
+        if isinstance(exc, HTTPException):
+            return exc
+        if wants_json_error_response():
+            return jsonify({"ok": False, "error": "Internal server error."}), 500
+        return InternalServerError()
+
+    @app.after_request
+    def capture_error_responses(response):
+        try:
+            status_code = int(getattr(response, "status_code", 200) or 200)
+        except Exception:
+            status_code = 200
+        if status_code >= 400 and not getattr(g, "_vs_error_capture_active", False):
+            capture_server_error(status_code=status_code)
+        return response
 
     return app
 

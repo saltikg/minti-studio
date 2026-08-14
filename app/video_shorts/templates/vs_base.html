@@ -437,6 +437,81 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     (() => {
+      const endpoint = "{{ url_for('video_shorts_bp.client_error_api') }}";
+      const sentFingerprints = new Set();
+      const truncate = (value, limit = 500) => {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        const text = String(value);
+        return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+      };
+      const sendPayload = (payload, options = {}) => {
+        try {
+          const body = JSON.stringify(payload);
+          const fingerprint = `${payload.error_type}:${payload.source}:${payload.message}`;
+          if (options.dedupe !== false && sentFingerprints.has(fingerprint)) {
+            return;
+          }
+          if (options.dedupe !== false) {
+            sentFingerprints.add(fingerprint);
+          }
+          if (navigator.sendBeacon) {
+            const blob = new Blob([body], { type: "application/json" });
+            navigator.sendBeacon(endpoint, blob);
+            return;
+          }
+          fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        } catch (error) {
+          // Ignore error-reporting failures.
+        }
+      };
+
+      window.MintiErrorReporter = {
+        report(details = {}) {
+          const errorType = truncate(details.error_type || "js_error", 120);
+          sendPayload({
+            error_type: errorType,
+            message: truncate(details.message || "", 500),
+            source: truncate(details.source || window.location.pathname, 240),
+            page: truncate(window.location.pathname, 240),
+          }, { dedupe: details.dedupe !== false });
+        },
+      };
+
+      window.addEventListener("error", (event) => {
+        window.MintiErrorReporter.report({
+          error_type: "js_error",
+          message: event?.message || event?.error?.message || "Unhandled window error",
+          source: event?.filename || window.location.pathname,
+        });
+      });
+
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event?.reason;
+        const message =
+          typeof reason === "string"
+            ? reason
+            : reason?.message || "Unhandled promise rejection";
+        window.MintiErrorReporter.report({
+          error_type: "unhandled_rejection",
+          message,
+          source: window.location.pathname,
+        });
+      });
+    })();
+  </script>
+  <script>
+    (() => {
       const storageKey = "vsUiNotifications";
       const usageSummaryKey = "vsUsageSummaryCache";
       const dismissOnboarding = async () => {

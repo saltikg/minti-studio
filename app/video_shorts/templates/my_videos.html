@@ -736,7 +736,15 @@
       setProgress(percent);
       setFeedback(`Uploading… ${percent}%`);
     };
-    xhr.onerror = () => reject(new Error('Upload failed before processing started.'));
+    xhr.onerror = () => {
+      window.MintiErrorReporter?.report({
+        error_type: 'upload_failed',
+        message: 'Upload failed before processing started.',
+        source: window.location.pathname,
+        dedupe: false,
+      });
+      reject(new Error('Upload failed before processing started.'));
+    };
     xhr.onload = () => {
       let payload = {};
       try {
@@ -745,6 +753,12 @@
         payload = {};
       }
       if (xhr.status < 200 || xhr.status >= 300 || !payload.ok) {
+        window.MintiErrorReporter?.report({
+          error_type: 'upload_failed',
+          message: payload.error || 'Upload failed before processing started.',
+          source: window.location.pathname,
+          dedupe: false,
+        });
         reject(new Error(payload.error || 'Upload failed before processing started.'));
         return;
       }

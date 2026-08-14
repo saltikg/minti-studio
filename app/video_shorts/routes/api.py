@@ -4,6 +4,7 @@ from flask import current_app, g, jsonify, request
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import CAPTION_API_TOKEN
+from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
@@ -11,10 +12,17 @@ from app.video_shorts.services.db import (
     get_db,
     get_db_readonly,
 )
+from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
 from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
+
+
+CLIENT_ERROR_RATE_LIMITS = [
+    RateLimitRule(limit=10, window_seconds=60),
+    RateLimitRule(limit=30, window_seconds=3600),
+]
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -95,6 +103,38 @@ def render_job_status_api(job_id: str):
             "queue_position": job.get("queue_position"),
         }
     )
+
+
+@video_shorts_bp.route("/api/client-error", methods=["POST"])
+def client_error_api():
+    content_length = int(request.content_length or 0)
+    if content_length > CLIENT_ERROR_MAX_BODY_BYTES:
+        return ("", 204)
+
+    key_parts = [
+        current_event_user_id(),
+        request.headers.get("X-Forwarded-For", ""),
+        request.remote_addr or "",
+    ]
+    allowed, _retry_after = check_rate_limits("client-error", key_parts, CLIENT_ERROR_RATE_LIMITS)
+    if not allowed:
+        return ("", 204)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return ("", 204)
+
+    error_type = str(payload.get("error_type") or "").strip().lower()
+    if not error_type:
+        return ("", 204)
+
+    capture_client_error(
+        error_type=error_type,
+        message=payload.get("message"),
+        source=payload.get("source") or payload.get("page"),
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return ("", 204)
 
 
 @video_shorts_bp.route("/api/caption-result", methods=["POST"])
