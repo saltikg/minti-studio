@@ -2,10 +2,11 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import math
 from hashlib import sha256
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
@@ -69,6 +70,10 @@ ALLOWED_UPLOAD_EXTS = {".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", "
 LOCAL_CHANNEL_NAME = "Local uploads"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
+MULTIPART_UPLOAD_PART_SIZE_BYTES = 10 * 1024 * 1024
+MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024
+MULTIPART_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
+MULTIPART_UPLOAD_MAX_PARTS = 10_000
 
 
 def _normalize_timestamp(value):
@@ -473,6 +478,256 @@ def _upsert_storage_asset(file_key: str, file_path: str, size_bytes: int, user_i
         conn.close()
 
 
+def _create_uploaded_video_record(
+    *,
+    conn,
+    current_user,
+    brand_id,
+    upload_kind: str,
+    video_id: str,
+    filename: str,
+    source_key: str,
+    duration_seconds,
+):
+    ensure_brand_schema(conn)
+    ensure_channel_owner_schema(conn)
+    _ensure_video_crop_schema(conn)
+    source_reference = build_storage_reference(source_key)
+    if upload_kind == "music":
+        channel_id = _get_or_create_music_channel(conn, current_user.get("id"), brand_id)
+    elif upload_kind == "podcast":
+        channel_id = _get_or_create_podcast_channel(conn, current_user.get("id"), brand_id)
+    else:
+        channel_id = _get_or_create_local_channel(conn, current_user.get("id"), brand_id)
+    if not channel_id:
+        raise ValueError("Local channel could not be created.")
+    title = Path(filename).stem or "Uploaded media"
+    try:
+        conn.execute(
+            """
+            INSERT INTO youtube_videos
+                (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
+                 duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
+                 brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
+            """,
+            [
+                channel_id,
+                video_id,
+                title,
+                datetime.utcnow().isoformat(),
+                None,
+                False,
+                duration_seconds,
+                None,
+                None,
+                None,
+                source_reference,
+                current_user.get("id"),
+                brand_id,
+                bool(upload_kind == "music"),
+                "karaoke",
+            ],
+        )
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.execute(
+            """
+            INSERT INTO youtube_videos
+                (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
+                 duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
+                 brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
+            """,
+            [
+                channel_id,
+                video_id,
+                title,
+                datetime.utcnow().isoformat(),
+                None,
+                False,
+                duration_seconds,
+                None,
+                None,
+                None,
+                source_reference,
+                current_user.get("id"),
+                brand_id,
+                "karaoke",
+            ],
+        )
+    row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
+    conn.commit()
+    track_event(
+        current_user["id"],
+        "video_uploaded",
+        video_id=video_id,
+    )
+    return row[0] if row else None
+
+
+def _enqueue_uploaded_video_jobs(
+    *,
+    session_id: str,
+    current_user,
+    brand_id,
+    video_id: str,
+    video_pk: int,
+    source_key: str,
+    size_bytes: int,
+    duration_seconds,
+):
+    _upsert_storage_asset(
+        f"downloaded:{Path(source_key).name}",
+        f"s3://{source_key}",
+        int(size_bytes or 0),
+        current_user.get("id"),
+    )
+    normalize_input_hash = sha256(
+        f"quick-upload-normalize:{current_user['id']}:{brand_id}:{video_id}:{source_key}".encode("utf-8")
+    ).hexdigest()
+    enqueue_worker_job(
+        user_id=current_user["id"],
+        job_type=JOB_TYPE_NORMALIZE_UPLOAD,
+        payload={
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "source_key": source_key,
+        },
+        input_hash=normalize_input_hash,
+        priority=100,
+    )
+    job_input_hash = sha256(f"quick-upload:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
+    enqueue_result = enqueue_job(
+        user_id=current_user["id"],
+        job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
+        payload={
+            "quick_session_id": session_id,
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "duration_seconds": duration_seconds,
+        },
+        input_hash=job_input_hash,
+    )
+    job = enqueue_result.get("job") or {}
+    return update_session(
+        session_id,
+        status=STATUS_INGESTING,
+        video_pk=int(video_pk),
+        video_id=video_id,
+        ingest_job_id=job.get("id"),
+        result={"stage": "uploaded", "message": "Upload complete. Starting transcription."},
+    ), job
+
+
+def _finalize_uploaded_s3_object(
+    *,
+    current_user,
+    brand_id,
+    session,
+    source_key: str,
+):
+    upload_payload = (session.get("payload") or {}).get("upload") or {}
+    video_id = str(upload_payload.get("video_id") or "").strip()
+    filename = str(upload_payload.get("filename") or "").strip()
+    if not video_id or not filename or not source_key:
+        return None, None, _json_error("Upload payload is incomplete.")
+    if disk_guard_triggered(operation="quick_short_upload_complete", log=current_app.logger):
+        return None, None, _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
+    storage = get_media_storage()
+    try:
+        probe_target = storage.public_url(source_key) if getattr(storage, "backend_name", "local") == "s3" else source_key
+        probed_duration_seconds = _probe_duration_seconds(
+            probe_target,
+            context=f"source_key={source_key}",
+        )
+    except Exception:
+        current_app.logger.exception("Failed to probe uploaded media duration source_key=%s", source_key)
+        probed_duration_seconds = None
+    conn_ro = get_db_readonly()
+    try:
+        limits = _get_user_upload_limits(conn_ro, current_user["id"])
+    finally:
+        conn_ro.close()
+    duration_error = _validate_upload_duration(duration_seconds=probed_duration_seconds, limits=limits)
+    if duration_error:
+        try:
+            storage.delete(source_key)
+        except Exception:
+            current_app.logger.exception("Failed to delete rejected upload source_key=%s", source_key)
+        return None, None, _json_error(duration_error, 413, code="upload_too_long")
+    duration_seconds = probed_duration_seconds if probed_duration_seconds is not None else upload_payload.get("duration_seconds")
+    conn = get_db()
+    try:
+        video_pk = _create_uploaded_video_record(
+            conn=conn,
+            current_user=current_user,
+            brand_id=brand_id,
+            upload_kind=str(session.get("upload_kind") or "video").strip().lower(),
+            video_id=video_id,
+            filename=filename,
+            source_key=source_key,
+            duration_seconds=duration_seconds,
+        )
+    finally:
+        conn.close()
+    if not video_pk:
+        return None, None, _json_error("Video record could not be created.")
+    finalized_session, job = _enqueue_uploaded_video_jobs(
+        session_id=session["id"],
+        current_user=current_user,
+        brand_id=brand_id,
+        video_id=video_id,
+        video_pk=int(video_pk),
+        source_key=source_key,
+        size_bytes=int(upload_payload.get("size_bytes") or 0),
+        duration_seconds=duration_seconds,
+    )
+    return finalized_session, job, None
+
+
+def _multipart_part_size(total_size: int) -> int:
+    size = max(MULTIPART_UPLOAD_PART_SIZE_BYTES, MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES)
+    if total_size > 0:
+        min_required = math.ceil(total_size / MULTIPART_UPLOAD_MAX_PARTS)
+        if min_required > size:
+            size = min_required
+    size = max(size, MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES)
+    return size
+
+
+def _multipart_part_count(total_size: int, part_size: int) -> int:
+    if total_size <= 0:
+        return 0
+    return int(math.ceil(total_size / float(part_size)))
+
+
+def _multipart_upload_urls(storage, *, key: str, upload_id: str, part_count: int) -> List[Dict[str, Any]]:
+    urls: List[Dict[str, Any]] = []
+    for part_number in range(1, part_count + 1):
+        presigned_url = storage.client.generate_presigned_url(
+            "upload_part",
+            Params={
+                "Bucket": storage.bucket_name,
+                "Key": key,
+                "UploadId": upload_id,
+                "PartNumber": part_number,
+            },
+            ExpiresIn=MULTIPART_UPLOAD_URL_TTL_SECONDS,
+            HttpMethod="PUT",
+        )
+        urls.append(
+            {
+                "part_number": part_number,
+                "presigned_url": presigned_url,
+            }
+        )
+    return urls
+
+
 def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
     video_id = meta.get("video_id")
     if not video_id:
@@ -865,6 +1120,105 @@ def quick_short_upload_presign():
     )
 
 
+@video_shorts_bp.route("/shorts/quick/api/upload/multipart/start", methods=["POST"])
+def quick_short_upload_multipart_start():
+    current_user, redirect_response = _require_quick_user()
+    if redirect_response:
+        return jsonify({"error": "unauthorized"}), 401
+    _ensure_quick_schema()
+    brand_id = current_brand_id()
+    data = request.get_json(silent=True) or {}
+    filename = Path((data.get("filename") or "").strip()).name
+    upload_kind = str(data.get("upload_kind") or "video").strip().lower()
+    total_size = int(data.get("total_size") or data.get("size_bytes") or 0)
+    content_type = (data.get("content_type") or "").strip() or "application/octet-stream"
+    if upload_kind not in {"video", "music", "podcast"}:
+        upload_kind = "video"
+    if not filename:
+        return _json_error("Choose a file first.")
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_UPLOAD_EXTS:
+        return _json_error("Unsupported file format.")
+    conn_ro = get_db_readonly()
+    try:
+        limits = _get_user_upload_limits(conn_ro, current_user["id"])
+        usage = _get_user_storage_usage(conn_ro, current_user["id"])
+    finally:
+        conn_ro.close()
+    size_error = _validate_upload_size(size_bytes=total_size, limits=limits)
+    if size_error:
+        return _json_error(size_error, 413, code="upload_too_large")
+    if disk_guard_triggered(operation="quick_short_upload_multipart_start", log=current_app.logger):
+        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
+    limit_bytes = usage.get("limit_bytes") or 0
+    if limit_bytes and usage["used_bytes"] + total_size > limit_bytes:
+        return _json_error("Storage limit is full. Free up space or upgrade first.", 403, code="storage_full")
+    video_id = f"local_{uuid.uuid4().hex}"
+    source_key = f"videos/{video_id}{ext}"
+    storage = get_media_storage()
+    if getattr(storage, "backend_name", "local") != "s3" or not getattr(storage, "client", None):
+        return _json_error("Direct upload is only available when S3 storage is enabled.", 500)
+    part_size = _multipart_part_size(total_size)
+    part_count = _multipart_part_count(total_size, part_size)
+    if part_count <= 0:
+        return _json_error("Choose a file first.")
+    if part_count > MULTIPART_UPLOAD_MAX_PARTS:
+        return _json_error("This upload requires too many parts. Try a smaller file.", 413, code="too_many_parts")
+    try:
+        multipart = storage.client.create_multipart_upload(
+            Bucket=storage.bucket_name,
+            Key=source_key,
+            ContentType=content_type,
+        )
+        upload_id = str(multipart.get("UploadId") or "").strip()
+    except Exception:
+        current_app.logger.exception("Failed to start multipart upload source_key=%s", source_key)
+        return _json_error("Couldn't start multipart upload right now.", 502, code="multipart_start_failed")
+    if not upload_id:
+        return _json_error("Couldn't start multipart upload.")
+    upload_urls = _multipart_upload_urls(
+        storage,
+        key=source_key,
+        upload_id=upload_id,
+        part_count=part_count,
+    )
+    session = create_session(
+        user_id=current_user["id"],
+        brand_id=brand_id,
+        source_type="upload",
+        upload_kind=upload_kind,
+        source_filename=filename,
+        payload={
+            "upload": {
+                "video_id": video_id,
+                "source_key": source_key,
+                "filename": filename,
+                "size_bytes": total_size,
+                "content_type": content_type,
+                "multipart": {
+                    "upload_id": upload_id,
+                    "part_size": part_size,
+                    "part_count": part_count,
+                    "expected_size_bytes": total_size,
+                },
+            }
+        },
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "session_id": session["id"],
+            "video_id": video_id,
+            "source_key": source_key,
+            "upload_id": upload_id,
+            "part_size": part_size,
+            "part_count": part_count,
+            "expires_in": MULTIPART_UPLOAD_URL_TTL_SECONDS,
+            "parts": upload_urls,
+        }
+    )
+
+
 @video_shorts_bp.route("/shorts/quick/api/upload/complete", methods=["POST"])
 def quick_short_upload_complete():
     current_user, redirect_response = _require_quick_user()
@@ -874,168 +1228,128 @@ def quick_short_upload_complete():
     brand_id = current_brand_id()
     data = request.get_json(silent=True) or {}
     session_id = str(data.get("session_id") or "").strip()
-    duration_seconds = data.get("duration_seconds")
     session = get_session(session_id, user_id=current_user["id"])
     if not session:
         return _json_error("Upload session not found.", 404)
     upload_payload = (session.get("payload") or {}).get("upload") or {}
-    video_id = str(upload_payload.get("video_id") or "").strip()
-    filename = str(upload_payload.get("filename") or "").strip()
     source_key = str(upload_payload.get("source_key") or "").strip()
-    if not video_id or not filename or not source_key:
+    session, job, error_response = _finalize_uploaded_s3_object(
+        current_user=current_user,
+        brand_id=brand_id,
+        session=session,
+        source_key=source_key,
+    )
+    if error_response is not None:
+        return error_response
+    return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id")})
+
+
+@video_shorts_bp.route("/shorts/quick/api/upload/multipart/complete", methods=["POST"])
+def quick_short_upload_multipart_complete():
+    current_user, redirect_response = _require_quick_user()
+    if redirect_response:
+        return jsonify({"error": "unauthorized"}), 401
+    _ensure_quick_schema()
+    brand_id = current_brand_id()
+    data = request.get_json(silent=True) or {}
+    session_id = str(data.get("session_id") or "").strip()
+    source_key = str(data.get("key") or "").strip()
+    completed_parts = data.get("parts") or []
+    session = get_session(session_id, user_id=current_user["id"])
+    if not session:
+        return _json_error("Upload session not found.", 404)
+    upload_payload = (session.get("payload") or {}).get("upload") or {}
+    multipart_payload = upload_payload.get("multipart") or {}
+    upload_id = str(multipart_payload.get("upload_id") or data.get("upload_id") or "").strip()
+    expected_key = str(upload_payload.get("source_key") or "").strip()
+    if not upload_id or not expected_key:
         return _json_error("Upload payload is incomplete.")
-    if disk_guard_triggered(operation="quick_short_upload_complete", log=current_app.logger):
-        return _json_error(USER_FACING_DISK_GUARD_MESSAGE, 503, code="system_busy")
-    storage = get_media_storage()
+    if source_key and source_key != expected_key:
+        return _json_error("Upload key does not match the session.", 403)
+    if not isinstance(completed_parts, list) or not completed_parts:
+        return _json_error("Complete upload requires the uploaded parts list.")
     try:
-        probe_target = storage.public_url(source_key) if getattr(storage, "backend_name", "local") == "s3" else source_key
-        probed_duration_seconds = _probe_duration_seconds(
-            probe_target,
-            context=f"source_key={source_key}",
+        sorted_parts = sorted(
+            [
+                {
+                    "ETag": str(part.get("etag") or "").strip(),
+                    "PartNumber": int(part.get("part_number")),
+                }
+                for part in completed_parts
+                if str(part.get("etag") or "").strip() and part.get("part_number") is not None
+            ],
+            key=lambda part: int(part["PartNumber"]),
         )
     except Exception:
-        current_app.logger.exception("Failed to probe uploaded media duration source_key=%s", source_key)
-        probed_duration_seconds = None
-    conn_ro = get_db_readonly()
+        return _json_error("Uploaded parts are invalid.")
+    if not sorted_parts:
+        return _json_error("Complete upload requires the uploaded parts list.")
+    storage = get_media_storage()
     try:
-        limits = _get_user_upload_limits(conn_ro, current_user["id"])
-    finally:
-        conn_ro.close()
-    duration_error = _validate_upload_duration(duration_seconds=probed_duration_seconds, limits=limits)
-    if duration_error:
-        try:
-            storage.delete(source_key)
-        except Exception:
-            current_app.logger.exception("Failed to delete rejected upload source_key=%s", source_key)
-        return _json_error(duration_error, 413, code="upload_too_long")
-    if probed_duration_seconds:
-        duration_seconds = probed_duration_seconds
-    conn = get_db()
-    try:
-        ensure_brand_schema(conn)
-        ensure_channel_owner_schema(conn)
-        _ensure_video_crop_schema(conn)
-        source_reference = build_storage_reference(source_key)
-        if session.get("upload_kind") == "music":
-            channel_id = _get_or_create_music_channel(conn, current_user.get("id"), brand_id)
-        elif session.get("upload_kind") == "podcast":
-            channel_id = _get_or_create_podcast_channel(conn, current_user.get("id"), brand_id)
-        else:
-            channel_id = _get_or_create_local_channel(conn, current_user.get("id"), brand_id)
-        if not channel_id:
-            return _json_error("Local channel could not be created.")
-        title = Path(filename).stem or "Uploaded media"
-        try:
-            conn.execute(
-                """
-                INSERT INTO youtube_videos
-                    (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                     duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
-                """,
-                [
-                    channel_id,
-                    video_id,
-                    title,
-                    datetime.utcnow().isoformat(),
-                    None,
-                    False,
-                    duration_seconds,
-                    None,
-                    None,
-                    None,
-                    source_reference,
-                    current_user.get("id"),
-                    brand_id,
-                    bool(session.get("upload_kind") == "music"),
-                    "karaoke",
-                ],
-            )
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            conn.execute(
-                """
-                INSERT INTO youtube_videos
-                    (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                     duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
-                """,
-                [
-                    channel_id,
-                    video_id,
-                    title,
-                    datetime.utcnow().isoformat(),
-                    None,
-                    False,
-                    duration_seconds,
-                    None,
-                    None,
-                    None,
-                    source_reference,
-                    current_user.get("id"),
-                    brand_id,
-                    "karaoke",
-                ],
-            )
-        row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
-        conn.commit()
-        track_event(
-            current_user["id"],
-            "video_uploaded",
-            video_id=video_id,
+        storage.client.complete_multipart_upload(
+            Bucket=storage.bucket_name,
+            Key=expected_key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": sorted_parts},
         )
-    finally:
-        conn.close()
-    video_pk = row[0] if row else None
-    if not video_pk:
-        return _json_error("Video record could not be created.")
-    _upsert_storage_asset(
-        f"downloaded:{Path(source_key).name}",
-        f"s3://{source_key}",
-        int(upload_payload.get("size_bytes") or 0),
-        current_user.get("id"),
+    except Exception:
+        current_app.logger.exception(
+            "Failed to complete multipart upload session_id=%s source_key=%s",
+            session_id,
+            expected_key,
+        )
+        return _json_error("Couldn't complete multipart upload right now.", 502, code="multipart_complete_failed")
+    session, job, error_response = _finalize_uploaded_s3_object(
+        current_user=current_user,
+        brand_id=brand_id,
+        session=session,
+        source_key=expected_key,
     )
-    normalize_input_hash = sha256(
-        f"quick-upload-normalize:{current_user['id']}:{brand_id}:{video_id}:{source_key}".encode("utf-8")
-    ).hexdigest()
-    enqueue_worker_job(
-        user_id=current_user["id"],
-        job_type=JOB_TYPE_NORMALIZE_UPLOAD,
-        payload={
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "source_key": source_key,
-        },
-        input_hash=normalize_input_hash,
-        priority=100,
-    )
-    job_input_hash = sha256(f"quick-upload:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
-    enqueue_result = enqueue_job(
-        user_id=current_user["id"],
-        job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
-        payload={
-            "quick_session_id": session["id"],
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "duration_seconds": duration_seconds,
-        },
-        input_hash=job_input_hash,
-    )
-    job = enqueue_result.get("job") or {}
+    if error_response is not None:
+        return error_response
+    return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id")})
+
+
+@video_shorts_bp.route("/shorts/quick/api/upload/multipart/abort", methods=["POST"])
+def quick_short_upload_multipart_abort():
+    current_user, redirect_response = _require_quick_user()
+    if redirect_response:
+        return jsonify({"error": "unauthorized"}), 401
+    _ensure_quick_schema()
+    data = request.get_json(silent=True) or {}
+    session_id = str(data.get("session_id") or "").strip()
+    source_key = str(data.get("key") or "").strip()
+    session = get_session(session_id, user_id=current_user["id"])
+    if not session:
+        return _json_error("Upload session not found.", 404)
+    upload_payload = (session.get("payload") or {}).get("upload") or {}
+    multipart_payload = upload_payload.get("multipart") or {}
+    upload_id = str(multipart_payload.get("upload_id") or data.get("upload_id") or "").strip()
+    expected_key = str(upload_payload.get("source_key") or "").strip()
+    if not upload_id or not expected_key:
+        return _json_error("Upload payload is incomplete.")
+    if source_key and source_key != expected_key:
+        return _json_error("Upload key does not match the session.", 403)
+    storage = get_media_storage()
+    try:
+        storage.client.abort_multipart_upload(
+            Bucket=storage.bucket_name,
+            Key=expected_key,
+            UploadId=upload_id,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Failed to abort multipart upload session_id=%s source_key=%s",
+            session_id,
+            expected_key,
+        )
+        return _json_error("Couldn't cancel multipart upload right now.", 502, code="multipart_abort_failed")
     session = update_session(
         session["id"],
-        status=STATUS_INGESTING,
-        video_pk=int(video_pk),
-        video_id=video_id,
-        ingest_job_id=job.get("id"),
-        result={"stage": "uploaded", "message": "Upload complete. Starting transcription."},
+        status=STATUS_FAILED,
+        result={"stage": "cancelled", "message": "Upload cancelled."},
     )
-    return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id")})
+    return jsonify({"ok": True, "session": _build_session_payload(session)})
 
 
 def _create_uploaded_video_session_and_enqueue(
@@ -1067,114 +1381,29 @@ def _create_uploaded_video_session_and_enqueue(
     )
     conn = get_db()
     try:
-        ensure_brand_schema(conn)
-        ensure_channel_owner_schema(conn)
-        _ensure_video_crop_schema(conn)
-        source_reference = build_storage_reference(source_key)
-        if upload_kind == "music":
-            channel_id = _get_or_create_music_channel(conn, current_user.get("id"), brand_id)
-        elif upload_kind == "podcast":
-            channel_id = _get_or_create_podcast_channel(conn, current_user.get("id"), brand_id)
-        else:
-            channel_id = _get_or_create_local_channel(conn, current_user.get("id"), brand_id)
-        if not channel_id:
-            raise ValueError("Local channel could not be created.")
-        title = Path(filename).stem or "Uploaded media"
-        try:
-            conn.execute(
-                """
-                INSERT INTO youtube_videos
-                    (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                     duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
-                """,
-                [
-                    channel_id,
-                    video_id,
-                    title,
-                    datetime.utcnow().isoformat(),
-                    None,
-                    False,
-                    duration_seconds,
-                    None,
-                    None,
-                    None,
-                    source_reference,
-                    current_user.get("id"),
-                    brand_id,
-                    bool(upload_kind == "music"),
-                    "karaoke",
-                ],
-            )
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            conn.execute(
-                """
-                INSERT INTO youtube_videos
-                    (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                     duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
-                     brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
-                """,
-                [
-                    channel_id,
-                    video_id,
-                    title,
-                    datetime.utcnow().isoformat(),
-                    None,
-                    False,
-                    duration_seconds,
-                    None,
-                    None,
-                    None,
-                    source_reference,
-                    current_user.get("id"),
-                    brand_id,
-                    "karaoke",
-                ],
-            )
-        row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
-        conn.commit()
-        track_event(
-            current_user["id"],
-            "video_uploaded",
+        video_pk = _create_uploaded_video_record(
+            conn=conn,
+            current_user=current_user,
+            brand_id=brand_id,
+            upload_kind=upload_kind,
             video_id=video_id,
+            filename=filename,
+            source_key=source_key,
+            duration_seconds=duration_seconds,
         )
     finally:
         conn.close()
-    video_pk = row[0] if row else None
     if not video_pk:
         raise ValueError("Video record could not be created.")
-    _upsert_storage_asset(
-        f"downloaded:{Path(source_key).name}",
-        f"s3://{source_key}",
-        int(size_bytes or 0),
-        current_user.get("id"),
-    )
-    job_input_hash = sha256(f"quick-upload:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
-    enqueue_result = enqueue_job(
-        user_id=current_user["id"],
-        job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
-        payload={
-            "quick_session_id": session["id"],
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "duration_seconds": duration_seconds,
-        },
-        input_hash=job_input_hash,
-    )
-    job = enqueue_result.get("job") or {}
-    session = update_session(
-        session["id"],
-        status=STATUS_INGESTING,
-        video_pk=int(video_pk),
+    session, job = _enqueue_uploaded_video_jobs(
+        session_id=session["id"],
+        current_user=current_user,
+        brand_id=brand_id,
         video_id=video_id,
-        ingest_job_id=job.get("id"),
-        result={"stage": "uploaded", "message": "Upload complete. Starting transcription."},
+        video_pk=int(video_pk),
+        source_key=source_key,
+        size_bytes=int(size_bytes or 0),
+        duration_seconds=duration_seconds,
     )
     return session, job
 
