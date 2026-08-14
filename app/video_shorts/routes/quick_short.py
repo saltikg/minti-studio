@@ -135,16 +135,28 @@ def _get_or_create_channel(conn, meta, owner_id, brand_id):
 
 
 def _get_or_create_local_channel(conn, owner_id, brand_id):
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, LOCAL_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, LOCAL_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, LOCAL_CHANNEL_NAME, brand_id],
+        ).fetchone()
     if row:
         return row[0]
     next_channel_id = _next_channel_id(conn)
@@ -155,30 +167,54 @@ def _get_or_create_local_channel(conn, owner_id, brand_id):
         """,
         [next_channel_id, LOCAL_CHANNEL_NAME, "local://uploads", "Local uploads", owner_id, True, brand_id],
     )
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, LOCAL_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, LOCAL_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, LOCAL_CHANNEL_NAME, brand_id],
+        ).fetchone()
     return row[0] if row else None
 
 
 def _get_or_create_music_channel(conn, owner_id, brand_id):
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, MUSIC_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, MUSIC_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, MUSIC_CHANNEL_NAME, brand_id],
+        ).fetchone()
     if row:
         return row[0]
     next_channel_id = _next_channel_id(conn)
@@ -189,30 +225,54 @@ def _get_or_create_music_channel(conn, owner_id, brand_id):
         """,
         [next_channel_id, MUSIC_CHANNEL_NAME, "local://music-uploads", "Music-only local uploads", owner_id, True, brand_id],
     )
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, MUSIC_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, MUSIC_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, MUSIC_CHANNEL_NAME, brand_id],
+        ).fetchone()
     return row[0] if row else None
 
 
 def _get_or_create_podcast_channel(conn, owner_id, brand_id):
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, PODCAST_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, PODCAST_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, PODCAST_CHANNEL_NAME, brand_id],
+        ).fetchone()
     if row:
         return row[0]
     next_channel_id = _next_channel_id(conn)
@@ -223,16 +283,28 @@ def _get_or_create_podcast_channel(conn, owner_id, brand_id):
         """,
         [next_channel_id, PODCAST_CHANNEL_NAME, "local://podcast-uploads", "Podcast local uploads", owner_id, True, brand_id],
     )
-    row = conn.execute(
-        """
-        SELECT channel_id
-        FROM youtube_channels
-        WHERE owner_user_id = ?
-          AND channel_name = ?
-          AND brand_id = ?
-        """,
-        [owner_id, PODCAST_CHANNEL_NAME, brand_id],
-    ).fetchone()
+    if brand_id is None:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id IS NULL
+            """,
+            [owner_id, PODCAST_CHANNEL_NAME],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT channel_id
+            FROM youtube_channels
+            WHERE owner_user_id = ?
+              AND channel_name = ?
+              AND brand_id = ?
+            """,
+            [owner_id, PODCAST_CHANNEL_NAME, brand_id],
+        ).fetchone()
     return row[0] if row else None
 
 
