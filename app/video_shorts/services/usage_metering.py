@@ -538,13 +538,30 @@ def add_transcription_minutes(
     if amount <= 0:
         return get_current_period(user_id)
     conn = get_db()
-    period_start = _month_start()
     try:
         ensure_usage_metering_schema(conn)
+        occurred_at = event_at or datetime.now(timezone.utc)
+        event_period = _month_start(occurred_at.date())
+        period_start = _month_start()
         _ensure_usage_row(conn, user_id, period_start)
+        # Un-keyed usage cannot be deduped safely, so calls without a video_id
+        # intentionally preserve the existing additive behavior.
         if video_id:
-            occurred_at = event_at or datetime.now(timezone.utc)
-            event_period = _month_start(occurred_at.date())
+            existing_event = conn.execute(
+                f"""
+                SELECT 1
+                FROM {TRANSCRIPTION_EVENTS_TABLE}
+                WHERE user_id = ?
+                  AND video_id = ?
+                  AND period_start = ?
+                LIMIT 1
+                """,
+                [user_id, video_id, event_period],
+            ).fetchone()
+            if existing_event:
+                snapshot = _fetch_plan_and_usage(conn, user_id, period_start)
+                conn.commit()
+                return snapshot
             conn.execute(
                 f"""
                 INSERT INTO {TRANSCRIPTION_EVENTS_TABLE} (
