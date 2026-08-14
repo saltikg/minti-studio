@@ -209,7 +209,7 @@ from app.video_shorts.services.instagram_queue import enqueue_instagram_clip, lo
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip, load_facebook_queue_map
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip, load_tiktok_queue_map
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir, ensure_video_shorts_tmp_dir
-from app.video_shorts.services.generated_video_lifecycle import upsert_generated_video_record
+from app.video_shorts.services.generated_video_lifecycle import _first_non_empty, upsert_generated_video_record
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
