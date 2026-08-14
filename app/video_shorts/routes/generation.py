@@ -7024,6 +7024,124 @@ def _load_admin_auth_users(
     return users, int(total_count or 0)
 
 
+def _load_admin_error_events(
+    conn,
+    *,
+    event_name: str = "",
+    status_query: str = "",
+    email_query: str = "",
+    time_range: str = "24h",
+    limit: int = 200,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    normalized_event = (event_name or "").strip().lower()
+    normalized_status = (status_query or "").strip().lower()
+    normalized_email = (email_query or "").strip().lower()
+    normalized_range = (time_range or "24h").strip().lower()
+
+    allowed_ranges = {
+        "24h": "now() - interval '24 hours'",
+        "7d": "now() - interval '7 days'",
+    }
+
+    where_clauses = [
+        "ue.event_name IN ('server_error', 'client_error')",
+    ]
+    params: List[Any] = []
+
+    if normalized_event in {"server_error", "client_error"}:
+        where_clauses.append("ue.event_name = ?")
+        params.append(normalized_event)
+
+    if normalized_status:
+        where_clauses.append("lower(coalesce(ue.status, '')) LIKE ?")
+        params.append(f"%{normalized_status}%")
+
+    if normalized_email:
+        where_clauses.append(
+            """
+            (
+                lower(coalesce(su.email, '')) LIKE ?
+                OR lower(coalesce(ue.user_id, '')) LIKE ?
+            )
+            """
+        )
+        like_value = f"%{normalized_email}%"
+        params.extend([like_value, like_value])
+
+    if normalized_range in allowed_ranges:
+        where_clauses.append(f"ue.created_at >= {allowed_ranges[normalized_range]}")
+
+    where_sql = " AND ".join(where_clauses)
+    base_from_sql = f"""
+        FROM user_events ue
+        LEFT JOIN shorts_users su
+          ON CAST(su.id AS VARCHAR) = ue.user_id
+        WHERE {where_sql}
+    """
+
+    total_count = int(
+        conn.execute(
+            f"SELECT COUNT(*) {base_from_sql}",
+            params,
+        ).fetchone()[0]
+        or 0
+    )
+    rows = conn.execute(
+        f"""
+        SELECT
+          ue.created_at,
+          ue.user_id,
+          coalesce(su.email, ''),
+          ue.event_name,
+          coalesce(ue.status, ''),
+          ue.metadata
+        {base_from_sql}
+        ORDER BY ue.created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [limit, offset],
+    ).fetchall()
+
+    events: List[Dict[str, Any]] = []
+    for row in rows:
+        metadata_value = row[5]
+        if isinstance(metadata_value, str):
+            try:
+                metadata_value = json.loads(metadata_value)
+            except Exception:
+                metadata_value = {}
+        if not isinstance(metadata_value, dict):
+            metadata_value = {}
+        short_message = (
+            str(metadata_value.get("exception_message") or "").strip()
+            or str(metadata_value.get("message") or "").strip()
+        )
+        path_value = (
+            str(metadata_value.get("path") or "").strip()
+            or str(metadata_value.get("source") or "").strip()
+        )
+        resolved_email = str(row[2] or "").strip()
+        user_id_value = str(row[1] or "").strip() or "anonymous"
+        if user_id_value == "anonymous":
+            user_label = "anonymous"
+        else:
+            user_label = resolved_email or user_id_value
+        events.append(
+            {
+                "created_at": row[0],
+                "user_id": user_id_value,
+                "user_label": user_label,
+                "event_name": str(row[3] or "").strip(),
+                "status": str(row[4] or "").strip(),
+                "short_message": short_message,
+                "path": path_value,
+                "metadata": metadata_value,
+            }
+        )
+    return events, total_count
+
+
 def _directory_size_bytes(path: Path) -> int:
     total = 0
     try:
@@ -7935,6 +8053,62 @@ def admin_user_detail(user_id: str):
         "shorts_admin_user_detail.html",
         admin_title=detail["name"],
         user_detail=detail,
+    )
+
+
+@video_shorts_bp.route("/admin/errors", methods=["GET"])
+@require_admin
+def admin_errors():
+    selected_event_name = (request.args.get("event_name") or "").strip().lower()
+    status_query = (request.args.get("status") or "").strip()
+    email_query = (request.args.get("email") or "").strip()
+    time_range = (request.args.get("range") or "24h").strip().lower()
+    if time_range not in {"24h", "7d", "all"}:
+        time_range = "24h"
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 200
+
+    conn = get_db_readonly()
+    try:
+        total_events = _load_admin_error_events(
+            conn,
+            event_name=selected_event_name,
+            status_query=status_query,
+            email_query=email_query,
+            time_range=time_range,
+            limit=1,
+            offset=0,
+        )[1]
+        total_pages = max(1, (total_events + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        events, total_events = _load_admin_error_events(
+            conn,
+            event_name=selected_event_name,
+            status_query=status_query,
+            email_query=email_query,
+            time_range=time_range,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
+    finally:
+        conn.close()
+
+    return render_template(
+        "shorts_admin_errors.html",
+        admin_title="Errors",
+        events=events,
+        selected_event_name=selected_event_name,
+        status_query=status_query,
+        email_query=email_query,
+        selected_range=time_range,
+        page=page,
+        per_page=per_page,
+        total_events=total_events,
+        total_pages=total_pages,
     )
 
 

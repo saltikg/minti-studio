@@ -1,0 +1,208 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Errors{% endblock %}
+{% block admin_heading %}Errors{% endblock %}
+{% block admin_subheading %}
+  <p>Review captured server and client errors from the existing <code>user_events</code> stream.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-errors-toolbar {
+      display: grid;
+      grid-template-columns: minmax(150px, 0.8fr) minmax(180px, 0.9fr) minmax(240px, 1fr) auto auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .admin-errors-meta {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.9rem;
+    }
+    .admin-errors-table-wrap {
+      overflow-x: auto;
+    }
+    .admin-errors-table {
+      width: 100%;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .admin-errors-table th,
+    .admin-errors-table td {
+      padding: 14px 16px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .admin-errors-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .admin-errors-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .admin-errors-user {
+      font-weight: 600;
+    }
+    .admin-errors-user-id {
+      color: rgba(255, 255, 255, 0.54);
+      font-size: 0.84rem;
+      margin-top: 4px;
+      word-break: break-all;
+    }
+    .admin-errors-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 0.84rem;
+      white-space: nowrap;
+    }
+    .admin-errors-pill.is-server {
+      background: rgba(248, 113, 113, 0.14);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.22);
+    }
+    .admin-errors-pill.is-client {
+      background: rgba(59, 130, 246, 0.16);
+      color: #bfdbfe;
+      border: 1px solid rgba(59, 130, 246, 0.24);
+    }
+    .admin-errors-message {
+      max-width: 440px;
+      word-break: break-word;
+    }
+    .admin-errors-path {
+      max-width: 320px;
+      color: rgba(255, 255, 255, 0.72);
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.84rem;
+    }
+    .admin-errors-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .admin-errors-pagination-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 1199.98px) {
+      .admin-errors-toolbar {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+    }
+    @media (max-width: 767.98px) {
+      .admin-errors-toolbar {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="get" class="admin-errors-toolbar">
+      <div>
+        <label for="admin-errors-event-name" class="form-label mb-2">Event type</label>
+        <select id="admin-errors-event-name" name="event_name" class="form-select">
+          <option value="" {% if not selected_event_name %}selected{% endif %}>All</option>
+          <option value="server_error" {% if selected_event_name == 'server_error' %}selected{% endif %}>server_error</option>
+          <option value="client_error" {% if selected_event_name == 'client_error' %}selected{% endif %}>client_error</option>
+        </select>
+      </div>
+      <div>
+        <label for="admin-errors-range" class="form-label mb-2">Time range</label>
+        <select id="admin-errors-range" name="range" class="form-select">
+          <option value="24h" {% if selected_range == '24h' %}selected{% endif %}>Last 24 hours</option>
+          <option value="7d" {% if selected_range == '7d' %}selected{% endif %}>Last 7 days</option>
+          <option value="all" {% if selected_range == 'all' %}selected{% endif %}>All time</option>
+        </select>
+      </div>
+      <div>
+        <label for="admin-errors-status" class="form-label mb-2">Status contains</label>
+        <input id="admin-errors-status" type="text" name="status" value="{{ status_query }}" class="form-control" placeholder="500, upload_failed, js_error">
+      </div>
+      <div>
+        <label for="admin-errors-email" class="form-label mb-2">User email contains</label>
+        <input id="admin-errors-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="name@example.com">
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Apply</button>
+        <a href="{{ url_for('video_shorts_bp.admin_errors') }}" class="btn btn-outline-light">Reset</a>
+      </div>
+    </form>
+
+    <div class="admin-errors-meta mb-3">{{ total_events }} matching events · showing up to {{ per_page }} per page</div>
+
+    <div class="admin-errors-table-wrap">
+      <table class="admin-errors-table">
+        <thead>
+          <tr>
+            <th>Created</th>
+            <th>User</th>
+            <th>Event</th>
+            <th>Status</th>
+            <th>Message</th>
+            <th>Path</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in events %}
+            <tr>
+              <td class="admin-errors-meta">
+                {{ event.created_at.strftime('%b %-d, %Y · %H:%M:%S') if event.created_at and event.created_at.strftime else (event.created_at or '—') }}
+              </td>
+              <td>
+                <div class="admin-errors-user">{{ event.user_label }}</div>
+                {% if event.user_label != event.user_id %}
+                  <div class="admin-errors-user-id">{{ event.user_id }}</div>
+                {% endif %}
+              </td>
+              <td>
+                <span class="admin-errors-pill {% if event.event_name == 'server_error' %}is-server{% else %}is-client{% endif %}">
+                  {{ event.event_name }}
+                </span>
+              </td>
+              <td><span class="admin-errors-pill">{{ event.status or '—' }}</span></td>
+              <td>
+                <div class="admin-errors-message" title="{{ event.short_message or '' }}">
+                  {{ event.short_message or '—' }}
+                </div>
+              </td>
+              <td>
+                <div class="admin-errors-path" title="{{ event.path or '' }}">{{ event.path or '—' }}</div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="6" class="admin-errors-meta text-center py-4">No error events matched your filters.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="admin-errors-pagination">
+      <div class="admin-errors-meta">Page {{ page }} of {{ total_pages }}</div>
+      <div class="admin-errors-pagination-links">
+        {% if page > 1 %}
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endblock %}
