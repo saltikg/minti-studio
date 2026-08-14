@@ -2440,6 +2440,20 @@ def _format_long_created_at_pst(created_at_iso: Optional[str], fallback_ts: Opti
     return dt_utc.astimezone(PST_ZONE).strftime("%Y-%m-%d %I:%M %p")
 
 
+def _format_datetime_pst(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    dt_value: Optional[datetime]
+    if isinstance(value, datetime):
+        dt_value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    else:
+        parsed = _parse_iso_datetime(str(value))
+        if parsed is None:
+            return str(value)
+        dt_value = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(PST_ZONE).strftime("%b %-d, %Y · %H:%M:%S")
+
+
 def _safe_long_comp_name(name: str) -> bool:
     return bool(re.match(r"^long_from_shorts_[A-Za-z0-9_-]+_\d{8}_\d{6}\.mp4$", (name or "").strip()))
 
@@ -7674,8 +7688,11 @@ def _load_admin_share_links(
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
                 "first_seen": row[7],
+                "first_seen_pst": _format_datetime_pst(row[7]),
                 "last_seen": row[8],
+                "last_seen_pst": _format_datetime_pst(row[8]),
                 "created_at": row[9],
+                "created_at_pst": _format_datetime_pst(row[9]),
             }
         )
     return items, total_count, normalized_filter
@@ -14466,17 +14483,24 @@ def autoclip_video(video_pk):
             plan_entry["audio_start"] = adj_start
             plan_entry["audio_end"] = adj_end
             plan_entry["output_filename"] = clip_filename
-            _maybe_autogenerate_description_for_plan_entry(
-                current_user=current_user or {},
-                brand_id=current_brand_id(),
-                video_id=vid,
-                video_title=video_title,
-                published_at=published_at,
-                video_date_text=video_date_text,
-                duration_seconds=duration_seconds,
-                plan_entry=plan_entry,
-                segments=segments,
-            )
+            try:
+                _maybe_autogenerate_description_for_plan_entry(
+                    current_user=current_user or {},
+                    brand_id=current_brand_id(),
+                    video_id=vid,
+                    video_title=video_title,
+                    video_date_text=video_date_text,
+                    duration_seconds=duration_seconds,
+                    plan_entry=plan_entry,
+                    segments=segments,
+                )
+            except Exception as exc:
+                current_app.logger.warning(
+                    "Auto description hook skipped after render video_id=%s plan_index=%s: %s",
+                    vid,
+                    plan_entry.get("plan_index"),
+                    exc,
+                )
             plan_entry.setdefault("publish_status", "ready" if plan_entry.get("yt_description") else "not_ready")
             try:
                 current_app.logger.info(
@@ -14715,11 +14739,11 @@ def _generate_description_for_plan_entry(
     brand_id: Optional[str],
     video_id: str,
     video_title: Optional[str],
-    published_at: Any,
     video_date_text: Optional[str],
     duration_seconds: Any,
     plan_entry: Dict[str, Any],
     segments: List[Dict[str, Any]],
+    published_at: Any = None,
 ) -> str:
     start = plan_entry.get("start")
     end = plan_entry.get("end")
@@ -14867,11 +14891,11 @@ def _maybe_autogenerate_description_for_plan_entry(
     brand_id: Optional[str],
     video_id: str,
     video_title: Optional[str],
-    published_at: Any,
     video_date_text: Optional[str],
     duration_seconds: Any,
     plan_entry: Dict[str, Any],
     segments: List[Dict[str, Any]],
+    published_at: Any = None,
 ) -> bool:
     if _existing_plan_entry_description(plan_entry):
         return False

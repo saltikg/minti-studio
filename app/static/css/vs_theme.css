@@ -1677,7 +1677,7 @@ a:hover {
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("{{ url_for('video_shorts_bp.static', filename='fonts/Oswald-Regular.ttf') }}") format("truetype");
+  src: url("/video_shorts/static/fonts/Oswald-Regular.ttf") format("truetype");
 }
 
 @font-face {
@@ -1685,7 +1685,7 @@ a:hover {
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url("{{ url_for('video_shorts_bp.static', filename='fonts/Oswald-Bold.ttf') }}") format("truetype");
+  src: url("/video_shorts/static/fonts/Oswald-Bold.ttf") format("truetype");
 }
 .short-settings {
   display: flex;
