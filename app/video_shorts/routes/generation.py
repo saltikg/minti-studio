@@ -14466,6 +14466,17 @@ def autoclip_video(video_pk):
             plan_entry["audio_start"] = adj_start
             plan_entry["audio_end"] = adj_end
             plan_entry["output_filename"] = clip_filename
+            _maybe_autogenerate_description_for_plan_entry(
+                current_user=current_user or {},
+                brand_id=current_brand_id(),
+                video_id=vid,
+                video_title=video_title,
+                published_at=published_at,
+                video_date_text=video_date_text,
+                duration_seconds=duration_seconds,
+                plan_entry=plan_entry,
+                segments=segments,
+            )
             plan_entry.setdefault("publish_status", "ready" if plan_entry.get("yt_description") else "not_ready")
             try:
                 current_app.logger.info(
@@ -14678,6 +14689,247 @@ def autoclip_video(video_pk):
     return _respond("No clip was generated.", success=False, category="warning")
 
 
+def _description_generation_gate_error(
+    current_user: Dict[str, Any],
+    brand_id: Optional[str],
+) -> Optional[str]:
+    current_plan_id = str((current_user or {}).get("plan_id") or "").strip().lower()
+    llm_description_enabled = current_plan_id not in {"", "free"}
+    if not has_refresh_token((current_user or {}).get("id"), brand_id=brand_id):
+        return "Connect YouTube first."
+    if not llm_description_enabled:
+        return "Upgrade your plan to use AI descriptions."
+    if not _openai_client:
+        return "OPENAI_API_KEY is missing; cannot prepare description."
+    return None
+
+
+def _existing_plan_entry_description(plan_entry: Optional[Dict[str, Any]]) -> Optional[str]:
+    entry = plan_entry or {}
+    return _first_non_empty(entry.get("yt_description"), entry.get("description"))
+
+
+def _generate_description_for_plan_entry(
+    *,
+    current_user: Dict[str, Any],
+    brand_id: Optional[str],
+    video_id: str,
+    video_title: Optional[str],
+    published_at: Any,
+    video_date_text: Optional[str],
+    duration_seconds: Any,
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+) -> str:
+    start = plan_entry.get("start")
+    end = plan_entry.get("end")
+    if start is None or end is None:
+        raise ValueError("Clip timing not found in plan entry.")
+
+    clip_transcript = plan_entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
+    try:
+        clip_start = max(0.0, float(start or 0.0))
+    except Exception:
+        clip_start = 0.0
+    try:
+        clip_end = max(clip_start, float(end or clip_start))
+    except Exception:
+        clip_end = clip_start
+    try:
+        max_duration = float(duration_seconds) if duration_seconds is not None else None
+    except Exception:
+        max_duration = None
+    context_start = max(0.0, clip_start - DESCRIPTION_CONTEXT_PADDING_SECONDS)
+    context_end = clip_end + DESCRIPTION_CONTEXT_PADDING_SECONDS
+    if max_duration is not None:
+        context_end = min(max_duration, context_end)
+    context_transcript = build_transcript_for_range(segments, context_start, context_end, prefer_tr=True)
+    transcripts_source = (
+        "WIDER CONTEXT TRANSCRIPT (use this for understanding and summarizing the clip in context; "
+        "do not copy it into the Full Transcript section unless it appears inside the clip itself):\n"
+        f"{context_transcript or clip_transcript or ''}\n\n"
+        "CLIP TRANSCRIPT (use this exact text for the Full Transcript section):\n"
+        f"{clip_transcript or ''}"
+    )
+
+    date_str = ""
+    try:
+        if published_at:
+            if hasattr(published_at, "strftime"):
+                date_str = published_at.strftime("%Y-%m-%d")
+            else:
+                date_str = str(published_at)[:10]
+    except Exception:
+        date_str = ""
+
+    video_date_hint = (video_date_text or "").strip()
+    if video_date_hint:
+        contains_letters = bool(re.search(r"[A-Za-zÇĞİÖŞÜçğışöü]", video_date_hint))
+        if contains_letters:
+            date_instruction_text = (
+                f"Video date text: {video_date_hint}. This text includes date/location context. "
+                "Use it naturally in the description when relevant."
+            )
+        else:
+            date_instruction_text = (
+                f"Video date text: {video_date_hint}. If you mention the date, phrase it naturally like "
+                f"“Recorded on {video_date_hint} ...”."
+            )
+        date_note_line = f"- Date note: {date_instruction_text}"
+    elif date_str:
+        date_instruction_text = (
+            f"If it fits naturally, you may mention that the clip is from a video recorded or published on {date_str}."
+        )
+        date_note_line = f"- Date note: {date_instruction_text}"
+    else:
+        date_note_line = ""
+
+    saved_prompt, description_languages = load_description_settings((current_user or {}).get("id"), brand_id)
+
+    if description_languages == "tr":
+        language_instruction = (
+            "Write the full output in Turkish only. Use Turkish section labels and Turkish hashtags. "
+            "Do not include any English section."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Açıklama\n"
+            "<2-3 paragraf Türkçe açıklama>\n\n"
+            "Hashtagler\n"
+            "#etiket1 #etiket2 #etiket3 ...\n\n"
+            "Tam Metin\n"
+            "<klip transkriptini aynen buraya koy>"
+        )
+        system_message = "You write YouTube descriptions in Turkish based on user instructions."
+    elif description_languages == "en,tr":
+        language_instruction = (
+            "Write both an English and a Turkish version. Keep both versions aligned in meaning. "
+            "Use the exact template sections provided below and keep the clip transcript section in both languages."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Description\n"
+            "<2-3 paragraph English description>\n\n"
+            "Hashtags\n"
+            "#tag1 #tag2 #tag3 ...\n\n"
+            "Full Transcript\n"
+            "<put the clip transcript here exactly as provided>\n\n"
+            "Açıklama\n"
+            "<2-3 paragraf Türkçe açıklama>\n\n"
+            "Hashtagler\n"
+            "#etiket1 #etiket2 #etiket3 ...\n\n"
+            "Tam Metin\n"
+            "<klip transkriptini aynen buraya koy>"
+        )
+        system_message = "You write multilingual YouTube descriptions in English and Turkish based on user instructions."
+    else:
+        language_instruction = (
+            "Write the full output in English only. Use English section labels and English hashtags. "
+            "Do not include any Turkish section."
+        )
+        template_block = (
+            "TEMPLATE\n"
+            "Description\n"
+            "<2-3 paragraph English description>\n\n"
+            "Hashtags\n"
+            "#tag1 #tag2 #tag3 ...\n\n"
+            "Full Transcript\n"
+            "<put the clip transcript here exactly as provided>"
+        )
+        system_message = "You write YouTube descriptions in English based on user instructions."
+
+    prompt_template = saved_prompt or DEFAULT_DESCRIPTION_PROMPT
+    prompt = (
+        prompt_template
+        .replace("{language_instruction}", language_instruction)
+        .replace("{template_block}", template_block)
+        .replace("{date_note_line}", date_note_line)
+        .replace("{transcripts_source}", transcripts_source)
+    )
+
+    resp = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": system_message,
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    description_text = resp.choices[0].message.content if resp.choices else ""
+    return str(description_text or "").strip()
+
+
+def _maybe_autogenerate_description_for_plan_entry(
+    *,
+    current_user: Dict[str, Any],
+    brand_id: Optional[str],
+    video_id: str,
+    video_title: Optional[str],
+    published_at: Any,
+    video_date_text: Optional[str],
+    duration_seconds: Any,
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+) -> bool:
+    if _existing_plan_entry_description(plan_entry):
+        return False
+    gate_error = _description_generation_gate_error(current_user, brand_id)
+    if gate_error:
+        current_app.logger.info(
+            "Auto description skipped video_id=%s plan_index=%s reason=%s",
+            video_id,
+            plan_entry.get("plan_index"),
+            gate_error,
+        )
+        return False
+    if plan_entry.get("start") is None or plan_entry.get("end") is None:
+        current_app.logger.info(
+            "Auto description skipped video_id=%s plan_index=%s reason=missing_timing",
+            video_id,
+            plan_entry.get("plan_index"),
+        )
+        return False
+    if not (plan_entry.get("transcript_full") or segments):
+        current_app.logger.info(
+            "Auto description skipped video_id=%s plan_index=%s reason=missing_transcript",
+            video_id,
+            plan_entry.get("plan_index"),
+        )
+        return False
+    try:
+        description_text = _generate_description_for_plan_entry(
+            current_user=current_user,
+            brand_id=brand_id,
+            video_id=video_id,
+            video_title=video_title,
+            published_at=published_at,
+            video_date_text=video_date_text,
+            duration_seconds=duration_seconds,
+            plan_entry=plan_entry,
+            segments=segments,
+        )
+        if not description_text:
+            current_app.logger.info(
+                "Auto description skipped video_id=%s plan_index=%s reason=empty_response",
+                video_id,
+                plan_entry.get("plan_index"),
+            )
+            return False
+        plan_entry["yt_description"] = description_text
+        plan_entry["yt_status"] = "ready"
+        return True
+    except Exception as exc:
+        current_app.logger.warning(
+            "Auto description generation failed video_id=%s plan_index=%s: %s",
+            video_id,
+            plan_entry.get("plan_index"),
+            exc,
+        )
+        return False
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/prepare_description", methods=["POST"])
 def prepare_description(video_pk):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -14704,23 +14956,16 @@ def prepare_description(video_pk):
         return redirect(target)
 
     current_user = getattr(g, "vs_current_user", None) or {}
-    current_plan_id = str(current_user.get("plan_id") or "").strip().lower()
-    llm_description_enabled = current_plan_id not in {"", "free"}
     brand_id = current_brand_id()
-    if not has_refresh_token(current_user.get("id"), brand_id=brand_id):
+    gate_error = _description_generation_gate_error(current_user, brand_id)
+    if gate_error:
+        redirect_to = url_for("video_shorts_bp.youtube_connect") if gate_error == "Connect YouTube first." else None
         return _respond(
             False,
-            "Connect YouTube first.",
-            category="warning",
+            gate_error,
+            category="warning" if gate_error != "OPENAI_API_KEY is missing; cannot prepare description." else "danger",
             status=403,
-            redirect_to=url_for("video_shorts_bp.youtube_connect"),
-        )
-    if not llm_description_enabled:
-        return _respond(
-            False,
-            "Upgrade your plan to use AI descriptions.",
-            category="warning",
-            status=403,
+            redirect_to=redirect_to,
         )
 
     filename = (request.form.get("filename") or "").strip()
@@ -14784,154 +15029,22 @@ def prepare_description(video_pk):
     if not plan_entry:
         return _respond(False, "Clip not found in plan.", category="warning", status=404)
 
-    start = plan_entry.get("start")
-    end = plan_entry.get("end")
-    if start is None or end is None:
-        return _respond(
-            False,
-            "Clip timing not found in plan entry.",
-            category="danger",
-            status=400,
-        )
-
     conn = get_db_readonly()
     _, segments = _fetch_transcript(conn, vid)
     conn.close()
 
-    clip_transcript = plan_entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
     try:
-        clip_start = max(0.0, float(start or 0.0))
-    except Exception:
-        clip_start = 0.0
-    try:
-        clip_end = max(clip_start, float(end or clip_start))
-    except Exception:
-        clip_end = clip_start
-    try:
-        max_duration = float(duration_seconds) if duration_seconds is not None else None
-    except Exception:
-        max_duration = None
-    context_start = max(0.0, clip_start - DESCRIPTION_CONTEXT_PADDING_SECONDS)
-    context_end = clip_end + DESCRIPTION_CONTEXT_PADDING_SECONDS
-    if max_duration is not None:
-        context_end = min(max_duration, context_end)
-    context_transcript = build_transcript_for_range(segments, context_start, context_end, prefer_tr=True)
-    transcripts_source = (
-        "WIDER CONTEXT TRANSCRIPT (use this for understanding and summarizing the clip in context; "
-        "do not copy it into the Full Transcript section unless it appears inside the clip itself):\n"
-        f"{context_transcript or clip_transcript or ''}\n\n"
-        "CLIP TRANSCRIPT (use this exact text for the Full Transcript section):\n"
-        f"{clip_transcript or ''}"
-    )
-
-    date_str = ""
-    try:
-        if published_at:
-            if hasattr(published_at, "strftime"):
-                date_str = published_at.strftime("%Y-%m-%d")
-            else:
-                date_str = str(published_at)[:10]
-    except Exception:
-        date_str = ""
-
-    video_date_hint = video_date_text
-    if video_date_hint:
-        contains_letters = bool(re.search(r"[A-Za-zÇĞİÖŞÜçğışöü]", video_date_hint))
-        if contains_letters:
-            date_instruction_text = (
-                f"Video date text: {video_date_hint}. This text includes date/location context. "
-                "Use it naturally in the description when relevant."
-            )
-        else:
-            date_instruction_text = (
-                f"Video date text: {video_date_hint}. If you mention the date, phrase it naturally like "
-                f"“Recorded on {video_date_hint} ...”."
-            )
-        date_note_line = f"- Date note: {date_instruction_text}"
-    elif date_str:
-        date_instruction_text = (
-            f"If it fits naturally, you may mention that the clip is from a video recorded or published on {date_str}."
+        description_text = _generate_description_for_plan_entry(
+            current_user=current_user,
+            brand_id=brand_id,
+            video_id=vid,
+            video_title=video_title,
+            published_at=published_at,
+            video_date_text=video_date_text,
+            duration_seconds=duration_seconds,
+            plan_entry=plan_entry,
+            segments=segments,
         )
-        date_note_line = f"- Date note: {date_instruction_text}"
-    else:
-        date_instruction_text = ""
-        date_note_line = ""
-
-    saved_prompt, description_languages = load_description_settings(current_user.get("id"), brand_id)
-
-    if description_languages == "tr":
-        language_instruction = (
-            "Write the full output in Turkish only. Use Turkish section labels and Turkish hashtags. "
-            "Do not include any English section."
-        )
-        template_block = (
-            "TEMPLATE\n"
-            "Açıklama\n"
-            "<2-3 paragraf Türkçe açıklama>\n\n"
-            "Hashtagler\n"
-            "#etiket1 #etiket2 #etiket3 ...\n\n"
-            "Tam Metin\n"
-            "<klip transkriptini aynen buraya koy>"
-        )
-        system_message = "You write YouTube descriptions in Turkish based on user instructions."
-    elif description_languages == "en,tr":
-        language_instruction = (
-            "Write both an English and a Turkish version. Keep both versions aligned in meaning. "
-            "Use the exact template sections provided below and keep the clip transcript section in both languages."
-        )
-        template_block = (
-            "TEMPLATE\n"
-            "Description\n"
-            "<2-3 paragraph English description>\n\n"
-            "Hashtags\n"
-            "#tag1 #tag2 #tag3 ...\n\n"
-            "Full Transcript\n"
-            "<put the clip transcript here exactly as provided>\n\n"
-            "Açıklama\n"
-            "<2-3 paragraf Türkçe açıklama>\n\n"
-            "Hashtagler\n"
-            "#etiket1 #etiket2 #etiket3 ...\n\n"
-            "Tam Metin\n"
-            "<klip transkriptini aynen buraya koy>"
-        )
-        system_message = "You write multilingual YouTube descriptions in English and Turkish based on user instructions."
-    else:
-        language_instruction = (
-            "Write the full output in English only. Use English section labels and English hashtags. "
-            "Do not include any Turkish section."
-        )
-        template_block = (
-            "TEMPLATE\n"
-            "Description\n"
-            "<2-3 paragraph English description>\n\n"
-            "Hashtags\n"
-            "#tag1 #tag2 #tag3 ...\n\n"
-            "Full Transcript\n"
-            "<put the clip transcript here exactly as provided>"
-        )
-        system_message = "You write YouTube descriptions in English based on user instructions."
-
-    prompt_template = saved_prompt or DEFAULT_DESCRIPTION_PROMPT
-    prompt = (
-        prompt_template
-        .replace("{language_instruction}", language_instruction)
-        .replace("{template_block}", template_block)
-        .replace("{date_note_line}", date_note_line)
-        .replace("{transcripts_source}", transcripts_source)
-    )
-
-    try:
-        resp = _openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_message,
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
-        description_text = resp.choices[0].message.content if resp.choices else ""
     except Exception as e:
         return _respond(
             False,
