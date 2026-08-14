@@ -11455,6 +11455,65 @@ def _set_transcribe_job_state(video_pk: int, **updates: Any) -> Dict[str, Any]:
     return state
 
 
+def _parse_request_bool(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_transcript_summary(conn, video_id: str) -> Dict[str, Any]:
+    summary = {
+        "exists": False,
+        "segment_count": 0,
+        "text": "",
+    }
+    if not video_id:
+        return summary
+    transcript_row = conn.execute(
+        "SELECT full_text, segments_json, whisper_segments_json FROM youtube_transcripts WHERE video_id = ?",
+        [video_id],
+    ).fetchone()
+    if not transcript_row:
+        return summary
+    transcript_text = (transcript_row[0] or "").strip()
+    transcript_raw = transcript_row[2] or transcript_row[1]
+    transcript_segment_count = 0
+    if transcript_raw:
+        try:
+            parsed = json.loads(transcript_raw)
+            if isinstance(parsed, list):
+                transcript_segment_count = len(parsed)
+        except Exception:
+            transcript_segment_count = 0
+    summary["exists"] = bool(transcript_text or transcript_segment_count)
+    summary["segment_count"] = transcript_segment_count
+    summary["text"] = transcript_text
+    return summary
+
+
+def _should_force_retranscribe(form_data: Any) -> bool:
+    if _parse_request_bool(form_data.get("force_retranscribe")):
+        return True
+    reuse_existing_raw = form_data.get("reuse_existing")
+    if reuse_existing_raw is None:
+        return False
+    return str(reuse_existing_raw or "").strip().lower() in {"0", "false", "no", "off"}
+
+
+def _build_transcript_reuse_state(video_pk: int, video_id: str, transcript_segment_count: int) -> Dict[str, Any]:
+    segment_suffix = f" ({transcript_segment_count} segments)" if transcript_segment_count else ""
+    return _set_transcribe_job_state(
+        video_pk,
+        status="completed",
+        running=False,
+        stage="completed",
+        message=f"Existing transcript found{segment_suffix}. OpenAI call skipped.",
+        video_id=video_id,
+        segment_count=transcript_segment_count or None,
+        error=None,
+        elapsed_seconds=0.0,
+        finished_at=datetime.utcnow().isoformat(),
+    )
+
+
 def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_path_is_temp: bool, app_obj) -> None:
     start_ts = time.monotonic()
     conn = None
@@ -11608,23 +11667,10 @@ def transcribe_video_start(video_pk):
             )
             transcript_exists = False
             transcript_segment_count = 0
-            transcript_text = ""
             if row:
-                transcript_row = conn.execute(
-                    "SELECT full_text, segments_json, whisper_segments_json FROM youtube_transcripts WHERE video_id = ?",
-                    [row[0]],
-                ).fetchone()
-                if transcript_row:
-                    transcript_text = (transcript_row[0] or "").strip()
-                    transcript_raw = transcript_row[2] or transcript_row[1]
-                    if transcript_raw:
-                        try:
-                            parsed = json.loads(transcript_raw)
-                            if isinstance(parsed, list):
-                                transcript_segment_count = len(parsed)
-                        except Exception:
-                            transcript_segment_count = 0
-                    transcript_exists = bool(transcript_text or transcript_segment_count)
+                transcript_summary = _load_transcript_summary(conn, row[0])
+                transcript_exists = bool(transcript_summary["exists"])
+                transcript_segment_count = int(transcript_summary["segment_count"] or 0)
         finally:
             conn.close()
         if not row:
@@ -11633,6 +11679,8 @@ def transcribe_video_start(video_pk):
         video_id = row[0]
         duration_seconds = row[1]
         transcript_status = (row[2] or "").strip().lower()
+        force_retranscribe = _should_force_retranscribe(request.form)
+        has_completed_transcript = transcript_status == "done" or transcript_exists
 
         existing = _load_transcribe_job_state(video_pk)
         if not existing:
@@ -11671,21 +11719,10 @@ def transcribe_video_start(video_pk):
                 finished_at=datetime.utcnow().isoformat(),
             )
 
-        reuse_existing = str(request.form.get("reuse_existing") or "").strip().lower() in {"1", "true", "yes"}
-        if reuse_existing and (transcript_exists or transcript_status == "done"):
-            segment_suffix = f" ({transcript_segment_count} segments)" if transcript_segment_count else ""
-            state = _set_transcribe_job_state(
-                video_pk,
-                status="completed",
-                running=False,
-                stage="completed",
-                message=f"Existing transcript found{segment_suffix}. OpenAI call skipped.",
-                video_id=video_id,
-                segment_count=transcript_segment_count or None,
-                error=None,
-                elapsed_seconds=0.0,
-                finished_at=datetime.utcnow().isoformat(),
-            )
+        # Default behavior is idempotent: if a usable transcript already exists,
+        # skip Whisper entirely. Only an explicit force flag should re-run it.
+        if has_completed_transcript and not force_retranscribe:
+            state = _build_transcript_reuse_state(video_pk, video_id, transcript_segment_count)
             return jsonify(
                 {
                     "ok": True,
@@ -11752,7 +11789,13 @@ def transcribe_video_status(video_pk):
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()
     conn = get_db_readonly()
-    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds")
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds, COALESCE(transcript_status, '')")
+    transcript_exists = False
+    transcript_segment_count = 0
+    if row:
+        transcript_summary = _load_transcript_summary(conn, row[0])
+        transcript_exists = bool(transcript_summary["exists"])
+        transcript_segment_count = int(transcript_summary["segment_count"] or 0)
     conn.close()
     if not row:
         flash("Video not found", "danger")
@@ -11761,6 +11804,13 @@ def transcribe_video(video_pk):
     vid = row[0]
     video_title = row[1]
     duration_seconds = row[2] if len(row) > 2 else None
+    transcript_status = (row[3] or "").strip().lower() if len(row) > 3 else ""
+    force_retranscribe = _should_force_retranscribe(request.form)
+    has_completed_transcript = transcript_status == "done" or transcript_exists
+    if has_completed_transcript and not force_retranscribe:
+        segment_suffix = f" ({transcript_segment_count} segments)" if transcript_segment_count else ""
+        flash(f"Existing transcript found{segment_suffix}. OpenAI call skipped.", "info")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     quota_error = _transcription_quota_error_for_user(getattr(g, "vs_current_user", {}).get("id"), duration_seconds)
     if quota_error:
         flash(quota_error, "warning")
