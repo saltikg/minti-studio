@@ -5535,6 +5535,7 @@ def create_generated_short_share_link():
                 "UPDATE shorts_generated_videos SET share_token = ?, updated_at = now() WHERE CAST(id AS VARCHAR) = ?",
                 [share_token, generated_video_id],
             )
+            conn.commit()
 
         base_url = str(current_app.config.get("BASE_URL") or "https://mintistudio.com").rstrip("/")
         return jsonify(
