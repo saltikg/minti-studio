@@ -145,6 +145,7 @@ def ensure_generated_videos_schema(conn) -> None:
         ("facebook_published_at", "TIMESTAMP"),
         ("tiktok_published_at", "TIMESTAMP"),
         ("primary_publish_platform", "VARCHAR"),
+        ("share_token", "VARCHAR"),
     ):
         if col_name in cols:
             continue
@@ -165,6 +166,15 @@ def ensure_generated_videos_schema(conn) -> None:
             f"""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE_NAME}_source_clip
             ON {TABLE_NAME}(source_video_id, source_channel_type, clip_filename)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE_NAME}_share_token
+            ON {TABLE_NAME}(share_token)
             """
         )
     except Exception:

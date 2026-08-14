@@ -4853,6 +4853,36 @@ def generate_short(video_pk):
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     user_tz_label = TIMEZONE_LABELS.get(user_tz, user_tz)
     is_admin = (current_user or {}).get("role") == "admin"
+    generated_video_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    source_video_id = str(video.get("video_id") or "").strip()
+    if source_video_id:
+        conn_generated = get_db_readonly()
+        try:
+            generated_columns = table_columns(conn_generated, "shorts_generated_videos")
+            if generated_columns:
+                select_fields = ["id", "clip_filename", "generated_title"]
+                if "share_token" in generated_columns:
+                    select_fields.append("share_token")
+                generated_rows = conn_generated.execute(
+                    f"""
+                    SELECT {", ".join(select_fields)}
+                    FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+                    """,
+                    [source_video_id],
+                ).fetchall()
+                for generated_row in generated_rows:
+                    clip_name = str(generated_row[1] or "").strip()
+                    if not clip_name:
+                        continue
+                    generated_video_map[(source_video_id, clip_name)] = {
+                        "id": generated_row[0],
+                        "generated_title": generated_row[2] if len(generated_row) > 2 else None,
+                        "share_token": generated_row[3] if len(generated_row) > 3 else None,
+                    }
+        except Exception:
+            current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
     v2_rules = load_non_speech_rules()
     v3_rules = load_non_speech_rules()
     v4_rules = load_planner_rules_v4()
@@ -4882,6 +4912,7 @@ def generate_short(video_pk):
         status = "created" if clip_exists else (entry.get("status") or "pending")
         video_filename = clip_filename if clip_exists else None
         yt_id = entry.get("yt_video_id")
+        generated_record = generated_video_map.get((source_video_id, str(clip_filename or "").strip())) or {}
         clip_stats = published_stats_map.get(yt_id) if yt_id else {}
 
         publish_value = entry.get("publish_at_iso") or entry.get("publish_at")
@@ -5070,6 +5101,8 @@ def generate_short(video_pk):
             "plan_index": pi,
             "origin": origin,
             "is_ai_suggestion": is_ai_suggestion,
+            "generated_video_id": generated_record.get("id"),
+            "share_token": generated_record.get("share_token"),
             "title": entry.get("title") or "",
             "start": start,
             "end": end,
@@ -5462,6 +5495,111 @@ def generate_short(video_pk):
         long_compilation_videos=long_compilation_videos,
         brand_subscribe_overlay_available=brand_subscribe_overlay_available,
         llm_description_enabled=llm_description_enabled,
+    )
+
+
+@video_shorts_bp.route("/api/generated-shorts/share-link", methods=["POST"])
+@require_admin
+def create_generated_short_share_link():
+    payload = request.get_json(silent=True) or request.form or {}
+    generated_video_id = str(payload.get("generated_video_id") or "").strip()
+    if not generated_video_id:
+        return jsonify({"success": False, "message": "Generated short id is required."}), 400
+
+    conn = get_db()
+    try:
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        if "share_token" not in generated_columns:
+            return jsonify({"success": False, "message": "Share links are not available until the database migration is applied."}), 503
+
+        row = conn.execute(
+            """
+            SELECT id, share_token, clip_filename
+            FROM shorts_generated_videos
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [generated_video_id],
+        ).fetchone()
+        if not row:
+            return jsonify({"success": False, "message": "Generated short not found."}), 404
+
+        share_token = str(row[1] or "").strip()
+        clip_filename = str(row[2] or "").strip()
+        if not clip_filename:
+            return jsonify({"success": False, "message": "Rendered short is not available for sharing yet."}), 404
+
+        if not share_token:
+            share_token = secrets.token_urlsafe(16)
+            conn.execute(
+                "UPDATE shorts_generated_videos SET share_token = ?, updated_at = now() WHERE CAST(id AS VARCHAR) = ?",
+                [share_token, generated_video_id],
+            )
+
+        base_url = str(current_app.config.get("BASE_URL") or "https://mintistudio.com").rstrip("/")
+        return jsonify(
+            {
+                "success": True,
+                "generated_video_id": str(row[0] or generated_video_id),
+                "share_token": share_token,
+                "share_url": f"{base_url}/w/{share_token}",
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Failed to create share link for generated short %s", generated_video_id)
+        return jsonify({"success": False, "message": "Share link could not be created."}), 500
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/w/<token>")
+def public_short_watch_page(token: str):
+    normalized_token = str(token or "").strip()
+    if not normalized_token:
+        abort(404)
+
+    conn = get_db_readonly()
+    try:
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        if "share_token" not in generated_columns:
+            abort(404)
+        row = conn.execute(
+            """
+            SELECT
+              gv.id,
+              gv.clip_filename,
+              gv.generated_title,
+              gv.source_video_id,
+              yv.thumbnail_url,
+              yv.title
+            FROM shorts_generated_videos gv
+            LEFT JOIN youtube_videos yv
+              ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+            WHERE gv.share_token = ?
+            LIMIT 1
+            """,
+            [normalized_token],
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        abort(404)
+
+    clip_title = str(row[2] or row[5] or row[1] or "Short unavailable").strip() or "Short unavailable"
+    clip_filename = str(row[1] or "").strip()
+    if not clip_filename:
+        return render_template("short_share_unavailable.html", clip_title=clip_title), 404
+
+    playback_url = _short_public_url(clip_filename)
+    if not playback_url:
+        return render_template("short_share_unavailable.html", clip_title=clip_title), 404
+
+    return render_template(
+        "short_share_watch.html",
+        clip_title=clip_title,
+        playback_url=playback_url,
+        poster_url=(str(row[4] or "").strip() or None),
     )
 
 

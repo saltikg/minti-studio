@@ -3443,6 +3443,23 @@
                                   to enable scheduling.
                                 </div>
                               {% endif %}
+                              {% if is_admin and row.generated_video_id %}
+                                <div class="mt-2">
+                                  <button
+                                    type="button"
+                                    class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1 admin-share-link-btn"
+                                    data-generated-video-id="{{ row.generated_video_id }}"
+                                    data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}">
+                                    <i class="bi bi-link-45deg" aria-hidden="true"></i>
+                                    <span>Share link</span>
+                                  </button>
+                                  <div class="input-group input-group-sm mt-2 d-none admin-share-link-result">
+                                    <input type="text" class="form-control admin-share-link-input" readonly aria-label="Shared short URL">
+                                    <button type="button" class="btn btn-outline-secondary admin-share-link-copy-btn">Copy</button>
+                                  </div>
+                                  <div class="small mt-2 d-none admin-share-link-feedback" aria-live="polite"></div>
+                                </div>
+                              {% endif %}
                             </div>
                           {% endif %}
                         </div>
@@ -6497,6 +6514,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       bindClipTimeInputFocus();
       initClipSuggestTitleButtons();
       initClipCategoryAjax();
+      initAdminShareLinkButtons();
       initSendToYoutubeButtons();
       resumeQueuedClipJobs();
     }
@@ -8513,6 +8531,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initClipTitleRowAjax();
   bindClipTimeInputFocus();
   initClipCategoryAjax();
+  initAdminShareLinkButtons();
   initSendToYoutubeButtons();
   initCreateLongFromShortsButton();
   initLongVideoDeleteButtons();
@@ -10352,7 +10371,78 @@ const initRemovePlanEntryAjax = () => {
   });
 };
 
+const initAdminShareLinkButtons = () => {
+  document.querySelectorAll(".admin-share-link-btn").forEach((button) => {
+    if (button.dataset.shareLinkBound === "1") {
+      return;
+    }
+    button.dataset.shareLinkBound = "1";
+    button.addEventListener("click", async () => {
+      const generatedVideoId = String(button.dataset.generatedVideoId || "").trim();
+      const shareUrl = String(button.dataset.shareUrl || "").trim();
+      const wrapper = button.closest(".clip-card-action-primary, .clip-card");
+      const resultGroup = wrapper?.querySelector(".admin-share-link-result");
+      const resultInput = wrapper?.querySelector(".admin-share-link-input");
+      const copyButton = wrapper?.querySelector(".admin-share-link-copy-btn");
+      const feedback = wrapper?.querySelector(".admin-share-link-feedback");
+      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !feedback) {
+        return;
+      }
+      const originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+      feedback.classList.add("d-none");
+      feedback.classList.remove("text-danger", "text-success");
+      try {
+        const response = await fetch(shareUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({ generated_video_id: generatedVideoId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success || !payload.share_url) {
+          throw new Error(payload.message || "Share link could not be created.");
+        }
+        resultInput.value = payload.share_url;
+        resultGroup.classList.remove("d-none");
+        feedback.textContent = "Share link ready.";
+        feedback.classList.add("text-success");
+        feedback.classList.remove("d-none");
+        copyButton.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(resultInput.value);
+            feedback.textContent = "Copied.";
+            feedback.classList.remove("text-danger");
+            feedback.classList.add("text-success");
+            feedback.classList.remove("d-none");
+          } catch (err) {
+            resultInput.focus();
+            resultInput.select();
+            feedback.textContent = "Copy failed. Copy the link manually.";
+            feedback.classList.remove("text-success");
+            feedback.classList.add("text-danger");
+            feedback.classList.remove("d-none");
+          }
+        };
+      } catch (err) {
+        feedback.textContent = err.message || "Share link could not be created.";
+        feedback.classList.remove("text-success");
+        feedback.classList.add("text-danger");
+        feedback.classList.remove("d-none");
+      } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+      }
+    });
+  });
+};
+
 document.addEventListener("DOMContentLoaded", () => {
+  initAdminShareLinkButtons();
   initRemovePlanEntryAjax();
 });
 </script>
