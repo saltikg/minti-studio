@@ -726,67 +726,201 @@
     uploadProgressBar.style.width = '0%';
   };
 
-  const uploadViaBackend = (file, durationSeconds) => new Promise((resolve, reject) => {
+  let isUploading = false;
+
+  const reportUploadFailed = (message) => {
+    window.MintiErrorReporter?.report({
+      error_type: 'upload_failed',
+      message: message || 'Upload failed before processing started.',
+      source: window.location.pathname,
+      dedupe: false,
+    });
+  };
+
+  const setUploadControlsDisabled = (disabled) => {
+    isUploading = Boolean(disabled);
+    if (uploadInput) {
+      uploadInput.disabled = isUploading;
+    }
+    if (uploadSubmit) {
+      uploadSubmit.disabled = isUploading;
+      uploadSubmit.textContent = isUploading ? 'Uploading…' : 'Upload video';
+    }
+    if (dropzone) {
+      dropzone.classList.toggle('is-disabled', isUploading);
+      dropzone.setAttribute('aria-disabled', isUploading ? 'true' : 'false');
+      dropzone.style.pointerEvents = isUploading ? 'none' : '';
+      dropzone.style.opacity = isUploading ? '0.65' : '';
+    }
+  };
+
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const uploadPart = (url, blob) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '{{ url_for("video_shorts_bp.quick_short_upload_direct") }}', true);
-    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-    xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-      const percent = Math.round((event.loaded / event.total) * 100);
-      setProgress(percent);
-      setFeedback(`Uploading… ${percent}%`);
-    };
-    xhr.onerror = () => {
-      window.MintiErrorReporter?.report({
-        error_type: 'upload_failed',
-        message: 'Upload failed before processing started.',
-        source: window.location.pathname,
-        dedupe: false,
-      });
-      reject(new Error('Upload failed before processing started.'));
-    };
+    xhr.open('PUT', url, true);
+    xhr.onerror = () => reject(new Error('Network error while uploading a part.'));
     xhr.onload = () => {
-      let payload = {};
-      try {
-        payload = JSON.parse(xhr.responseText || '{}');
-      } catch (error) {
-        payload = {};
-      }
-      if (xhr.status < 200 || xhr.status >= 300 || !payload.ok) {
-        window.MintiErrorReporter?.report({
-          error_type: 'upload_failed',
-          message: payload.error || 'Upload failed before processing started.',
-          source: window.location.pathname,
-          dedupe: false,
-        });
-        reject(new Error(payload.error || 'Upload failed before processing started.'));
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Part upload failed with status ${xhr.status}.`));
         return;
       }
-      resolve(payload);
+      const etag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
+      if (!etag) {
+        reject(new Error('Part upload completed without an ETag response header.'));
+        return;
+      }
+      resolve(etag);
     };
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_kind', 'video');
-    if (durationSeconds !== null && durationSeconds !== undefined) {
-      formData.append('duration_seconds', String(durationSeconds));
-    }
-    xhr.send(formData);
+    xhr.send(blob);
   });
 
+  const startMultipartUpload = async (file) => {
+    const response = await fetch('{{ url_for("video_shorts_bp.quick_short_upload_multipart_start") }}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        total_size: file.size,
+        upload_kind: 'video',
+      }),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = {};
+    }
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || payload.error || 'Upload failed before processing started.');
+    }
+    return payload;
+  };
+
+  const completeMultipartUpload = async ({ sessionId, uploadId, key, parts }) => {
+    const response = await fetch('{{ url_for("video_shorts_bp.quick_short_upload_multipart_complete") }}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        upload_id: uploadId,
+        key,
+        parts,
+      }),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = {};
+    }
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || payload.error || 'Upload failed before processing started.');
+    }
+    return payload;
+  };
+
+  const abortMultipartUpload = async ({ sessionId, uploadId, key }) => {
+    try {
+      await fetch('{{ url_for("video_shorts_bp.quick_short_upload_multipart_abort") }}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          upload_id: uploadId,
+          key,
+        }),
+      });
+    } catch (error) {
+      console.warn('Multipart abort request failed.', error);
+    }
+  };
+
+  const uploadViaMultipart = async (file) => {
+    const startPayload = await startMultipartUpload(file);
+    const completedParts = [];
+    const totalParts = Array.isArray(startPayload.parts) ? startPayload.parts.length : 0;
+    let aborted = false;
+
+    const updatePartProgress = (completedCount) => {
+      if (!totalParts) return;
+      const percent = Math.round((completedCount / totalParts) * 100);
+      setProgress(percent);
+      setFeedback(`Uploading… part ${completedCount} of ${totalParts}`);
+    };
+
+    try {
+      updatePartProgress(0);
+      for (const part of startPayload.parts || []) {
+        const partNumber = Number(part.part_number);
+        const start = (partNumber - 1) * startPayload.part_size;
+        const end = Math.min(start + startPayload.part_size, file.size);
+        const chunk = file.slice(start, end);
+        let etag = null;
+        let attempt = 0;
+        while (attempt < 3 && !etag) {
+          try {
+            etag = await uploadPart(part.presigned_url, chunk);
+          } catch (error) {
+            attempt += 1;
+            if (attempt >= 3) {
+              throw error;
+            }
+            setFeedback(`Upload interrupted. Retrying part ${partNumber} (${attempt + 1}/3)…`);
+            await sleep(1000 * (2 ** (attempt - 1)));
+          }
+        }
+        completedParts.push({ part_number: partNumber, etag });
+        updatePartProgress(completedParts.length);
+      }
+      setFeedback('Finalizing upload…');
+      return await completeMultipartUpload({
+        sessionId: startPayload.session_id,
+        uploadId: startPayload.upload_id,
+        key: startPayload.source_key,
+        parts: completedParts,
+      });
+    } catch (error) {
+      aborted = true;
+      await abortMultipartUpload({
+        sessionId: startPayload.session_id,
+        uploadId: startPayload.upload_id,
+        key: startPayload.source_key,
+      });
+      throw error;
+    } finally {
+      if (aborted) {
+        resetProgress();
+      }
+    }
+  };
+
   const uploadFile = async () => {
+    if (isUploading) {
+      return;
+    }
     if (!selectedFile) {
       setFeedback('Choose a video first.', true);
       return;
     }
     setCoachmarkState('uploading');
     renderCoachmark(2);
-    uploadSubmit.disabled = true;
-    uploadSubmit.textContent = 'Uploading…';
+    setUploadControlsDisabled(true);
     setFeedback('Preparing upload…');
     resetProgress();
     try {
-      const durationSeconds = await readDurationSeconds(selectedFile);
-      await uploadViaBackend(selectedFile, durationSeconds);
+      await readDurationSeconds(selectedFile);
+      await uploadViaMultipart(selectedFile);
       setProgress(100);
       setFeedback('Upload complete. Your video is now transcribing.');
       setCoachmarkState('uploaded');
@@ -794,14 +928,16 @@
     } catch (error) {
       setCoachmarkState('');
       syncCoachmark();
-      setFeedback(error.message || 'Upload failed.', true);
+      const message = error?.message || 'Upload failed before processing started. Please retry.';
+      reportUploadFailed(message);
+      setFeedback(message, true);
     } finally {
-      uploadSubmit.disabled = false;
-      uploadSubmit.textContent = 'Upload video';
+      setUploadControlsDisabled(false);
     }
   };
 
   uploadInput?.addEventListener('change', (event) => {
+    if (isUploading) return;
     const [file] = Array.from(event.target.files || []);
     setSelectedFile(file || null);
     setFeedback('');
@@ -822,6 +958,7 @@
   });
 
   dropzone?.addEventListener('drop', (event) => {
+    if (isUploading) return;
     const [file] = Array.from(event.dataTransfer?.files || []);
     if (file) {
       if (uploadInput) {
