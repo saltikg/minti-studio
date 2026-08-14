@@ -1,0 +1,183 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Share Links{% endblock %}
+{% block admin_heading %}Share Links{% endblock %}
+{% block admin_subheading %}
+  <p>Review per-recipient outreach links and their view/play engagement from existing share events.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-share-links-toolbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) minmax(180px, 220px) auto auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .admin-share-links-meta {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.9rem;
+    }
+    .admin-share-links-table-wrap {
+      overflow-x: auto;
+    }
+    .admin-share-links-table {
+      width: 100%;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .admin-share-links-table th,
+    .admin-share-links-table td {
+      padding: 14px 16px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+    .admin-share-links-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .admin-share-links-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .admin-share-links-recipient {
+      font-weight: 600;
+    }
+    .admin-share-links-email {
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 0.88rem;
+      margin-top: 4px;
+      word-break: break-word;
+      white-space: normal;
+    }
+    .admin-share-links-title {
+      max-width: 320px;
+      white-space: normal;
+      word-break: break-word;
+    }
+    .admin-share-links-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 0.84rem;
+      min-width: 52px;
+    }
+    .admin-share-links-pill.is-yes {
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .admin-share-links-pill.is-no {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.72);
+    }
+    .admin-share-links-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .admin-share-links-pagination-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 1199.98px) {
+      .admin-share-links-toolbar {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+    }
+    @media (max-width: 767.98px) {
+      .admin-share-links-toolbar {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="get" class="admin-share-links-toolbar">
+      <div>
+        <label for="admin-share-links-email" class="form-label mb-2">Recipient email contains</label>
+        <input id="admin-share-links-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="name@example.com">
+      </div>
+      <div>
+        <label for="admin-share-links-engagement" class="form-label mb-2">Engagement</label>
+        <select id="admin-share-links-engagement" name="engagement" class="form-select">
+          <option value="all" {% if selected_engagement == 'all' %}selected{% endif %}>All</option>
+          <option value="viewed" {% if selected_engagement == 'viewed' %}selected{% endif %}>Viewed only</option>
+          <option value="played" {% if selected_engagement == 'played' %}selected{% endif %}>Played only</option>
+        </select>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Apply</button>
+        <a href="{{ url_for('video_shorts_bp.admin_share_links') }}" class="btn btn-outline-light">Reset</a>
+      </div>
+    </form>
+
+    <div class="admin-share-links-meta mb-3">{{ total_links }} matching links · showing up to {{ per_page }} per page</div>
+
+    <div class="admin-share-links-table-wrap">
+      <table class="admin-share-links-table">
+        <thead>
+          <tr>
+            <th>Recipient</th>
+            <th>Clip</th>
+            <th>Views</th>
+            <th>Plays</th>
+            <th>Viewed?</th>
+            <th>Played?</th>
+            <th>First seen</th>
+            <th>Last seen</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for link in links %}
+            <tr>
+              <td>
+                <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
+                <div class="admin-share-links-email">{{ link.recipient_email }}</div>
+              </td>
+              <td class="admin-share-links-title">{{ link.clip_title }}</td>
+              <td>{{ link.views_count }}</td>
+              <td>{{ link.plays_count }}</td>
+              <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
+              <td><span class="admin-share-links-pill {% if link.played %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.played else 'No' }}</span></td>
+              <td class="admin-share-links-meta">{{ link.first_seen.strftime('%b %-d, %Y · %H:%M:%S') if link.first_seen and link.first_seen.strftime else '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.last_seen.strftime('%b %-d, %Y · %H:%M:%S') if link.last_seen and link.last_seen.strftime else '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.created_at.strftime('%b %-d, %Y · %H:%M:%S') if link.created_at and link.created_at.strftime else (link.created_at or '—') }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="9" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="admin-share-links-pagination">
+      <div class="admin-share-links-meta">Page {{ page }} of {{ total_pages }}</div>
+      <div class="admin-share-links-pagination-links">
+        {% if page > 1 %}
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endblock %}

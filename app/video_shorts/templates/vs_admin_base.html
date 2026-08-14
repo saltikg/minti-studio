@@ -192,6 +192,14 @@
             <span>Errors</span>
           </span>
         </a>
+        <a
+          href="{{ url_for('video_shorts_bp.admin_share_links') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/share-links') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Share links</span>
+          </span>
+        </a>
       </nav>
     </aside>
 

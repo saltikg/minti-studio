@@ -7539,6 +7539,148 @@ def _load_admin_error_events(
     return events, total_count
 
 
+def _share_link_event_join_sql(conn) -> str:
+    if getattr(conn, "backend_name", "") == "postgres":
+        return """
+        ue.event_name IN ('share_view', 'share_play')
+        AND (
+          (
+            COALESCE(NULLIF(ue.metadata->>'share_link_id', ''), '') <> ''
+            AND ue.metadata->>'share_link_id' = CAST(sl.id AS VARCHAR)
+          )
+          OR (
+            COALESCE(NULLIF(ue.metadata->>'share_link_id', ''), '') = ''
+            AND ue.metadata->>'token' = sl.token
+          )
+        )
+        """
+    return """
+    ue.event_name IN ('share_view', 'share_play')
+    AND (
+      CAST(ue.metadata AS VARCHAR) LIKE ('%"share_link_id": "' || CAST(sl.id AS VARCHAR) || '"%')
+      OR (
+        CAST(ue.metadata AS VARCHAR) NOT LIKE '%"share_link_id": "%'
+        AND CAST(ue.metadata AS VARCHAR) LIKE ('%"token": "' || sl.token || '"%')
+      )
+    )
+    """
+
+
+def _load_admin_share_links(
+    conn,
+    *,
+    email_query: str = "",
+    engagement_filter: str = "all",
+    limit: int = 200,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int, str]:
+    normalized_email = (email_query or "").strip().lower()
+    normalized_filter = (engagement_filter or "all").strip().lower()
+    if normalized_filter not in {"all", "viewed", "played"}:
+        normalized_filter = "all"
+
+    where_clauses = ["1=1"]
+    params: List[Any] = []
+    if normalized_email:
+        where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
+        params.append(f"%{normalized_email}%")
+    where_sql = " AND ".join(where_clauses)
+
+    base_cte_sql = f"""
+        WITH share_rows AS (
+            SELECT
+              sl.id,
+              sl.generated_video_id,
+              COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
+              COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
+              sl.created_at,
+              COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
+              SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
+              SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count,
+              MIN(CASE WHEN ue.event_name = 'share_view' THEN ue.created_at END) AS first_seen,
+              MAX(CASE WHEN ue.event_name IN ('share_view', 'share_play') THEN ue.created_at END) AS last_seen
+            FROM short_share_links sl
+            LEFT JOIN shorts_generated_videos gv
+              ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+            LEFT JOIN user_events ue
+              ON {_share_link_event_join_sql(conn)}
+            WHERE {where_sql}
+            GROUP BY
+              sl.id,
+              sl.generated_video_id,
+              sl.recipient_name,
+              sl.recipient_email,
+              sl.created_at,
+              gv.generated_title,
+              gv.clip_filename
+        )
+    """
+
+    having_clauses = ["1=1"]
+    if normalized_filter == "viewed":
+        having_clauses.append("coalesce(views_count, 0) > 0")
+    elif normalized_filter == "played":
+        having_clauses.append("coalesce(plays_count, 0) > 0")
+    having_sql = " AND ".join(having_clauses)
+
+    total_count = int(
+        conn.execute(
+            f"""
+            {base_cte_sql}
+            SELECT COUNT(*)
+            FROM share_rows
+            WHERE {having_sql}
+            """,
+            params,
+        ).fetchone()[0]
+        or 0
+    )
+
+    rows = conn.execute(
+        f"""
+        {base_cte_sql}
+        SELECT
+          id,
+          generated_video_id,
+          recipient_name,
+          recipient_email,
+          clip_title,
+          COALESCE(views_count, 0) AS views_count,
+          COALESCE(plays_count, 0) AS plays_count,
+          first_seen,
+          last_seen,
+          created_at
+        FROM share_rows
+        WHERE {having_sql}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [limit, offset],
+    ).fetchall()
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        views_count = int(row[5] or 0)
+        plays_count = int(row[6] or 0)
+        items.append(
+            {
+                "id": row[0],
+                "generated_video_id": row[1],
+                "recipient_name": row[2],
+                "recipient_email": row[3],
+                "clip_title": row[4],
+                "views_count": views_count,
+                "plays_count": plays_count,
+                "viewed": views_count > 0,
+                "played": plays_count > 0,
+                "first_seen": row[7],
+                "last_seen": row[8],
+                "created_at": row[9],
+            }
+        )
+    return items, total_count, normalized_filter
+
+
 def _directory_size_bytes(path: Path) -> int:
     total = 0
     try:
@@ -8505,6 +8647,52 @@ def admin_errors():
         page=page,
         per_page=per_page,
         total_events=total_events,
+        total_pages=total_pages,
+    )
+
+
+@video_shorts_bp.route("/admin/share-links", methods=["GET"])
+@require_admin
+def admin_share_links():
+    email_query = (request.args.get("email") or "").strip()
+    engagement_filter = (request.args.get("engagement") or "all").strip().lower()
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 200
+
+    conn = get_db_readonly()
+    try:
+        total_links = _load_admin_share_links(
+            conn,
+            email_query=email_query,
+            engagement_filter=engagement_filter,
+            limit=1,
+            offset=0,
+        )[1]
+        total_pages = max(1, (total_links + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        links, total_links, normalized_filter = _load_admin_share_links(
+            conn,
+            email_query=email_query,
+            engagement_filter=engagement_filter,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
+    finally:
+        conn.close()
+
+    return render_template(
+        "shorts_admin_share_links.html",
+        admin_title="Share links",
+        links=links,
+        email_query=email_query,
+        selected_engagement=normalized_filter,
+        page=page,
+        per_page=per_page,
+        total_links=total_links,
         total_pages=total_pages,
     )
 
