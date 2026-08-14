@@ -415,7 +415,7 @@
         <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
         <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
           <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-          <span class="mv-dropzone-meta">Direct-to-S3 · up to 500MB</span>
+          <span class="mv-dropzone-meta">Video files up to 500MB per file</span>
         </label>
         <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
         <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
@@ -497,6 +497,7 @@
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
+  const maxUploadBytesPerFile = 500 * 1024 * 1024;
   const firstVideoRow = document.getElementById('mv-first-video-row');
   const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
   const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
@@ -756,6 +757,11 @@
 
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+  const isFileOverPerFileLimit = (file) => {
+    if (!file) return false;
+    return Number(file.size || 0) > maxUploadBytesPerFile;
+  };
+
   const uploadPart = (url, blob) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url, true);
@@ -874,7 +880,7 @@
           } catch (error) {
             attempt += 1;
             if (attempt >= 3) {
-              throw error;
+              throw new Error('Upload failed — your connection dropped. Please try again.');
             }
             setFeedback(`Upload interrupted. Retrying part ${partNumber} (${attempt + 1}/3)…`);
             await sleep(1000 * (2 ** (attempt - 1)));
@@ -913,6 +919,10 @@
       setFeedback('Choose a video first.', true);
       return;
     }
+    if (isFileOverPerFileLimit(selectedFile)) {
+      setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+      return;
+    }
     setCoachmarkState('uploading');
     renderCoachmark(2);
     setUploadControlsDisabled(true);
@@ -940,6 +950,10 @@
     if (isUploading) return;
     const [file] = Array.from(event.target.files || []);
     setSelectedFile(file || null);
+    if (file && isFileOverPerFileLimit(file)) {
+      setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+      return;
+    }
     setFeedback('');
   });
 
@@ -967,6 +981,10 @@
         uploadInput.files = dataTransfer.files;
       }
       setSelectedFile(file);
+      if (isFileOverPerFileLimit(file)) {
+        setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+        return;
+      }
       setFeedback('');
     }
   });

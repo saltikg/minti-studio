@@ -74,6 +74,7 @@ MULTIPART_UPLOAD_PART_SIZE_BYTES = 10 * 1024 * 1024
 MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024
 MULTIPART_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
 MULTIPART_UPLOAD_MAX_PARTS = 10_000
+MAX_UPLOAD_BYTES_PER_FILE = 500 * 1024 * 1024
 
 
 def _normalize_timestamp(value):
@@ -447,6 +448,10 @@ def _size_limit_message(*, size_bytes: int, plan_label: str, limit_bytes: int) -
     )
 
 
+def _per_file_size_limit_message() -> str:
+    return "This file is over the 500MB per-file limit. Please choose a smaller file."
+
+
 def _duration_limit_message(*, duration_seconds: int, plan_label: str, limit_seconds: int) -> str:
     return (
         f"This video is {_format_duration_observed(duration_seconds)}. "
@@ -461,12 +466,17 @@ def _validate_upload_size(*, size_bytes: int, limits: Dict[str, Any]):
         return None
     if size_bytes <= 0:
         return "Choose a file first."
-    limit_bytes = int(limits.get("max_upload_size_bytes") or 0)
-    if limit_bytes and size_bytes > limit_bytes:
+    plan_limit_bytes = int(limits.get("max_upload_size_bytes") or 0)
+    effective_limit_bytes = MAX_UPLOAD_BYTES_PER_FILE
+    if plan_limit_bytes > 0:
+        effective_limit_bytes = min(effective_limit_bytes, plan_limit_bytes)
+    if effective_limit_bytes and size_bytes > effective_limit_bytes:
+        if effective_limit_bytes == MAX_UPLOAD_BYTES_PER_FILE:
+            return _per_file_size_limit_message()
         return _size_limit_message(
             size_bytes=size_bytes,
             plan_label=str(limits.get("plan_label") or "Current"),
-            limit_bytes=limit_bytes,
+            limit_bytes=effective_limit_bytes,
         )
     return None
 
