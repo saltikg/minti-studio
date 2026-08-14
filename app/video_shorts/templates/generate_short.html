@@ -3445,14 +3445,26 @@
                               {% endif %}
                               {% if is_admin and row.generated_video_id %}
                                 <div class="mt-2">
-                                  <button
-                                    type="button"
-                                    class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1 admin-share-link-btn"
-                                    data-generated-video-id="{{ row.generated_video_id }}"
-                                    data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}">
-                                    <i class="bi bi-link-45deg" aria-hidden="true"></i>
-                                    <span>Share link</span>
-                                  </button>
+                                  <div class="d-grid gap-2 admin-share-link-panel">
+                                    <input
+                                      type="text"
+                                      class="form-control form-control-sm admin-share-link-recipient-name"
+                                      placeholder="Recipient name"
+                                      aria-label="Recipient name">
+                                    <input
+                                      type="email"
+                                      class="form-control form-control-sm admin-share-link-recipient-email"
+                                      placeholder="Recipient email (optional)"
+                                      aria-label="Recipient email">
+                                    <button
+                                      type="button"
+                                      class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center justify-content-center gap-1 admin-share-link-btn"
+                                      data-generated-video-id="{{ row.generated_video_id }}"
+                                      data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}">
+                                      <i class="bi bi-link-45deg" aria-hidden="true"></i>
+                                      <span>Share link</span>
+                                    </button>
+                                  </div>
                                   <div class="input-group input-group-sm mt-2 d-none admin-share-link-result">
                                     <input type="text" class="form-control admin-share-link-input" readonly aria-label="Shared short URL">
                                     <button type="button" class="btn btn-outline-secondary admin-share-link-copy-btn">Copy</button>
@@ -10381,13 +10393,17 @@ const initAdminShareLinkButtons = () => {
       const generatedVideoId = String(button.dataset.generatedVideoId || "").trim();
       const shareUrl = String(button.dataset.shareUrl || "").trim();
       const wrapper = button.closest(".clip-card-action-primary, .clip-card");
+      const recipientNameInput = wrapper?.querySelector(".admin-share-link-recipient-name");
+      const recipientEmailInput = wrapper?.querySelector(".admin-share-link-recipient-email");
       const resultGroup = wrapper?.querySelector(".admin-share-link-result");
       const resultInput = wrapper?.querySelector(".admin-share-link-input");
       const copyButton = wrapper?.querySelector(".admin-share-link-copy-btn");
       const feedback = wrapper?.querySelector(".admin-share-link-feedback");
-      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !feedback) {
+      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !feedback || !recipientNameInput || !recipientEmailInput) {
         return;
       }
+      const recipientName = String(recipientNameInput.value || "").trim();
+      const recipientEmail = String(recipientEmailInput.value || "").trim();
       const originalHtml = button.innerHTML;
       button.disabled = true;
       button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
@@ -10401,7 +10417,11 @@ const initAdminShareLinkButtons = () => {
             "Content-Type": "application/json",
             "X-Requested-With": "XMLHttpRequest",
           },
-          body: JSON.stringify({ generated_video_id: generatedVideoId }),
+          body: JSON.stringify({
+            generated_video_id: generatedVideoId,
+            recipient_name: recipientName,
+            recipient_email: recipientEmail,
+          }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success || !payload.share_url) {
@@ -10409,7 +10429,7 @@ const initAdminShareLinkButtons = () => {
         }
         resultInput.value = payload.share_url;
         resultGroup.classList.remove("d-none");
-        feedback.textContent = "Share link ready.";
+        feedback.textContent = "Recipient share link ready.";
         feedback.classList.add("text-success");
         feedback.classList.remove("d-none");
         copyButton.onclick = async () => {

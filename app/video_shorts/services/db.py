@@ -191,6 +191,67 @@ def table_columns(conn, table_name: str) -> set:
     return {row[1] for row in rows}
 
 
+def ensure_short_share_links_schema(conn) -> None:
+    if not _schema_management_enabled():
+        return
+    backend_name = getattr(conn, "backend_name", "")
+    if backend_name == "postgres":
+        id_column_sql = "BIGSERIAL PRIMARY KEY"
+    else:
+        id_column_sql = "INTEGER PRIMARY KEY AUTOINCREMENT"
+    try:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS short_share_links (
+                id {id_column_sql},
+                generated_video_id BIGINT NOT NULL,
+                token VARCHAR NOT NULL,
+                recipient_name VARCHAR,
+                recipient_email VARCHAR,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        return
+    cols = table_columns(conn, "short_share_links")
+    for col_name, col_type in (
+        ("generated_video_id", "BIGINT"),
+        ("token", "VARCHAR"),
+        ("recipient_name", "VARCHAR"),
+        ("recipient_email", "VARCHAR"),
+        ("created_at", "TIMESTAMP"),
+    ):
+        if col_name in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE short_share_links ADD COLUMN {col_name} {col_type}")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_short_share_links_token
+            ON short_share_links(token)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_short_share_links_generated_video_id
+            ON short_share_links(generated_video_id)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
 def _ensure_transcript_schema(conn) -> set:
     """
     Make sure youtube_transcripts has the new whisper_segments_json column.

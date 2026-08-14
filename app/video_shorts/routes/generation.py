@@ -104,6 +104,7 @@ from app.video_shorts.services.db import (
     ensure_auth_user_schema,
     ensure_categories_schema,
     ensure_postgres_youtube_transcripts_id_default,
+    ensure_short_share_links_schema,
     ensure_static_images_schema,
     ensure_storage_user_schema,
     ensure_channel_owner_schema,
@@ -111,6 +112,7 @@ from app.video_shorts.services.db import (
     get_db_readonly,
     table_columns,
 )
+from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.background_preferences import load_background_preference
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
@@ -1083,6 +1085,104 @@ def _short_public_url(filename: str) -> str:
         current_app.logger.debug("short url resolved from local filename=%s key=%s", safe_name, key)
         return local_storage.public_url(key)
     return ""
+
+
+def _short_poster_storage_key(filename: str) -> str:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return ""
+    return f"shorts/posters/{safe_name}.jpg"
+
+
+def _short_poster_public_url(filename: str) -> str:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return ""
+    key = _short_poster_storage_key(safe_name)
+    storage = get_media_storage()
+    if getattr(storage, "backend_name", "local") == "s3":
+        try:
+            if storage.exists(key):
+                return storage.public_url(key)
+        except Exception:
+            current_app.logger.exception("Failed to resolve short poster url from s3 filename=%s key=%s", safe_name, key)
+    local_storage = get_media_storage("local")
+    try:
+        if local_storage.exists(key):
+            return local_storage.public_url(key)
+    except Exception:
+        current_app.logger.exception("Failed to resolve short poster url from local storage filename=%s key=%s", safe_name, key)
+    return ""
+
+
+def _cleanup_managed_temp_path(path_obj: Any) -> None:
+    cleanup = getattr(path_obj, "cleanup", None)
+    if callable(cleanup):
+        try:
+            cleanup()
+        except Exception:
+            pass
+
+
+def _ensure_shared_short_poster(filename: str) -> None:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return
+    poster_key = _short_poster_storage_key(safe_name)
+    if not poster_key:
+        return
+    storage = get_media_storage()
+    try:
+        if storage.exists(poster_key):
+            return
+    except Exception:
+        current_app.logger.exception("Failed to check short poster existence filename=%s key=%s", safe_name, poster_key)
+        return
+
+    short_key = _short_storage_key(safe_name)
+    input_path_obj = None
+    output_path = None
+    try:
+        input_path_obj = storage.download_to_temp(short_key)
+        input_path = Path(str(input_path_obj))
+        if not input_path.exists():
+            return
+        with tempfile.NamedTemporaryFile(prefix="short_poster_", suffix=".jpg", delete=False) as handle:
+            output_path = Path(handle.name)
+        ffmpeg_bin = _resolve_ffmpeg()
+        run_media_subprocess(
+            [
+                ffmpeg_bin,
+                "-y",
+                "-ss",
+                "1",
+                "-i",
+                str(input_path),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "3",
+                str(output_path),
+            ],
+            timeout=max(30, min(int(FFMPEG_SHORT_TIMEOUT or 120), 180)),
+            operation="share_poster_extract",
+            context=f"clip_filename={safe_name}",
+            output_paths=[output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if output_path.exists() and output_path.stat().st_size > 0:
+            storage.put_file(output_path, poster_key)
+    except Exception:
+        current_app.logger.exception("Failed to generate shared short poster filename=%s", safe_name)
+    finally:
+        _cleanup_managed_temp_path(input_path_obj)
+        if output_path is not None:
+            try:
+                output_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _short_exists(filename: str) -> bool:
@@ -5498,23 +5598,118 @@ def generate_short(video_pk):
     )
 
 
+SHARE_EVENT_MAX_BODY_BYTES = 512
+SHARE_EVENT_RATE_LIMITS = [
+    RateLimitRule(limit=20, window_seconds=60),
+    RateLimitRule(limit=120, window_seconds=3600),
+]
+
+
+def _share_base_url() -> str:
+    return str(current_app.config.get("BASE_URL") or "https://mintistudio.com").rstrip("/")
+
+
+def _share_public_url(token: str) -> str:
+    return f"{_share_base_url()}/w/{token}"
+
+
+def _short_share_links_ready(conn) -> bool:
+    ensure_short_share_links_schema(conn)
+    return bool(table_columns(conn, "short_share_links"))
+
+
+def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
+    normalized_token = str(token or "").strip()
+    if not normalized_token:
+        return None
+
+    if _short_share_links_ready(conn):
+        row = conn.execute(
+            """
+            SELECT
+              gv.id,
+              gv.clip_filename,
+              gv.generated_title,
+              yv.title,
+              COALESCE(NULLIF(CAST(gv.user_id AS VARCHAR), ''), CAST(b.owner_user_id AS VARCHAR)) AS owner_user_id,
+              sl.id AS share_link_id,
+              sl.token AS resolved_token,
+              'recipient' AS token_source
+            FROM short_share_links sl
+            JOIN shorts_generated_videos gv
+              ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+            LEFT JOIN shorts_brands b
+              ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
+            LEFT JOIN youtube_videos yv
+              ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+            WHERE sl.token = ?
+            LIMIT 1
+            """,
+            [normalized_token],
+        ).fetchone()
+        if row:
+            return {
+                "generated_video_id": str(row[0] or "").strip(),
+                "clip_filename": str(row[1] or "").strip(),
+                "clip_title": str(row[2] or row[3] or row[1] or "Short unavailable").strip() or "Short unavailable",
+                "owner_user_id": str(row[4] or "").strip(),
+                "share_link_id": str(row[5] or "").strip() or None,
+                "token": str(row[6] or normalized_token).strip(),
+                "token_source": str(row[7] or "recipient").strip() or "recipient",
+            }
+
+    generated_columns = table_columns(conn, "shorts_generated_videos")
+    if "share_token" not in generated_columns:
+        return None
+    row = conn.execute(
+        """
+        SELECT
+          gv.id,
+          gv.clip_filename,
+          gv.generated_title,
+          yv.title,
+          COALESCE(NULLIF(CAST(gv.user_id AS VARCHAR), ''), CAST(b.owner_user_id AS VARCHAR)) AS owner_user_id
+        FROM shorts_generated_videos gv
+        LEFT JOIN shorts_brands b
+          ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
+        LEFT JOIN youtube_videos yv
+          ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+        WHERE gv.share_token = ?
+        LIMIT 1
+        """,
+        [normalized_token],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "generated_video_id": str(row[0] or "").strip(),
+        "clip_filename": str(row[1] or "").strip(),
+        "clip_title": str(row[2] or row[3] or row[1] or "Short unavailable").strip() or "Short unavailable",
+        "owner_user_id": str(row[4] or "").strip(),
+        "share_link_id": None,
+        "token": normalized_token,
+        "token_source": "legacy",
+    }
+
+
 @video_shorts_bp.route("/api/generated-shorts/share-link", methods=["POST"])
 @require_admin
 def create_generated_short_share_link():
     payload = request.get_json(silent=True) or request.form or {}
     generated_video_id = str(payload.get("generated_video_id") or "").strip()
+    recipient_name = str(payload.get("recipient_name") or "").strip()
+    recipient_email = str(payload.get("recipient_email") or "").strip()
     if not generated_video_id:
         return jsonify({"success": False, "message": "Generated short id is required."}), 400
 
     conn = get_db()
     try:
-        generated_columns = table_columns(conn, "shorts_generated_videos")
-        if "share_token" not in generated_columns:
+        if not _short_share_links_ready(conn):
             return jsonify({"success": False, "message": "Share links are not available until the database migration is applied."}), 503
 
         row = conn.execute(
             """
-            SELECT id, share_token, clip_filename
+            SELECT id, clip_filename
             FROM shorts_generated_videos
             WHERE CAST(id AS VARCHAR) = ?
             LIMIT 1
@@ -5524,71 +5719,78 @@ def create_generated_short_share_link():
         if not row:
             return jsonify({"success": False, "message": "Generated short not found."}), 404
 
-        share_token = str(row[1] or "").strip()
-        clip_filename = str(row[2] or "").strip()
+        clip_filename = str(row[1] or "").strip()
         if not clip_filename:
             return jsonify({"success": False, "message": "Rendered short is not available for sharing yet."}), 404
 
-        if not share_token:
-            share_token = secrets.token_urlsafe(16)
+        share_token = ""
+        for _ in range(5):
+            candidate = secrets.token_urlsafe(16)
+            exists = conn.execute(
+                "SELECT 1 FROM short_share_links WHERE token = ? LIMIT 1",
+                [candidate],
+            ).fetchone()
+            if exists:
+                continue
             conn.execute(
-                "UPDATE shorts_generated_videos SET share_token = ?, updated_at = now() WHERE CAST(id AS VARCHAR) = ?",
-                [share_token, generated_video_id],
+                """
+                INSERT INTO short_share_links (
+                    generated_video_id,
+                    token,
+                    recipient_name,
+                    recipient_email,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, now())
+                """,
+                [
+                    str(row[0] or generated_video_id),
+                    candidate,
+                    recipient_name or None,
+                    recipient_email or None,
+                ],
             )
-            conn.commit()
-
-        base_url = str(current_app.config.get("BASE_URL") or "https://mintistudio.com").rstrip("/")
+            share_token = candidate
+            break
+        if not share_token:
+            return jsonify({"success": False, "message": "Share link could not be created."}), 500
+        conn.commit()
+        _ensure_shared_short_poster(clip_filename)
         return jsonify(
             {
                 "success": True,
                 "generated_video_id": str(row[0] or generated_video_id),
                 "share_token": share_token,
-                "share_url": f"{base_url}/w/{share_token}",
+                "share_url": _share_public_url(share_token),
             }
         )
     except Exception:
         current_app.logger.exception("Failed to create share link for generated short %s", generated_video_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return jsonify({"success": False, "message": "Share link could not be created."}), 500
     finally:
         conn.close()
 
 
-@video_shorts_bp.route("/w/<token>")
-def public_short_watch_page(token: str):
+def _render_public_short_watch_page(token: str):
     normalized_token = str(token or "").strip()
     if not normalized_token:
         abort(404)
 
     conn = get_db_readonly()
     try:
-        generated_columns = table_columns(conn, "shorts_generated_videos")
-        if "share_token" not in generated_columns:
-            abort(404)
-        row = conn.execute(
-            """
-            SELECT
-              gv.id,
-              gv.clip_filename,
-              gv.generated_title,
-              gv.source_video_id,
-              yv.thumbnail_url,
-              yv.title
-            FROM shorts_generated_videos gv
-            LEFT JOIN youtube_videos yv
-              ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
-            WHERE gv.share_token = ?
-            LIMIT 1
-            """,
-            [normalized_token],
-        ).fetchone()
+        row = _load_shared_short_row(conn, normalized_token)
     finally:
         conn.close()
 
     if not row:
         abort(404)
 
-    clip_title = str(row[2] or row[5] or row[1] or "Short unavailable").strip() or "Short unavailable"
-    clip_filename = str(row[1] or "").strip()
+    clip_title = row["clip_title"]
+    clip_filename = row["clip_filename"]
     if not clip_filename:
         return render_template("short_share_unavailable.html", clip_title=clip_title), 404
 
@@ -5596,12 +5798,68 @@ def public_short_watch_page(token: str):
     if not playback_url:
         return render_template("short_share_unavailable.html", clip_title=clip_title), 404
 
+    poster_url = _short_poster_public_url(clip_filename) or None
     return render_template(
         "short_share_watch.html",
         clip_title=clip_title,
-        playback_url=playback_url,
-        poster_url=(str(row[4] or "").strip() or None),
+        playback_url=f"{playback_url}#t=1",
+        poster_url=poster_url,
+        event_url=url_for("public_short_watch_event_alias", token=normalized_token),
     )
+
+
+@video_shorts_bp.route("/w/<token>")
+def public_short_watch_page(token: str):
+    return _render_public_short_watch_page(token)
+
+
+def _handle_public_short_watch_event(token: str):
+    if int(request.content_length or 0) > SHARE_EVENT_MAX_BODY_BYTES:
+        return ("", 204)
+
+    key_parts = [
+        str(token or "").strip(),
+        request.headers.get("X-Forwarded-For", ""),
+        request.remote_addr or "",
+    ]
+    allowed, _retry_after = check_rate_limits("share-watch-event", key_parts, SHARE_EVENT_RATE_LIMITS)
+    if not allowed:
+        return ("", 204)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return ("", 204)
+
+    event_type = str(payload.get("type") or "").strip().lower()
+    if event_type not in {"view", "play"}:
+        return ("", 204)
+
+    conn = get_db_readonly()
+    try:
+        row = _load_shared_short_row(conn, token)
+    finally:
+        conn.close()
+
+    if not row or not row.get("generated_video_id") or not row.get("owner_user_id"):
+        return ("", 204)
+
+    track_event(
+        row["owner_user_id"],
+        f"share_{event_type}",
+        short_id=row["generated_video_id"],
+        metadata={
+            "token": row["token"],
+            "generated_video_id": row["generated_video_id"],
+            "share_link_id": row["share_link_id"],
+            "token_source": row["token_source"],
+        },
+    )
+    return ("", 204)
+
+
+@video_shorts_bp.route("/w/<token>/event", methods=["POST"])
+def public_short_watch_event(token: str):
+    return _handle_public_short_watch_event(token)
 
 
 @video_shorts_bp.route("/generate/preferences/clip-coachmark", methods=["POST"])

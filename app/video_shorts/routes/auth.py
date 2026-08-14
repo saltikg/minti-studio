@@ -828,6 +828,8 @@ def _guard_video_shorts():
         "video_shorts_bp.download_status",
         "video_shorts_bp.download_tasks",
         "video_shorts_bp.client_error_api",
+        "video_shorts_bp.public_short_watch_page",
+        "video_shorts_bp.public_short_watch_event",
         "video_shorts_bp.serve_media",
         "video_shorts_bp.serve_instagram_media_proxy",
         "video_shorts_bp.home",

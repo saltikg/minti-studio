@@ -54,10 +54,10 @@
       .watch-footer {
         margin-top: 18px;
         display: flex;
-        justify-content: space-between;
+        justify-content: center;
         align-items: center;
         gap: 12px;
-        flex-wrap: wrap;
+        text-align: center;
         font-size: 0.92rem;
       }
       .watch-footer a {
@@ -74,13 +74,45 @@
     <main class="watch-shell">
       <h1>{{ clip_title }}</h1>
       <p>Watch this short clip shared from MintiStudio.</p>
-      <video controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
+      <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
         <source src="{{ playback_url }}" type="video/mp4">
       </video>
       <div class="watch-footer">
-        <span>Public share link</span>
-        <a href="https://mintistudio.com" target="_blank" rel="noreferrer">Made with MintiStudio</a>
+        <a href="https://mintistudio.com" target="_blank" rel="noreferrer">MintiStudio ile uzun videolarını otomatik short'a çevir</a>
       </div>
     </main>
+    <script>
+      (() => {
+        const eventUrl = {{ event_url|tojson }};
+        const video = document.getElementById("shared-short-video");
+        if (!eventUrl || !video) {
+          return;
+        }
+        const fireEvent = (type) => {
+          const body = JSON.stringify({ type });
+          if (navigator.sendBeacon) {
+            const blob = new Blob([body], { type: "application/json" });
+            navigator.sendBeacon(eventUrl, blob);
+            return;
+          }
+          fetch(eventUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            keepalive: true,
+            credentials: "omit",
+          }).catch(() => {});
+        };
+        fireEvent("view");
+        let playTracked = false;
+        video.addEventListener("play", () => {
+          if (playTracked) {
+            return;
+          }
+          playTracked = true;
+          fireEvent("play");
+        }, { passive: true });
+      })();
+    </script>
   </body>
 </html>

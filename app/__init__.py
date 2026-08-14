@@ -99,6 +99,12 @@ def create_app():
 
         return public_short_watch_page(token)
 
+    @app.post("/w/<token>/event")
+    def public_short_watch_event_alias(token):
+        from app.video_shorts.routes.generation import public_short_watch_event
+
+        return public_short_watch_event(token)
+
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp
         app.register_blueprint(trend_bp)
