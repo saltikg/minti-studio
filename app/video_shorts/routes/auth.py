@@ -845,6 +845,8 @@ def _guard_video_shorts():
         return
     if request.endpoint and request.endpoint.startswith("video_shorts_bp."):
         if not _is_authenticated():
+            if (request.path or "").startswith("/video_shorts/admin/"):
+                abort(404)
             return redirect(url_for("video_shorts_bp.login", next=request.url))
 
 
