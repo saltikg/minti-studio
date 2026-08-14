@@ -74,6 +74,7 @@ from app.video_shorts.services.instagram_api import (
 from src.trends.facebook_page_tokens import get_facebook_page_data
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
+    extract_video_id,
     fetch_playlist_items_batch,
     fetch_video_stats,
     get_channel_metadata,
@@ -3609,6 +3610,122 @@ def videos_page(channel_id):
         shorts_completed_count=total_completed,
         shorts_not_started_count=total_not_started,
     )
+
+
+@video_shorts_bp.route("/videos/<int:channel_id>/add-by-url", methods=["POST"])
+def add_video_by_url(channel_id):
+    current_user = getattr(g, "vs_current_user", None)
+    active_brand_id = current_brand_id()
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    is_admin = current_user.get("role") == "admin"
+
+    conn = get_db()
+    ensure_brand_schema(conn)
+    ensure_channel_owner_schema(conn)
+    _ensure_video_crop_schema(conn)
+
+    try:
+        row = conn.execute(
+            """
+            SELECT channel_id, channel_name, channel_url, owner_user_id, brand_id
+            FROM youtube_channels
+            WHERE channel_id = ?
+            """,
+            [channel_id],
+        ).fetchone()
+        if not row:
+            flash("Channel not found", "danger")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+
+        channel = {
+            "channel_id": row[0],
+            "channel_name": row[1],
+            "channel_url": row[2],
+            "owner_user_id": row[3],
+            "brand_id": row[4],
+        }
+        preferred_channel_ids = _preferred_brand_channel_ids(
+            channel.get("owner_user_id"),
+            active_brand_id,
+        )
+        if not is_admin and channel["owner_user_id"] != current_user["id"]:
+            flash("You do not have permission to update this channel.", "danger")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+        if not is_admin and active_brand_id and channel.get("brand_id") != active_brand_id:
+            flash("Bu channel aktif brand'e ait değil.", "warning")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+        if preferred_channel_ids and str(channel.get("channel_id")) not in preferred_channel_ids:
+            flash("Bu channel aktif brand scope'una ait değil.", "warning")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+        if str(channel.get("channel_url") or "").strip().lower() != "local://uploads":
+            flash("Add by URL is only available in Local uploads.", "warning")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+
+        raw_url = (request.form.get("video_url") or "").strip()
+        video_id = extract_video_id(raw_url)
+        if not video_id or len(video_id) != 11:
+            flash("Paste a valid YouTube video URL.", "danger")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+
+        canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+        existing = conn.execute(
+            "SELECT id FROM youtube_videos WHERE channel_id = ? AND video_id = ? LIMIT 1",
+            [channel_id, video_id],
+        ).fetchone()
+        if existing:
+            flash("This video was already added to Local uploads.", "info")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+
+        title = canonical_url
+        thumbnail_url = None
+        try:
+            oembed_resp = requests.get(
+                "https://www.youtube.com/oembed",
+                params={"url": canonical_url, "format": "json"},
+                timeout=10,
+            )
+            if oembed_resp.ok:
+                payload = oembed_resp.json() or {}
+                title = str(payload.get("title") or "").strip() or canonical_url
+                thumbnail_url = str(payload.get("thumbnail_url") or "").strip() or None
+        except Exception:
+            current_app.logger.info(
+                "YouTube oEmbed lookup failed for add-by-url video_id=%s",
+                video_id,
+                exc_info=True,
+            )
+
+        conn.execute(
+            """
+            INSERT INTO youtube_videos
+                (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
+                 duration_seconds, view_count, like_count, comment_count, video_url,
+                 owner_user_id, brand_id, download_status, subtitle_style)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                channel_id,
+                video_id,
+                title,
+                thumbnail_url,
+                False,
+                None,
+                None,
+                None,
+                None,
+                canonical_url,
+                channel.get("owner_user_id"),
+                channel.get("brand_id"),
+                "pending",
+                "karaoke",
+            ],
+        )
+        conn.commit()
+        flash("Video added to Local uploads.", "success")
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+    finally:
+        conn.close()
 
 
 @video_shorts_bp.route("/shorts/overview")

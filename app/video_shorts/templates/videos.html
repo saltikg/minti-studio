@@ -68,6 +68,14 @@
         <input type="text" name="video_to_fetch" placeholder="Video ID (e.g., abc123)" class="form-control form-control-sm vs-input vs-input-140">
         <button class="vs-btn vs-btn-primary vs-btn-sm">Fetch Video</button>
       </form>
+      {% if (channel.channel_url or '')|lower == 'local://uploads' %}
+      <form method="post"
+            action="{{ url_for('video_shorts_bp.add_video_by_url', channel_id=channel.channel_id) }}"
+            class="d-flex gap-1 vs-fetch-form">
+        <input type="text" name="video_url" placeholder="Paste a YouTube video URL" class="form-control form-control-sm vs-input" style="min-width: 260px;">
+        <button class="vs-btn vs-btn-primary vs-btn-sm">Add</button>
+      </form>
+      {% endif %}
     </div>
   </div>
 
