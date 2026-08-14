@@ -93,6 +93,12 @@ def create_app():
         _current_user()
         return render_job_status_api(job_id)
 
+    @app.get("/w/<token>")
+    def public_short_watch_alias(token):
+        from app.video_shorts.routes.generation import public_short_watch_page
+
+        return public_short_watch_page(token)
+
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp
         app.register_blueprint(trend_bp)
