@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from flask import g, request
+from flask import g, request, session
 
 from app.video_shorts.services.user_events import track_event
 
@@ -34,6 +34,9 @@ def current_event_user_id() -> str:
         user_id = str(current_user.get("id") or "").strip()
         if user_id:
             return user_id
+    session_user_id = str(session.get("vs_user_id") or "").strip()
+    if session_user_id:
+        return session_user_id
     return "anonymous"
 
 
