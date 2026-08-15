@@ -3456,6 +3456,42 @@ def videos_page(channel_id):
     cols = [d[0] for d in conn.description]
     videos = [dict(zip(cols, r)) for r in rows]
 
+    share_link_stats: Dict[str, Dict[str, int]] = {}
+    video_ids = [str(v.get("video_id") or "").strip() for v in videos if str(v.get("video_id") or "").strip()]
+    if video_ids:
+        share_link_columns = table_columns(conn, "short_share_links")
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        has_emailed_at = "emailed_at" in share_link_columns
+        if share_link_columns and generated_columns:
+            placeholders = ", ".join("?" for _ in video_ids)
+            sent_sql = (
+                "SUM(CASE WHEN sl.emailed_at IS NOT NULL THEN 1 ELSE 0 END)"
+                if has_emailed_at
+                else "0"
+            )
+            share_rows = conn.execute(
+                f"""
+                SELECT
+                  CAST(gv.source_video_id AS VARCHAR) AS source_video_id,
+                  COUNT(sl.id) AS share_links_count,
+                  {sent_sql} AS sent_count
+                FROM shorts_generated_videos gv
+                JOIN short_share_links sl
+                  ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+                WHERE CAST(gv.source_video_id AS VARCHAR) IN ({placeholders})
+                GROUP BY CAST(gv.source_video_id AS VARCHAR)
+                """,
+                video_ids,
+            ).fetchall()
+            share_link_stats = {
+                str(row[0] or "").strip(): {
+                    "share_links_count": int(row[1] or 0),
+                    "share_links_sent_count": int(row[2] or 0),
+                }
+                for row in share_rows
+                if str(row[0] or "").strip()
+            }
+
     # Normalize published_at for display (date only)
     for v in videos:
         pa = v.get("published_at")
@@ -3497,6 +3533,10 @@ def videos_page(channel_id):
         v["downloaded_at_dt"] = downloaded_dt_value
         v["downloaded_at_epoch"] = downloaded_dt_value.timestamp() if downloaded_dt_value else None
         v["downloaded_at_str"] = downloaded_label
+        share_stats = share_link_stats.get(str(v.get("video_id") or "").strip(), {})
+        v["share_links_count"] = int(share_stats.get("share_links_count") or 0)
+        v["share_links_sent_count"] = int(share_stats.get("share_links_sent_count") or 0)
+        v["share_links_email_sent"] = v["share_links_sent_count"] > 0
 
     conn.close()
 

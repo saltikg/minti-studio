@@ -277,6 +277,16 @@
                 <div class="text-muted stats-plan-row">
                   <strong>Plan {{ v.plan_count }} | Video {{ v.created_count }} | Desc {{ v.desc_ready }}</strong>
                 </div>
+                {% if v.share_links_count %}
+                <div class="text-muted small">
+                  <strong>Share {{ v.share_links_count }} | Email {{ v.share_links_sent_count }}</strong>
+                  {% if v.share_links_email_sent %}
+                    <span class="text-success">sent</span>
+                  {% else %}
+                    <span>not sent</span>
+                  {% endif %}
+                </div>
+                {% endif %}
                 <hr class="stats-plan-divider">
                 <div class="text-muted small d-flex gap-3 flex-nowrap align-items-center vs-nowrap-row">
                   <span class="text-nowrap">
