@@ -7681,6 +7681,7 @@ def _load_admin_share_links(
         SELECT
           id,
           generated_video_id,
+          token,
           recipient_name,
           recipient_email,
           clip_title,
@@ -7705,19 +7706,21 @@ def _load_admin_share_links(
             {
                 "id": row[0],
                 "generated_video_id": row[1],
-                "recipient_name": row[2],
-                "recipient_email": row[3],
-                "clip_title": row[4],
+                "share_token": str(row[2] or "").strip(),
+                "share_url": _share_public_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
+                "recipient_name": row[3],
+                "recipient_email": row[4],
+                "clip_title": row[5],
                 "views_count": views_count,
                 "plays_count": plays_count,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
-                "first_seen": row[7],
-                "first_seen_pst": _format_datetime_pst(row[7]),
-                "last_seen": row[8],
-                "last_seen_pst": _format_datetime_pst(row[8]),
-                "created_at": row[9],
-                "created_at_pst": _format_datetime_pst(row[9]),
+                "first_seen": row[8],
+                "first_seen_pst": _format_datetime_pst(row[8]),
+                "last_seen": row[9],
+                "last_seen_pst": _format_datetime_pst(row[9]),
+                "created_at": row[10],
+                "created_at_pst": _format_datetime_pst(row[10]),
             }
         )
     return items, total_count, normalized_filter

@@ -59,6 +59,20 @@
       white-space: normal;
       word-break: break-word;
     }
+    .admin-share-links-url {
+      margin-top: 6px;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+    .admin-share-links-url a {
+      color: #8ddfcb;
+      text-decoration: none;
+    }
+    .admin-share-links-url a:hover,
+    .admin-share-links-url a:focus {
+      text-decoration: underline;
+    }
     .admin-share-links-pill {
       display: inline-flex;
       align-items: center;
@@ -150,14 +164,21 @@
                 <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">{{ link.recipient_email }}</div>
               </td>
-              <td class="admin-share-links-title">{{ link.clip_title }}</td>
+              <td class="admin-share-links-title">
+                <div>{{ link.clip_title }}</div>
+                {% if link.share_url %}
+                  <div class="admin-share-links-url">
+                    <a href="{{ link.share_url }}" target="_blank" rel="noopener noreferrer">{{ link.share_url }}</a>
+                  </div>
+                {% endif %}
+              </td>
               <td>{{ link.views_count }}</td>
               <td>{{ link.plays_count }}</td>
               <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
               <td><span class="admin-share-links-pill {% if link.played %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.played else 'No' }}</span></td>
-              <td class="admin-share-links-meta">{{ link.first_seen.strftime('%b %-d, %Y · %H:%M:%S') if link.first_seen and link.first_seen.strftime else '—' }}</td>
-              <td class="admin-share-links-meta">{{ link.last_seen.strftime('%b %-d, %Y · %H:%M:%S') if link.last_seen and link.last_seen.strftime else '—' }}</td>
-              <td class="admin-share-links-meta">{{ link.created_at.strftime('%b %-d, %Y · %H:%M:%S') if link.created_at and link.created_at.strftime else (link.created_at or '—') }}</td>
+              <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.created_at_pst or '—' }}</td>
             </tr>
           {% else %}
             <tr>
