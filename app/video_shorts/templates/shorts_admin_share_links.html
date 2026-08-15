@@ -81,12 +81,20 @@
       align-items: center;
       font-size: 0.78rem;
     }
-    .admin-share-links-actions a {
+    .admin-share-links-actions a,
+    .admin-share-links-actions button {
       color: rgba(255, 255, 255, 0.78);
       text-decoration: none;
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      cursor: pointer;
     }
     .admin-share-links-actions a:hover,
-    .admin-share-links-actions a:focus {
+    .admin-share-links-actions a:focus,
+    .admin-share-links-actions button:hover,
+    .admin-share-links-actions button:focus {
       text-decoration: underline;
     }
     .admin-share-links-sent {
@@ -205,11 +213,14 @@
               <td class="admin-share-links-title">
                 <div>{{ link.clip_title }}</div>
                 {% if link.share_url %}
-                  <div class="admin-share-links-url">
-                    <a href="{{ link.share_url }}" target="_blank" rel="noopener noreferrer">{{ link.share_url }}</a>
-                  </div>
+                  <div class="admin-share-links-url">{{ link.share_url }}</div>
                   <div class="admin-share-links-actions">
-                    <a href="{{ link.share_url }}" target="_blank" rel="noopener noreferrer">Live link</a>
+                    <button
+                      type="button"
+                      class="admin-share-links-copy-btn"
+                      data-copy-text="{{ link.share_url }}"
+                      title="Copy share link"
+                      aria-label="Copy share link">📋 Copy</button>
                     <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
                   </div>
                 {% endif %}
@@ -257,4 +268,32 @@
       </div>
     </div>
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    document.addEventListener("click", async (event) => {
+      const button = event.target.closest(".admin-share-links-copy-btn");
+      if (!button) {
+        return;
+      }
+      const originalLabel = button.textContent;
+      const copyText = String(button.dataset.copyText || "").trim();
+      if (!copyText) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(copyText);
+        button.textContent = "Copied";
+        setTimeout(() => {
+          button.textContent = originalLabel;
+        }, 1200);
+      } catch (err) {
+        button.textContent = "Copy failed";
+        setTimeout(() => {
+          button.textContent = originalLabel;
+        }, 1200);
+      }
+    });
+  </script>
 {% endblock %}

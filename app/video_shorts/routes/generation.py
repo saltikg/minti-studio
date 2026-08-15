@@ -5743,6 +5743,7 @@ def create_generated_short_share_link():
     generated_video_id = str(payload.get("generated_video_id") or "").strip()
     recipient_name = str(payload.get("recipient_name") or "").strip()
     recipient_email = str(payload.get("recipient_email") or "").strip()
+    normalized_recipient_email = recipient_email.lower()
     if not generated_video_id:
         return jsonify({"success": False, "message": "Generated short id is required."}), 400
 
@@ -5766,6 +5767,68 @@ def create_generated_short_share_link():
         clip_filename = str(row[1] or "").strip()
         if not clip_filename:
             return jsonify({"success": False, "message": "Rendered short is not available for sharing yet."}), 404
+
+        existing_share_row = None
+        if normalized_recipient_email:
+            existing_share_row = conn.execute(
+                """
+                SELECT id, token
+                FROM short_share_links
+                WHERE CAST(generated_video_id AS VARCHAR) = ?
+                  AND lower(coalesce(recipient_email, '')) = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                [str(row[0] or generated_video_id), normalized_recipient_email],
+            ).fetchone()
+            if not existing_share_row:
+                existing_share_row = conn.execute(
+                    """
+                    SELECT id, token
+                    FROM short_share_links
+                    WHERE CAST(generated_video_id AS VARCHAR) = ?
+                      AND coalesce(nullif(trim(recipient_email), ''), '') = ''
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    [str(row[0] or generated_video_id)],
+                ).fetchone()
+                if existing_share_row:
+                    conn.execute(
+                        """
+                        UPDATE short_share_links
+                           SET recipient_name = ?,
+                               recipient_email = ?
+                         WHERE id = ?
+                        """,
+                        [recipient_name or None, recipient_email or None, existing_share_row[0]],
+                    )
+        else:
+            existing_share_row = conn.execute(
+                """
+                SELECT id, token
+                FROM short_share_links
+                WHERE CAST(generated_video_id AS VARCHAR) = ?
+                  AND coalesce(nullif(trim(recipient_email), ''), '') = ''
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                [str(row[0] or generated_video_id)],
+            ).fetchone()
+
+        if existing_share_row:
+            share_token = str(existing_share_row[1] or "").strip()
+            conn.commit()
+            _ensure_shared_short_poster(clip_filename)
+            return jsonify(
+                {
+                    "success": True,
+                    "generated_video_id": str(row[0] or generated_video_id),
+                    "share_token": share_token,
+                    "share_url": _share_public_url(share_token),
+                    "reused": True,
+                }
+            )
 
         share_token = ""
         for _ in range(5):
