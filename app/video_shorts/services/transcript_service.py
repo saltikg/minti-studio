@@ -1496,6 +1496,12 @@ def _build_word_highlight_caption_overlay(
         if e <= clip_start or s >= clip_end:
             continue
 
+        overlap_start = max(s, clip_start)
+        overlap_end = min(e, clip_end)
+        overlap_duration = max(overlap_end - overlap_start, 0.0)
+        if overlap_duration <= 0.0:
+            continue
+
         words_raw = seg.get("words") or []
         karaoke_words: List[Dict[str, Any]] = []
         if isinstance(words_raw, list):
@@ -1519,6 +1525,32 @@ def _build_word_highlight_caption_overlay(
                         "end": min(word_end, clip_end),
                     }
                 )
+        if not karaoke_words:
+            display_text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
+            if display_text:
+                if s < clip_start or e > clip_end:
+                    display_text = _trim_text_to_segment_overlap(
+                        display_text,
+                        segment_start=s,
+                        segment_end=e,
+                        overlap_start=overlap_start,
+                        overlap_end=overlap_end,
+                    )
+                tokens = [token for token in re.findall(r"\S+", display_text) if token]
+                if tokens:
+                    step = overlap_duration / len(tokens)
+                    cursor = overlap_start
+                    for index, token in enumerate(tokens):
+                        word_start = cursor
+                        word_end = overlap_end if index == len(tokens) - 1 else min(overlap_end, cursor + step)
+                        karaoke_words.append(
+                            {
+                                "word": token,
+                                "start": word_start,
+                                "end": max(word_start + 0.01, word_end),
+                            }
+                        )
+                        cursor = word_end
         if not karaoke_words:
             continue
 

@@ -4200,6 +4200,51 @@ def _fetch_video_with_transcript_for_scope(
     return video_id, title, duration_seconds, transcript_text, segments or []
 
 
+def _resolve_clip_transcript_override(
+    plan_entry: Optional[Dict[str, Any]],
+    segments: List[Dict[str, Any]],
+    start: Any,
+    end: Any,
+) -> str:
+    entry = plan_entry or {}
+    custom_transcript = str(entry.get("transcript_full_custom") or "").strip()
+    if custom_transcript:
+        return custom_transcript
+    stored_transcript = str(entry.get("transcript_full") or "").strip()
+    if not stored_transcript:
+        return ""
+    try:
+        derived_transcript = build_transcript_for_range(segments, float(start), float(end), prefer_tr=True).strip()
+    except Exception:
+        derived_transcript = ""
+    return stored_transcript if stored_transcript and stored_transcript != derived_transcript else ""
+
+
+def _build_override_segments_for_karaoke(
+    text: str,
+    clip_start: float,
+    clip_end: float,
+) -> List[Dict[str, Any]]:
+    override_text = str(text or "").strip()
+    if not override_text:
+        return []
+    duration = max(float(clip_end) - float(clip_start), 0.01)
+    return [
+        {
+            "start": float(clip_start),
+            "end": float(clip_end),
+            "duration": duration,
+            "text": override_text,
+            "tr_text": override_text,
+            "ar_text": None,
+            # No real word timings available for manual override text.
+            # The karaoke renderer will synthesize proportional timings for display.
+            "words": [],
+            "word_tags": [],
+        }
+    ]
+
+
 def _get_font_settings_from_session(
     video_font_key: Optional[str] = None,
     title_font_size_override: Optional[int] = None,
@@ -13981,16 +14026,69 @@ def autoclip_video(video_pk):
         adj_end = end + END_PAD
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
-        custom_transcript = plan_entry.get("transcript_full_custom")
+        custom_transcript = _resolve_clip_transcript_override(plan_entry, segments, start, end)
         subtitle_srt = None
         subtitle_text = ""
         clip_text = ""
         if custom_transcript:
             clip_text = custom_transcript
             subtitle_text = custom_transcript
-            subtitle_srt = _build_srt_from_text(custom_transcript, adj_start, adj_end)
-            if subtitle_srt:
-                temp_subs.append(subtitle_srt)
+            if video_subtitle_style == "karaoke":
+                override_segments = _build_override_segments_for_karaoke(custom_transcript, adj_start, adj_end)
+                if video_subtitle_style == "karaoke":
+                    active_subtitle_preset = str(video_subtitle_preset or "").strip()
+                    active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
+                    if bool(active_preset_config.get("active_pill")):
+                        subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
+                            override_segments,
+                            adj_start,
+                            adj_end,
+                            subtitle_font_size=sub_font_size,
+                            subtitle_margin=sub_margin,
+                            subtitle_preset=video_subtitle_preset,
+                        )
+                        subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
+                        overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
+                        if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
+                            current_app.logger.info(
+                                "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps mode=single_overlay_video",
+                                clip_filename,
+                                overlay_frame_count,
+                            )
+                        else:
+                            subtitle_srt = _build_ass_karaoke_for_clip(
+                                override_segments,
+                                adj_start,
+                                adj_end,
+                                subtitle_font=sub_font_name,
+                                subtitle_font_size=sub_font_size,
+                                subtitle_margin=sub_margin,
+                                subtitle_text_color=subtitle_text_color,
+                                subtitle_text_alpha=subtitle_text_alpha,
+                                subtitle_bg_color=subtitle_bg_color,
+                                subtitle_bg_alpha=subtitle_bg_alpha,
+                                subtitle_preset=video_subtitle_preset,
+                            )
+                    else:
+                        subtitle_srt = _build_ass_karaoke_for_clip(
+                            override_segments,
+                            adj_start,
+                            adj_end,
+                            subtitle_font=sub_font_name,
+                            subtitle_font_size=sub_font_size,
+                            subtitle_margin=sub_margin,
+                            subtitle_text_color=subtitle_text_color,
+                            subtitle_text_alpha=subtitle_text_alpha,
+                            subtitle_bg_color=subtitle_bg_color,
+                            subtitle_bg_alpha=subtitle_bg_alpha,
+                            subtitle_preset=video_subtitle_preset,
+                        )
+                if subtitle_srt:
+                    temp_subs.append(subtitle_srt)
+            else:
+                subtitle_srt = _build_srt_from_text(custom_transcript, adj_start, adj_end)
+                if subtitle_srt:
+                    temp_subs.append(subtitle_srt)
         else:
             sub_segments = []
             for s in (segments or []):
