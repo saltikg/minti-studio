@@ -4200,26 +4200,6 @@ def _fetch_video_with_transcript_for_scope(
     return video_id, title, duration_seconds, transcript_text, segments or []
 
 
-def _resolve_clip_transcript_override(
-    plan_entry: Optional[Dict[str, Any]],
-    segments: List[Dict[str, Any]],
-    start: Any,
-    end: Any,
-) -> str:
-    entry = plan_entry or {}
-    custom_transcript = str(entry.get("transcript_full_custom") or "").strip()
-    if custom_transcript:
-        return custom_transcript
-    stored_transcript = str(entry.get("transcript_full") or "").strip()
-    if not stored_transcript:
-        return ""
-    try:
-        derived_transcript = build_transcript_for_range(segments, float(start), float(end), prefer_tr=True).strip()
-    except Exception:
-        derived_transcript = ""
-    return stored_transcript if stored_transcript and stored_transcript != derived_transcript else ""
-
-
 def _build_override_segments_for_karaoke(
     text: str,
     clip_start: float,
@@ -14026,7 +14006,7 @@ def autoclip_video(video_pk):
         adj_end = end + END_PAD
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
-        custom_transcript = _resolve_clip_transcript_override(plan_entry, segments, start, end)
+        custom_transcript = str(plan_entry.get("transcript_full_custom") or "").strip()
         subtitle_srt = None
         subtitle_text = ""
         clip_text = ""
