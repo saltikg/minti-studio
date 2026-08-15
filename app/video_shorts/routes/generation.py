@@ -7702,8 +7702,8 @@ def _load_admin_share_links(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        views_count = int(row[5] or 0)
-        plays_count = int(row[6] or 0)
+        views_count = int(row[6] or 0)
+        plays_count = int(row[7] or 0)
         items.append(
             {
                 "id": row[0],
