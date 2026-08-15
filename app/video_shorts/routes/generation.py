@@ -7630,6 +7630,7 @@ def _load_admin_share_links(
             SELECT
               sl.id,
               sl.generated_video_id,
+              sl.token,
               COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
               sl.created_at,
@@ -7647,6 +7648,7 @@ def _load_admin_share_links(
             GROUP BY
               sl.id,
               sl.generated_video_id,
+              sl.token,
               sl.recipient_name,
               sl.recipient_email,
               sl.created_at,
