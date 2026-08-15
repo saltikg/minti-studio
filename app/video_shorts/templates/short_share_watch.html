@@ -73,7 +73,13 @@
   <body>
     <main class="watch-shell">
       <h1>{{ clip_title }}</h1>
-      <p>Watch this short clip shared from MintiStudio.</p>
+      <p>
+        {% if preview_mode %}
+          Preview mode: this test view does not record view or play counts.
+        {% else %}
+          Watch this short clip shared from MintiStudio.
+        {% endif %}
+      </p>
       <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
         <source src="{{ playback_url }}" type="video/mp4">
       </video>

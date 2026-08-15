@@ -208,6 +208,7 @@ def ensure_short_share_links_schema(conn) -> None:
                 token VARCHAR NOT NULL,
                 recipient_name VARCHAR,
                 recipient_email VARCHAR,
+                emailed_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -220,6 +221,7 @@ def ensure_short_share_links_schema(conn) -> None:
         ("token", "VARCHAR"),
         ("recipient_name", "VARCHAR"),
         ("recipient_email", "VARCHAR"),
+        ("emailed_at", "TIMESTAMP"),
         ("created_at", "TIMESTAMP"),
     ):
         if col_name in cols:

@@ -73,6 +73,43 @@
     .admin-share-links-url a:focus {
       text-decoration: underline;
     }
+    .admin-share-links-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+    .admin-share-links-actions a {
+      color: rgba(255, 255, 255, 0.78);
+      text-decoration: none;
+    }
+    .admin-share-links-actions a:hover,
+    .admin-share-links-actions a:focus {
+      text-decoration: underline;
+    }
+    .admin-share-links-sent {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: normal;
+    }
+    .admin-share-links-sent input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #2dd4bf;
+      cursor: pointer;
+    }
+    .admin-share-links-sent-label {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .admin-share-links-sent-time {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.76rem;
+    }
     .admin-share-links-pill {
       display: inline-flex;
       align-items: center;
@@ -148,6 +185,7 @@
           <tr>
             <th>Recipient</th>
             <th>Clip</th>
+            <th>Sent</th>
             <th>Views</th>
             <th>Plays</th>
             <th>Viewed?</th>
@@ -170,7 +208,25 @@
                   <div class="admin-share-links-url">
                     <a href="{{ link.share_url }}" target="_blank" rel="noopener noreferrer">{{ link.share_url }}</a>
                   </div>
+                  <div class="admin-share-links-actions">
+                    <a href="{{ link.share_url }}" target="_blank" rel="noopener noreferrer">Live link</a>
+                    <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
+                  </div>
                 {% endif %}
+              </td>
+              <td>
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_emailed', share_link_id=link.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                  <label class="admin-share-links-sent">
+                    <input type="checkbox" name="emailed" value="1" {% if link.emailed %}checked{% endif %} onchange="this.form.submit()">
+                    <span class="admin-share-links-sent-label">
+                      <span>{{ 'Sent' if link.emailed else 'Not sent' }}</span>
+                      {% if link.emailed_at_pst %}
+                        <span class="admin-share-links-sent-time">{{ link.emailed_at_pst }}</span>
+                      {% endif %}
+                    </span>
+                  </label>
+                </form>
               </td>
               <td>{{ link.views_count }}</td>
               <td>{{ link.plays_count }}</td>
@@ -182,7 +238,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="9" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="10" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>

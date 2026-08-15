@@ -18,6 +18,7 @@ from google.auth.exceptions import RefreshError
 
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 import requests
+from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
@@ -5652,6 +5653,10 @@ def _share_public_url(token: str) -> str:
     return f"{_share_base_url()}/w/{token}"
 
 
+def _share_preview_url(token: str) -> str:
+    return f"{_share_public_url(token)}?preview=1"
+
+
 def _short_share_links_ready(conn) -> bool:
     ensure_short_share_links_schema(conn)
     return bool(table_columns(conn, "short_share_links"))
@@ -5818,6 +5823,7 @@ def _render_public_short_watch_page(token: str):
     normalized_token = str(token or "").strip()
     if not normalized_token:
         abort(404)
+    preview_mode = (request.args.get("preview") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     conn = get_db_readonly()
     try:
@@ -5843,7 +5849,8 @@ def _render_public_short_watch_page(token: str):
         clip_title=clip_title,
         playback_url=f"{playback_url}#t=1",
         poster_url=poster_url,
-        event_url=url_for("public_short_watch_event_alias", token=normalized_token),
+        event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
+        preview_mode=preview_mode,
     )
 
 
@@ -5899,6 +5906,57 @@ def _handle_public_short_watch_event(token: str):
 @video_shorts_bp.route("/w/<token>/event", methods=["POST"])
 def public_short_watch_event(token: str):
     return _handle_public_short_watch_event(token)
+
+
+@video_shorts_bp.route("/admin/share-links/<int:share_link_id>/emailed", methods=["POST"])
+@require_admin
+def admin_share_link_set_emailed(share_link_id: int):
+    next_url = (request.form.get("next") or request.args.get("next") or "").strip()
+    checked_value = (request.form.get("emailed") or "").strip().lower()
+    mark_emailed = checked_value in {"1", "true", "yes", "on"}
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            flash("Share links are not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "emailed_at" not in share_link_columns:
+            flash("Email sent tracking is not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        exists = conn.execute(
+            "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
+            [share_link_id],
+        ).fetchone()
+        if not exists:
+            abort(404)
+        conn.execute(
+            """
+            UPDATE short_share_links
+               SET emailed_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+            """
+            if mark_emailed
+            else """
+            UPDATE short_share_links
+               SET emailed_at = NULL
+             WHERE id = ?
+            """,
+            [share_link_id],
+        )
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        current_app.logger.exception("Failed to update emailed_at for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        flash("Email sent state could not be updated.", "danger")
+    finally:
+        conn.close()
+    return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
 
 
 @video_shorts_bp.route("/generate/preferences/clip-coachmark", methods=["POST"])
@@ -7613,6 +7671,8 @@ def _load_admin_share_links(
     limit: int = 200,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int, str]:
+    share_link_columns = table_columns(conn, "short_share_links")
+    has_emailed_at = "emailed_at" in share_link_columns
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
     if normalized_filter not in {"all", "viewed", "played"}:
@@ -7633,6 +7693,7 @@ def _load_admin_share_links(
               sl.token,
               COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
+              {("sl.emailed_at" if has_emailed_at else "NULL")} AS emailed_at,
               sl.created_at,
               COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
               SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
@@ -7651,6 +7712,7 @@ def _load_admin_share_links(
               sl.token,
               sl.recipient_name,
               sl.recipient_email,
+              {("sl.emailed_at," if has_emailed_at else "")}
               sl.created_at,
               gv.generated_title,
               gv.clip_filename
@@ -7686,6 +7748,7 @@ def _load_admin_share_links(
           token,
           recipient_name,
           recipient_email,
+          emailed_at,
           clip_title,
           COALESCE(views_count, 0) AS views_count,
           COALESCE(plays_count, 0) AS plays_count,
@@ -7702,27 +7765,31 @@ def _load_admin_share_links(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        views_count = int(row[6] or 0)
-        plays_count = int(row[7] or 0)
+        views_count = int(row[7] or 0)
+        plays_count = int(row[8] or 0)
         items.append(
             {
                 "id": row[0],
                 "generated_video_id": row[1],
                 "share_token": str(row[2] or "").strip(),
                 "share_url": _share_public_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
+                "preview_url": _share_preview_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
                 "recipient_name": row[3],
                 "recipient_email": row[4],
-                "clip_title": row[5],
+                "emailed_at": row[5],
+                "emailed_at_pst": _format_datetime_pst(row[5]),
+                "emailed": bool(row[5]),
+                "clip_title": row[6],
                 "views_count": views_count,
                 "plays_count": plays_count,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
-                "first_seen": row[8],
-                "first_seen_pst": _format_datetime_pst(row[8]),
-                "last_seen": row[9],
-                "last_seen_pst": _format_datetime_pst(row[9]),
-                "created_at": row[10],
-                "created_at_pst": _format_datetime_pst(row[10]),
+                "first_seen": row[9],
+                "first_seen_pst": _format_datetime_pst(row[9]),
+                "last_seen": row[10],
+                "last_seen_pst": _format_datetime_pst(row[10]),
+                "created_at": row[11],
+                "created_at_pst": _format_datetime_pst(row[11]),
             }
         )
     return items, total_count, normalized_filter
