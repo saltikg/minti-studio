@@ -137,9 +137,17 @@
         <label for="admin-errors-email" class="form-label mb-2">User email contains</label>
         <input id="admin-errors-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="name@example.com">
       </div>
+      {% if include_noise %}
+        <input type="hidden" name="include_noise" value="1">
+      {% endif %}
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary">Apply</button>
         <a href="{{ url_for('video_shorts_bp.admin_errors') }}" class="btn btn-outline-light">Reset</a>
+        {% if include_noise %}
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range) }}" class="btn btn-outline-warning">Hide scanner 404s</a>
+        {% else %}
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, include_noise=1) }}" class="btn btn-outline-warning">Show scanner 404s</a>
+        {% endif %}
       </div>
     </form>
 
@@ -197,10 +205,10 @@
       <div class="admin-errors-meta">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-errors-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, include_noise=1 if include_noise else None, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_errors', event_name=selected_event_name, status=status_query, email=email_query, range=selected_range, include_noise=1 if include_noise else None, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>

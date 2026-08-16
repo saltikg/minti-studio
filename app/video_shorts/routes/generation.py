@@ -121,6 +121,41 @@ from app.video_shorts.services.user_preferences import (
     save_user_preference,
     save_user_bool_preference,
 )
+
+# Read-time filter for common internet scanner probes that otherwise drown the
+# admin errors view. These rows remain stored in user_events; only the default
+# admin listing hides 404s whose request path clearly matches one of these
+# bot-scan signatures. Use ?include_noise=1 on /admin/errors to show all rows.
+NOISE_404_PATTERNS = [
+    r"\.php(?:$|[/?])",
+    r"/wp-",
+    r"/wp-content",
+    r"/wp-includes",
+    r"/wp-admin",
+    r"/cgi-bin",
+    r"/adminer",
+    r"/xmlrpc",
+    r"phpmyadmin",
+    r"/\.env",
+    r"/vendor/",
+]
+
+# SQL LIKE equivalents for the default admin-errors filter. Keep this list
+# aligned with NOISE_404_PATTERNS above; it is intentionally conservative.
+NOISE_404_PATH_LIKE_PATTERNS = [
+    "%.php",
+    "%.php?%",
+    "%/wp-%",
+    "%/wp-content%",
+    "%/wp-includes%",
+    "%/wp-admin%",
+    "%/cgi-bin%",
+    "%/adminer%",
+    "%/xmlrpc%",
+    "%phpmyadmin%",
+    "%/.env%",
+    "%/vendor/%",
+]
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
@@ -7588,6 +7623,7 @@ def _load_admin_error_events(
     status_query: str = "",
     email_query: str = "",
     time_range: str = "24h",
+    include_noise: bool = False,
     limit: int = 200,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
@@ -7628,6 +7664,22 @@ def _load_admin_error_events(
 
     if normalized_range in allowed_ranges:
         where_clauses.append(f"ue.created_at >= {allowed_ranges[normalized_range]}")
+
+    if not include_noise:
+        if getattr(conn, "backend_name", "") == "postgres":
+            path_expr = "lower(coalesce(ue.metadata->>'path', ue.metadata->>'source', ''))"
+        else:
+            path_expr = "lower(coalesce(json_extract_string(ue.metadata, '$.path'), json_extract_string(ue.metadata, '$.source'), ''))"
+        like_clauses = " OR ".join(f"{path_expr} LIKE ?" for _ in NOISE_404_PATH_LIKE_PATTERNS)
+        where_clauses.append(
+            f"""
+            NOT (
+                lower(coalesce(ue.status, '')) = '404'
+                AND ({like_clauses})
+            )
+            """
+        )
+        params.extend(pattern.lower() for pattern in NOISE_404_PATH_LIKE_PATTERNS)
 
     where_sql = " AND ".join(where_clauses)
     base_from_sql = f"""
@@ -8778,6 +8830,7 @@ def admin_errors():
     selected_event_name = (request.args.get("event_name") or "").strip().lower()
     status_query = (request.args.get("status") or "").strip()
     email_query = (request.args.get("email") or "").strip()
+    include_noise = (request.args.get("include_noise") or "").strip() == "1"
     time_range = (request.args.get("range") or "24h").strip().lower()
     if time_range not in {"24h", "7d", "all"}:
         time_range = "24h"
@@ -8796,6 +8849,7 @@ def admin_errors():
             status_query=status_query,
             email_query=email_query,
             time_range=time_range,
+            include_noise=include_noise,
             limit=1,
             offset=0,
         )[1]
@@ -8807,6 +8861,7 @@ def admin_errors():
             status_query=status_query,
             email_query=email_query,
             time_range=time_range,
+            include_noise=include_noise,
             limit=per_page,
             offset=(page - 1) * per_page,
         )
@@ -8820,6 +8875,7 @@ def admin_errors():
         selected_event_name=selected_event_name,
         status_query=status_query,
         email_query=email_query,
+        include_noise=include_noise,
         selected_range=time_range,
         page=page,
         per_page=per_page,
