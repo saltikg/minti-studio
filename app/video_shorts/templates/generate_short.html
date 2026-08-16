@@ -1835,6 +1835,38 @@
     isolation: isolate;
     animation: editorNodePulseGlow 1.8s ease-in-out infinite;
   }
+  #step-edit-btn {
+    cursor: pointer;
+  }
+  #step-edit-btn .editor-flow-step-circle {
+    transition:
+      transform 160ms ease,
+      box-shadow 160ms ease,
+      border-color 160ms ease,
+      background 160ms ease,
+      color 160ms ease;
+  }
+  #step-edit-btn .editor-flow-step-circle .bi-pencil {
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  #step-edit-btn .editor-flow-step-label {
+    color: rgba(215, 255, 251, 0.94);
+    text-decoration: none;
+    text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px;
+    transition: color 160ms ease, text-decoration-color 160ms ease;
+  }
+  #step-edit-btn:hover .editor-flow-step-circle,
+  #step-edit-btn:focus-visible .editor-flow-step-circle {
+    transform: translateY(-1px) scale(1.04);
+    box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.08);
+  }
+  #step-edit-btn:hover .editor-flow-step-label,
+  #step-edit-btn:focus-visible .editor-flow-step-label {
+    color: #ffffff;
+    text-decoration: underline;
+  }
   #step-edit-btn.editor-node-pulse::after {
     content: "";
     position: absolute;

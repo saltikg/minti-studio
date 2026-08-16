@@ -31,6 +31,7 @@
       {% elif step_index == current_step %}
         {% set step_state = 'active' %}
       {% endif %}
+      {% set is_editor_flow_edit = class_prefix == 'editor-flow' and step_key == 'edit' %}
       <div class="{{ step_class }} is-{{ step_state }}" data-step-key="{{ step_key }}">
         {% if step_key == 'edit' and edit_proxy_button_id %}
           <button type="button"
@@ -40,7 +41,9 @@
                   {% if edit_video_id is not none %}data-video-id="{{ edit_video_id }}"{% endif %}
                   aria-label="{{ step.label }}">
             <span class="{{ circle_class }}" aria-hidden="true">
-              {% if step_state == 'done' %}
+              {% if is_editor_flow_edit %}
+                <i class="bi bi-pencil" aria-hidden="true"></i>
+              {% elif step_state == 'done' %}
                 <span class="material-icons-outlined">check</span>
               {% else %}
                 <span class="material-icons-outlined">{{ step.icon }}</span>
@@ -64,7 +67,11 @@
                   class="{{ button_class }}"
                   aria-label="{{ step.label }}">
             <span class="{{ circle_class }}" aria-hidden="true">
-              <span class="material-icons-outlined">{{ step.icon }}</span>
+              {% if is_editor_flow_edit %}
+                <i class="bi bi-pencil" aria-hidden="true"></i>
+              {% else %}
+                <span class="material-icons-outlined">{{ step.icon }}</span>
+              {% endif %}
             </span>
             <span class="{{ label_class }}">{{ step.label }}</span>
           </button>
@@ -75,13 +82,19 @@
                   {% if not publish_enabled %}aria-disabled="true"{% endif %}
                   aria-label="{{ step.label }}">
             <span class="{{ circle_class }}" aria-hidden="true">
-              <span class="material-icons-outlined">{{ step.icon }}</span>
+              {% if is_editor_flow_edit %}
+                <i class="bi bi-pencil" aria-hidden="true"></i>
+              {% else %}
+                <span class="material-icons-outlined">{{ step.icon }}</span>
+              {% endif %}
             </span>
             <span class="{{ label_class }}">{{ step.label }}</span>
           </button>
         {% else %}
           <div class="{{ circle_class }}" aria-hidden="true">
-            {% if step_state == 'done' %}
+            {% if is_editor_flow_edit %}
+              <i class="bi bi-pencil" aria-hidden="true"></i>
+            {% elif step_state == 'done' %}
               <span class="material-icons-outlined">check</span>
             {% else %}
               <span class="material-icons-outlined">{{ step.icon }}</span>
