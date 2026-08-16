@@ -127,7 +127,7 @@ from app.video_shorts.services.user_preferences import (
 # admin listing hides 404s whose request path clearly matches one of these
 # bot-scan signatures. Use ?include_noise=1 on /admin/errors to show all rows.
 NOISE_404_PATTERNS = [
-    r"\.php(?:$|[/?])",
+    r"\.php",
     r"/wp-",
     r"/wp-content",
     r"/wp-includes",
@@ -143,8 +143,7 @@ NOISE_404_PATTERNS = [
 # SQL LIKE equivalents for the default admin-errors filter. Keep this list
 # aligned with NOISE_404_PATTERNS above; it is intentionally conservative.
 NOISE_404_PATH_LIKE_PATTERNS = [
-    "%.php",
-    "%.php?%",
+    "%.php%",
     "%/wp-%",
     "%/wp-content%",
     "%/wp-includes%",
