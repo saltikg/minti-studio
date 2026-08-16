@@ -1,4 +1,4 @@
-{% macro flow_step_map(current_step=1, current_step_form=None, current_step_button_id=None, publish_button_id=None, publish_enabled=False, class_prefix='editor-flow', edit_button_id=None, edit_proxy_button_id=None) %}
+{% macro flow_step_map(current_step=1, current_step_form=None, current_step_button_id=None, publish_button_id=None, publish_enabled=False, class_prefix='editor-flow', edit_button_id=None, edit_proxy_button_id=None, edit_video_id=None) %}
   {% if class_prefix == 'editor-flow' %}
     {% set steps = [
       {'key': 'add-video', 'label': 'Add video', 'icon': 'videocam'},
@@ -37,6 +37,7 @@
                   {% if edit_button_id %}id="{{ edit_button_id }}"{% endif %}
                   class="{{ button_class }}"
                   data-open-editor-target="{{ edit_proxy_button_id }}"
+                  {% if edit_video_id is not none %}data-video-id="{{ edit_video_id }}"{% endif %}
                   aria-label="{{ step.label }}">
             <span class="{{ circle_class }}" aria-hidden="true">
               {% if step_state == 'done' %}
