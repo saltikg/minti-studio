@@ -136,6 +136,7 @@ NOISE_404_PATTERNS = [
     r"/adminer",
     r"/xmlrpc",
     r"phpmyadmin",
+    r"/\.well-known/",
     r"/\.env",
     r"/vendor/",
 ]
@@ -152,6 +153,7 @@ NOISE_404_PATH_LIKE_PATTERNS = [
     "%/adminer%",
     "%/xmlrpc%",
     "%phpmyadmin%",
+    "%/.well-known/%",
     "%/.env%",
     "%/vendor/%",
 ]
