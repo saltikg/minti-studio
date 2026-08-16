@@ -245,6 +245,7 @@
               </a>
             </th>
             <th class="vs-col-status">Status</th>
+            <th class="vs-col-status">Shared link</th>
             <th class="vs-col-generate">Generate short</th>
           </tr>
         </thead>
@@ -362,6 +363,14 @@
               {% endif %}
             </td>
 
+            <td class="small text-center">
+              {% if v.share_links_count|default(0) > 0 %}
+                <span class="text-success" title="Share link created">✓</span>
+              {% else %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+
             <td class="small vs-generate-cell">
               {% set dstat = (v.download_status or '')|lower %}
               {% if dstat == 'downloaded' %}
@@ -395,7 +404,7 @@
 
           {% if videos|length == 0 %}
           <tr>
-            <td colspan="7" class="text-center text-muted py-3">
+            <td colspan="8" class="text-center text-muted py-3">
               No videos in database yet. Click "Fetch next batch" to import.
             </td>
           </tr>
