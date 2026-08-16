@@ -460,6 +460,17 @@
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.03);
   }
+  .background-selected-card.is-clickable {
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  }
+  .background-selected-card.is-clickable:hover,
+  .background-selected-card.is-clickable:focus-visible {
+    border-color: rgba(45, 212, 191, 0.32);
+    background: rgba(45, 212, 191, 0.08);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.08);
+    outline: none;
+  }
   .background-selected-thumb {
     width: 52px;
     height: 52px;
@@ -4214,7 +4225,7 @@
                   <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="background" hidden>
                     <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
                       <label class="text-white-50">Background</label>
-                      <div class="background-selected-card" id="background-selected-card">
+                      <div class="background-selected-card is-clickable" id="background-selected-card" role="button" tabindex="0" aria-label="Change background">
                         <img src="" alt="" class="background-selected-thumb" id="background-selected-thumb">
                         <div class="background-selected-meta">
                           <div class="background-selected-label" id="background-selected-label">No background selected</div>
@@ -8703,6 +8714,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const backgroundSelectedThumb = modalEl.querySelector("#background-selected-thumb");
   const backgroundSelectedLabel = modalEl.querySelector("#background-selected-label");
   const backgroundSelectedNote = modalEl.querySelector("#background-selected-note");
+  const backgroundSelectedCard = modalEl.querySelector("#background-selected-card");
   const backgroundEditBtn = modalEl.querySelector("#background-edit-btn");
   const backgroundPickerPanel = modalEl.querySelector("#background-picker-panel");
   const backgroundPickerCloseBtn = modalEl.querySelector("#background-picker-close");
@@ -10051,6 +10063,19 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   backgroundEditBtn?.addEventListener("click", () => {
     setBackgroundPickerOpen(!backgroundPickerPanel?.classList.contains("is-open"));
+  });
+  backgroundSelectedCard?.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("#background-edit-btn")) {
+      return;
+    }
+    setBackgroundPickerOpen(true);
+  });
+  backgroundSelectedCard?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    setBackgroundPickerOpen(true);
   });
   backgroundPickerCloseBtn?.addEventListener("click", () => {
     setBackgroundPickerOpen(false);
