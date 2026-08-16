@@ -2787,31 +2787,7 @@
 {% if has_transcript %}
 <div class="gs-card mb-3 editor-topbar-card">
   <div class="editor-topbar-map-wrap">
-    {{ flow_step_map(4 if created_clip_count > 0 else 3, None, 'step2-jump-btn', 'publish-jump-btn', created_clip_count > 0, 'editor-flow') }}
-    <button
-      type="button"
-      class="editor-primary-action editor-primary-action-icon editor-topbar-editor-btn"
-      id="video-editor-btn"
-      data-bs-toggle="modal"
-      data-bs-target="#crop-area-modal"
-      data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
-      data-preview-url="{{ preview_url or '' }}"
-      data-split-enabled="{{ '1' if video.split_enabled else '0' }}"
-      data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
-      data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
-      data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
-      data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
-      data-crop2-x="{{ video.crop2_x_ratio if video.crop2_x_ratio is not none else '' }}"
-      data-crop2-y="{{ video.crop2_y_ratio if video.crop2_y_ratio is not none else '' }}"
-      data-crop2-w="{{ video.crop2_w_ratio if video.crop2_w_ratio is not none else '' }}"
-      data-crop2-h="{{ video.crop2_h_ratio if video.crop2_h_ratio is not none else '' }}"
-      data-static-visual-key="{{ video_static_visual_key or '' }}"
-      data-background-visual-key="{{ video_background_visual_key or '' }}"
-      data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
-      data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
-      <span class="material-icons-outlined" aria-hidden="true">tune</span>
-      <span>Editor</span>
-    </button>
+    {{ flow_step_map(5 if created_clip_count > 0 else 3, None, None, 'publish-jump-btn', created_clip_count > 0, 'editor-flow', 'step-edit-btn', 'choose-crop-btn') }}
   </div>
   <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
 </div>
@@ -6305,11 +6281,21 @@ document.addEventListener("DOMContentLoaded", () => {
 document.addEventListener("DOMContentLoaded", () => {
   const transcriptSelector = document.getElementById("transcript-range-selector");
   const step2JumpBtn = document.getElementById("step2-jump-btn");
+  const stepEditBtn = document.getElementById("step-edit-btn");
   const publishJumpBtn = document.getElementById("publish-jump-btn");
   const clipList = document.getElementById("clip-management-panel");
   if (step2JumpBtn && transcriptSelector) {
     step2JumpBtn.addEventListener("click", () => {
       transcriptSelector.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+  if (stepEditBtn) {
+    stepEditBtn.addEventListener("click", () => {
+      const targetId = stepEditBtn.dataset.openEditorTarget || "";
+      if (!targetId) {
+        return;
+      }
+      document.getElementById(targetId)?.click();
     });
   }
   if (publishJumpBtn && clipList && publishJumpBtn.getAttribute("aria-disabled") !== "true") {
