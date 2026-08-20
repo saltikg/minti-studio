@@ -4047,6 +4047,47 @@ def _update_plan_entry_publish_state(
     return True
 
 
+def _load_generated_video_publish_guard_row(
+    *,
+    source_video_id: str,
+    clip_filename: str,
+    brand_id: Optional[str],
+):
+    if not source_video_id or not clip_filename or not brand_id:
+        return None
+    conn = get_db_readonly()
+    try:
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        if not generated_columns:
+            return None
+        row = conn.execute(
+            """
+            SELECT
+                CAST(id AS VARCHAR),
+                youtube_video_id,
+                publish_status,
+                planned_publish_at
+            FROM shorts_generated_videos
+            WHERE CAST(source_video_id AS VARCHAR) = ?
+              AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+              AND clip_filename = ?
+              AND brand_id = ?
+            LIMIT 1
+            """,
+            [source_video_id, clip_filename, brand_id],
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": str(row[0] or "").strip() or None,
+            "youtube_video_id": str(row[1] or "").strip() or None,
+            "publish_status": str(row[2] or "").strip().lower() or None,
+            "planned_publish_at": row[3],
+        }
+    finally:
+        conn.close()
+
+
 def _sync_generated_video_from_plan_entry(
     *,
     source_video_id: str,
@@ -11323,6 +11364,21 @@ def upload_clip_to_youtube():
     existing_publish_status = (target_entry.get("publish_status") or "").lower() if target_entry else ""
     existing_publish_at_iso = target_entry.get("publish_at_iso") if target_entry else None
     existing_publish_at_local = target_entry.get("publish_at") if target_entry else None
+    generated_guard_row = None
+    normalized_existing_yt_id = str(existing_yt_id or "").strip()
+    if source_video_id and filename and brand_id:
+        generated_guard_row = _load_generated_video_publish_guard_row(
+            source_video_id=source_video_id,
+            clip_filename=filename,
+            brand_id=brand_id,
+        )
+    if not normalized_existing_yt_id and generated_guard_row:
+        existing_yt_id = generated_guard_row.get("youtube_video_id")
+        normalized_existing_yt_id = str(existing_yt_id or "").strip()
+    if existing_publish_status not in {"scheduled", "published", "uploaded"} and generated_guard_row:
+        fallback_publish_status = str(generated_guard_row.get("publish_status") or "").strip().lower()
+        if fallback_publish_status in {"scheduled", "published", "uploaded"}:
+            existing_publish_status = fallback_publish_status
     skip_youtube_upload = False
     should_update_youtube = False
     if youtube_enabled and existing_yt_id and existing_publish_status in {"scheduled", "published", "uploaded"}:
