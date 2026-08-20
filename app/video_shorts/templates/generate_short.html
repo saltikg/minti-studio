@@ -3126,16 +3126,16 @@
                         <span class="clip-rail-status-text"></span>
                       </span>
                       <span class="clip-rail-platforms">
-                        {% if row.publish_display %}
-                          {% if row.publish_status == "published" %}
+                        {% if row.db_publish_display %}
+                          {% if row.db_publish_status == "published" %}
                           {% set rail_yt_icon_class = "text-success" %}
-                          {% elif row.publish_status == "scheduled" %}
+                          {% elif row.db_publish_status == "scheduled" %}
                             {% set rail_yt_icon_class = "text-warning" %}
                           {% else %}
                             {% set rail_yt_icon_class = "text-danger" %}
                           {% endif %}
-                          {% set rail_yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
-                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.publish_display }}">
+                          {% set rail_yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.db_publish_display }}">
                             <i class="bi bi-youtube {{ rail_yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                           </span>
                         {% endif %}
@@ -3184,23 +3184,23 @@
             {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
               {% set clip_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
               {% set meta_row_classes = "clip-card-meta-row" %}
-              {% if row.publish_status == "scheduled" %}
+              {% if row.db_publish_status == "scheduled" %}
                 {% set meta_row_classes = meta_row_classes + " scheduled" %}
-              {% elif row.publish_status == "published" %}
+              {% elif row.db_publish_status == "published" %}
                 {% set meta_row_classes = meta_row_classes + " published" %}
               {% endif %}
               {% set modal_yt_tooltip = '' %}
               {% set modal_yt_icon_class = '' %}
-              {% if row.publish_display %}
-                {% if row.publish_status == "published" %}
+              {% if row.db_publish_display %}
+                {% if row.db_publish_status == "published" %}
                   {% set modal_yt_icon_class = "text-success" %}
-                {% elif row.publish_status == "scheduled" %}
+                {% elif row.db_publish_status == "scheduled" %}
                   {% set modal_yt_icon_class = "text-warning" %}
                 {% else %}
                   {% set modal_yt_icon_class = "text-danger" %}
                 {% endif %}
-                {% set modal_yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
-                {% set modal_yt_tooltip = modal_yt_tooltip_label ~ ": " ~ row.publish_display %}
+                {% set modal_yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
+                {% set modal_yt_tooltip = modal_yt_tooltip_label ~ ": " ~ row.db_publish_display %}
               {% endif %}
               {% set modal_ig_tooltip = '' %}
               {% set modal_ig_icon_class = '' %}
@@ -3261,16 +3261,16 @@
                     {% if row.is_ai_suggestion %}
                       <span class="clip-card-suggestion-badge">AI · Suggested</span>
                     {% endif %}
-                    {% if row.publish_display %}
-                      {% if row.publish_status == "published" %}
+                    {% if row.db_publish_display %}
+                      {% if row.db_publish_status == "published" %}
                         {% set yt_icon_class = "text-success" %}
-                      {% elif row.publish_status == "scheduled" %}
+                      {% elif row.db_publish_status == "scheduled" %}
                         {% set yt_icon_class = "text-warning" %}
                       {% else %}
                         {% set yt_icon_class = "text-danger" %}
                       {% endif %}
-                      {% set yt_tooltip_label = "Published date" if row.publish_status == "published" else "Schedule date" %}
-                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ yt_tooltip_label }}: {{ row.publish_display }}">
+                      {% set yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ yt_tooltip_label }}: {{ row.db_publish_display }}">
                         <i class="bi bi-youtube {{ yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
@@ -3516,14 +3516,18 @@
                                       type="button"
                                       class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center justify-content-center gap-1 admin-share-link-btn"
                                       data-generated-video-id="{{ row.generated_video_id }}"
-                                      data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}">
+                                      data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}"
+                                      data-parent-video-title="{{ video.title or '' }}"
+                                      data-clip-title="{{ row.title or '' }}">
                                       <i class="bi bi-link-45deg" aria-hidden="true"></i>
                                       <span>Share link</span>
                                     </button>
                                   </div>
                                   <div class="input-group input-group-sm mt-2 d-none admin-share-link-result">
                                     <input type="text" class="form-control admin-share-link-input" readonly aria-label="Shared short URL">
-                                    <button type="button" class="btn btn-outline-secondary admin-share-link-copy-btn">Copy</button>
+                                    <button type="button" class="btn btn-outline-secondary admin-share-link-copy-btn" disabled>Copy</button>
+                                    <button type="button" class="btn btn-outline-secondary admin-share-link-copy-tr-btn" disabled>Copy TR</button>
+                                    <button type="button" class="btn btn-outline-secondary admin-share-link-copy-en-btn" disabled>Copy EN</button>
                                   </div>
                                   <div class="small mt-2 d-none admin-share-link-feedback" aria-live="polite"></div>
                                 </div>
@@ -10523,17 +10527,145 @@ const initAdminShareLinkButtons = () => {
     button.addEventListener("click", async () => {
       const generatedVideoId = String(button.dataset.generatedVideoId || "").trim();
       const shareUrl = String(button.dataset.shareUrl || "").trim();
+      const parentVideoTitle = String(button.dataset.parentVideoTitle || "").trim();
+      const clipTitle = String(button.dataset.clipTitle || "").trim();
       const wrapper = button.closest(".clip-card-action-primary, .clip-card");
       const recipientNameInput = wrapper?.querySelector(".admin-share-link-recipient-name");
       const recipientEmailInput = wrapper?.querySelector(".admin-share-link-recipient-email");
       const resultGroup = wrapper?.querySelector(".admin-share-link-result");
       const resultInput = wrapper?.querySelector(".admin-share-link-input");
       const copyButton = wrapper?.querySelector(".admin-share-link-copy-btn");
+      const copyTrButton = wrapper?.querySelector(".admin-share-link-copy-tr-btn");
+      const copyEnButton = wrapper?.querySelector(".admin-share-link-copy-en-btn");
       const feedback = wrapper?.querySelector(".admin-share-link-feedback");
-      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !feedback || !recipientNameInput || !recipientEmailInput) {
+      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !copyTrButton || !copyEnButton || !feedback || !recipientNameInput || !recipientEmailInput) {
         return;
       }
-      const recipientName = String(recipientNameInput.value || "").trim();
+      const getVideoTitle = () => parentVideoTitle || clipTitle || "Untitled video";
+      const getRecipientName = () => String(recipientNameInput.value || "").trim();
+      const buildGreeting = (language) => {
+        const recipientName = getRecipientName();
+        if (!recipientName) {
+          return language === "tr" ? "Merhaba," : "Hi,";
+        }
+        return language === "tr" ? `Merhaba ${recipientName},` : `Hi ${recipientName},`;
+      };
+      const buildEmailText = (language) => {
+        const videoTitle = getVideoTitle();
+        const currentShareUrl = String(resultInput.value || "").trim();
+        if (language === "tr") {
+          return [
+            "Subject: Videonuzdan hazırladığımız kısa bir örnek",
+            "",
+            buildGreeting("tr"),
+            "",
+            "Geçen hafta Minti Studio ile ilgili size yazmıştım. Bu sefer anlatmak yerine göstermek istedim.",
+            "",
+            "Kanalınızdaki videonuzdan, sizin için hazırladığımız kısa bir örnek:",
+            "",
+            videoTitle,
+            currentShareUrl,
+            "",
+            "Buradaki örnekte uzun videonuzun içinden kısa videoya uygun bir bölüm Minti ile seçilerek altyazılı, dikey bir videoya dönüştürüldü.",
+            "",
+            "Aynı sistem üzerinden uzun videolarınızdan kısa içerikler oluşturabilir, bunları YouTube Shorts, Instagram ve Facebook'a yayınlayabilir, sonrasında farklı platformlardaki yorumları ve performansı tek yerden takip edebilirsiniz.",
+            "",
+            "Örnek faydalı görünürse, Minti Studio'yu kendi videolarınızla deneyebilmeniz için 3 aylık ücretsiz erişim kodunu iletebilirim.",
+            "",
+            "Selamlar,",
+            "Gokhan Saltik",
+            "Founder, Minti Studio",
+            "mintistudio.com",
+          ].join("\n");
+        }
+        return [
+          `Subject: A Short from your "${videoTitle}" video`,
+          "",
+          buildGreeting("en"),
+          "",
+          "I'm the founder of Minti Studio, based in San Francisco. Instead of explaining what we do, I thought it would be more useful to show you.",
+          "",
+          "We created this Short from one of your recent videos:",
+          "",
+          videoTitle,
+          currentShareUrl,
+          "",
+          "Minti identified a strong moment from your long-form video and turned it into a captioned, vertical Short.",
+          "",
+          "Beyond creating clips, Minti also lets you publish across YouTube, Instagram, and Facebook, then manage comments and compare performance across platforms from one place.",
+          "",
+          "If this looks useful, I'd be happy to give you 3 months of complimentary access to try Minti with your own videos.",
+          "",
+          "Best,",
+          "Gokhan Saltik",
+          "Founder, Minti Studio",
+          "mintistudio.com",
+        ].join("\n");
+      };
+      const setFeedback = (message, isError = false) => {
+        feedback.textContent = message;
+        feedback.classList.toggle("text-danger", isError);
+        feedback.classList.toggle("text-success", !isError);
+        feedback.classList.remove("d-none");
+      };
+      const fallbackCopyText = (text) => {
+        const tempInput = document.createElement("textarea");
+        tempInput.value = text;
+        tempInput.setAttribute("readonly", "readonly");
+        tempInput.style.position = "fixed";
+        tempInput.style.top = "-9999px";
+        tempInput.style.left = "-9999px";
+        document.body.appendChild(tempInput);
+        tempInput.focus();
+        tempInput.select();
+        tempInput.setSelectionRange(0, tempInput.value.length);
+        let copied = false;
+        try {
+          copied = document.execCommand("copy");
+        } catch (err) {
+          copied = false;
+        }
+        document.body.removeChild(tempInput);
+        return copied;
+      };
+      const copyText = async (text) => {
+        if (!text) {
+          return false;
+        }
+        if (navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (err) {
+            // Fall back to document.execCommand for browsers with stricter clipboard permissions.
+          }
+        }
+        return fallbackCopyText(text);
+      };
+      const bindCopyButton = (targetButton, getText, successMessage) => {
+        targetButton.disabled = false;
+        targetButton.onclick = async () => {
+          const text = String(getText() || "").trim();
+          if (!text) {
+            setFeedback("Create a share link first.", true);
+            return;
+          }
+          try {
+            const copied = await copyText(text);
+            if (!copied) {
+              throw new Error("copy-failed");
+            }
+            setFeedback(successMessage, false);
+          } catch (err) {
+            if (targetButton === copyButton) {
+              resultInput.focus();
+              resultInput.select();
+            }
+            setFeedback("Copy failed. Copy it manually.", true);
+          }
+        };
+      };
+      const recipientName = getRecipientName();
       const recipientEmail = String(recipientEmailInput.value || "").trim();
       const originalHtml = button.innerHTML;
       button.disabled = true;
@@ -10560,30 +10692,12 @@ const initAdminShareLinkButtons = () => {
         }
         resultInput.value = payload.share_url;
         resultGroup.classList.remove("d-none");
-        feedback.textContent = "Recipient share link ready.";
-        feedback.classList.add("text-success");
-        feedback.classList.remove("d-none");
-        copyButton.onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(resultInput.value);
-            feedback.textContent = "Copied.";
-            feedback.classList.remove("text-danger");
-            feedback.classList.add("text-success");
-            feedback.classList.remove("d-none");
-          } catch (err) {
-            resultInput.focus();
-            resultInput.select();
-            feedback.textContent = "Copy failed. Copy the link manually.";
-            feedback.classList.remove("text-success");
-            feedback.classList.add("text-danger");
-            feedback.classList.remove("d-none");
-          }
-        };
+        setFeedback("Recipient share link ready.", false);
+        bindCopyButton(copyButton, () => resultInput.value, "Share link copied.");
+        bindCopyButton(copyTrButton, () => buildEmailText("tr"), "TR email copied.");
+        bindCopyButton(copyEnButton, () => buildEmailText("en"), "EN email copied.");
       } catch (err) {
-        feedback.textContent = err.message || "Share link could not be created.";
-        feedback.classList.remove("text-success");
-        feedback.classList.add("text-danger");
-        feedback.classList.remove("d-none");
+        setFeedback(err.message || "Share link could not be created.", true);
       } finally {
         button.disabled = false;
         button.innerHTML = originalHtml;

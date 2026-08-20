@@ -5071,13 +5071,14 @@ def generate_short(video_pk):
     user_tz_label = TIMEZONE_LABELS.get(user_tz, user_tz)
     is_admin = (current_user or {}).get("role") == "admin"
     generated_video_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    active_brand_id = current_brand_id()
     source_video_id = str(video.get("video_id") or "").strip()
-    if source_video_id:
+    if source_video_id and active_brand_id:
         conn_generated = get_db_readonly()
         try:
             generated_columns = table_columns(conn_generated, "shorts_generated_videos")
             if generated_columns:
-                select_fields = ["id", "clip_filename", "generated_title"]
+                select_fields = ["id", "clip_filename", "generated_title", "publish_status", "planned_publish_at"]
                 if "share_token" in generated_columns:
                     select_fields.append("share_token")
                 generated_rows = conn_generated.execute(
@@ -5086,8 +5087,9 @@ def generate_short(video_pk):
                     FROM shorts_generated_videos
                     WHERE CAST(source_video_id AS VARCHAR) = ?
                       AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+                      AND brand_id = ?
                     """,
-                    [source_video_id],
+                    [source_video_id, active_brand_id],
                 ).fetchall()
                 for generated_row in generated_rows:
                     clip_name = str(generated_row[1] or "").strip()
@@ -5096,7 +5098,9 @@ def generate_short(video_pk):
                     generated_video_map[(source_video_id, clip_name)] = {
                         "id": generated_row[0],
                         "generated_title": generated_row[2] if len(generated_row) > 2 else None,
-                        "share_token": generated_row[3] if len(generated_row) > 3 else None,
+                        "publish_status": str(generated_row[3] or "").strip().lower() or None,
+                        "planned_publish_at": generated_row[4],
+                        "share_token": generated_row[5] if len(generated_row) > 5 else None,
                     }
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
@@ -5135,6 +5139,13 @@ def generate_short(video_pk):
         publish_value = entry.get("publish_at_iso") or entry.get("publish_at")
         publish_display = _format_publish_display(publish_value, user_tz)
         youtube_schedule_date = _format_schedule_date(publish_value) if publish_value else None
+        db_publish_status = (
+            str(generated_record.get("publish_status") or "").strip().lower()
+            or (str(entry.get("publish_status") or "").strip().lower() if entry.get("publish_status") else "")
+            or ("ready" if entry.get("yt_description") else "not_ready")
+        )
+        db_publish_value = generated_record.get("planned_publish_at") or publish_value
+        db_publish_display = _format_publish_display(db_publish_value, user_tz) if db_publish_value else publish_display
 
         ig_entries = instagram_queue_map.get((video.get("video_id") or "", str(pi))) or []
         ig_entries = [
@@ -5338,6 +5349,8 @@ def generate_short(video_pk):
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),
             "publish_display": publish_display,
+            "db_publish_status": db_publish_status,
+            "db_publish_display": db_publish_display,
             "youtube_schedule_date": youtube_schedule_date,
             "yt_description": entry.get("yt_description"),
             "category": entry.get("category") or "",
