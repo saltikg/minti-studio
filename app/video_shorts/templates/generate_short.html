@@ -7094,22 +7094,43 @@ const setClipFeedbackState = (
 
 const formatQueuedMessage = (queuePosition) => {
   const count = Math.max(1, Number(queuePosition) || 0);
-  return `You're in line — ${count} ${count === 1 ? "ahead" : "ahead"}. We'll start this shortly.`;
+  return `In queue (position ${count})... We'll start this shortly.`;
+};
+
+const isClipJobLiveStatus = (status) => {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  return ["queued", "processing", "running"].includes(normalizedStatus);
+};
+
+const formatQueuedBackgroundMessage = (queuePosition) => {
+  const count = Number(queuePosition);
+  if (Number.isFinite(count) && count > 0) {
+    return `Still rendering — your clip is in the queue (position ${count}) and will finish in the background. You can leave this page; it'll appear here when ready.`;
+  }
+  return "Still rendering — your clip is in the queue and will finish in the background. You can leave this page; it'll appear here when ready.";
+};
+
+const formatRenderingBackgroundMessage = () => {
+  return "Still rendering — your clip is being processed and will finish in the background. You can leave this page; it'll appear here when ready.";
 };
 
 const renderClipJobProgressState = (card, status, queuePosition) => {
   const normalizedStatus = String(status || "").trim().toLowerCase();
   const ahead = Number(queuePosition);
-  if (normalizedStatus === "queued" && Number.isFinite(ahead) && ahead > 0) {
+  if (normalizedStatus === "queued") {
     setClipFeedbackState(card, {
-      message: formatQueuedMessage(ahead),
+      message: Number.isFinite(ahead) && ahead > 0
+        ? formatQueuedMessage(ahead)
+        : "In queue... We'll start this shortly.",
       tone: "text-white-50",
       busy: true,
     });
     return;
   }
   setClipFeedbackState(card, {
-    message: "Generating your short…",
+    message: normalizedStatus === "processing" || normalizedStatus === "running"
+      ? "Rendering your short…"
+      : "Generating your short…",
     tone: "text-white",
     busy: true,
   });
@@ -7185,6 +7206,26 @@ const handleClipJobFailure = (planIndex) => {
   });
 };
 
+const handleClipJobBackgroundContinue = (planIndex, status, queuePosition) => {
+  stopClipJobPolling(planIndex, { clearStored: true });
+  const card = getClipCardByPlanIndex(planIndex);
+  if (!card) {
+    return;
+  }
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const message = normalizedStatus === "queued"
+    ? formatQueuedBackgroundMessage(queuePosition)
+    : formatRenderingBackgroundMessage();
+  setClipFeedbackState(card, {
+    message,
+    tone: "text-warning",
+    busy: false,
+    buttonLabel: "Queued",
+    disableButton: false,
+    showSpinner: false,
+  });
+};
+
 const pollClipJobUntilDone = async (
   planIndex,
   jobId,
@@ -7207,6 +7248,8 @@ const pollClipJobUntilDone = async (
   let attempt = 0;
   let status = initialStatus;
   let queuePosition = initialQueuePosition;
+  let lastObservedStatus = initialStatus;
+  let lastObservedQueuePosition = initialQueuePosition;
 
   while (!state.cancelled && (Date.now() - startedAt) < clipJobPollMaxMs) {
     const card = getClipCardByPlanIndex(planIndex);
@@ -7226,6 +7269,8 @@ const pollClipJobUntilDone = async (
         const payload = await response.json();
         status = payload?.status || status;
         queuePosition = payload?.queue_position;
+        lastObservedStatus = status;
+        lastObservedQueuePosition = queuePosition;
         if (status === "done") {
           await finalizeClipJobSuccess(planIndex);
           return;
@@ -7244,6 +7289,10 @@ const pollClipJobUntilDone = async (
     await sleep(delay);
   }
 
+  if (isClipJobLiveStatus(lastObservedStatus)) {
+    handleClipJobBackgroundContinue(planIndex, lastObservedStatus, lastObservedQueuePosition);
+    return;
+  }
   handleClipJobFailure(planIndex);
 };
 
