@@ -4359,7 +4359,12 @@
                                   data-bs-placement="top"
                                   title="Background {{ visual.label }}"
                                 >
-                                  <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
+                                  <img
+                                    data-src="{{ bg_img_url or '' }}"
+                                    alt="Background {{ visual.label }}"
+                                    loading="lazy"
+                                    decoding="async"
+                                  >
                                   <span class="bg-visual-option-name">{{ visual.label }}</span>
                                   <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
                                 </button>
@@ -8988,6 +8993,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeSplitEnabled = false;
   let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
+  let backgroundPickerImagesHydrated = false;
   const clampRatio = (value) => Math.max(0, Math.min(1, Number(value) || 0));
   const showLoader = () => previewLoader?.classList.remove("d-none");
   const hideLoader = () => previewLoader?.classList.add("d-none");
@@ -9261,7 +9267,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const getActiveBackgroundOption = () => (
     bgVisualOptions.find((opt) => opt.key === activeBackgroundKey) || null
   );
+  const hydrateBackgroundPickerImages = () => {
+    if (backgroundPickerImagesHydrated) {
+      return;
+    }
+    bgVisualButtons.forEach((button) => {
+      const img = button.querySelector("img[data-src]");
+      if (!(img instanceof HTMLImageElement)) {
+        return;
+      }
+      const dataSrc = String(img.dataset.src || "").trim();
+      if (!dataSrc || img.getAttribute("src")) {
+        return;
+      }
+      img.src = dataSrc;
+    });
+    backgroundPickerImagesHydrated = true;
+  };
   const setBackgroundPickerOpen = (isOpen) => {
+    if (isOpen) {
+      hydrateBackgroundPickerImages();
+    }
     backgroundPickerPanel?.classList.toggle("is-open", !!isOpen);
     backgroundEditBtn?.setAttribute("aria-expanded", isOpen ? "true" : "false");
   };
