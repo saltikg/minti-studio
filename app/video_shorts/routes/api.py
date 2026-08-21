@@ -90,6 +90,11 @@ def render_job_status_api(job_id: str):
         return jsonify({"error": str(exc)}), 500
     if not job:
         return jsonify({"error": "not_found"}), 404
+    error_text = str(job.get("error") or "").strip()
+    error_code = None
+    lowered_error = error_text.lower()
+    if "export limit reached" in lowered_error or "monthly export limit reached" in lowered_error:
+        error_code = "export_limit_reached"
     return jsonify(
         {
             "id": job["id"],
@@ -100,6 +105,7 @@ def render_job_status_api(job_id: str):
             "finished_at": job["finished_at"],
             "result": job.get("result"),
             "error": job.get("error"),
+            "error_code": error_code,
             "queue_position": job.get("queue_position"),
         }
     )

@@ -7319,6 +7319,48 @@ const handleClipJobFailure = (planIndex) => {
   });
 };
 
+const isExportLimitPayload = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const code = String(payload.code || payload.error_code || "").trim().toLowerCase();
+  if (code === "export_limit_reached") {
+    return true;
+  }
+  const errorText = String(payload.error || payload.message || "").trim().toLowerCase();
+  return errorText.includes("export limit reached") || errorText.includes("monthly export limit reached");
+};
+
+const showExportLimitMessage = (card) => {
+  if (!card) {
+    return;
+  }
+  const resetCopy = latestUsageSnapshot?.period?.reset_at
+    ? usageResetCopy(latestUsageSnapshot.period.reset_at)
+    : "";
+  setClipFeedbackState(card, {
+    message: `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}. <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`,
+    tone: "text-danger",
+    busy: false,
+    html: true,
+    showSpinner: false,
+    disableButton: false,
+  });
+};
+
+const handleClipJobFailurePayload = (planIndex, payload = null) => {
+  if (isExportLimitPayload(payload)) {
+    stopClipJobPolling(planIndex, { clearStored: true });
+    const card = getClipCardByPlanIndex(planIndex);
+    if (!card) {
+      return;
+    }
+    showExportLimitMessage(card);
+    return;
+  }
+  handleClipJobFailure(planIndex);
+};
+
 const handleClipJobBackgroundContinue = (planIndex, status, queuePosition) => {
   stopClipJobPolling(planIndex, { clearStored: true });
   const card = getClipCardByPlanIndex(planIndex);
@@ -7389,7 +7431,7 @@ const pollClipJobUntilDone = async (
           return;
         }
         if (status === "failed" || status === "cancelled") {
-          handleClipJobFailure(planIndex);
+          handleClipJobFailurePayload(planIndex, payload);
           return;
         }
       } catch (error) {
@@ -7406,7 +7448,7 @@ const pollClipJobUntilDone = async (
     handleClipJobBackgroundContinue(planIndex, lastObservedStatus, lastObservedQueuePosition);
     return;
   }
-  handleClipJobFailure(planIndex);
+  handleClipJobFailurePayload(planIndex);
 };
 
 const usageResetCopy = (resetAt) => {
@@ -7499,17 +7541,11 @@ const initGenerateClipForms = () => {
           typeof payload.message === "string" &&
           payload.message.toLowerCase().includes("already generated");
         if (response.status === 403 && payload.code === "export_limit_reached") {
-          const resetCopy = latestUsageSnapshot?.period?.reset_at
-            ? usageResetCopy(latestUsageSnapshot.period.reset_at)
-            : "";
-          setClipFeedbackState(card, {
-            message: `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}. <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`,
-            tone: "text-danger",
-            busy: false,
-            html: true,
-            showSpinner: false,
-            disableButton: false,
-          });
+          showExportLimitMessage(card);
+          return;
+        }
+        if (isExportLimitPayload(payload)) {
+          showExportLimitMessage(card);
           return;
         }
         if (response.status === 429 && payload.code === "concurrency_limit") {
@@ -7538,7 +7574,7 @@ const initGenerateClipForms = () => {
           await finalizeClipJobSuccess(planIndex, { cached: false });
           return;
         }
-        handleClipJobFailure(planIndex);
+        handleClipJobFailurePayload(planIndex, payload);
       } catch (err) {
         handleClipJobFailure(planIndex);
       } finally {
