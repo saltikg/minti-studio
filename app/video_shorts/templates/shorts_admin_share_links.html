@@ -198,6 +198,9 @@
             <th>Plays</th>
             <th>Viewed?</th>
             <th>Played?</th>
+            <th>Redeemed?</th>
+            <th>Redeemed at</th>
+            <th>User</th>
             <th>First seen</th>
             <th>Last seen</th>
             <th>Created</th>
@@ -243,13 +246,22 @@
               <td>{{ link.plays_count }}</td>
               <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
               <td><span class="admin-share-links-pill {% if link.played %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.played else 'No' }}</span></td>
+              <td><span class="admin-share-links-pill {% if link.redeemed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.redeemed else 'No' }}</span></td>
+              <td class="admin-share-links-meta">{{ link.redeemed_at_pst or '—' }}</td>
+              <td class="admin-share-links-meta">
+                {% if link.redeemed_user_detail_url %}
+                  <a href="{{ link.redeemed_user_detail_url }}">Open user</a>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
               <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
               <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
               <td class="admin-share-links-meta">{{ link.created_at_pst or '—' }}</td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="10" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="13" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>

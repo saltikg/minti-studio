@@ -115,6 +115,10 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.background_preferences import load_background_preference
+from app.video_shorts.services.onboarding_magic_links import (
+    mint_onboarding_magic_link,
+    normalize_outreach_language,
+)
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
     load_user_bool_preference,
@@ -5768,6 +5772,9 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
               COALESCE(NULLIF(CAST(gv.user_id AS VARCHAR), ''), CAST(b.owner_user_id AS VARCHAR)) AS owner_user_id,
               sl.id AS share_link_id,
               sl.token AS resolved_token,
+              sl.recipient_name,
+              sl.recipient_email,
+              sl.language,
               'recipient' AS token_source
             FROM short_share_links sl
             JOIN shorts_generated_videos gv
@@ -5789,7 +5796,10 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
                 "owner_user_id": str(row[4] or "").strip(),
                 "share_link_id": str(row[5] or "").strip() or None,
                 "token": str(row[6] or normalized_token).strip(),
-                "token_source": str(row[7] or "recipient").strip() or "recipient",
+                "recipient_name": str(row[7] or "").strip(),
+                "recipient_email": str(row[8] or "").strip().lower(),
+                "language": str(row[9] or "").strip().upper(),
+                "token_source": str(row[10] or "recipient").strip() or "recipient",
             }
 
     generated_columns = table_columns(conn, "shorts_generated_videos")
@@ -5821,6 +5831,9 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
         "clip_title": str(row[2] or row[3] or row[1] or "Short unavailable").strip() or "Short unavailable",
         "owner_user_id": str(row[4] or "").strip(),
         "share_link_id": None,
+        "recipient_name": "",
+        "recipient_email": "",
+        "language": "",
         "token": normalized_token,
         "token_source": "legacy",
     }
@@ -5913,6 +5926,7 @@ def create_generated_short_share_link():
             return jsonify(
                 {
                     "success": True,
+                    "share_link_id": int(existing_share_row[0]),
                     "generated_video_id": str(row[0] or generated_video_id),
                     "share_token": share_token,
                     "share_url": _share_public_url(share_token),
@@ -5951,11 +5965,21 @@ def create_generated_short_share_link():
             break
         if not share_token:
             return jsonify({"success": False, "message": "Share link could not be created."}), 500
+        share_link_row = conn.execute(
+            """
+            SELECT id
+            FROM short_share_links
+            WHERE token = ?
+            LIMIT 1
+            """,
+            [share_token],
+        ).fetchone()
         conn.commit()
         _ensure_shared_short_poster(clip_filename)
         return jsonify(
             {
                 "success": True,
+                "share_link_id": int(share_link_row[0]) if share_link_row and share_link_row[0] is not None else None,
                 "generated_video_id": str(row[0] or generated_video_id),
                 "share_token": share_token,
                 "share_url": _share_public_url(share_token),
@@ -5997,12 +6021,32 @@ def _render_public_short_watch_page(token: str):
         return render_template("short_share_unavailable.html", clip_title=clip_title), 404
 
     poster_url = _short_poster_public_url(clip_filename) or None
+    onboarding_url = ""
+    recipient_email = str(row.get("recipient_email") or "").strip().lower()
+    if recipient_email:
+        try:
+            resolved_language = normalize_outreach_language(row.get("language"), default="EN")
+            minted = mint_onboarding_magic_link(
+                recipient_email=recipient_email,
+                recipient_name=str(row.get("recipient_name") or "").strip(),
+                share_link_id=int(row["share_link_id"]) if row.get("share_link_id") else None,
+                share_link_token=str(row.get("token") or "").strip(),
+                language=resolved_language,
+            )
+            onboarding_url = str(minted.get("url") or "").strip()
+        except Exception:
+            current_app.logger.exception(
+                "Failed to mint onboarding magic link for share token=%s share_link_id=%s",
+                normalized_token,
+                row.get("share_link_id"),
+            )
     return render_template(
         "short_share_watch.html",
         clip_title=clip_title,
         playback_url=f"{playback_url}#t=1",
         poster_url=poster_url,
         event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
+        onboarding_url=onboarding_url or None,
         preview_mode=preview_mode,
     )
 
@@ -6110,6 +6154,48 @@ def admin_share_link_set_emailed(share_link_id: int):
     finally:
         conn.close()
     return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+
+
+@video_shorts_bp.route("/api/generated-shorts/share-link/<int:share_link_id>/language", methods=["POST"])
+@require_admin
+def admin_generated_short_share_link_set_language(share_link_id: int):
+    payload = request.get_json(silent=True) or request.form or {}
+    resolved_language = normalize_outreach_language(payload.get("language"), default="")
+    if resolved_language not in {"TR", "EN"}:
+        return jsonify({"success": False, "message": "Language must be TR or EN."}), 400
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"success": False, "message": "Share links are not available until the database migration is applied."}), 503
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "language" not in share_link_columns:
+            return jsonify({"success": False, "message": "Share-link language tracking is not available until the database migration is applied."}), 503
+        exists = conn.execute(
+            "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
+            [share_link_id],
+        ).fetchone()
+        if not exists:
+            return jsonify({"success": False, "message": "Share link not found."}), 404
+        conn.execute(
+            """
+            UPDATE short_share_links
+            SET language = ?
+            WHERE id = ?
+            """,
+            [resolved_language, share_link_id],
+        )
+        conn.commit()
+        return jsonify({"success": True, "share_link_id": share_link_id, "language": resolved_language})
+    except Exception:
+        current_app.logger.exception("Failed to update language for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"success": False, "message": "Share-link language could not be updated."}), 500
+    finally:
+        conn.close()
 
 
 @video_shorts_bp.route("/generate/preferences/clip-coachmark", methods=["POST"])
@@ -7842,7 +7928,9 @@ def _load_admin_share_links(
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int, str]:
     share_link_columns = table_columns(conn, "short_share_links")
+    onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
+    has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
     if normalized_filter not in {"all", "viewed", "played"}:
@@ -7854,6 +7942,45 @@ def _load_admin_share_links(
         where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
         params.append(f"%{normalized_email}%")
     where_sql = " AND ".join(where_clauses)
+    redeemed_magic_cte_sql = ""
+    if onboarding_magic_link_columns:
+        redeemed_user_sql = "NULL"
+        if has_magic_link_user_id:
+            redeemed_user_sql = "NULLIF(CAST(oml.user_id AS VARCHAR), '')"
+        redeemed_magic_cte_sql = f"""
+        ,
+        redeemed_magic_links AS (
+            SELECT
+              sl.id AS share_link_id,
+              oml.used_at AS redeemed_at,
+              {redeemed_user_sql} AS redeemed_user_id,
+              ROW_NUMBER() OVER (
+                PARTITION BY sl.id
+                ORDER BY oml.used_at DESC, oml.id DESC
+              ) AS rn
+            FROM short_share_links sl
+            JOIN onboarding_magic_links oml
+              ON (
+                (
+                  oml.share_link_id IS NOT NULL
+                  AND CAST(oml.share_link_id AS BIGINT) = CAST(sl.id AS BIGINT)
+                )
+                OR (
+                  COALESCE(oml.share_link_token, '') <> ''
+                  AND oml.share_link_token = sl.token
+                )
+              )
+            WHERE oml.used_at IS NOT NULL
+        ),
+        latest_redeemed_magic_link AS (
+            SELECT
+              share_link_id,
+              redeemed_at,
+              redeemed_user_id
+            FROM redeemed_magic_links
+            WHERE rn = 1
+        )
+        """
 
     base_cte_sql = f"""
         WITH share_rows AS (
@@ -7887,6 +8014,7 @@ def _load_admin_share_links(
               gv.generated_title,
               gv.clip_filename
         )
+        {redeemed_magic_cte_sql}
     """
 
     having_clauses = ["1=1"]
@@ -7913,21 +8041,24 @@ def _load_admin_share_links(
         f"""
         {base_cte_sql}
         SELECT
-          id,
-          generated_video_id,
-          token,
-          recipient_name,
-          recipient_email,
-          emailed_at,
-          clip_title,
-          COALESCE(views_count, 0) AS views_count,
-          COALESCE(plays_count, 0) AS plays_count,
-          first_seen,
-          last_seen,
-          created_at
-        FROM share_rows
+          sr.id,
+          sr.generated_video_id,
+          sr.token,
+          sr.recipient_name,
+          sr.recipient_email,
+          sr.emailed_at,
+          sr.clip_title,
+          COALESCE(sr.views_count, 0) AS views_count,
+          COALESCE(sr.plays_count, 0) AS plays_count,
+          sr.first_seen,
+          sr.last_seen,
+          sr.created_at,
+          {("lr.redeemed_at," if onboarding_magic_link_columns else "NULL AS redeemed_at,")}
+          {("lr.redeemed_user_id" if onboarding_magic_link_columns else "NULL AS redeemed_user_id")}
+        FROM share_rows sr
+        {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY sr.created_at DESC, sr.id DESC
         LIMIT ? OFFSET ?
         """,
         params + [limit, offset],
@@ -7960,6 +8091,15 @@ def _load_admin_share_links(
                 "last_seen_pst": _format_datetime_pst(row[10]),
                 "created_at": row[11],
                 "created_at_pst": _format_datetime_pst(row[11]),
+                "redeemed_at": row[12],
+                "redeemed_at_pst": _format_datetime_pst(row[12]),
+                "redeemed_user_id": str(row[13] or "").strip(),
+                "redeemed": bool(row[12]),
+                "redeemed_user_detail_url": (
+                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[13]).strip())
+                    if str(row[13] or "").strip()
+                    else ""
+                ),
             }
         )
     return items, total_count, normalized_filter

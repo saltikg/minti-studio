@@ -208,6 +208,7 @@ def ensure_short_share_links_schema(conn) -> None:
                 token VARCHAR NOT NULL,
                 recipient_name VARCHAR,
                 recipient_email VARCHAR,
+                language VARCHAR,
                 emailed_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -221,6 +222,7 @@ def ensure_short_share_links_schema(conn) -> None:
         ("token", "VARCHAR"),
         ("recipient_name", "VARCHAR"),
         ("recipient_email", "VARCHAR"),
+        ("language", "VARCHAR"),
         ("emailed_at", "TIMESTAMP"),
         ("created_at", "TIMESTAMP"),
     ):
@@ -244,6 +246,95 @@ def ensure_short_share_links_schema(conn) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_short_share_links_generated_video_id
             ON short_share_links(generated_video_id)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
+def ensure_onboarding_magic_links_schema(conn) -> None:
+    if not _schema_management_enabled():
+        return
+    backend_name = getattr(conn, "backend_name", "")
+    if backend_name == "postgres":
+        id_column_sql = "BIGSERIAL PRIMARY KEY"
+    else:
+        id_column_sql = "INTEGER PRIMARY KEY AUTOINCREMENT"
+    try:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS onboarding_magic_links (
+                id {id_column_sql},
+                token_hash VARCHAR NOT NULL,
+                recipient_email VARCHAR NOT NULL,
+                recipient_name VARCHAR,
+                share_link_id BIGINT,
+                share_link_token VARCHAR,
+                user_id VARCHAR,
+                language VARCHAR,
+                expires_at TIMESTAMP NOT NULL,
+                used_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        return
+    cols = table_columns(conn, "onboarding_magic_links")
+    for col_name, col_type in (
+        ("token_hash", "VARCHAR"),
+        ("recipient_email", "VARCHAR"),
+        ("recipient_name", "VARCHAR"),
+        ("share_link_id", "BIGINT"),
+        ("share_link_token", "VARCHAR"),
+        ("user_id", "VARCHAR"),
+        ("language", "VARCHAR"),
+        ("expires_at", "TIMESTAMP"),
+        ("used_at", "TIMESTAMP"),
+        ("created_at", "TIMESTAMP"),
+    ):
+        if col_name in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE onboarding_magic_links ADD COLUMN {col_name} {col_type}")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_magic_links_token_hash
+            ON onboarding_magic_links(token_hash)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_onboarding_magic_links_recipient_email
+            ON onboarding_magic_links(recipient_email)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_onboarding_magic_links_share_link_id
+            ON onboarding_magic_links(share_link_id)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_onboarding_magic_links_user_id
+            ON onboarding_magic_links(user_id)
             """
         )
     except Exception:
@@ -683,6 +774,26 @@ def ensure_channel_owner_schema(conn):
         )
     except Exception:
         pass
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
+def ensure_youtube_video_local_bucket_schema(conn):
+    """
+    Make sure youtube_videos can remember which Local uploads bucket an add-by-URL
+    video should surface under while preserving the real creator channel_id.
+    """
+    if not _schema_management_enabled():
+        return
+    cols = table_columns(conn, "youtube_videos")
+    if "local_bucket_channel_id" in cols:
+        return
+    try:
+        conn.execute("ALTER TABLE youtube_videos ADD COLUMN local_bucket_channel_id BIGINT")
+    except Exception:
+        return
     try:
         conn.commit()
     except Exception:

@@ -10691,7 +10691,33 @@ const initAdminShareLinkButtons = () => {
         }
         return fallbackCopyText(text);
       };
-      const bindCopyButton = (targetButton, getText, successMessage) => {
+      const persistLanguage = async (shareLinkId, language) => {
+        const resolvedShareLinkId = Number(shareLinkId || 0);
+        const resolvedLanguage = String(language || "").trim().toUpperCase();
+        if (!resolvedShareLinkId || !["TR", "EN"].includes(resolvedLanguage)) {
+          return;
+        }
+        try {
+          const response = await fetch(`/video_shorts/api/generated-shorts/share-link/${resolvedShareLinkId}/language`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({ language: resolvedLanguage }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || "language-persist-failed");
+          }
+        } catch (err) {
+          console.warn("Share-link language could not be persisted.", err);
+        }
+      };
+      const bindCopyButton = (targetButton, getText, successMessage, options = {}) => {
+        const language = String(options.language || "").trim().toUpperCase();
+        const shareLinkId = Number(options.shareLinkId || 0);
         targetButton.disabled = false;
         targetButton.onclick = async () => {
           const text = String(getText() || "").trim();
@@ -10703,6 +10729,9 @@ const initAdminShareLinkButtons = () => {
             const copied = await copyText(text);
             if (!copied) {
               throw new Error("copy-failed");
+            }
+            if (language) {
+              await persistLanguage(shareLinkId, language);
             }
             setFeedback(successMessage, false);
           } catch (err) {
@@ -10739,12 +10768,13 @@ const initAdminShareLinkButtons = () => {
         if (!response.ok || !payload.success || !payload.share_url) {
           throw new Error(payload.message || "Share link could not be created.");
         }
+        const shareLinkId = Number(payload.share_link_id || 0);
         resultInput.value = payload.share_url;
         resultGroup.classList.remove("d-none");
         setFeedback("Recipient share link ready.", false);
         bindCopyButton(copyButton, () => resultInput.value, "Share link copied.");
-        bindCopyButton(copyTrButton, () => buildEmailText("tr"), "TR email copied.");
-        bindCopyButton(copyEnButton, () => buildEmailText("en"), "EN email copied.");
+        bindCopyButton(copyTrButton, () => buildEmailText("tr"), "TR email copied.", { language: "TR", shareLinkId });
+        bindCopyButton(copyEnButton, () => buildEmailText("en"), "EN email copied.", { language: "EN", shareLinkId });
       } catch (err) {
         setFeedback(err.message || "Share link could not be created.", true);
       } finally {

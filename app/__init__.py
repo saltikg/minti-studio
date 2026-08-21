@@ -43,6 +43,7 @@ def create_app():
     # Config
     app.config["DB_PATH"]  = DB_PATH
     app.config["BASE_URL"] = BASE_URL
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=60)
 
     app.secret_key = os.getenv("SECRET_KEY")
 
@@ -104,6 +105,12 @@ def create_app():
         from app.video_shorts.routes.generation import public_short_watch_event
 
         return public_short_watch_event(token)
+
+    @app.get("/onboard/<token>")
+    def onboarding_magic_link_alias(token):
+        from app.video_shorts.routes.auth import redeem_onboarding_magic_link
+
+        return redeem_onboarding_magic_link(token)
 
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp

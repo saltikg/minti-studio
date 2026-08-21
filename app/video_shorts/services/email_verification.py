@@ -279,6 +279,79 @@ def send_password_reset_email(*, to_email: str, reset_token: str, recipient_name
     send_resend_email(to_email=to_email, subject=subject, html=html, text=text)
 
 
+def send_onboarding_magic_link_welcome_email(
+    *,
+    to_email: str,
+    set_password_url: str,
+    recipient_name: str = "",
+    language: str = "EN",
+) -> dict[str, object]:
+    normalized_language = (language or "").strip().upper()
+    display_name = recipient_name.strip() or ("Merhaba" if normalized_language == "TR" else "there")
+    if normalized_language == "TR":
+        subject = "Minti Studio hesabınız hazır"
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+          <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+            <div style="font-size:24px;font-weight:700;margin-bottom:12px;">Minti Studio</div>
+            <p style="margin:0 0 12px;">Merhaba {html.escape(display_name)},</p>
+            <p style="margin:0 0 12px;">Minti Studio hesabınız hazır ({html.escape(to_email)}) ve 3 aylık ücretsiz erişiminiz aktif.</p>
+            <p style="margin:0 0 12px;">Bu cihazda zaten giriş yapmış durumdasınız. İleride şifreyle giriş yapmak için şifrenizi buradan belirleyebilirsiniz:</p>
+            <p style="margin:0 0 20px;">
+              <a href="{html.escape(set_password_url)}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Şifre belirle</a>
+            </p>
+            <p style="margin:0 0 12px;">Bu e-posta ile Google üzerinden de giriş yapabilirsiniz.</p>
+            <p style="margin:0;">Selamlar,<br>Gokhan Saltik<br>Minti Studio</p>
+          </div>
+        </div>
+        """.strip()
+        text_body = (
+            f"Merhaba {display_name},\n\n"
+            f"Minti Studio hesabınız hazır ({to_email}) ve 3 aylık ücretsiz erişiminiz aktif.\n"
+            "Bu cihazda zaten giriş yapmış durumdasınız. İleride şifreyle giriş yapmak için "
+            "şifrenizi buradan belirleyebilirsiniz:\n"
+            f"{set_password_url}\n\n"
+            "Bu e-posta ile Google üzerinden de giriş yapabilirsiniz.\n\n"
+            "Selamlar,\n"
+            "Gokhan Saltik\n"
+            "Minti Studio"
+        )
+    else:
+        subject = "Your Minti Studio account is ready"
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+          <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+            <div style="font-size:24px;font-weight:700;margin-bottom:12px;">Minti Studio</div>
+            <p style="margin:0 0 12px;">Hi {html.escape(display_name)},</p>
+            <p style="margin:0 0 12px;">Your Minti Studio account is ready ({html.escape(to_email)}), and your 3 months of complimentary access are active.</p>
+            <p style="margin:0 0 12px;">You're already signed in on this device. To set a password for future logins, use this link:</p>
+            <p style="margin:0 0 20px;">
+              <a href="{html.escape(set_password_url)}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Set your password</a>
+            </p>
+            <p style="margin:0 0 12px;">You can also sign in with Google using this email.</p>
+            <p style="margin:0;">Best,<br>Gokhan Saltik<br>Minti Studio</p>
+          </div>
+        </div>
+        """.strip()
+        text_body = (
+            f"Hi {display_name},\n\n"
+            f"Your Minti Studio account is ready ({to_email}), and your 3 months of complimentary access are active.\n"
+            "You're already signed in on this device. To set a password for future logins, use this link:\n"
+            f"{set_password_url}\n\n"
+            "You can also sign in with Google using this email.\n\n"
+            "Best,\n"
+            "Gokhan Saltik\n"
+            "Minti Studio"
+        )
+    return send_resend_email(
+        to_email=to_email,
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        error_message="Onboarding welcome email could not be sent.",
+    )
+
+
 def send_welcome_email(*, to_email: str, recipient_name: str = "") -> dict[str, object]:
     dashboard_url = build_dashboard_url()
     greeting = recipient_name.strip() or "there"

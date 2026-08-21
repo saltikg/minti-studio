@@ -29,6 +29,7 @@ from app.video_shorts.config import (
 )
 from app.video_shorts.services.db import (
     ensure_auth_user_schema,
+    ensure_onboarding_magic_links_schema,
     ensure_storage_user_schema,
     ensure_user_events_schema,
     get_db,
@@ -48,12 +49,14 @@ from app.video_shorts.services.brands import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.usage_metering import get_usage_snapshot
 from app.video_shorts.services.email_verification import (
+    build_password_reset_url,
     can_resend_verification,
     can_send_password_reset,
     generate_email_verification_token,
     hash_email_verification_token,
     password_reset_token_expiry,
     send_membership_activated_emails,
+    send_onboarding_magic_link_welcome_email,
     send_verification_email,
     send_password_reset_email,
     send_contact_email,
@@ -69,6 +72,11 @@ from app.video_shorts.services.auth_protection import (
 from app.video_shorts.services.billing import (
     load_billing_user_state,
     user_has_managed_subscription,
+)
+from app.video_shorts.services.onboarding_magic_links import (
+    ONBOARDING_MAGIC_LINK_PLAN_ID,
+    hash_onboarding_magic_token,
+    normalize_outreach_language,
 )
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.youtube_oauth import (
@@ -304,6 +312,114 @@ def _lookup_user_by_email(email: str):
         conn.close()
 
 
+def _default_name_from_email(email: str) -> str:
+    normalized_email = _normalize_auth_email(email)
+    local_part = normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+    cleaned = local_part.replace(".", " ").replace("_", " ").replace("-", " ").strip()
+    return cleaned.title() or "Minti Creator"
+
+
+def _establish_authenticated_session(*, user_id: str, brand_id: Optional[str]) -> None:
+    session["vs_user_id"] = str(user_id)
+    if brand_id:
+        session["vs_brand_id"] = str(brand_id)
+    else:
+        session.pop("vs_brand_id", None)
+    session.permanent = True
+
+
+def _render_onboarding_magic_link_status_page(*, status: str, status_code: int = 200):
+    normalized_status = (status or "").strip().lower() or "invalid"
+    allowed_statuses = {"invalid", "expired", "used"}
+    if normalized_status not in allowed_statuses:
+        normalized_status = "invalid"
+    return (
+        render_template("vs_onboarding_magic_link_status.html", link_status=normalized_status),
+        status_code,
+    )
+
+
+def _create_or_grant_magic_link_user(
+    conn,
+    *,
+    recipient_email: str,
+    recipient_name: str = "",
+    existing_user_id: Optional[str] = None,
+) -> tuple[str, Optional[str]]:
+    normalized_email = _normalize_auth_email(recipient_email)
+    if not normalized_email:
+        raise ValueError("recipient_email is required")
+    desired_name = str(recipient_name or "").strip() or _default_name_from_email(normalized_email)
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    ensure_brand_schema(conn)
+    resolved_existing_user_id = str(existing_user_id or "").strip()
+    if not resolved_existing_user_id:
+        existing_user = conn.execute(
+            """
+            SELECT CAST(id AS VARCHAR)
+            FROM shorts_users
+            WHERE lower(email) = lower(?)
+               OR lower(username) = lower(?)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            [normalized_email, normalized_email],
+        ).fetchone()
+        resolved_existing_user_id = str(existing_user[0] or "").strip() if existing_user else ""
+    if resolved_existing_user_id:
+        user_id = resolved_existing_user_id
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET name = COALESCE(NULLIF(name, ''), ?),
+                email = COALESCE(NULLIF(email, ''), ?),
+                username = COALESCE(NULLIF(username, ''), ?),
+                plan_id = ?,
+                email_verified = TRUE,
+                email_verified_at = COALESCE(email_verified_at, now()),
+                email_verification_token_hash = NULL,
+                email_verification_expires_at = NULL,
+                updated_at = now()
+            WHERE id = ?
+            """,
+            [
+                desired_name,
+                normalized_email,
+                normalized_email,
+                ONBOARDING_MAGIC_LINK_PLAN_ID,
+                user_id,
+            ],
+        )
+    else:
+        user_id = str(uuid4())
+        conn.execute(
+            """
+            INSERT INTO shorts_users (
+                id,
+                username,
+                password_hash,
+                name,
+                email,
+                role,
+                plan_id,
+                email_verified,
+                email_verified_at
+            )
+            VALUES (?, ?, NULL, ?, ?, 'member', ?, TRUE, now())
+            """,
+            [
+                user_id,
+                normalized_email,
+                desired_name,
+                normalized_email,
+                ONBOARDING_MAGIC_LINK_PLAN_ID,
+            ],
+        )
+    brand = ensure_brand_for_user(conn, user_id=user_id, user_name=desired_name)
+    return user_id, brand["id"] if brand else None
+
+
 def _client_ip() -> str:
     forwarded_ip = (request.headers.get("CF-Connecting-IP") or "").strip()
     if forwarded_ip:
@@ -404,6 +520,26 @@ def _issue_password_reset_for_user(user_row) -> tuple[bool, int]:
         conn.close()
     send_password_reset_email(to_email=email, reset_token=reset_token, recipient_name=display_name)
     return True, 0
+
+
+def _create_password_reset_token_for_user(conn, *, user_id: str) -> tuple[str, datetime]:
+    reset_token = generate_email_verification_token()
+    token_hash = hash_email_verification_token(reset_token)
+    expires_at = password_reset_token_expiry()
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    conn.execute(
+        """
+        UPDATE shorts_users
+        SET password_reset_token_hash = ?,
+            password_reset_expires_at = ?,
+            password_reset_sent_at = now(),
+            updated_at = now()
+        WHERE CAST(id AS VARCHAR) = ?
+        """,
+        [token_hash, expires_at, str(user_id)],
+    )
+    return reset_token, expires_at
 
 
 def _render_login_page(*, resend_email: str = "", prefill_email: str = "", status_code: int = 200):
@@ -830,6 +966,7 @@ def _guard_video_shorts():
         "video_shorts_bp.client_error_api",
         "video_shorts_bp.public_short_watch_page",
         "video_shorts_bp.public_short_watch_event",
+        "video_shorts_bp.redeem_onboarding_magic_link",
         "video_shorts_bp.serve_media",
         "video_shorts_bp.serve_instagram_media_proxy",
         "video_shorts_bp.home",
@@ -1119,7 +1256,7 @@ def verify_email():
                 updated_at = now()
             WHERE id = ?
             """,
-            [row[0]],
+            [str(user_id), row[0]],
         )
         conn.commit()
     finally:
@@ -1274,6 +1411,125 @@ def logout():
     session.pop("vs_brand_id", None)
     flash("You have been signed out.", "info")
     return redirect(url_for("video_shorts_bp.login"))
+
+
+@video_shorts_bp.route("/onboard/<token>", methods=["GET"])
+def redeem_onboarding_magic_link(token: str):
+    normalized_token = str(token or "").strip()
+    if not normalized_token:
+        return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
+
+    token_hash = hash_onboarding_magic_token(normalized_token)
+    conn = get_db()
+    is_new_user = False
+    outreach_language = "EN"
+    welcome_email_context: tuple[str, str, str] | None = None
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        ensure_brand_schema(conn)
+        ensure_onboarding_magic_links_schema(conn)
+        row = conn.execute(
+            """
+            SELECT
+                id,
+                recipient_email,
+                recipient_name,
+                language,
+                expires_at,
+                used_at
+            FROM onboarding_magic_links
+            WHERE token_hash = ?
+            LIMIT 1
+            """,
+            [token_hash],
+        ).fetchone()
+        if not row:
+            return _render_onboarding_magic_link_status_page(status="invalid", status_code=404)
+
+        expires_at = row[4]
+        if expires_at and getattr(expires_at, "tzinfo", None) is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        used_at = row[5]
+        if used_at:
+            return _render_onboarding_magic_link_status_page(status="used", status_code=410)
+        if not expires_at or expires_at < datetime.now(timezone.utc):
+            return _render_onboarding_magic_link_status_page(status="expired", status_code=410)
+
+        recipient_email = _normalize_auth_email(row[1] or "")
+        recipient_name = str(row[2] or "").strip()
+        outreach_language = normalize_outreach_language(row[3], default="EN")
+        if not recipient_email:
+            return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
+        existing_user = _lookup_user_by_email(recipient_email)
+        is_new_user = existing_user is None
+
+        user_id, brand_id = _create_or_grant_magic_link_user(
+            conn,
+            recipient_email=recipient_email,
+            recipient_name=recipient_name,
+            existing_user_id=str(existing_user[0] or "").strip() if existing_user else None,
+        )
+        if is_new_user:
+            reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=user_id)
+            welcome_email_context = (
+                recipient_email,
+                recipient_name,
+                build_password_reset_url(reset_token),
+            )
+        updated = conn.execute(
+            """
+            UPDATE onboarding_magic_links
+            SET used_at = now(),
+                user_id = ?
+            WHERE id = ?
+              AND used_at IS NULL
+            """,
+            [str(user_id), row[0]],
+        )
+        if getattr(updated, "rowcount", -1) == 0:
+            conn.rollback()
+            return _render_onboarding_magic_link_status_page(status="used", status_code=410)
+        conn.commit()
+    except Exception:
+        current_app.logger.exception("Failed to redeem onboarding magic link")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
+    if is_new_user and welcome_email_context:
+        welcome_email, welcome_name, set_password_url = welcome_email_context
+        try:
+            result = send_onboarding_magic_link_welcome_email(
+                to_email=welcome_email,
+                set_password_url=set_password_url,
+                recipient_name=welcome_name,
+                language=outreach_language,
+            )
+            current_app.logger.info(
+                "Onboarding welcome email sent: user_id=%s to=%s status=%s request_id=%s language=%s",
+                user_id,
+                welcome_email,
+                result.get("status_code"),
+                result.get("request_id") or "(missing)",
+                outreach_language,
+            )
+        except Exception:
+            current_app.logger.exception(
+                "Onboarding welcome email failed: user_id=%s to=%s language=%s",
+                user_id,
+                welcome_email,
+                outreach_language,
+            )
+    return redirect(url_for("video_shorts_bp.my_videos_page"))
 
 
 @video_shorts_bp.route("/profile", methods=["GET", "POST"])

@@ -29,6 +29,7 @@ from app.video_shorts.services.db import (
     get_db_readonly,
     _ensure_video_crop_schema,
     ensure_channel_owner_schema,
+    ensure_youtube_video_local_bucket_schema,
     table_columns,
 )
 from app.video_shorts.services.comment_moderation import moderate_text_entries
@@ -76,6 +77,7 @@ from app.video_shorts.youtube_api import (
     YoutubeApiError,
     extract_video_id,
     fetch_playlist_items_batch,
+    fetch_video_metadata,
     fetch_video_stats,
     get_channel_metadata,
     fetch_video_comments,
@@ -140,6 +142,207 @@ def _short_public_url(filename: str) -> Optional[str]:
     if clip_path.exists() and clip_path.is_file():
         return get_media_storage("local").public_url(key)
     return None
+
+
+def _channel_video_scope_sql(*, include_local_bucket_attachment: bool) -> str:
+    if include_local_bucket_attachment:
+        return "(channel_id = ? OR local_bucket_channel_id = ?)"
+    return "channel_id = ?"
+
+
+def _channel_video_scope_params(channel_id: Any, *, include_local_bucket_attachment: bool) -> List[Any]:
+    if include_local_bucket_attachment:
+        return [channel_id, channel_id]
+    return [channel_id]
+
+
+def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
+    channel_key = str(meta.get("channel_id") or "").strip()
+    if not channel_key:
+        return None
+    row = conn.execute(
+        """
+        SELECT channel_id, owner_user_id, brand_id
+        FROM youtube_channels
+        WHERE youtube_channel_id = ?
+        ORDER BY channel_id ASC
+        LIMIT 1
+        """,
+        [channel_key],
+    ).fetchone()
+    if row:
+        existing_owner_id = str(row[1] or "").strip() or None
+        existing_brand_id = str(row[2] or "").strip() or None
+        requested_owner_id = str(owner_id or "").strip() or None
+        requested_brand_id = str(brand_id or "").strip() or None
+        if (
+            requested_owner_id
+            and requested_brand_id
+            and (existing_owner_id != requested_owner_id or existing_brand_id != requested_brand_id)
+        ):
+            current_app.logger.warning(
+                "Refusing to overwrite youtube_channels ownership for %s: existing owner=%s brand=%s requested owner=%s brand=%s",
+                channel_key,
+                existing_owner_id,
+                existing_brand_id,
+                requested_owner_id,
+                requested_brand_id,
+            )
+        return row[0]
+
+    channel_name = meta.get("channel_title") or "YouTube Channel"
+    channel_url = f"https://www.youtube.com/channel/{channel_key}"
+    notes = "Add by URL import"
+    next_channel_id = conn.execute(
+        "SELECT COALESCE(MAX(channel_id), 0) + 1 FROM youtube_channels"
+    ).fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO youtube_channels (channel_id, channel_name, channel_url, notes, owner_user_id, youtube_channel_id, is_active, brand_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [next_channel_id, channel_name, channel_url, notes, owner_id, channel_key, True, brand_id],
+    )
+    row = conn.execute(
+        "SELECT channel_id FROM youtube_channels WHERE youtube_channel_id = ? LIMIT 1",
+        [channel_key],
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _share_link_event_join_sql(conn) -> str:
+    if getattr(conn, "backend_name", "") == "postgres":
+        return """
+        ue.event_name IN ('share_view', 'share_play')
+        AND (
+          (
+            COALESCE(NULLIF(ue.metadata->>'share_link_id', ''), '') <> ''
+            AND ue.metadata->>'share_link_id' = CAST(sl.id AS VARCHAR)
+          )
+          OR (
+            COALESCE(NULLIF(ue.metadata->>'share_link_id', ''), '') = ''
+            AND ue.metadata->>'token' = sl.token
+          )
+        )
+        """
+    return """
+    ue.event_name IN ('share_view', 'share_play')
+    AND (
+      CAST(ue.metadata AS VARCHAR) LIKE ('%"share_link_id": "' || CAST(sl.id AS VARCHAR) || '"%')
+      OR (
+        CAST(ue.metadata AS VARCHAR) NOT LIKE '%"share_link_id": "%'
+        AND CAST(ue.metadata AS VARCHAR) LIKE ('%"token": "' || sl.token || '"%')
+      )
+    )
+    """
+
+
+def _format_outreach_warning_date(value: Any) -> str:
+    if hasattr(value, "strftime"):
+        try:
+            return value.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return str(value or "").strip() or "unknown date"
+
+
+def _build_outreach_warning_message(match: Dict[str, Any]) -> str:
+    creator_parts: List[str] = []
+    creator_handle = str(match.get("creator_handle") or "").strip()
+    creator_name = str(match.get("creator_name") or "").strip()
+    creator_channel_id = str(match.get("youtube_channel_id") or "").strip()
+    if creator_handle:
+        creator_parts.append(creator_handle)
+    if creator_name and creator_name != creator_handle:
+        creator_parts.append(creator_name)
+    creator_label = " / ".join(creator_parts) or creator_channel_id or "this creator"
+    total_matches = int(match.get("match_count") or 0)
+    lines = [
+        f"Outreach warning: {creator_label} already has {total_matches} share link(s).",
+    ]
+    for item in match.get("contacts") or []:
+        recipient_name = str(item.get("recipient_name") or "").strip()
+        recipient_email = str(item.get("recipient_email") or "").strip()
+        recipient_bits = [bit for bit in (recipient_name, recipient_email) if bit and bit != "—"]
+        recipient_label = " / ".join(recipient_bits) or "Unknown recipient"
+        created_label = _format_outreach_warning_date(item.get("created_at"))
+        viewed_label = "Yes" if item.get("viewed") else "No"
+        played_label = "Yes" if item.get("played") else "No"
+        lines.append(
+            f"{recipient_label} on {created_label} (Viewed: {viewed_label}, Played: {played_label})"
+        )
+    remaining = max(0, total_matches - len(match.get("contacts") or []))
+    if remaining:
+        lines.append(f"... plus {remaining} older outreach record(s).")
+    return " ".join(lines)
+
+
+def _load_admin_global_outreach_match(conn, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
+    normalized_channel_id = str(youtube_channel_id or "").strip()
+    if not normalized_channel_id:
+        return None
+
+    rows = conn.execute(
+        f"""
+        SELECT
+          yc.youtube_channel_id,
+          yc.channel_name,
+          yc.channel_url,
+          sl.id,
+          sl.recipient_name,
+          sl.recipient_email,
+          sl.created_at,
+          COALESCE(SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END), 0) AS views_count,
+          COALESCE(SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END), 0) AS plays_count
+        FROM short_share_links sl
+        JOIN shorts_generated_videos gv
+          ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+        JOIN youtube_videos yv
+          ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+        JOIN youtube_channels yc
+          ON CAST(yc.channel_id AS VARCHAR) = CAST(yv.channel_id AS VARCHAR)
+        LEFT JOIN user_events ue
+          ON {_share_link_event_join_sql(conn)}
+        WHERE yc.youtube_channel_id = ?
+        GROUP BY
+          yc.youtube_channel_id,
+          yc.channel_name,
+          yc.channel_url,
+          sl.id,
+          sl.recipient_name,
+          sl.recipient_email,
+          sl.created_at
+        ORDER BY sl.created_at DESC, sl.id DESC
+        """,
+        [normalized_channel_id],
+    ).fetchall()
+    if not rows:
+        return None
+
+    channel_name = str(rows[0][1] or "").strip()
+    channel_url = str(rows[0][2] or "").strip()
+    creator_handle = ""
+    if "/@" in channel_url:
+        creator_handle = "@" + channel_url.split("/@", 1)[1].split("/", 1)[0].strip()
+    contacts = []
+    for row in rows[:5]:
+        contacts.append(
+            {
+                "share_link_id": row[3],
+                "recipient_name": str(row[4] or "").strip() or "—",
+                "recipient_email": str(row[5] or "").strip() or "—",
+                "created_at": row[6],
+                "viewed": int(row[7] or 0) > 0,
+                "played": int(row[8] or 0) > 0,
+            }
+        )
+    return {
+        "youtube_channel_id": normalized_channel_id,
+        "creator_name": channel_name,
+        "creator_handle": creator_handle,
+        "match_count": len(rows),
+        "contacts": contacts,
+    }
 
 
 SHORT_WINDOW_SECONDS = timedelta(minutes=5).total_seconds()
@@ -2938,6 +3141,7 @@ def videos_page(channel_id):
     conn = get_db()
     ensure_brand_schema(conn)
     ensure_channel_owner_schema(conn)
+    ensure_youtube_video_local_bucket_schema(conn)
 
     # Pagination & sorting params
     try:
@@ -3023,6 +3227,12 @@ def videos_page(channel_id):
         "owner_user_id": row[10],
         "brand_id": row[11],
     }
+    is_local_uploads_channel = str(channel.get("channel_url") or "").strip().lower() == "local://uploads"
+    channel_scope_sql = _channel_video_scope_sql(include_local_bucket_attachment=is_local_uploads_channel)
+    channel_scope_params = _channel_video_scope_params(
+        channel_id,
+        include_local_bucket_attachment=is_local_uploads_channel,
+    )
     preferred_channel_ids = _preferred_brand_channel_ids(
         channel.get("owner_user_id"),
         brand_id,
@@ -3228,7 +3438,7 @@ def videos_page(channel_id):
                 row[0]
                 for row in conn.execute(
                     "SELECT video_id FROM youtube_videos WHERE channel_id = ?",
-                    [channel_id],
+                    channel_scope_params,
                 ).fetchall()
             ]
             extra_stats = fetch_video_stats(existing_ids)
@@ -3248,7 +3458,7 @@ def videos_page(channel_id):
             if not video_to_fetch and not channel["next_page_token"] and channel["total_videos"] is not None:
                 conn.execute(
                     "UPDATE youtube_channels SET is_active = 0 WHERE channel_id = ?",
-                    [channel_id],
+                    channel_scope_params,
                 )
                 channel["is_active"] = 0
                 flash(
@@ -3282,8 +3492,8 @@ def videos_page(channel_id):
     duration_min_seconds = duration_min * 60 if duration_min is not None else None
     duration_max_seconds = duration_max * 60 if duration_max is not None else None
 
-    where_clauses = ["channel_id = ?", "title ILIKE ?"]
-    where_params = [channel_id, f"%{search_q}%" if search_q else "%"]
+    where_clauses = [channel_scope_sql, "title ILIKE ?"]
+    where_params = channel_scope_params + [f"%{search_q}%" if search_q else "%"]
     if video_id_q:
         where_clauses.append("video_id = ?")
         where_params.append(video_id_q)
@@ -3314,64 +3524,62 @@ def videos_page(channel_id):
     caption_pending = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND fetch_transcript = TRUE
+        WHERE """ + channel_scope_sql + """ AND fetch_transcript = TRUE
               AND lower(transcript_status) = 'pending'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
 
     caption_ready = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(transcript_status) IN ('done','ready','completed','ok')
+        WHERE """ + channel_scope_sql + """ AND lower(transcript_status) IN ('done','ready','completed','ok')
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
 
     download_ready = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(coalesce(download_status,'')) = 'downloaded'
+        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'downloaded'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
     download_ready_deleted = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(coalesce(download_status,'')) = 'downloaded_deleted'
+        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'downloaded_deleted'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
     download_short = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(coalesce(download_status,'')) = 'short'
+        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'short'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
     download_irrelevant = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(coalesce(download_status,'')) = 'irrelevant'
+        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'irrelevant'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
     download_pending = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND lower(coalesce(download_status,'')) = 'pending'
+        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'pending'
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
 
     # aggregate short plan stats per video
     short_plan_stats = {}
     short_dir = SHORTS_DIR
     for row in conn.execute(
-        """
-        SELECT id, video_id, download_status FROM youtube_videos WHERE channel_id = ?
-        """,
-        [channel_id],
+        "SELECT id, video_id, download_status FROM youtube_videos WHERE " + channel_scope_sql,
+        channel_scope_params,
     ).fetchall():
         vid_id = row[1]
         row_download_status = (row[2] or "").lower()
@@ -3418,9 +3626,9 @@ def videos_page(channel_id):
     download_not_needed = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE channel_id = ? AND (download_status IS NULL OR lower(download_status) = 'not_needed')
+        WHERE """ + channel_scope_sql + """ AND (download_status IS NULL OR lower(download_status) = 'not_needed')
         """,
-        [channel_id],
+        channel_scope_params,
     ).fetchone()[0]
 
     offset = (page - 1) * page_size
@@ -3663,6 +3871,7 @@ def add_video_by_url(channel_id):
     conn = get_db()
     ensure_brand_schema(conn)
     ensure_channel_owner_schema(conn)
+    ensure_youtube_video_local_bucket_schema(conn)
     _ensure_video_crop_schema(conn)
 
     try:
@@ -3710,15 +3919,22 @@ def add_video_by_url(channel_id):
 
         canonical_url = f"https://www.youtube.com/watch?v={video_id}"
         existing = conn.execute(
-            "SELECT id FROM youtube_videos WHERE channel_id = ? AND video_id = ? LIMIT 1",
-            [channel_id, video_id],
+            """
+            SELECT id
+            FROM youtube_videos
+            WHERE video_id = ?
+              AND (channel_id = ? OR local_bucket_channel_id = ?)
+            LIMIT 1
+            """,
+            [video_id, channel_id, channel_id],
         ).fetchone()
         if existing:
-            flash("This video was already added to Local uploads.", "info")
+            flash("This video is already visible in Local uploads.", "info")
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
 
         title = canonical_url
         thumbnail_url = None
+        resolved_channel_id = None
         try:
             oembed_resp = requests.get(
                 "https://www.youtube.com/oembed",
@@ -3736,16 +3952,96 @@ def add_video_by_url(channel_id):
                 exc_info=True,
             )
 
+        try:
+            meta = fetch_video_metadata(video_id)
+        except YoutubeApiError as exc:
+            current_app.logger.warning(
+                "YouTube metadata lookup failed for add-by-url video_id=%s: %s",
+                video_id,
+                exc,
+            )
+            meta = None
+        except Exception:
+            current_app.logger.exception(
+                "Unexpected YouTube metadata lookup failure for add-by-url video_id=%s",
+                video_id,
+            )
+            meta = None
+
+        if meta:
+            title = str(meta.get("title") or "").strip() or title
+            thumbnail_url = str(meta.get("thumbnail_url") or "").strip() or thumbnail_url
+            try:
+                resolved_channel_id = _get_or_create_real_youtube_channel(
+                    conn,
+                    meta,
+                    channel.get("owner_user_id"),
+                    channel.get("brand_id"),
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to resolve or create real YouTube channel for add-by-url video_id=%s",
+                    video_id,
+                )
+                resolved_channel_id = None
+        else:
+            current_app.logger.warning(
+                "Real YouTube channel_id unavailable for add-by-url video_id=%s; storing NULL channel linkage",
+                video_id,
+            )
+
+        if is_admin and meta and str(meta.get("channel_id") or "").strip():
+            outreach_match = _load_admin_global_outreach_match(
+                conn,
+                str(meta.get("channel_id") or "").strip(),
+            )
+            if outreach_match:
+                flash(_build_outreach_warning_message(outreach_match), "warning")
+
+        existing = conn.execute(
+            """
+            SELECT id, owner_user_id, brand_id, local_bucket_channel_id
+            FROM youtube_videos
+            WHERE video_id = ?
+            LIMIT 1
+            """,
+            [video_id],
+        ).fetchone()
+        if existing:
+            existing_owner_user_id = str(existing[1] or "").strip() or None
+            existing_brand_id = str(existing[2] or "").strip() or None
+            existing_local_bucket_channel_id = existing[3]
+            requested_owner_user_id = str(channel.get("owner_user_id") or "").strip() or None
+            requested_brand_id = str(channel.get("brand_id") or "").strip() or None
+            same_scope = (
+                existing_owner_user_id == requested_owner_user_id
+                and existing_brand_id == requested_brand_id
+            )
+            if same_scope and existing_local_bucket_channel_id != channel_id:
+                conn.execute(
+                    """
+                    UPDATE youtube_videos
+                    SET local_bucket_channel_id = ?
+                    WHERE id = ?
+                    """,
+                    [channel_id, existing[0]],
+                )
+                conn.commit()
+                flash("Video already existed and is now visible in Local uploads.", "success")
+                return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+            flash("This video was already added.", "info")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+
         conn.execute(
             """
             INSERT INTO youtube_videos
                 (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                 duration_seconds, view_count, like_count, comment_count, video_url,
+                 duration_seconds, view_count, like_count, comment_count, video_url, local_bucket_channel_id,
                  owner_user_id, brand_id, download_status, subtitle_style)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                channel_id,
+                resolved_channel_id,
                 video_id,
                 title,
                 thumbnail_url,
@@ -3755,6 +4051,7 @@ def add_video_by_url(channel_id):
                 None,
                 None,
                 canonical_url,
+                channel_id,
                 channel.get("owner_user_id"),
                 channel.get("brand_id"),
                 "pending",
@@ -3762,7 +4059,7 @@ def add_video_by_url(channel_id):
             ],
         )
         conn.commit()
-        flash("Video added to Local uploads.", "success")
+        flash("Video added and visible in Local uploads.", "success")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
     finally:
         conn.close()

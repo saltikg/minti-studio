@@ -1,0 +1,21 @@
+{% extends "vs_auth_base.html" %}
+
+{% block auth_content %}
+  <div class="card border-0">
+    <div class="card-body p-4 p-md-5">
+      <div class="vs-app-brand d-inline-flex align-items-center gap-2 mb-3">
+        <span class="fw-semibold">MintiStudio</span>
+      </div>
+      {% if link_status == "used" %}
+        <h1 class="card-title h3 mb-3">This access link has already been used</h1>
+        <p class="mb-0">Ask MintiStudio for a fresh access link if you still need onboarding.</p>
+      {% elif link_status == "expired" %}
+        <h1 class="card-title h3 mb-3">This access link has expired</h1>
+        <p class="mb-0">Ask MintiStudio for a fresh access link to continue.</p>
+      {% else %}
+        <h1 class="card-title h3 mb-3">This access link is invalid</h1>
+        <p class="mb-0">The link could not be verified. Request a new one from MintiStudio.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
