@@ -591,21 +591,105 @@
     font-size: 0.78rem;
     color: rgba(255, 255, 255, 0.68);
   }
-  .background-picker-grid {
+  .background-picker-carousel {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
   }
-  .background-picker-grid .bg-visual-option {
-    padding: 0;
-    aspect-ratio: 9 / 16;
+  .background-picker-carousel-viewport {
+    min-width: 0;
     overflow: hidden;
   }
-  .background-picker-grid .bg-visual-option img {
+  .background-picker-carousel-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.82);
+    transition: opacity 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+  }
+  .background-picker-carousel-arrow:hover,
+  .background-picker-carousel-arrow:focus-visible {
+    border-color: rgba(45, 212, 191, 0.42);
+    background: rgba(45, 212, 191, 0.12);
+    color: #ffffff;
+  }
+  .background-picker-carousel-arrow:disabled {
+    opacity: 0.32;
+    cursor: default;
+    pointer-events: none;
+  }
+  .background-picker-track {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 10px;
+    overflow-x: auto;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    padding: 2px;
+  }
+  .background-picker-track::-webkit-scrollbar {
+    display: none;
+  }
+  .background-picker-track .bg-visual-option {
+    padding: 0;
+    flex: 0 0 calc((100% - 50px) / 6);
+    min-width: 110px;
+    aspect-ratio: 9 / 16;
+    overflow: hidden;
+    position: relative;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
+  .background-picker-track .bg-visual-option:hover,
+  .background-picker-track .bg-visual-option:focus-visible {
+    border-color: rgba(45, 212, 191, 0.42);
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.3);
+  }
+  .background-picker-track .bg-visual-option img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+  .background-picker-track .bg-visual-option::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.04) 0%, rgba(15, 23, 42, 0.36) 100%);
+    pointer-events: none;
+  }
+  .bg-visual-option-name {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 2;
+    padding: 6px 8px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.82);
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.15;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 160ms ease, transform 160ms ease;
+    pointer-events: none;
+  }
+  .background-picker-track .bg-visual-option:hover .bg-visual-option-name,
+  .background-picker-track .bg-visual-option:focus-visible .bg-visual-option-name {
+    opacity: 1;
+    transform: translateY(0);
   }
   .background-picker-grid .subscribe-visual-option {
     padding: 0;
@@ -627,13 +711,21 @@
     color: rgba(255, 255, 255, 0.64);
   }
   @media (max-width: 991.98px) {
-    .background-picker-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .background-picker-track .bg-visual-option {
+      flex-basis: calc((100% - 30px) / 4);
     }
   }
   @media (max-width: 575.98px) {
-    .background-picker-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .background-picker-carousel {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+    }
+    .background-picker-carousel-arrow {
+      display: none;
+    }
+    .background-picker-track .bg-visual-option {
+      flex-basis: calc((100% - 10px) / 2.35);
+      min-width: 96px;
     }
   }
   .trs-shell {
@@ -4244,23 +4336,44 @@
                           <div class="background-picker-title">Choose a different default background</div>
                           <button type="button" class="btn btn-link btn-sm text-muted p-0" id="background-picker-close">Done</button>
                         </div>
-                        <div class="background-picker-grid" id="background-visual-grid">
-                          {% for visual in bg_visual_options %}
-                            {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
-                            <button
-                              type="button"
-                              class="static-visual-option bg-visual-option"
-                              data-bg-visual-key="{{ visual.key }}"
-                              data-img-url="{{ bg_img_url or '' }}"
-                              aria-label="Select background {{ visual.label }}"
-                              data-bs-toggle="tooltip"
-                              data-bs-placement="top"
-                              title="Background {{ visual.label }}"
-                            >
-                              <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
-                              <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
-                            </button>
-                          {% endfor %}
+                        <div class="background-picker-carousel">
+                          <button
+                            type="button"
+                            class="background-picker-carousel-arrow"
+                            data-background-carousel-prev
+                            aria-label="Scroll backgrounds left"
+                          >
+                            <i class="bi bi-chevron-left" aria-hidden="true"></i>
+                          </button>
+                          <div class="background-picker-carousel-viewport">
+                            <div class="background-picker-track" id="background-visual-grid" data-background-carousel-track>
+                              {% for visual in bg_visual_options %}
+                                {% set bg_img_url = visual.image_url or (visual.image_filename and url_for('video_shorts_bp.static', filename='img/' ~ visual.image_filename)) %}
+                                <button
+                                  type="button"
+                                  class="static-visual-option bg-visual-option"
+                                  data-bg-visual-key="{{ visual.key }}"
+                                  data-img-url="{{ bg_img_url or '' }}"
+                                  aria-label="Select background {{ visual.label }}"
+                                  data-bs-toggle="tooltip"
+                                  data-bs-placement="top"
+                                  title="Background {{ visual.label }}"
+                                >
+                                  <img src="{{ bg_img_url or '' }}" alt="Background {{ visual.label }}">
+                                  <span class="bg-visual-option-name">{{ visual.label }}</span>
+                                  <span class="bg-selected-badge" aria-hidden="true"><i class="bi bi-check"></i></span>
+                                </button>
+                              {% endfor %}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            class="background-picker-carousel-arrow"
+                            data-background-carousel-next
+                            aria-label="Scroll backgrounds right"
+                          >
+                            <i class="bi bi-chevron-right" aria-hidden="true"></i>
+                          </button>
                         </div>
                       </div>
                       {% if not bg_visual_options %}
@@ -8771,6 +8884,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const backgroundEditBtn = modalEl.querySelector("#background-edit-btn");
   const backgroundPickerPanel = modalEl.querySelector("#background-picker-panel");
   const backgroundPickerCloseBtn = modalEl.querySelector("#background-picker-close");
+  const backgroundCarouselTrack = modalEl.querySelector("[data-background-carousel-track]");
+  const backgroundCarouselPrev = modalEl.querySelector("[data-background-carousel-prev]");
+  const backgroundCarouselNext = modalEl.querySelector("[data-background-carousel-next]");
   const subscribeSelectedCard = modalEl.querySelector("#subscribe-selected-card");
   const subscribeSelectedMedia = modalEl.querySelector("#subscribe-selected-media");
   const subscribeSelectedLabel = modalEl.querySelector("#subscribe-selected-label");
@@ -9088,6 +9204,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const setBackgroundPickerOpen = (isOpen) => {
     backgroundPickerPanel?.classList.toggle("is-open", !!isOpen);
     backgroundEditBtn?.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  };
+  const updateBackgroundCarouselNav = () => {
+    if (!backgroundCarouselTrack) {
+      return;
+    }
+    const maxScrollLeft = Math.max(
+      0,
+      backgroundCarouselTrack.scrollWidth - backgroundCarouselTrack.clientWidth
+    );
+    const scrollLeft = backgroundCarouselTrack.scrollLeft;
+    const threshold = 6;
+    if (backgroundCarouselPrev) {
+      backgroundCarouselPrev.disabled = scrollLeft <= threshold;
+    }
+    if (backgroundCarouselNext) {
+      backgroundCarouselNext.disabled = scrollLeft >= maxScrollLeft - threshold;
+    }
+  };
+  const scrollBackgroundCarousel = (direction) => {
+    if (!backgroundCarouselTrack) {
+      return;
+    }
+    const firstTile = bgVisualButtons[0];
+    const tileGap = Number.parseFloat(window.getComputedStyle(backgroundCarouselTrack).gap || "0") || 0;
+    const tileWidth = firstTile ? firstTile.getBoundingClientRect().width + tileGap : 132;
+    const nextLeft = direction * Math.max(tileWidth * 3, backgroundCarouselTrack.clientWidth * 0.82);
+    backgroundCarouselTrack.scrollBy({ left: nextLeft, behavior: "smooth" });
   };
   const syncActiveBackgroundCard = () => {
     const selected = getActiveBackgroundOption();
@@ -10133,6 +10276,14 @@ document.addEventListener("DOMContentLoaded", () => {
   backgroundPickerCloseBtn?.addEventListener("click", () => {
     setBackgroundPickerOpen(false);
   });
+  backgroundCarouselPrev?.addEventListener("click", () => {
+    scrollBackgroundCarousel(-1);
+  });
+  backgroundCarouselNext?.addEventListener("click", () => {
+    scrollBackgroundCarousel(1);
+  });
+  backgroundCarouselTrack?.addEventListener("scroll", updateBackgroundCarouselNav, { passive: true });
+  window.addEventListener("resize", updateBackgroundCarouselNav);
   visualModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       setVisualMode(button.dataset.visualMode || "video");
@@ -10179,6 +10330,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   setActiveStaticVisual(activeStaticVisualKey);
   syncActiveBackgroundCard();
+  updateBackgroundCarouselNav();
   syncActiveSubscribeCard();
   loadPodcastAudios();
   loadPodcastShortClips();
