@@ -10828,7 +10828,7 @@ const initAdminShareLinkButtons = () => {
       if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !copyTrButton || !copyEnButton || !feedback || !recipientNameInput || !recipientEmailInput) {
         return;
       }
-      const getVideoTitle = () => parentVideoTitle || clipTitle || "Untitled video";
+      const getVideoTitle = () => clipTitle || parentVideoTitle || "Untitled video";
       const getRecipientName = () => String(recipientNameInput.value || "").trim();
       const buildGreeting = (language) => {
         const recipientName = getRecipientName();
