@@ -7331,31 +7331,59 @@ const isExportLimitPayload = (payload) => {
   return errorText.includes("export limit reached") || errorText.includes("monthly export limit reached");
 };
 
-const showExportLimitMessage = (card) => {
+const isStorageQuotaPayload = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const errorText = String(payload.error || payload.message || "").trim().toLowerCase();
+  return errorText.includes("storage full") || errorText.includes("delete files");
+};
+
+const buildQuotaMessageHtml = (payload) => {
+  if (isExportLimitPayload(payload)) {
+    const resetCopy = latestUsageSnapshot?.period?.reset_at
+      ? usageResetCopy(latestUsageSnapshot.period.reset_at)
+      : "";
+    return `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}. <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`;
+  }
+  if (isStorageQuotaPayload(payload)) {
+    const message = String(payload?.message || payload?.error || "").trim();
+    if (!message) {
+      return "";
+    }
+    return `${escapeHtml(message)} <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`;
+  }
+  return "";
+};
+
+const showClipFailureMessage = (card, message, { html = false } = {}) => {
   if (!card) {
     return;
   }
-  const resetCopy = latestUsageSnapshot?.period?.reset_at
-    ? usageResetCopy(latestUsageSnapshot.period.reset_at)
-    : "";
   setClipFeedbackState(card, {
-    message: `You've hit this month's export limit — upgrade or wait until ${resetCopy || "the next reset"}. <a href="${storagePlansUrl}" class="link-warning">Upgrade</a>`,
+    message,
     tone: "text-danger",
     busy: false,
-    html: true,
+    html,
     showSpinner: false,
     disableButton: false,
   });
 };
 
 const handleClipJobFailurePayload = (planIndex, payload = null) => {
-  if (isExportLimitPayload(payload)) {
-    stopClipJobPolling(planIndex, { clearStored: true });
-    const card = getClipCardByPlanIndex(planIndex);
-    if (!card) {
-      return;
-    }
-    showExportLimitMessage(card);
+  stopClipJobPolling(planIndex, { clearStored: true });
+  const card = getClipCardByPlanIndex(planIndex);
+  if (!card) {
+    return;
+  }
+  const quotaHtml = buildQuotaMessageHtml(payload);
+  if (quotaHtml) {
+    showClipFailureMessage(card, quotaHtml, { html: true });
+    return;
+  }
+  const detailedMessage = String(payload?.error || payload?.message || "").trim();
+  if (detailedMessage) {
+    showClipFailureMessage(card, escapeHtml(detailedMessage), { html: true });
     return;
   }
   handleClipJobFailure(planIndex);
@@ -7540,12 +7568,8 @@ const initGenerateClipForms = () => {
           response.status === 409 &&
           typeof payload.message === "string" &&
           payload.message.toLowerCase().includes("already generated");
-        if (response.status === 403 && payload.code === "export_limit_reached") {
-          showExportLimitMessage(card);
-          return;
-        }
-        if (isExportLimitPayload(payload)) {
-          showExportLimitMessage(card);
+        if (response.status === 403 && buildQuotaMessageHtml(payload)) {
+          showClipFailureMessage(card, buildQuotaMessageHtml(payload), { html: true });
           return;
         }
         if (response.status === 429 && payload.code === "concurrency_limit") {
