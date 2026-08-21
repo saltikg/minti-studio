@@ -1256,7 +1256,7 @@ def verify_email():
                 updated_at = now()
             WHERE id = ?
             """,
-            [str(user_id), row[0]],
+            [row[0]],
         )
         conn.commit()
     finally:
