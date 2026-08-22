@@ -84,180 +84,27 @@
     margin: 0 auto;
   }
 
-  .gs-carousel {
-    position: relative;
-    max-width: 860px;
-    margin: 0 auto;
-    background: #0f1620;
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 16px;
-    padding: 20px;
-  }
-
-  .gs-carousel .stage {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-
-  .gs-carousel .nav {
-    flex: 0 0 auto;
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    background: #0c1420;
-    border: 1px solid rgba(255,255,255,.08);
-    color: #e8edf2;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 20px;
-    transition: background .2s,border-color .2s,opacity .2s,transform .2s;
-    user-select: none;
-  }
-
-  .gs-carousel .nav:hover:not([disabled]) {
-    border-color: #2dd4bf;
-    color: #2dd4bf;
-    transform: translateY(-1px);
-  }
-
-  .gs-carousel .nav[disabled] {
-    opacity: .28;
-    cursor: default;
-  }
-
-  .gs-carousel .nav:focus-visible {
-    outline: 2px solid #2dd4bf;
-    outline-offset: 2px;
-  }
-
-  .gs-carousel .frame {
-    flex: 1 1 auto;
-    min-width: 0;
-    position: relative;
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid rgba(255,255,255,.08);
-    box-shadow: 0 20px 50px -24px rgba(0,0,0,.7);
-    background: linear-gradient(135deg,#12324a,#0a1b29);
-  }
-
-  .gs-carousel .frame::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: linear-gradient(180deg,#2dd4bf,transparent);
-    z-index: 3;
-  }
-
-  .gs-carousel .slide {
-    display: none;
-  }
-
-  .gs-carousel .slide.active {
-    display: block;
-  }
-
-  .gs-carousel .slide img,
-  .gs-carousel .slide .ph {
-    display: block;
-    width: 100%;
-    max-height: 500px;
-    object-fit: contain;
-    background: #0a1420;
-  }
-
-  .gs-carousel .ph {
-    height: 46vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255,255,255,.4);
-    font-size: 14px;
-  }
-
-  .gs-carousel .caption {
-    margin-top: 22px;
-  }
-
-  .gs-carousel .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    background: rgba(45,212,191,.12);
-    border: 1px solid rgba(45,212,191,.4);
-    color: #2dd4bf;
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-    margin-bottom: 14px;
-  }
-
-  .gs-carousel .cap-title {
-    font-size: clamp(1.45rem, 2.6vw, 2rem);
-    font-weight: 600;
-    letter-spacing: -.01em;
-    margin: 0 0 10px;
-    color: #e8edf2;
-    line-height: 1.18;
-  }
-
-  .gs-carousel .cap-body {
-    color: var(--text-2);
-    font-size: 1rem;
-    line-height: 1.75;
-    margin: 0;
-    max-width: 64ch;
-  }
-
-  .gs-carousel .foot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    margin-top: 24px;
-  }
-
-  .gs-carousel .counter {
-    color: #8a97a6;
-    font-size: 14px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .gs-carousel .dots {
-    display: flex;
-    gap: 9px;
-  }
-
-  .gs-carousel .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #2a3543;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    transition: background .2s,transform .2s;
-  }
-
-  .gs-carousel .dot.active {
-    background: #2dd4bf;
-    transform: scale(1.15);
-  }
-
-  .gs-carousel .dot:focus-visible {
-    outline: 2px solid #2dd4bf;
-    outline-offset: 2px;
-  }
+  .gs-carousel{position:relative;max-width:860px;margin:0 auto;background:#0f1620;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;}
+  .gs-carousel .stage{position:relative;display:flex;align-items:center;gap:14px;}
+  .gs-carousel .nav{flex:0 0 auto;width:52px;height:52px;border-radius:50%;background:#0c1420;border:1px solid rgba(255,255,255,.08);color:#e8edf2;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;transition:background .2s,border-color .2s,opacity .2s,transform .2s;user-select:none;}
+  .gs-carousel .nav:hover:not([disabled]){border-color:#2dd4bf;color:#2dd4bf;transform:translateY(-1px);}
+  .gs-carousel .nav[disabled]{opacity:.28;cursor:default;}
+  .gs-carousel .nav:focus-visible{outline:2px solid #2dd4bf;outline-offset:2px;}
+  .gs-carousel .frame{flex:1 1 auto;min-width:0;position:relative;height:58vh;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 50px -24px rgba(0,0,0,.7);background:#0a1420;}
+  .gs-carousel .frame::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#2dd4bf,transparent);z-index:3;}
+  .gs-carousel .slide{position:absolute;inset:0;display:none;align-items:center;justify-content:center;}
+  .gs-carousel .slide.active{display:flex;}
+  .gs-carousel .slide img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;}
+  .gs-carousel .caption{margin-top:22px;min-height:96px;}
+  .gs-carousel .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.4);color:#2dd4bf;font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:14px;}
+  .gs-carousel .cap-title{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 10px;color:#e8edf2;line-height:1.2;}
+  .gs-carousel .cap-body{color:var(--text-2);font-size:16px;line-height:1.7;margin:0;max-width:64ch;}
+  .gs-carousel .foot{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:16px;}
+  .gs-carousel .counter{color:#8a97a6;font-size:14px;font-variant-numeric:tabular-nums;}
+  .gs-carousel .dots{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;}
+  .gs-carousel .dot{width:9px;height:9px;border-radius:50%;background:#2a3543;border:none;cursor:pointer;padding:0;transition:background .2s,transform .2s;}
+  .gs-carousel .dot.active{background:#2dd4bf;transform:scale(1.15);}
+  .gs-carousel .dot:focus-visible{outline:2px solid #2dd4bf;outline-offset:2px;}
 
   .vs-blog-section {
     display: grid;
@@ -591,24 +438,10 @@
   }
 
   @media (max-width: 767px) {
-    .gs-carousel {
-      padding: 16px;
-    }
-
-    .gs-carousel .nav {
-      width: 42px;
-      height: 42px;
-      font-size: 17px;
-    }
-
-    .gs-carousel .cap-title {
-      font-size: 21px;
-    }
-
-    .gs-carousel .slide img,
-    .gs-carousel .slide .ph {
-      max-height: 48vh;
-    }
+    .gs-carousel .nav{width:42px;height:42px;font-size:17px;}
+    .gs-carousel .cap-title{font-size:21px;}
+    .gs-carousel .frame{height:44vh;}
+    .gs-carousel .caption{min-height:120px;}
 
     .vs-blog-step-caption {
       left: 0.8rem;
@@ -631,16 +464,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .gs-carousel .nav,
-    .gs-carousel .dot,
-    .vs-blog-step-figure {
-      transition: none;
-    }
-
-    .vs-blog-step-figure:hover,
-    .vs-blog-step-figure:focus-within {
-      transform: none;
-    }
+    .gs-carousel .nav,.gs-carousel .dot{transition:none;}
   }
 </style>
 {% endblock %}
@@ -680,8 +504,6 @@
                   src="{{ url_for('video_shorts_bp.static', filename=primary_image.src) }}"
                   alt="{{ primary_image.alt or ('Step ' ~ (section.step_number or loop.index)) }}"
                 >
-              {% else %}
-                <div class="ph">Missing image</div>
               {% endif %}
             </div>
           {% endfor %}
@@ -789,17 +611,13 @@
 
 {% block scripts %}
   {{ super() }}
-  <script>
-    (function(){
-      var steps = [
-        {% for section in article.sections %}
-        {
-          badge: {{ ("Step " ~ (section.step_number or "%02d"|format(loop.index)))|tojson }},
-          title: {{ section.heading|tojson }},
-          body: {{ (section.paragraphs|join(' '))|tojson }}
-        }{% if not loop.last %},{% endif %}
-        {% endfor %}
-      ];
+<script>
+(function(){
+  var steps=[
+    {% for section in article.sections %}
+    {badge:{{ ("Step " ~ (section.step_number or "%02d"|format(loop.index)))|tojson }},title:{{ section.heading|tojson }},body:{{ (section.paragraphs|join(' '))|tojson }}}{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
       var root=document.querySelector('[data-carousel]');
       if(!root) return;
       var slides=root.querySelectorAll('.slide');
