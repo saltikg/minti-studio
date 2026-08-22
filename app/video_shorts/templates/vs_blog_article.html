@@ -84,39 +84,179 @@
     margin: 0 auto;
   }
 
-  .vs-blog-step-carousel {
+  .gs-carousel {
+    position: relative;
     max-width: 860px;
     margin: 0 auto;
-    width: 100%;
-    display: grid;
-    gap: 1rem;
+    background: #0f1620;
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 20px;
   }
 
-  .vs-blog-step-carousel-shell {
+  .gs-carousel .stage {
     position: relative;
-    overflow: hidden;
-    min-height: 0;
-    border-radius: 28px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background:
-      radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 28%),
-      linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(8, 15, 25, 0.98));
-    box-shadow: 0 28px 72px -28px rgba(0, 0, 0, 0.78);
-  }
-
-  .vs-blog-step-carousel-track {
     display: flex;
-    align-items: stretch;
-    transition: transform 240ms ease;
-    will-change: transform;
+    align-items: center;
+    gap: 14px;
   }
 
-  .vs-blog-step-slide {
-    flex: 0 0 100%;
-    display: grid;
-    align-content: start;
-    gap: 1rem;
-    padding: 1rem;
+  .gs-carousel .nav {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: #0c1420;
+    border: 1px solid rgba(255,255,255,.08);
+    color: #e8edf2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 20px;
+    transition: background .2s,border-color .2s,opacity .2s,transform .2s;
+    user-select: none;
+  }
+
+  .gs-carousel .nav:hover:not([disabled]) {
+    border-color: #2dd4bf;
+    color: #2dd4bf;
+    transform: translateY(-1px);
+  }
+
+  .gs-carousel .nav[disabled] {
+    opacity: .28;
+    cursor: default;
+  }
+
+  .gs-carousel .nav:focus-visible {
+    outline: 2px solid #2dd4bf;
+    outline-offset: 2px;
+  }
+
+  .gs-carousel .frame {
+    flex: 1 1 auto;
+    min-width: 0;
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.08);
+    box-shadow: 0 20px 50px -24px rgba(0,0,0,.7);
+    background: linear-gradient(135deg,#12324a,#0a1b29);
+  }
+
+  .gs-carousel .frame::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg,#2dd4bf,transparent);
+    z-index: 3;
+  }
+
+  .gs-carousel .slide {
+    display: none;
+  }
+
+  .gs-carousel .slide.active {
+    display: block;
+  }
+
+  .gs-carousel .slide img,
+  .gs-carousel .slide .ph {
+    display: block;
+    width: 100%;
+    max-height: 500px;
+    object-fit: contain;
+    background: #0a1420;
+  }
+
+  .gs-carousel .ph {
+    height: 46vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,.4);
+    font-size: 14px;
+  }
+
+  .gs-carousel .caption {
+    margin-top: 22px;
+  }
+
+  .gs-carousel .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(45,212,191,.12);
+    border: 1px solid rgba(45,212,191,.4);
+    color: #2dd4bf;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .gs-carousel .cap-title {
+    font-size: clamp(1.45rem, 2.6vw, 2rem);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0 0 10px;
+    color: #e8edf2;
+    line-height: 1.18;
+  }
+
+  .gs-carousel .cap-body {
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.75;
+    margin: 0;
+    max-width: 64ch;
+  }
+
+  .gs-carousel .foot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin-top: 24px;
+  }
+
+  .gs-carousel .counter {
+    color: #8a97a6;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .gs-carousel .dots {
+    display: flex;
+    gap: 9px;
+  }
+
+  .gs-carousel .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #2a3543;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: background .2s,transform .2s;
+  }
+
+  .gs-carousel .dot.active {
+    background: #2dd4bf;
+    transform: scale(1.15);
+  }
+
+  .gs-carousel .dot:focus-visible {
+    outline: 2px solid #2dd4bf;
+    outline-offset: 2px;
   }
 
   .vs-blog-section {
@@ -451,20 +591,23 @@
   }
 
   @media (max-width: 767px) {
-    .vs-blog-step-carousel-shell {
-      border-radius: 22px;
+    .gs-carousel {
+      padding: 16px;
     }
 
-    .vs-blog-step-slide {
-      padding: 0.8rem;
+    .gs-carousel .nav {
+      width: 42px;
+      height: 42px;
+      font-size: 17px;
     }
 
-    .vs-blog-step-figure {
-      min-height: 420px;
+    .gs-carousel .cap-title {
+      font-size: 21px;
     }
 
-    .vs-blog-step-slide-copy {
-      min-height: 0;
+    .gs-carousel .slide img,
+    .gs-carousel .slide .ph {
+      max-height: 48vh;
     }
 
     .vs-blog-step-caption {
@@ -488,16 +631,14 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .vs-blog-step-carousel-track,
+    .gs-carousel .nav,
+    .gs-carousel .dot,
     .vs-blog-step-figure {
       transition: none;
     }
 
     .vs-blog-step-figure:hover,
-    .vs-blog-step-figure:focus-within,
-    .vs-blog-step-nav-btn:hover,
-    .vs-blog-step-nav-btn:focus,
-    .vs-blog-step-dot {
+    .vs-blog-step-figure:focus-within {
       transform: none;
     }
   }
@@ -527,73 +668,36 @@
   </article>
 
   {% if article.display_mode == 'step_carousel' %}
-    <section class="vs-blog-step-carousel" aria-labelledby="article-steps-title">
-      <div class="vs-blog-step-carousel-shell" data-step-carousel>
-        <div class="vs-blog-step-carousel-track" data-step-carousel-track>
+    <div class="gs-carousel" data-carousel tabindex="0">
+      <div class="stage">
+        <button class="nav" data-prev aria-label="Previous step">&#8592;</button>
+        <div class="frame">
           {% for section in article.sections %}
             {% set primary_image = (section.images or [])[0] if section.images else None %}
-            <article
-              class="vs-blog-step-slide"
-              data-step-slide
-              data-step-index="{{ loop.index0 }}"
-            >
+            <div class="slide{% if loop.first %} active{% endif %}">
               {% if primary_image %}
-                <figure class="vs-blog-step-figure">
-                  <img
-                    src="{{ url_for('video_shorts_bp.static', filename=primary_image.src) }}"
-                    alt="{{ primary_image.alt or section.heading }}"
-                    loading="{% if loop.first %}eager{% else %}lazy{% endif %}"
-                  >
-                  <figcaption class="vs-blog-step-caption">
-                    {% if section.step_number %}
-                      <strong>Step {{ section.step_number }}</strong>
-                    {% endif %}
-                    <span>{{ section.heading }}</span>
-                  </figcaption>
-                </figure>
+                <img
+                  src="{{ url_for('video_shorts_bp.static', filename=primary_image.src) }}"
+                  alt="{{ primary_image.alt or ('Step ' ~ (section.step_number or loop.index)) }}"
+                >
+              {% else %}
+                <div class="ph">Missing image</div>
               {% endif %}
-              <div class="vs-blog-step-slide-copy">
-                <div class="vs-blog-step-heading">
-                  {% if section.step_number %}
-                    <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
-                  {% endif %}
-                  <h2 id="{% if loop.first %}article-steps-title{% endif %}">{{ section.heading }}</h2>
-                </div>
-                {% for paragraph in section.paragraphs %}
-                  <p>{{ paragraph }}</p>
-                {% endfor %}
-                {% if section.bullets %}
-                  <ul>
-                    {% for bullet in section.bullets %}
-                      <li>{{ bullet }}</li>
-                    {% endfor %}
-                  </ul>
-                {% endif %}
-              </div>
-            </article>
+            </div>
           {% endfor %}
         </div>
+        <button class="nav" data-next aria-label="Next step">&#8594;</button>
       </div>
-      <div class="vs-blog-step-nav">
-        <button type="button" class="vs-blog-step-nav-btn" data-step-prev aria-label="Previous step">←</button>
-        <div class="vs-blog-step-nav-status">
-          <span data-step-current>1</span>
-          <span>/</span>
-          <span data-step-total>{{ article.sections|length }}</span>
-        </div>
-        <button type="button" class="vs-blog-step-nav-btn" data-step-next aria-label="Next step">→</button>
+      <div class="caption">
+        <span class="badge" data-badge>Step 01</span>
+        <h3 class="cap-title" data-title></h3>
+        <p class="cap-body" data-body></p>
       </div>
-      <div class="vs-blog-step-dots" aria-label="Choose step">
-        {% for section in article.sections %}
-          <button
-            type="button"
-            class="vs-blog-step-dot{% if loop.first %} is-active{% endif %}"
-            data-step-dot="{{ loop.index0 }}"
-            aria-label="Go to step {{ section.step_number or loop.index }}"
-          ></button>
-        {% endfor %}
+      <div class="foot">
+        <div class="counter"><span data-current>1</span> / <span data-total>{{ article.sections|length }}</span></div>
+        <div class="dots" data-dots></div>
       </div>
-    </section>
+    </div>
   {% else %}
     <div class="vs-blog-article-body">
       {% for section in article.sections %}
@@ -686,77 +790,48 @@
 {% block scripts %}
   {{ super() }}
   <script>
-    (() => {
-      const carousel = document.querySelector("[data-step-carousel]");
-      if (!carousel) {
-        return;
+    (function(){
+      var steps = [
+        {% for section in article.sections %}
+        {
+          badge: {{ ("Step " ~ (section.step_number or "%02d"|format(loop.index)))|tojson }},
+          title: {{ section.heading|tojson }},
+          body: {{ (section.paragraphs|join(' '))|tojson }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ];
+      var root=document.querySelector('[data-carousel]');
+      if(!root) return;
+      var slides=root.querySelectorAll('.slide');
+      var prev=root.querySelector('[data-prev]'), next=root.querySelector('[data-next]');
+      var badge=root.querySelector('[data-badge]'), title=root.querySelector('[data-title]'), body=root.querySelector('[data-body]');
+      var curEl=root.querySelector('[data-current]'), totalEl=root.querySelector('[data-total]'), dotsWrap=root.querySelector('[data-dots]');
+      var i=0, n=slides.length;
+      totalEl.textContent=n;
+      for(var d=0; d<n; d++){
+        var b=document.createElement('button');
+        b.className='dot'+(d===0?' active':'');
+        b.setAttribute('aria-label','Go to step '+(d+1));
+        (function(idx){ b.addEventListener('click', function(){ go(idx); }); })(d);
+        dotsWrap.appendChild(b);
       }
-
-      const slides = Array.from(carousel.querySelectorAll("[data-step-slide]"));
-      const track = carousel.querySelector("[data-step-carousel-track]");
-      const shell = carousel.querySelector(".vs-blog-step-carousel-shell");
-      const prevBtn = document.querySelector("[data-step-prev]");
-      const nextBtn = document.querySelector("[data-step-next]");
-      const currentLabel = document.querySelector("[data-step-current]");
-      const dots = Array.from(document.querySelectorAll("[data-step-dot]"));
-      if (!slides.length || !track || !shell || !prevBtn || !nextBtn || !currentLabel) {
-        return;
+      var dots=dotsWrap.querySelectorAll('.dot');
+      function render(){
+        slides.forEach(function(s,idx){ s.classList.toggle('active', idx===i); });
+        dots.forEach(function(dt,idx){ dt.classList.toggle('active', idx===i); });
+        var st=steps[i]||{};
+        if(badge) badge.textContent=st.badge||('Step '+String(i+1).padStart(2,'0'));
+        if(title) title.textContent=st.title||'';
+        if(body) body.textContent=st.body||'';
+        curEl.textContent=i+1;
+        prev.disabled=(i===0);
+        next.disabled=(i===n-1);
       }
-
-      let activeIndex = 0;
-      const maxIndex = slides.length - 1;
-
-      function syncShellHeight() {
-        let tallest = 0;
-        slides.forEach((slide) => {
-          tallest = Math.max(tallest, slide.offsetHeight);
-        });
-        if (tallest > 0) {
-          shell.style.minHeight = `${tallest}px`;
-        }
-      }
-
-      function render(index) {
-        activeIndex = Math.max(0, Math.min(index, maxIndex));
-        track.style.transform = `translateX(-${activeIndex * 100}%)`;
-        dots.forEach((dot, dotIndex) => {
-          dot.classList.toggle("is-active", dotIndex === activeIndex);
-          dot.setAttribute("aria-current", dotIndex === activeIndex ? "true" : "false");
-        });
-        prevBtn.disabled = activeIndex === 0;
-        nextBtn.disabled = activeIndex === maxIndex;
-        currentLabel.textContent = String(activeIndex + 1);
-      }
-
-      prevBtn.addEventListener("click", () => render(activeIndex - 1));
-      nextBtn.addEventListener("click", () => render(activeIndex + 1));
-      dots.forEach((dot) => {
-        dot.addEventListener("click", () => render(Number(dot.dataset.stepDot || 0)));
-      });
-
-      carousel.addEventListener("keydown", (event) => {
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          render(activeIndex + 1);
-        } else if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          render(activeIndex - 1);
-        }
-      });
-
-      carousel.tabIndex = 0;
-      window.addEventListener("resize", syncShellHeight);
-      window.addEventListener("load", syncShellHeight);
-      slides.forEach((slide) => {
-        slide.querySelectorAll("img").forEach((img) => {
-          if (!img.complete) {
-            img.addEventListener("load", syncShellHeight, { once: true });
-            img.addEventListener("error", syncShellHeight, { once: true });
-          }
-        });
-      });
-      syncShellHeight();
-      render(0);
+      function go(idx){ i=Math.max(0,Math.min(n-1,idx)); render(); }
+      prev.addEventListener('click', function(){ go(i-1); });
+      next.addEventListener('click', function(){ go(i+1); });
+      root.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){go(i-1);} if(e.key==='ArrowRight'){go(i+1);} });
+      render();
     })();
   </script>
 {% endblock %}
