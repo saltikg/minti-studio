@@ -163,11 +163,37 @@ def _resolve_brand_local_uploads_channel(conn, brand_id: str):
     }
 
 
+def _video_already_in_bucket(conn, video_id: str, local_bucket_channel_id) -> bool:
+    if not video_id or local_bucket_channel_id is None:
+        return False
+    row = conn.execute(
+        """
+        SELECT id
+        FROM youtube_videos
+        WHERE video_id = ?
+          AND (channel_id = ? OR local_bucket_channel_id = ?)
+        LIMIT 1
+        """,
+        [video_id, local_bucket_channel_id, local_bucket_channel_id],
+    ).fetchone()
+    return bool(row)
+
+
 def _extract_creator_email(description: str | None) -> str | None:
     match = EMAIL_RE.search(str(description or ""))
     if not match:
         return None
     return match.group(0).strip() or None
+
+
+def _looks_like_urlish_name(value: str) -> bool:
+    candidate = str(value or "").strip().lower()
+    if not candidate:
+        return False
+    blocked_fragments = ("http", "www.", ".com", ".net", ".org", "/", "@")
+    if any(fragment in candidate for fragment in blocked_fragments):
+        return True
+    return "." in candidate and "/" in candidate
 
 
 def _extract_creator_name(description: str | None, channel_title: str | None) -> str | None:
@@ -179,6 +205,8 @@ def _extract_creator_name(description: str | None, channel_title: str | None) ->
             continue
         candidate = line.split(":", 1)[1].strip()
         candidate = EMAIL_RE.sub("", candidate).strip(" -|,;/")
+        if _looks_like_urlish_name(candidate):
+            continue
         parts = [part for part in re.split(r"\s+", candidate) if part]
         if 1 <= len(parts) <= 4 and all(any(ch.isalpha() for ch in part) for part in parts):
             return " ".join(parts)[:255]
@@ -248,6 +276,7 @@ def admin_youtube_channel_diagnose():
         gate_subscriber = _subscriber_gate(subscriber_count)
         gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
         outreach_detail = None
+        already_added = False
         try:
             conn = get_db_readonly()
         except RuntimeError as exc:
@@ -255,6 +284,16 @@ def admin_youtube_channel_diagnose():
             return jsonify({"error": "server_config", "message": message or "Database is not configured."}), 500
         try:
             outreach_detail = _load_admin_global_outreach_match(conn, resolved_channel_id)
+            candidate_video_id = str((video_meta or {}).get("video_id") or "").strip()
+            active_brand_id = str(current_brand_id() or "").strip() or None
+            if candidate_video_id and active_brand_id:
+                local_channel = _resolve_brand_local_uploads_channel(conn, active_brand_id)
+                if local_channel:
+                    already_added = _video_already_in_bucket(
+                        conn,
+                        candidate_video_id,
+                        local_channel.get("channel_id"),
+                    )
         finally:
             conn.close()
 
@@ -273,7 +312,10 @@ def admin_youtube_channel_diagnose():
                 "gate_cadence": gate_cadence,
                 "longform_last_60d": longform_last_60d,
                 "shorts_last_30": shorts_last_30,
+                "shorts_window": "last_30_uploads",
+                "shorts_sample_size": UPLOAD_SAMPLE_SIZE,
                 "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+                "already_added": already_added,
                 "already_reached": bool(outreach_detail),
                 "outreach_detail": outreach_detail,
             }
@@ -347,17 +389,17 @@ def admin_add_youtube_video():
         local_bucket_channel_id = local_channel["channel_id"]
         owner_user_id = local_channel["owner_user_id"]
 
-        existing_local = conn.execute(
-            """
-            SELECT id
-            FROM youtube_videos
-            WHERE video_id = ?
-              AND (channel_id = ? OR local_bucket_channel_id = ?)
-            LIMIT 1
-            """,
-            [video_id, local_bucket_channel_id, local_bucket_channel_id],
-        ).fetchone()
-        if existing_local:
+        if _video_already_in_bucket(conn, video_id, local_bucket_channel_id):
+            existing_local = conn.execute(
+                """
+                SELECT id
+                FROM youtube_videos
+                WHERE video_id = ?
+                  AND (channel_id = ? OR local_bucket_channel_id = ?)
+                LIMIT 1
+                """,
+                [video_id, local_bucket_channel_id, local_bucket_channel_id],
+            ).fetchone()
             row = conn.execute(
                 """
                 SELECT id, channel_id, brand_id, title, creator_name, creator_email
