@@ -462,6 +462,8 @@ def _ensure_video_crop_schema(conn) -> set:
         ("podcast_audio_filename", "VARCHAR", None),
         ("visual_mode", "VARCHAR", "video"),
         ("podcast_overlay_short_ids", "VARCHAR", None),
+        ("creator_name", "VARCHAR", None),
+        ("creator_email", "VARCHAR", None),
     ]
     for column, col_type, default in definitions:
         if column not in cols:
