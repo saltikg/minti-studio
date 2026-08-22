@@ -179,6 +179,24 @@ def _video_already_in_bucket(conn, video_id: str, local_bucket_channel_id) -> bo
     return bool(row)
 
 
+def _count_videos_for_creator_channel(conn, channel_id: str) -> int:
+    normalized_channel_id = str(channel_id or "").strip()
+    if not normalized_channel_id:
+        return 0
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM youtube_videos
+        WHERE channel_id = ?
+        """,
+        [normalized_channel_id],
+    ).fetchone()
+    try:
+        return int((row or [0])[0] or 0)
+    except Exception:
+        return 0
+
+
 def _extract_creator_email(description: str | None) -> str | None:
     match = EMAIL_RE.search(str(description or ""))
     if not match:
@@ -277,6 +295,7 @@ def admin_youtube_channel_diagnose():
         gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
         outreach_detail = None
         already_added = False
+        channel_video_count = 0
         try:
             conn = get_db_readonly()
         except RuntimeError as exc:
@@ -284,6 +303,7 @@ def admin_youtube_channel_diagnose():
             return jsonify({"error": "server_config", "message": message or "Database is not configured."}), 500
         try:
             outreach_detail = _load_admin_global_outreach_match(conn, resolved_channel_id)
+            channel_video_count = _count_videos_for_creator_channel(conn, resolved_channel_id)
             candidate_video_id = str((video_meta or {}).get("video_id") or "").strip()
             active_brand_id = str(current_brand_id() or "").strip() or None
             if candidate_video_id and active_brand_id:
@@ -317,6 +337,8 @@ def admin_youtube_channel_diagnose():
                 "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
                 "already_added": already_added,
                 "already_reached": bool(outreach_detail),
+                "channel_already_in_minti": channel_video_count > 0,
+                "channel_video_count": channel_video_count,
                 "outreach_detail": outreach_detail,
             }
         )
