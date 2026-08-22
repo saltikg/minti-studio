@@ -95,6 +95,7 @@
   .vs-blog-step-carousel-shell {
     position: relative;
     overflow: hidden;
+    min-height: 0;
     border-radius: 28px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background:
@@ -105,6 +106,7 @@
 
   .vs-blog-step-carousel-track {
     display: flex;
+    align-items: stretch;
     transition: transform 240ms ease;
     will-change: transform;
   }
@@ -112,6 +114,7 @@
   .vs-blog-step-slide {
     flex: 0 0 100%;
     display: grid;
+    align-content: start;
     gap: 1rem;
     padding: 1rem;
   }
@@ -178,6 +181,10 @@
 
   .vs-blog-step-figure {
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 500px;
     margin: 0;
     overflow: hidden;
     border-radius: 10px;
@@ -232,6 +239,7 @@
   .vs-blog-step-slide-copy {
     display: grid;
     gap: 0.7rem;
+    min-height: 15.5rem;
     padding: 0.2rem 0.1rem 0.35rem;
   }
 
@@ -451,6 +459,14 @@
       padding: 0.8rem;
     }
 
+    .vs-blog-step-figure {
+      min-height: 420px;
+    }
+
+    .vs-blog-step-slide-copy {
+      min-height: 0;
+    }
+
     .vs-blog-step-caption {
       left: 0.8rem;
       top: 0.8rem;
@@ -520,7 +536,6 @@
               class="vs-blog-step-slide"
               data-step-slide
               data-step-index="{{ loop.index0 }}"
-              {% if not loop.first %}hidden{% endif %}
             >
               {% if primary_image %}
                 <figure class="vs-blog-step-figure">
@@ -679,23 +694,31 @@
 
       const slides = Array.from(carousel.querySelectorAll("[data-step-slide]"));
       const track = carousel.querySelector("[data-step-carousel-track]");
+      const shell = carousel.querySelector(".vs-blog-step-carousel-shell");
       const prevBtn = document.querySelector("[data-step-prev]");
       const nextBtn = document.querySelector("[data-step-next]");
       const currentLabel = document.querySelector("[data-step-current]");
       const dots = Array.from(document.querySelectorAll("[data-step-dot]"));
-      if (!slides.length || !track || !prevBtn || !nextBtn || !currentLabel) {
+      if (!slides.length || !track || !shell || !prevBtn || !nextBtn || !currentLabel) {
         return;
       }
 
       let activeIndex = 0;
       const maxIndex = slides.length - 1;
 
+      function syncShellHeight() {
+        let tallest = 0;
+        slides.forEach((slide) => {
+          tallest = Math.max(tallest, slide.offsetHeight);
+        });
+        if (tallest > 0) {
+          shell.style.minHeight = `${tallest}px`;
+        }
+      }
+
       function render(index) {
         activeIndex = Math.max(0, Math.min(index, maxIndex));
         track.style.transform = `translateX(-${activeIndex * 100}%)`;
-        slides.forEach((slide, slideIndex) => {
-          slide.hidden = slideIndex !== activeIndex;
-        });
         dots.forEach((dot, dotIndex) => {
           dot.classList.toggle("is-active", dotIndex === activeIndex);
           dot.setAttribute("aria-current", dotIndex === activeIndex ? "true" : "false");
@@ -722,6 +745,17 @@
       });
 
       carousel.tabIndex = 0;
+      window.addEventListener("resize", syncShellHeight);
+      window.addEventListener("load", syncShellHeight);
+      slides.forEach((slide) => {
+        slide.querySelectorAll("img").forEach((img) => {
+          if (!img.complete) {
+            img.addEventListener("load", syncShellHeight, { once: true });
+            img.addEventListener("error", syncShellHeight, { once: true });
+          }
+        });
+      });
+      syncShellHeight();
       render(0);
     })();
   </script>
