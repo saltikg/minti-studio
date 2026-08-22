@@ -32,10 +32,6 @@ BLOG_ARTICLES = [
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/01-open-account.png",
-                        "alt": "MintiStudio account sign-in screen",
-                    },
-                    {
                         "src": "img/blog/getting-started/02-my-videos.png",
                         "alt": "My Videos library in MintiStudio",
                     },
