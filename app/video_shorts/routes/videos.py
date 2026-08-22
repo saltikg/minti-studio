@@ -3149,16 +3149,8 @@ def videos_page(channel_id):
     except Exception:
         page = 1
     page_size = 50
-    sort_key = request.args.get("sort", "published")
+    requested_sort_key = (request.args.get("sort") or "").strip().lower()
     sort_dir = request.args.get("dir", "desc")
-
-    sort_map = {
-        "title": "title",
-        "published": "published_at",
-        "downloaded": "downloaded_at",
-    }
-    sort_col = sort_map.get(sort_key, "published_at")
-    sort_dir_clean = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
     search_q = (request.args.get("q") or "").strip()
     video_id_q = (request.args.get("vid") or "").strip()
     try:
@@ -3228,6 +3220,15 @@ def videos_page(channel_id):
         "brand_id": row[11],
     }
     is_local_uploads_channel = str(channel.get("channel_url") or "").strip().lower() == "local://uploads"
+    sort_key = requested_sort_key or ("added" if is_local_uploads_channel else "published")
+    sort_map = {
+        "title": "title",
+        "published": "published_at",
+        "downloaded": "downloaded_at",
+        "added": "id",
+    }
+    sort_col = sort_map.get(sort_key, "published_at")
+    sort_dir_clean = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
     channel_scope_sql = _channel_video_scope_sql(include_local_bucket_attachment=is_local_uploads_channel)
     channel_scope_params = _channel_video_scope_params(
         channel_id,

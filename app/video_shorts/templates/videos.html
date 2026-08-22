@@ -229,6 +229,14 @@
             <th class="vs-col-shorts">Shorts</th>
             <th class="vs-col-stats">Stats</th>
             <th class="vs-col-published">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='added', dir='asc' if sort!='added' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+                Added
+              {% if sort == 'added' %}
+                <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
+              {% endif %}
+              </a>
+            </th>
+            <th class="vs-col-published">
               <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
                 Published
               {% if sort == 'published' %}
