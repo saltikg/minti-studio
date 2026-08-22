@@ -297,6 +297,11 @@ def admin_youtube_channel_diagnose():
         subscriber_count = subscriber_info.get("subscriber_count")
         gate_subscriber = _subscriber_gate(subscriber_count)
         gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
+        creator_name = None
+        creator_email = None
+        if video_meta:
+            creator_name = _extract_creator_name(video_meta.get("description"), video_meta.get("channel_title"))
+            creator_email = _extract_creator_email(video_meta.get("description"))
         outreach_detail = None
         already_added = False
         channel_video_count = 0
@@ -331,6 +336,8 @@ def admin_youtube_channel_diagnose():
                 "channel_id": resolved_channel_id,
                 "channel_title": channel_title,
                 "subscriber_count": subscriber_count,
+                "creator_name": creator_name,
+                "creator_email": creator_email,
                 "eligible": gate_subscriber != "hedef_disi" and gate_cadence == "aktif",
                 "gate_subscriber": gate_subscriber,
                 "gate_cadence": gate_cadence,
