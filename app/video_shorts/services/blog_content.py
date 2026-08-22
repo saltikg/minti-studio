@@ -20,6 +20,7 @@ BLOG_ARTICLES = [
         "published_on": date(2026, 8, 21),
         "author_name": "MintiStudio Team",
         "reading_time": "7 min read",
+        "display_mode": "step_carousel",
         "sections": [
             {
                 "step_number": "01",
