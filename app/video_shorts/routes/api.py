@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app, g, jsonify, request
 
@@ -17,12 +18,25 @@ from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
+from app.video_shorts.youtube_api import (
+    YoutubeApiError,
+    extract_channel_id,
+    extract_video_id,
+    fetch_channel_subscriber_counts,
+    fetch_playlist_items_batch,
+    fetch_video_metadata,
+    fetch_video_stats,
+    get_channel_metadata,
+)
+from app.video_shorts.routes.videos import _load_admin_global_outreach_match
 
 
 CLIENT_ERROR_RATE_LIMITS = [
     RateLimitRule(limit=10, window_seconds=60),
     RateLimitRule(limit=30, window_seconds=3600),
 ]
+LONGFORM_WINDOW_DAYS = 60
+UPLOAD_SAMPLE_SIZE = 30
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -38,6 +52,176 @@ def _duration_minutes(duration_seconds) -> float:
 def _check_caption_token(req):
     token = req.headers.get("X-Api-Token")
     return bool(token and token == CAPTION_API_TOKEN)
+
+
+def _parse_yt_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _resolve_channel_context(raw_url: str):
+    candidate = str(raw_url or "").strip()
+    if not candidate:
+        return None, None, ("missing_url", "Missing url.")
+
+    video_id = extract_video_id(candidate)
+    if video_id:
+        meta = fetch_video_metadata(video_id)
+        channel_id = str(meta.get("channel_id") or "").strip()
+        if not channel_id:
+            return None, None, ("channel_not_found", "Channel could not be resolved from video metadata.")
+        return channel_id, meta, None
+
+    channel_id = extract_channel_id(candidate)
+    if not channel_id:
+        return None, None, ("invalid_url", "Unsupported or invalid YouTube URL.")
+    return str(channel_id).strip(), None, None
+
+
+def _collect_recent_uploads(uploads_playlist_id: str, *, limit: int = UPLOAD_SAMPLE_SIZE):
+    videos = []
+    page_token = None
+    while len(videos) < limit:
+        batch = fetch_playlist_items_batch(
+            playlist_id=uploads_playlist_id,
+            page_token=page_token,
+            max_results=min(50, limit),
+        )
+        batch_videos = batch.get("videos") or []
+        if not batch_videos:
+            break
+        videos.extend(batch_videos)
+        page_token = batch.get("next_page_token")
+        if not page_token:
+            break
+    return videos[:limit]
+
+
+def _subscriber_gate(subscriber_count):
+    try:
+        count = int(subscriber_count)
+    except (TypeError, ValueError):
+        return "hedef_disi"
+    if count < 100_000:
+        return "ideal"
+    if count <= 300_000:
+        return "uygun"
+    return "hedef_disi"
+
+
+def _youtube_env_error_message(exc: Exception) -> str | None:
+    message = str(exc or "").strip()
+    lowered = message.lower()
+    if "youtub" in lowered and ("api key" in lowered or "oauth" in lowered):
+        return "YouTube API credentials are not configured for this environment."
+    return None
+
+
+@video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
+def admin_youtube_channel_diagnose():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"error": "unauthorized", "message": "Admin session required."}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"error": "forbidden", "message": "Admin access required."}), 403
+
+    payload = request.get_json(silent=True) or {}
+    raw_url = str(payload.get("url") or "").strip()
+    if not raw_url:
+        return jsonify({"error": "bad_request", "message": "Request body must include a YouTube url."}), 400
+
+    try:
+        resolved_channel_id, video_meta, resolve_error = _resolve_channel_context(raw_url)
+        if resolve_error:
+            code, message = resolve_error
+            status = 400 if code in {"missing_url", "invalid_url"} else 404
+            return jsonify({"error": code, "message": message}), status
+
+        channel_lookup_url = f"https://www.youtube.com/channel/{resolved_channel_id}"
+        channel_meta = get_channel_metadata(channel_lookup_url)
+        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id])
+        subscriber_info = subscriber_map.get(resolved_channel_id) or {}
+        recent_uploads = _collect_recent_uploads(channel_meta["uploads_playlist_id"], limit=UPLOAD_SAMPLE_SIZE)
+        stats_map = fetch_video_stats([item.get("video_id") for item in recent_uploads if item.get("video_id")])
+
+        now_utc = datetime.now(timezone.utc)
+        longform_last_60d = 0
+        shorts_last_30 = 0
+        latest_short_dt = None
+        for item in recent_uploads:
+            video_id = str(item.get("video_id") or "").strip()
+            published_at = _parse_yt_timestamp(item.get("published_at"))
+            duration_seconds = (stats_map.get(video_id) or {}).get("duration_seconds")
+            try:
+                is_short = int(duration_seconds or 0) <= 60
+            except (TypeError, ValueError):
+                is_short = False
+            if is_short:
+                shorts_last_30 += 1
+                if published_at and (latest_short_dt is None or published_at > latest_short_dt):
+                    latest_short_dt = published_at
+                continue
+            if published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
+                longform_last_60d += 1
+
+        subscriber_count = subscriber_info.get("subscriber_count")
+        gate_subscriber = _subscriber_gate(subscriber_count)
+        gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
+        outreach_detail = None
+        try:
+            conn = get_db_readonly()
+        except RuntimeError as exc:
+            message = str(exc or "").strip()
+            return jsonify({"error": "server_config", "message": message or "Database is not configured."}), 500
+        try:
+            outreach_detail = _load_admin_global_outreach_match(conn, resolved_channel_id)
+        finally:
+            conn.close()
+
+        channel_title = (
+            subscriber_info.get("channel_title")
+            or (video_meta or {}).get("channel_title")
+            or None
+        )
+        return jsonify(
+            {
+                "channel_id": resolved_channel_id,
+                "channel_title": channel_title,
+                "subscriber_count": subscriber_count,
+                "eligible": gate_subscriber != "hedef_disi" and gate_cadence == "aktif",
+                "gate_subscriber": gate_subscriber,
+                "gate_cadence": gate_cadence,
+                "longform_last_60d": longform_last_60d,
+                "shorts_last_30": shorts_last_30,
+                "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+                "already_reached": bool(outreach_detail),
+                "outreach_detail": outreach_detail,
+            }
+        )
+    except YoutubeApiError as exc:
+        env_message = _youtube_env_error_message(exc)
+        if env_message:
+            return jsonify({"error": "server_config", "message": env_message}), 500
+        message = str(exc or "").strip() or "YouTube API request failed."
+        status = 404 if "not found" in message.lower() else 502
+        return jsonify({"error": "youtube_api_error", "message": message}), status
+    except RuntimeError as exc:
+        message = str(exc or "").strip()
+        if "database" in message.lower():
+            return jsonify({"error": "server_config", "message": message}), 500
+        current_app.logger.exception("Unexpected runtime error in admin YouTube diagnose endpoint")
+        return jsonify({"error": "server_error", "message": message or "Unexpected server error."}), 500
+    except Exception:
+        current_app.logger.exception("Unexpected error in admin YouTube diagnose endpoint")
+        return jsonify({"error": "server_error", "message": "Unexpected server error."}), 500
 
 
 @video_shorts_bp.route("/api/caption-tasks", methods=["GET"])
