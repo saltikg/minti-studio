@@ -84,6 +84,38 @@
     margin: 0 auto;
   }
 
+  .vs-blog-step-carousel {
+    max-width: 860px;
+    margin: 0 auto;
+    width: 100%;
+    display: grid;
+    gap: 1rem;
+  }
+
+  .vs-blog-step-carousel-shell {
+    position: relative;
+    overflow: hidden;
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 28%),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(8, 15, 25, 0.98));
+    box-shadow: 0 28px 72px -28px rgba(0, 0, 0, 0.78);
+  }
+
+  .vs-blog-step-carousel-track {
+    display: flex;
+    transition: transform 240ms ease;
+    will-change: transform;
+  }
+
+  .vs-blog-step-slide {
+    flex: 0 0 100%;
+    display: grid;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
   .vs-blog-section {
     display: grid;
     gap: 0.9rem;
@@ -191,6 +223,92 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .vs-blog-step-slide-copy {
+    display: grid;
+    gap: 0.7rem;
+    padding: 0.2rem 0.1rem 0.35rem;
+  }
+
+  .vs-blog-step-slide-copy p {
+    margin: 0;
+    color: rgba(226, 232, 240, 0.94);
+    line-height: 1.78;
+    font-size: 1rem;
+  }
+
+  .vs-blog-step-slide-copy ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: rgba(226, 232, 240, 0.94);
+    line-height: 1.8;
+  }
+
+  .vs-blog-step-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.9rem;
+  }
+
+  .vs-blog-step-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.78);
+    color: rgba(241, 245, 249, 0.96);
+    box-shadow: 0 16px 30px -22px rgba(0, 0, 0, 0.75);
+    transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+  }
+
+  .vs-blog-step-nav-btn:hover,
+  .vs-blog-step-nav-btn:focus {
+    transform: translateY(-2px);
+    background: rgba(20, 33, 54, 0.92);
+    border-color: rgba(45, 212, 191, 0.28);
+    color: #ffffff;
+  }
+
+  .vs-blog-step-nav-btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .vs-blog-step-nav-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: rgba(148, 163, 184, 0.92);
+    font-size: 0.92rem;
+  }
+
+  .vs-blog-step-dots {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .vs-blog-step-dot {
+    width: 0.62rem;
+    height: 0.62rem;
+    border: 0;
+    padding: 0;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.34);
+    transition: transform 180ms ease, background 180ms ease;
+  }
+
+  .vs-blog-step-dot.is-active {
+    transform: scale(1.16);
+    background: #2dd4bf;
   }
 
   .vs-blog-sources,
@@ -321,10 +439,27 @@
   }
 
   @media (max-width: 767px) {
+    .vs-blog-step-carousel-shell {
+      border-radius: 22px;
+    }
+
+    .vs-blog-step-slide {
+      padding: 0.8rem;
+    }
+
     .vs-blog-step-caption {
       left: 0.8rem;
       top: 0.8rem;
       font-size: 0.76rem;
+    }
+
+    .vs-blog-step-nav {
+      gap: 0.7rem;
+    }
+
+    .vs-blog-step-nav-btn {
+      width: 2.65rem;
+      height: 2.65rem;
     }
 
     .vs-blog-related-grid {
@@ -333,12 +468,16 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .vs-blog-step-carousel-track,
     .vs-blog-step-figure {
       transition: none;
     }
 
     .vs-blog-step-figure:hover,
-    .vs-blog-step-figure:focus-within {
+    .vs-blog-step-figure:focus-within,
+    .vs-blog-step-nav-btn:hover,
+    .vs-blog-step-nav-btn:focus,
+    .vs-blog-step-dot {
       transform: none;
     }
   }
@@ -367,51 +506,122 @@
     </header>
   </article>
 
-  <div class="vs-blog-article-body">
-    {% for section in article.sections %}
-      <section class="vs-blog-section">
-        <div class="vs-blog-step-heading">
-          {% if section.step_number %}
-            <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
-          {% endif %}
-          <h2>{{ section.heading }}</h2>
-        </div>
-        {% for paragraph in section.paragraphs %}
-          <p>{{ paragraph }}</p>
-        {% endfor %}
-        {% if section.bullets %}
-          <ul>
-            {% for bullet in section.bullets %}
-              <li>{{ bullet }}</li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-        {% if section.images %}
-          <div class="vs-blog-step-gallery">
-            {% for image in section.images %}
-              <figure class="vs-blog-step-figure">
-                <img
-                  src="{{ url_for('video_shorts_bp.static', filename=image.src) }}"
-                  alt="{{ image.alt or section.heading }}"
-                  loading="lazy"
-                >
-                {% if section.step_number or image.caption %}
+  {% if article.display_mode == 'step_carousel' %}
+    <section class="vs-blog-step-carousel" aria-labelledby="article-steps-title">
+      <div class="vs-blog-step-carousel-shell" data-step-carousel>
+        <div class="vs-blog-step-carousel-track" data-step-carousel-track>
+          {% for section in article.sections %}
+            {% set primary_image = (section.images or [])[0] if section.images else None %}
+            <article
+              class="vs-blog-step-slide"
+              data-step-slide
+              data-step-index="{{ loop.index0 }}"
+              {% if not loop.first %}hidden{% endif %}
+            >
+              {% if primary_image %}
+                <figure class="vs-blog-step-figure">
+                  <img
+                    src="{{ url_for('video_shorts_bp.static', filename=primary_image.src) }}"
+                    alt="{{ primary_image.alt or section.heading }}"
+                    loading="{% if loop.first %}eager{% else %}lazy{% endif %}"
+                  >
                   <figcaption class="vs-blog-step-caption">
                     {% if section.step_number %}
                       <strong>Step {{ section.step_number }}</strong>
                     {% endif %}
-                    {% if image.caption %}
-                      <span>{{ image.caption }}</span>
-                    {% endif %}
+                    <span>{{ section.heading }}</span>
                   </figcaption>
+                </figure>
+              {% endif %}
+              <div class="vs-blog-step-slide-copy">
+                <div class="vs-blog-step-heading">
+                  {% if section.step_number %}
+                    <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
+                  {% endif %}
+                  <h2 id="{% if loop.first %}article-steps-title{% endif %}">{{ section.heading }}</h2>
+                </div>
+                {% for paragraph in section.paragraphs %}
+                  <p>{{ paragraph }}</p>
+                {% endfor %}
+                {% if section.bullets %}
+                  <ul>
+                    {% for bullet in section.bullets %}
+                      <li>{{ bullet }}</li>
+                    {% endfor %}
+                  </ul>
                 {% endif %}
-              </figure>
-            {% endfor %}
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="vs-blog-step-nav">
+        <button type="button" class="vs-blog-step-nav-btn" data-step-prev aria-label="Previous step">←</button>
+        <div class="vs-blog-step-nav-status">
+          <span data-step-current>1</span>
+          <span>/</span>
+          <span data-step-total>{{ article.sections|length }}</span>
+        </div>
+        <button type="button" class="vs-blog-step-nav-btn" data-step-next aria-label="Next step">→</button>
+      </div>
+      <div class="vs-blog-step-dots" aria-label="Choose step">
+        {% for section in article.sections %}
+          <button
+            type="button"
+            class="vs-blog-step-dot{% if loop.first %} is-active{% endif %}"
+            data-step-dot="{{ loop.index0 }}"
+            aria-label="Go to step {{ section.step_number or loop.index }}"
+          ></button>
+        {% endfor %}
+      </div>
+    </section>
+  {% else %}
+    <div class="vs-blog-article-body">
+      {% for section in article.sections %}
+        <section class="vs-blog-section">
+          <div class="vs-blog-step-heading">
+            {% if section.step_number %}
+              <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
+            {% endif %}
+            <h2>{{ section.heading }}</h2>
           </div>
-        {% endif %}
-      </section>
-    {% endfor %}
-  </div>
+          {% for paragraph in section.paragraphs %}
+            <p>{{ paragraph }}</p>
+          {% endfor %}
+          {% if section.bullets %}
+            <ul>
+              {% for bullet in section.bullets %}
+                <li>{{ bullet }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+          {% if section.images %}
+            <div class="vs-blog-step-gallery">
+              {% for image in section.images %}
+                <figure class="vs-blog-step-figure">
+                  <img
+                    src="{{ url_for('video_shorts_bp.static', filename=image.src) }}"
+                    alt="{{ image.alt or section.heading }}"
+                    loading="lazy"
+                  >
+                  {% if section.step_number or image.caption %}
+                    <figcaption class="vs-blog-step-caption">
+                      {% if section.step_number %}
+                        <strong>Step {{ section.step_number }}</strong>
+                      {% endif %}
+                      {% if image.caption %}
+                        <span>{{ image.caption }}</span>
+                      {% endif %}
+                    </figcaption>
+                  {% endif %}
+                </figure>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </div>
+  {% endif %}
 
   {% if article.sources %}
     <section class="vs-blog-sources" aria-labelledby="article-sources-title">
@@ -452,4 +662,63 @@
     </section>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const carousel = document.querySelector("[data-step-carousel]");
+      if (!carousel) {
+        return;
+      }
+
+      const slides = Array.from(carousel.querySelectorAll("[data-step-slide]"));
+      const track = carousel.querySelector("[data-step-carousel-track]");
+      const prevBtn = document.querySelector("[data-step-prev]");
+      const nextBtn = document.querySelector("[data-step-next]");
+      const currentLabel = document.querySelector("[data-step-current]");
+      const dots = Array.from(document.querySelectorAll("[data-step-dot]"));
+      if (!slides.length || !track || !prevBtn || !nextBtn || !currentLabel) {
+        return;
+      }
+
+      let activeIndex = 0;
+      const maxIndex = slides.length - 1;
+
+      function render(index) {
+        activeIndex = Math.max(0, Math.min(index, maxIndex));
+        track.style.transform = `translateX(-${activeIndex * 100}%)`;
+        slides.forEach((slide, slideIndex) => {
+          slide.hidden = slideIndex !== activeIndex;
+        });
+        dots.forEach((dot, dotIndex) => {
+          dot.classList.toggle("is-active", dotIndex === activeIndex);
+          dot.setAttribute("aria-current", dotIndex === activeIndex ? "true" : "false");
+        });
+        prevBtn.disabled = activeIndex === 0;
+        nextBtn.disabled = activeIndex === maxIndex;
+        currentLabel.textContent = String(activeIndex + 1);
+      }
+
+      prevBtn.addEventListener("click", () => render(activeIndex - 1));
+      nextBtn.addEventListener("click", () => render(activeIndex + 1));
+      dots.forEach((dot) => {
+        dot.addEventListener("click", () => render(Number(dot.dataset.stepDot || 0)));
+      });
+
+      carousel.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          render(activeIndex + 1);
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          render(activeIndex - 1);
+        }
+      });
+
+      carousel.tabIndex = 0;
+      render(0);
+    })();
+  </script>
 {% endblock %}
