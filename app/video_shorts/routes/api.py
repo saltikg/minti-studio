@@ -187,7 +187,7 @@ def _count_videos_for_creator_channel(conn, channel_id: str) -> int:
         """
         SELECT COUNT(*)
         FROM youtube_videos
-        WHERE channel_id = ?
+        WHERE CAST(channel_id AS VARCHAR) = ?
         """,
         [normalized_channel_id],
     ).fetchone()
