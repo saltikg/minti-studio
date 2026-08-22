@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app, g, jsonify, request
@@ -6,10 +7,13 @@ from flask import current_app, g, jsonify, request
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import CAPTION_API_TOKEN
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
+from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
+    ensure_channel_owner_schema,
     ensure_postgres_youtube_transcripts_id_default,
+    ensure_youtube_video_local_bucket_schema,
     get_db,
     get_db_readonly,
 )
@@ -28,7 +32,7 @@ from app.video_shorts.youtube_api import (
     fetch_video_stats,
     get_channel_metadata,
 )
-from app.video_shorts.routes.videos import _load_admin_global_outreach_match
+from app.video_shorts.routes.videos import _get_or_create_real_youtube_channel, _load_admin_global_outreach_match
 
 
 CLIENT_ERROR_RATE_LIMITS = [
@@ -37,6 +41,8 @@ CLIENT_ERROR_RATE_LIMITS = [
 ]
 LONGFORM_WINDOW_DAYS = 60
 UPLOAD_SAMPLE_SIZE = 30
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+CONTACT_LINE_RE = re.compile(r"(iletisim|iletişim|contact|business)", re.IGNORECASE)
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -123,6 +129,72 @@ def _youtube_env_error_message(exc: Exception) -> str | None:
     if "youtub" in lowered and ("api key" in lowered or "oauth" in lowered):
         return "YouTube API credentials are not configured for this environment."
     return None
+
+
+def _resolve_brand_local_uploads_channel(conn, brand_id: str):
+    row = conn.execute(
+        """
+        SELECT b.owner_user_id, c.channel_id, c.owner_user_id, c.brand_id
+        FROM shorts_brands b
+        LEFT JOIN youtube_channels c
+          ON c.brand_id = b.id
+         AND c.owner_user_id = b.owner_user_id
+         AND lower(COALESCE(c.channel_url, '')) = 'local://uploads'
+         AND COALESCE(c.is_active, true) = true
+        WHERE b.id = ?
+        LIMIT 1
+        """,
+        [brand_id],
+    ).fetchone()
+    if not row:
+        return None
+    owner_user_id = str(row[0] or "").strip() or None
+    local_channel_id = row[1]
+    local_owner_user_id = str(row[2] or "").strip() or None
+    local_brand_id = str(row[3] or "").strip() or None
+    if not owner_user_id or local_channel_id is None:
+        return None
+    if local_owner_user_id != owner_user_id or local_brand_id != brand_id:
+        return None
+    return {
+        "owner_user_id": owner_user_id,
+        "channel_id": local_channel_id,
+        "brand_id": brand_id,
+    }
+
+
+def _extract_creator_email(description: str | None) -> str | None:
+    match = EMAIL_RE.search(str(description or ""))
+    if not match:
+        return None
+    return match.group(0).strip() or None
+
+
+def _extract_creator_name(description: str | None, channel_title: str | None) -> str | None:
+    for raw_line in str(description or "").splitlines():
+        line = raw_line.strip()
+        if not line or not CONTACT_LINE_RE.search(line):
+            continue
+        if ":" not in line:
+            continue
+        candidate = line.split(":", 1)[1].strip()
+        candidate = EMAIL_RE.sub("", candidate).strip(" -|,;/")
+        parts = [part for part in re.split(r"\s+", candidate) if part]
+        if 1 <= len(parts) <= 4 and all(any(ch.isalpha() for ch in part) for part in parts):
+            return " ".join(parts)[:255]
+    fallback = str(channel_title or "").strip()
+    return fallback[:255] if fallback else None
+
+
+def _json_error(error: str, message: str, status: int):
+    return jsonify({"error": error, "message": message}), status
+
+
+def _coerce_video_pk(value):
+    try:
+        return int(value)
+    except Exception:
+        return value
 
 
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
@@ -222,6 +294,232 @@ def admin_youtube_channel_diagnose():
     except Exception:
         current_app.logger.exception("Unexpected error in admin YouTube diagnose endpoint")
         return jsonify({"error": "server_error", "message": "Unexpected server error."}), 500
+
+
+@video_shorts_bp.route("/api/admin/add-youtube-video", methods=["POST"])
+def admin_add_youtube_video():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return _json_error("unauthorized", "Admin session required.", 401)
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return _json_error("forbidden", "Admin access required.", 403)
+
+    payload = request.get_json(silent=True) or {}
+    raw_url = str(payload.get("url") or "").strip()
+    if not raw_url:
+        return _json_error("invalid_url", "Request body must include a YouTube video url.", 400)
+
+    brand_id = str(current_brand_id() or "").strip() or None
+    if not brand_id:
+        return _json_error("no_active_brand", "No active brand is selected for this session.", 400)
+
+    video_id = extract_video_id(raw_url)
+    if not video_id or len(video_id) != 11:
+        return _json_error("invalid_url", "Unsupported or invalid YouTube video URL.", 400)
+
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    try:
+        meta = fetch_video_metadata(video_id)
+    except YoutubeApiError as exc:
+        env_message = _youtube_env_error_message(exc)
+        if env_message:
+            return _json_error("server_config", env_message, 500)
+        message = str(exc or "").strip() or "YouTube API request failed."
+        return _json_error("youtube_api_error", message, 502)
+
+    resolved_channel_key = str(meta.get("channel_id") or "").strip()
+    if not resolved_channel_key:
+        return _json_error("channel_not_found", "Channel could not be resolved from video metadata.", 404)
+
+    conn = None
+    try:
+        conn = get_db()
+        ensure_brand_schema(conn)
+        ensure_channel_owner_schema(conn)
+        ensure_youtube_video_local_bucket_schema(conn)
+        _ensure_video_crop_schema(conn)
+
+        local_channel = _resolve_brand_local_uploads_channel(conn, brand_id)
+        if not local_channel:
+            return _json_error("no_local_uploads_channel", "No active Local uploads channel exists for the active brand.", 400)
+
+        local_bucket_channel_id = local_channel["channel_id"]
+        owner_user_id = local_channel["owner_user_id"]
+
+        existing_local = conn.execute(
+            """
+            SELECT id
+            FROM youtube_videos
+            WHERE video_id = ?
+              AND (channel_id = ? OR local_bucket_channel_id = ?)
+            LIMIT 1
+            """,
+            [video_id, local_bucket_channel_id, local_bucket_channel_id],
+        ).fetchone()
+        if existing_local:
+            row = conn.execute(
+                """
+                SELECT id, channel_id, brand_id, title, creator_name, creator_email
+                FROM youtube_videos
+                WHERE id = ?
+                LIMIT 1
+                """,
+                [existing_local[0]],
+            ).fetchone()
+            return jsonify(
+                {
+                    "ok": True,
+                    "video_id": _coerce_video_pk(row[0] if row else existing_local[0]),
+                    "youtube_video_id": video_id,
+                    "channel_id": str((row[1] if row else meta.get("channel_id")) or "").strip() or None,
+                    "brand_id": str((row[2] if row else brand_id) or "").strip() or brand_id,
+                    "creator_name": (row[4] if row else None),
+                    "creator_email": (row[5] if row else None),
+                    "title": (row[3] if row else meta.get("title")),
+                    "already_exists": True,
+                }
+            )
+
+        creator_name = _extract_creator_name(meta.get("description"), meta.get("channel_title"))
+        creator_email = _extract_creator_email(meta.get("description"))
+
+        try:
+            resolved_channel_id = _get_or_create_real_youtube_channel(
+                conn,
+                meta,
+                owner_user_id,
+                brand_id,
+            )
+        except Exception:
+            current_app.logger.exception(
+                "Failed to resolve or create real YouTube channel for admin add endpoint video_id=%s",
+                video_id,
+            )
+            return _json_error("server_error", "Failed to resolve the creator channel.", 500)
+        if resolved_channel_id is None:
+            return _json_error("channel_not_found", "Creator channel could not be resolved.", 404)
+
+        existing = conn.execute(
+            """
+            SELECT id, owner_user_id, brand_id, local_bucket_channel_id, channel_id, title, creator_name, creator_email
+            FROM youtube_videos
+            WHERE video_id = ?
+            LIMIT 1
+            """,
+            [video_id],
+        ).fetchone()
+        if existing:
+            existing_owner_user_id = str(existing[1] or "").strip() or None
+            existing_brand_id = str(existing[2] or "").strip() or None
+            existing_local_bucket_channel_id = existing[3]
+            same_scope = existing_owner_user_id == owner_user_id and existing_brand_id == brand_id
+            if same_scope and existing_local_bucket_channel_id != local_bucket_channel_id:
+                conn.execute(
+                    """
+                    UPDATE youtube_videos
+                    SET local_bucket_channel_id = ?,
+                        creator_name = COALESCE(creator_name, ?),
+                        creator_email = COALESCE(creator_email, ?)
+                    WHERE id = ?
+                    """,
+                    [local_bucket_channel_id, creator_name, creator_email, existing[0]],
+                )
+                conn.commit()
+                return jsonify(
+                    {
+                        "ok": True,
+                        "video_id": _coerce_video_pk(existing[0]),
+                        "youtube_video_id": video_id,
+                        "channel_id": str(existing[4] or "").strip() or resolved_channel_id,
+                        "brand_id": brand_id,
+                        "creator_name": existing[6] or creator_name,
+                        "creator_email": existing[7] or creator_email,
+                        "title": existing[5] or meta.get("title"),
+                        "already_exists": True,
+                    }
+                )
+            return jsonify(
+                {
+                    "ok": True,
+                    "video_id": _coerce_video_pk(existing[0]),
+                    "youtube_video_id": video_id,
+                    "channel_id": str(existing[4] or "").strip() or resolved_channel_id,
+                    "brand_id": existing_brand_id or brand_id,
+                    "creator_name": existing[6] or creator_name,
+                    "creator_email": existing[7] or creator_email,
+                    "title": existing[5] or meta.get("title"),
+                    "already_exists": True,
+                }
+            )
+
+        conn.execute(
+            """
+            INSERT INTO youtube_videos
+                (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
+                 duration_seconds, view_count, like_count, comment_count, video_url, local_bucket_channel_id,
+                 owner_user_id, brand_id, download_status, subtitle_style, creator_name, creator_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                resolved_channel_id,
+                video_id,
+                meta.get("title") or canonical_url,
+                meta.get("published_at"),
+                meta.get("thumbnail_url"),
+                False,
+                meta.get("duration_seconds"),
+                meta.get("view_count"),
+                meta.get("like_count"),
+                meta.get("comment_count"),
+                canonical_url,
+                local_bucket_channel_id,
+                owner_user_id,
+                brand_id,
+                "pending",
+                "karaoke",
+                creator_name,
+                creator_email,
+            ],
+        )
+        inserted = conn.execute(
+            """
+            SELECT id
+            FROM youtube_videos
+            WHERE video_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [video_id],
+        ).fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "video_id": _coerce_video_pk(inserted[0] if inserted else None),
+                "youtube_video_id": video_id,
+                "channel_id": resolved_channel_id,
+                "brand_id": brand_id,
+                "creator_name": creator_name,
+                "creator_email": creator_email,
+                "title": meta.get("title") or canonical_url,
+                "already_exists": False,
+            }
+        )
+    except RuntimeError as exc:
+        message = str(exc or "").strip()
+        return _json_error("server_config", message or "Database is not configured.", 500)
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Unexpected error in admin add YouTube video endpoint")
+        return _json_error("server_error", "Unexpected server error.", 500)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @video_shorts_bp.route("/api/caption-tasks", methods=["GET"])

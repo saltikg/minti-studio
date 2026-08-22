@@ -248,6 +248,7 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
     return {
         "video_id": video_id,
         "title": snippet.get("title"),
+        "description": snippet.get("description"),
         "published_at": snippet.get("publishedAt"),
         "thumbnail_url": thumb_url,
         "channel_id": snippet.get("channelId"),
