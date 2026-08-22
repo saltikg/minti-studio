@@ -186,8 +186,10 @@ def _count_videos_for_creator_channel(conn, channel_id: str) -> int:
     row = conn.execute(
         """
         SELECT COUNT(*)
-        FROM youtube_videos
-        WHERE CAST(channel_id AS VARCHAR) = ?
+        FROM youtube_videos v
+        JOIN youtube_channels c
+          ON c.channel_id = v.channel_id
+        WHERE COALESCE(c.youtube_channel_id, '') = ?
         """,
         [normalized_channel_id],
     ).fetchone()
