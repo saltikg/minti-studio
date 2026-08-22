@@ -40,7 +40,8 @@ CLIENT_ERROR_RATE_LIMITS = [
     RateLimitRule(limit=30, window_seconds=3600),
 ]
 LONGFORM_WINDOW_DAYS = 60
-UPLOAD_SAMPLE_SIZE = 30
+SHORTS_WINDOW_DAYS = 15
+UPLOAD_SAMPLE_SIZE = 50
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"(iletisim|iletişim|contact|business)", re.IGNORECASE)
 
@@ -274,7 +275,7 @@ def admin_youtube_channel_diagnose():
 
         now_utc = datetime.now(timezone.utc)
         longform_last_60d = 0
-        shorts_last_30 = 0
+        shorts_last_15d = 0
         latest_short_dt = None
         for item in recent_uploads:
             video_id = str(item.get("video_id") or "").strip()
@@ -285,9 +286,10 @@ def admin_youtube_channel_diagnose():
             except (TypeError, ValueError):
                 is_short = False
             if is_short:
-                shorts_last_30 += 1
                 if published_at and (latest_short_dt is None or published_at > latest_short_dt):
                     latest_short_dt = published_at
+                if published_at and published_at >= now_utc - timedelta(days=SHORTS_WINDOW_DAYS):
+                    shorts_last_15d += 1
                 continue
             if published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
                 longform_last_60d += 1
@@ -333,9 +335,9 @@ def admin_youtube_channel_diagnose():
                 "gate_subscriber": gate_subscriber,
                 "gate_cadence": gate_cadence,
                 "longform_last_60d": longform_last_60d,
-                "shorts_last_30": shorts_last_30,
-                "shorts_window": "last_30_uploads",
-                "shorts_sample_size": UPLOAD_SAMPLE_SIZE,
+                "shorts_last_15d": shorts_last_15d,
+                "shorts_color": "yellow" if shorts_last_15d >= 7 else "green",
+                "shorts_window": "last_15_days",
                 "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
                 "already_added": already_added,
                 "already_reached": bool(outreach_detail),
