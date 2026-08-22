@@ -84,17 +84,18 @@
     margin: 0 auto;
   }
 
-  .gs-carousel{position:relative;max-width:1120px;margin:0 auto;background:#0f1620;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;}
+  .gs-carousel{position:relative;background:#0f1620;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;max-width:1120px;margin:0 auto;}
   .gs-carousel .stage{position:relative;display:flex;align-items:center;gap:14px;}
   .gs-carousel .nav{flex:0 0 auto;width:52px;height:52px;border-radius:50%;background:#0c1420;border:1px solid rgba(255,255,255,.08);color:#e8edf2;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;transition:background .2s,border-color .2s,opacity .2s,transform .2s;user-select:none;}
   .gs-carousel .nav:hover:not([disabled]){border-color:#2dd4bf;color:#2dd4bf;transform:translateY(-1px);}
   .gs-carousel .nav[disabled]{opacity:.28;cursor:default;}
-  .gs-carousel .nav:focus-visible{outline:2px solid #2dd4bf;outline-offset:2px;}
-  .gs-carousel .frame{flex:1 1 auto;min-width:0;position:relative;height:58vh;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 50px -24px rgba(0,0,0,.7);background:#0a1420;}
+  .gs-carousel .frame{flex:1 1 auto;min-width:0;position:relative;height:56vh;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 50px -24px rgba(0,0,0,.7);background:#0a1420;}
   .gs-carousel .frame::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#2dd4bf,transparent);z-index:3;}
   .gs-carousel .slide{position:absolute;inset:0;display:none;align-items:center;justify-content:center;}
   .gs-carousel .slide.active{display:flex;}
-  .gs-carousel .slide img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;}
+  .gs-carousel .slide img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;cursor:zoom-in;}
+  .gs-carousel .zoom-hint{position:absolute;right:12px;bottom:12px;z-index:4;background:rgba(10,20,32,.8);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:12px;padding:5px 10px;border-radius:8px;display:flex;align-items:center;gap:6px;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .gs-carousel .frame:hover .zoom-hint{opacity:1;}
   .gs-carousel .caption{margin-top:22px;min-height:96px;}
   .gs-carousel .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.4);color:#2dd4bf;font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:14px;}
   .gs-carousel .cap-title{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 10px;color:#e8edf2;line-height:1.2;}
@@ -104,7 +105,16 @@
   .gs-carousel .dots{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;}
   .gs-carousel .dot{width:9px;height:9px;border-radius:50%;background:#2a3543;border:none;cursor:pointer;padding:0;transition:background .2s,transform .2s;}
   .gs-carousel .dot.active{background:#2dd4bf;transform:scale(1.15);}
-  .gs-carousel .dot:focus-visible{outline:2px solid #2dd4bf;outline-offset:2px;}
+  .gs-lightbox{position:fixed;inset:0;z-index:9999;background:rgba(5,8,12,.94);display:none;align-items:center;justify-content:center;padding:32px;cursor:zoom-out;}
+  .gs-lightbox.open{display:flex;}
+  .gs-lightbox img{max-width:96vw;max-height:92vh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 30px 80px -20px rgba(0,0,0,.8);}
+  .gs-lightbox .close{position:absolute;top:20px;right:24px;width:44px;height:44px;border-radius:50%;background:rgba(20,30,42,.9);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .gs-lightbox .close:hover{border-color:#2dd4bf;color:#2dd4bf;}
+  .gs-lightbox .lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;background:rgba(20,30,42,.9);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .gs-lightbox .lb-nav:hover:not([disabled]){border-color:#2dd4bf;color:#2dd4bf;}
+  .gs-lightbox .lb-nav[disabled]{opacity:.25;cursor:default;}
+  .gs-lightbox .lb-prev{left:20px;}.gs-lightbox .lb-next{right:20px;}
+  .gs-lightbox .lb-counter{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);color:#8a97a6;font-size:14px;}
 
   .vs-blog-section {
     display: grid;
@@ -440,8 +450,9 @@
   @media (max-width: 767px) {
     .gs-carousel .nav{width:42px;height:42px;font-size:17px;}
     .gs-carousel .cap-title{font-size:21px;}
-    .gs-carousel .frame{height:44vh;}
+    .gs-carousel .frame{height:42vh;}
     .gs-carousel .caption{min-height:120px;}
+    .gs-lightbox .lb-nav{width:42px;height:42px;}
 
     .vs-blog-step-caption {
       left: 0.8rem;
@@ -495,7 +506,7 @@
     <div class="gs-carousel" data-carousel tabindex="0">
       <div class="stage">
         <button class="nav" data-prev aria-label="Previous step">&#8592;</button>
-        <div class="frame">
+        <div class="frame" data-frame>
           {% for section in article.sections %}
             {% set primary_image = (section.images or [])[0] if section.images else None %}
             <div class="slide{% if loop.first %} active{% endif %}">
@@ -507,6 +518,7 @@
               {% endif %}
             </div>
           {% endfor %}
+          <div class="zoom-hint">&#10530; Click to enlarge</div>
         </div>
         <button class="nav" data-next aria-label="Next step">&#8594;</button>
       </div>
@@ -519,6 +531,13 @@
         <div class="counter"><span data-current>1</span> / <span data-total>{{ article.sections|length }}</span></div>
         <div class="dots" data-dots></div>
       </div>
+    </div>
+    <div class="gs-lightbox" data-lightbox>
+      <button class="close" data-lb-close aria-label="Close">&times;</button>
+      <button class="lb-nav lb-prev" data-lb-prev aria-label="Previous">&#8592;</button>
+      <img data-lb-img src="" alt="">
+      <button class="lb-nav lb-next" data-lb-next aria-label="Next">&#8594;</button>
+      <div class="lb-counter"><span data-lb-current>1</span> / <span data-lb-total>{{ article.sections|length }}</span></div>
     </div>
   {% else %}
     <div class="vs-blog-article-body">
@@ -618,38 +637,34 @@
     {badge:{{ ("Step " ~ (section.step_number or "%02d"|format(loop.index)))|tojson }},title:{{ section.heading|tojson }},body:{{ (section.paragraphs|join(' '))|tojson }}}{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
-      var root=document.querySelector('[data-carousel]');
-      if(!root) return;
-      var slides=root.querySelectorAll('.slide');
-      var prev=root.querySelector('[data-prev]'), next=root.querySelector('[data-next]');
-      var badge=root.querySelector('[data-badge]'), title=root.querySelector('[data-title]'), body=root.querySelector('[data-body]');
-      var curEl=root.querySelector('[data-current]'), totalEl=root.querySelector('[data-total]'), dotsWrap=root.querySelector('[data-dots]');
-      var i=0, n=slides.length;
-      totalEl.textContent=n;
-      for(var d=0; d<n; d++){
-        var b=document.createElement('button');
-        b.className='dot'+(d===0?' active':'');
-        b.setAttribute('aria-label','Go to step '+(d+1));
-        (function(idx){ b.addEventListener('click', function(){ go(idx); }); })(d);
-        dotsWrap.appendChild(b);
-      }
-      var dots=dotsWrap.querySelectorAll('.dot');
-      function render(){
-        slides.forEach(function(s,idx){ s.classList.toggle('active', idx===i); });
-        dots.forEach(function(dt,idx){ dt.classList.toggle('active', idx===i); });
-        var st=steps[i]||{};
-        if(badge) badge.textContent=st.badge||('Step '+String(i+1).padStart(2,'0'));
-        if(title) title.textContent=st.title||'';
-        if(body) body.textContent=st.body||'';
-        curEl.textContent=i+1;
-        prev.disabled=(i===0);
-        next.disabled=(i===n-1);
-      }
-      function go(idx){ i=Math.max(0,Math.min(n-1,idx)); render(); }
-      prev.addEventListener('click', function(){ go(i-1); });
-      next.addEventListener('click', function(){ go(i+1); });
-      root.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'){go(i-1);} if(e.key==='ArrowRight'){go(i+1);} });
-      render();
+  var root=document.querySelector('[data-carousel]');if(!root)return;
+  var slides=root.querySelectorAll('.slide');
+  var prev=root.querySelector('[data-prev]'),next=root.querySelector('[data-next]');
+  var badge=root.querySelector('[data-badge]'),title=root.querySelector('[data-title]'),body=root.querySelector('[data-body]');
+  var curEl=root.querySelector('[data-current]'),totalEl=root.querySelector('[data-total]'),dotsWrap=root.querySelector('[data-dots]');
+  var frame=root.querySelector('[data-frame]');
+  var i=0,n=slides.length;totalEl.textContent=n;
+  for(var d=0;d<n;d++){var b=document.createElement('button');b.className='dot'+(d===0?' active':'');b.setAttribute('aria-label','Go to step '+(d+1));(function(idx){b.addEventListener('click',function(){go(idx);});})(d);dotsWrap.appendChild(b);}
+  var dots=dotsWrap.querySelectorAll('.dot');
+  function render(){slides.forEach(function(s,idx){s.classList.toggle('active',idx===i);});dots.forEach(function(dt,idx){dt.classList.toggle('active',idx===i);});var st=steps[i]||{};if(badge)badge.textContent=st.badge||('Step '+String(i+1).padStart(2,'0'));if(title)title.textContent=st.title||'';if(body)body.textContent=st.body||'';curEl.textContent=i+1;prev.disabled=(i===0);next.disabled=(i===n-1);}
+  function go(idx){i=Math.max(0,Math.min(n-1,idx));render();if(lbOpen)renderLB();}
+  prev.addEventListener('click',function(){go(i-1);});next.addEventListener('click',function(){go(i+1);});
+  var lb=document.querySelector('[data-lightbox]');
+  var lbImg=lb.querySelector('[data-lb-img]'),lbClose=lb.querySelector('[data-lb-close]');
+  var lbPrev=lb.querySelector('[data-lb-prev]'),lbNext=lb.querySelector('[data-lb-next]');
+  var lbCur=lb.querySelector('[data-lb-current]'),lbTot=lb.querySelector('[data-lb-total]');
+  var lbOpen=false;lbTot.textContent=n;
+  function getSrc(idx){var im=slides[idx].querySelector('img');return im?im.src:null;}
+  function renderLB(){var src=getSrc(i);if(src){lbImg.src=src;lbImg.alt='Step '+(i+1);}lbCur.textContent=i+1;lbPrev.disabled=(i===0);lbNext.disabled=(i===n-1);}
+  function openLB(){lbOpen=true;lb.classList.add('open');renderLB();document.body.style.overflow='hidden';}
+  function closeLB(){lbOpen=false;lb.classList.remove('open');document.body.style.overflow='';}
+  frame.addEventListener('click',function(){openLB();});
+  lb.addEventListener('click',function(e){if(e.target===lb||e.target===lbImg){closeLB();}});
+  lbClose.addEventListener('click',function(e){e.stopPropagation();closeLB();});
+  lbPrev.addEventListener('click',function(e){e.stopPropagation();go(i-1);});
+  lbNext.addEventListener('click',function(e){e.stopPropagation();go(i+1);});
+  document.addEventListener('keydown',function(e){if(lbOpen){if(e.key==='Escape')closeLB();if(e.key==='ArrowLeft')go(i-1);if(e.key==='ArrowRight')go(i+1);}else if(root.contains(document.activeElement)){if(e.key==='ArrowLeft')go(i-1);if(e.key==='ArrowRight')go(i+1);}});
+  render();
     })();
   </script>
 {% endblock %}
