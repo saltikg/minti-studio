@@ -4434,6 +4434,10 @@ def generate_short(video_pk):
     """
     if "subtitle_preset" in video_columns:
         video_sql += ", subtitle_preset"
+    if "creator_name" in video_columns:
+        video_sql += ", creator_name"
+    if "creator_email" in video_columns:
+        video_sql += ", creator_email"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -4458,6 +4462,10 @@ def generate_short(video_pk):
     ]
     if "subtitle_preset" in video_columns:
         cols.append("subtitle_preset")
+    if "creator_name" in video_columns:
+        cols.append("creator_name")
+    if "creator_email" in video_columns:
+        cols.append("creator_email")
     video = dict(zip(cols, row))
     video_duration_label = _format_time_label(video["duration_seconds"]) if video.get("duration_seconds") else None
     if video_duration_label and video_duration_label.endswith(".000"):
@@ -5095,16 +5103,54 @@ def generate_short(video_pk):
                     """,
                     [source_video_id, active_brand_id],
                 ).fetchall()
+                generated_recipient_map: Dict[str, Dict[str, str]] = {}
+                if generated_rows and _short_share_links_ready(conn_generated):
+                    generated_video_ids = [
+                        str(generated_row[0] or "").strip()
+                        for generated_row in generated_rows
+                        if str(generated_row[0] or "").strip()
+                    ]
+                    if generated_video_ids:
+                        placeholders = ", ".join("?" for _ in generated_video_ids)
+                        recipient_rows = conn_generated.execute(
+                            f"""
+                            SELECT
+                              CAST(sl.generated_video_id AS VARCHAR) AS generated_video_id,
+                              sl.recipient_name,
+                              sl.recipient_email
+                            FROM short_share_links sl
+                            JOIN (
+                              SELECT generated_video_id, MAX(id) AS latest_id
+                              FROM short_share_links
+                              WHERE CAST(generated_video_id AS VARCHAR) IN ({placeholders})
+                              GROUP BY generated_video_id
+                            ) latest
+                              ON CAST(latest.latest_id AS BIGINT) = CAST(sl.id AS BIGINT)
+                            """,
+                            generated_video_ids,
+                        ).fetchall()
+                        for recipient_row in recipient_rows:
+                            generated_id = str(recipient_row[0] or "").strip()
+                            if not generated_id:
+                                continue
+                            generated_recipient_map[generated_id] = {
+                                "recipient_name": str(recipient_row[1] or "").strip(),
+                                "recipient_email": str(recipient_row[2] or "").strip(),
+                            }
                 for generated_row in generated_rows:
                     clip_name = str(generated_row[1] or "").strip()
                     if not clip_name:
                         continue
+                    generated_id = str(generated_row[0] or "").strip()
+                    recipient_info = generated_recipient_map.get(generated_id) or {}
                     generated_video_map[(source_video_id, clip_name)] = {
                         "id": generated_row[0],
                         "generated_title": generated_row[2] if len(generated_row) > 2 else None,
                         "publish_status": str(generated_row[3] or "").strip().lower() or None,
                         "planned_publish_at": generated_row[4],
                         "share_token": generated_row[5] if len(generated_row) > 5 else None,
+                        "recipient_name": str(recipient_info.get("recipient_name") or "").strip(),
+                        "recipient_email": str(recipient_info.get("recipient_email") or "").strip(),
                     }
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
@@ -5335,6 +5381,8 @@ def generate_short(video_pk):
             "is_ai_suggestion": is_ai_suggestion,
             "generated_video_id": generated_record.get("id"),
             "share_token": generated_record.get("share_token"),
+            "recipient_name": str(generated_record.get("recipient_name") or "").strip(),
+            "recipient_email": str(generated_record.get("recipient_email") or "").strip(),
             "title": entry.get("title") or "",
             "start": start,
             "end": end,

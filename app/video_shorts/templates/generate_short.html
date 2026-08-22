@@ -3597,11 +3597,13 @@
                                     <input
                                       type="text"
                                       class="form-control form-control-sm admin-share-link-recipient-name"
+                                      value="{{ row.recipient_name or video.creator_name or '' }}"
                                       placeholder="Recipient name"
                                       aria-label="Recipient name">
                                     <input
                                       type="email"
                                       class="form-control form-control-sm admin-share-link-recipient-email"
+                                      value="{{ row.recipient_email or video.creator_email or '' }}"
                                       placeholder="Recipient email (optional)"
                                       aria-label="Recipient email">
                                     <button
