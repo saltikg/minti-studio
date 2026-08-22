@@ -235,6 +235,50 @@ def _extract_creator_name(description: str | None, channel_title: str | None) ->
     return fallback[:255] if fallback else None
 
 
+_CREATOR_FIELD_UNSET = object()
+
+
+def _normalize_manual_creator_name(value, channel_title: str | None) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    if _looks_like_urlish_name(candidate):
+        fallback = str(channel_title or "").strip()
+        return fallback[:255] if fallback else None
+    return candidate[:255]
+
+
+def _normalize_manual_creator_email(value) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    if "@" not in candidate or "." not in candidate:
+        return None
+    return candidate[:255]
+
+
+def _update_existing_creator_fields(conn, row_id, *, creator_name=_CREATOR_FIELD_UNSET, creator_email=_CREATOR_FIELD_UNSET) -> bool:
+    assignments = []
+    params = []
+    if creator_name is not _CREATOR_FIELD_UNSET:
+        assignments.append("creator_name = ?")
+        params.append(creator_name)
+    if creator_email is not _CREATOR_FIELD_UNSET:
+        assignments.append("creator_email = ?")
+        params.append(creator_email)
+    if not assignments:
+        return False
+    conn.execute(
+        f"""
+        UPDATE youtube_videos
+        SET {", ".join(assignments)}
+        WHERE id = ?
+        """,
+        params + [row_id],
+    )
+    return True
+
+
 def _json_error(error: str, message: str, status: int):
     return jsonify({"error": error, "message": message}), status
 
@@ -407,6 +451,21 @@ def admin_add_youtube_video():
     if not resolved_channel_key:
         return _json_error("channel_not_found", "Channel could not be resolved from video metadata.", 404)
 
+    manual_creator_name_present = bool(str(payload.get("creator_name") or "").strip())
+    manual_creator_email_present = bool(str(payload.get("creator_email") or "").strip())
+    fallback_creator_name = _extract_creator_name(meta.get("description"), meta.get("channel_title"))
+    fallback_creator_email = _extract_creator_email(meta.get("description"))
+    creator_name = (
+        _normalize_manual_creator_name(payload.get("creator_name"), meta.get("channel_title"))
+        if manual_creator_name_present
+        else fallback_creator_name
+    )
+    creator_email = (
+        _normalize_manual_creator_email(payload.get("creator_email"))
+        if manual_creator_email_present
+        else fallback_creator_email
+    )
+
     conn = None
     try:
         conn = get_db()
@@ -442,6 +501,20 @@ def admin_add_youtube_video():
                 """,
                 [existing_local[0]],
             ).fetchone()
+            updated = False
+            resolved_creator_name = row[4] if row else None
+            resolved_creator_email = row[5] if row else None
+            if row:
+                updated = _update_existing_creator_fields(
+                    conn,
+                    row[0],
+                    creator_name=creator_name if manual_creator_name_present else _CREATOR_FIELD_UNSET,
+                    creator_email=creator_email if manual_creator_email_present else _CREATOR_FIELD_UNSET,
+                )
+                if updated:
+                    conn.commit()
+                    resolved_creator_name = creator_name if manual_creator_name_present else resolved_creator_name
+                    resolved_creator_email = creator_email if manual_creator_email_present else resolved_creator_email
             return jsonify(
                 {
                     "ok": True,
@@ -449,15 +522,13 @@ def admin_add_youtube_video():
                     "youtube_video_id": video_id,
                     "channel_id": str((row[1] if row else meta.get("channel_id")) or "").strip() or None,
                     "brand_id": str((row[2] if row else brand_id) or "").strip() or brand_id,
-                    "creator_name": (row[4] if row else None),
-                    "creator_email": (row[5] if row else None),
+                    "creator_name": resolved_creator_name,
+                    "creator_email": resolved_creator_email,
                     "title": (row[3] if row else meta.get("title")),
                     "already_exists": True,
+                    "updated": updated,
                 }
             )
-
-        creator_name = _extract_creator_name(meta.get("description"), meta.get("channel_title"))
-        creator_email = _extract_creator_email(meta.get("description"))
 
         try:
             resolved_channel_id = _get_or_create_real_youtube_channel(
@@ -500,6 +571,12 @@ def admin_add_youtube_video():
                     """,
                     [local_bucket_channel_id, creator_name, creator_email, existing[0]],
                 )
+                updated = _update_existing_creator_fields(
+                    conn,
+                    existing[0],
+                    creator_name=creator_name if manual_creator_name_present else _CREATOR_FIELD_UNSET,
+                    creator_email=creator_email if manual_creator_email_present else _CREATOR_FIELD_UNSET,
+                )
                 conn.commit()
                 return jsonify(
                     {
@@ -508,12 +585,21 @@ def admin_add_youtube_video():
                         "youtube_video_id": video_id,
                         "channel_id": str(existing[4] or "").strip() or resolved_channel_id,
                         "brand_id": brand_id,
-                        "creator_name": existing[6] or creator_name,
-                        "creator_email": existing[7] or creator_email,
+                        "creator_name": creator_name if manual_creator_name_present else (existing[6] or creator_name),
+                        "creator_email": creator_email if manual_creator_email_present else (existing[7] or creator_email),
                         "title": existing[5] or meta.get("title"),
                         "already_exists": True,
+                        "updated": updated,
                     }
                 )
+            updated = _update_existing_creator_fields(
+                conn,
+                existing[0],
+                creator_name=creator_name if manual_creator_name_present else _CREATOR_FIELD_UNSET,
+                creator_email=creator_email if manual_creator_email_present else _CREATOR_FIELD_UNSET,
+            )
+            if updated:
+                conn.commit()
             return jsonify(
                 {
                     "ok": True,
@@ -521,10 +607,11 @@ def admin_add_youtube_video():
                     "youtube_video_id": video_id,
                     "channel_id": str(existing[4] or "").strip() or resolved_channel_id,
                     "brand_id": existing_brand_id or brand_id,
-                    "creator_name": existing[6] or creator_name,
-                    "creator_email": existing[7] or creator_email,
+                    "creator_name": creator_name if manual_creator_name_present else (existing[6] or creator_name),
+                    "creator_email": creator_email if manual_creator_email_present else (existing[7] or creator_email),
                     "title": existing[5] or meta.get("title"),
                     "already_exists": True,
+                    "updated": updated,
                 }
             )
 
@@ -579,6 +666,7 @@ def admin_add_youtube_video():
                 "creator_email": creator_email,
                 "title": meta.get("title") or canonical_url,
                 "already_exists": False,
+                "updated": False,
             }
         )
     except RuntimeError as exc:
