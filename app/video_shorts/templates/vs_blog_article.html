@@ -89,6 +89,30 @@
     gap: 0.9rem;
   }
 
+  .vs-blog-step-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .vs-blog-step-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.2rem;
+    min-height: 2.2rem;
+    padding: 0 0.72rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(45, 212, 191, 0.22), rgba(45, 212, 191, 0.1));
+    border: 1px solid rgba(45, 212, 191, 0.3);
+    color: #7cead9;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
   .vs-blog-section h2 {
     margin: 0;
     font-size: clamp(1.35rem, 2.2vw, 1.7rem);
@@ -112,6 +136,61 @@
 
   .vs-blog-section li + li {
     margin-top: 0.45rem;
+  }
+
+  .vs-blog-step-gallery {
+    display: grid;
+    gap: 1rem;
+    margin-top: 0.15rem;
+  }
+
+  .vs-blog-step-figure {
+    position: relative;
+    margin: 0;
+    overflow: hidden;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      linear-gradient(90deg, rgba(45, 212, 191, 0.92), rgba(45, 212, 191, 0) 26px),
+      rgba(15, 23, 42, 0.58);
+    box-shadow: 0 24px 60px -22px rgba(0, 0, 0, 0.7);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+  }
+
+  .vs-blog-step-figure:hover,
+  .vs-blog-step-figure:focus-within {
+    transform: translateY(-4px);
+    box-shadow: 0 30px 78px -24px rgba(0, 0, 0, 0.82);
+  }
+
+  .vs-blog-step-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .vs-blog-step-caption {
+    position: absolute;
+    left: 0.95rem;
+    top: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.72rem;
+    border-radius: 999px;
+    background: rgba(8, 15, 25, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(241, 245, 249, 0.96);
+    font-size: 0.8rem;
+    line-height: 1.2;
+    backdrop-filter: blur(10px);
+  }
+
+  .vs-blog-step-caption strong {
+    color: #7cead9;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .vs-blog-sources,
@@ -242,8 +321,25 @@
   }
 
   @media (max-width: 767px) {
+    .vs-blog-step-caption {
+      left: 0.8rem;
+      top: 0.8rem;
+      font-size: 0.76rem;
+    }
+
     .vs-blog-related-grid {
       grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vs-blog-step-figure {
+      transition: none;
+    }
+
+    .vs-blog-step-figure:hover,
+    .vs-blog-step-figure:focus-within {
+      transform: none;
     }
   }
 </style>
@@ -274,7 +370,12 @@
   <div class="vs-blog-article-body">
     {% for section in article.sections %}
       <section class="vs-blog-section">
-        <h2>{{ section.heading }}</h2>
+        <div class="vs-blog-step-heading">
+          {% if section.step_number %}
+            <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
+          {% endif %}
+          <h2>{{ section.heading }}</h2>
+        </div>
         {% for paragraph in section.paragraphs %}
           <p>{{ paragraph }}</p>
         {% endfor %}
@@ -284,6 +385,29 @@
               <li>{{ bullet }}</li>
             {% endfor %}
           </ul>
+        {% endif %}
+        {% if section.images %}
+          <div class="vs-blog-step-gallery">
+            {% for image in section.images %}
+              <figure class="vs-blog-step-figure">
+                <img
+                  src="{{ url_for('video_shorts_bp.static', filename=image.src) }}"
+                  alt="{{ image.alt or section.heading }}"
+                  loading="lazy"
+                >
+                {% if section.step_number or image.caption %}
+                  <figcaption class="vs-blog-step-caption">
+                    {% if section.step_number %}
+                      <strong>Step {{ section.step_number }}</strong>
+                    {% endif %}
+                    {% if image.caption %}
+                      <span>{{ image.caption }}</span>
+                    {% endif %}
+                  </figcaption>
+                {% endif %}
+              </figure>
+            {% endfor %}
+          </div>
         {% endif %}
       </section>
     {% endfor %}

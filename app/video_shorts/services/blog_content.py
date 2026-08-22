@@ -6,6 +6,177 @@ from datetime import date
 
 BLOG_ARTICLES = [
     {
+        "slug": "getting-started-with-mintistudio",
+        "title": "Getting Started: From Long Video to Published Short",
+        "description": (
+            "A step-by-step walk-through: sign in, upload a long video, let Minti find the moments, "
+            "style your Short, and publish across platforms."
+        ),
+        "meta_title": "Getting Started: From Long Video to Published Short | MintiStudio",
+        "meta_description": (
+            "Follow the full MintiStudio workflow from sign-in to a published Short, including upload, "
+            "transcript review, clip suggestions, styling, rendering, scheduling, and tracking."
+        ),
+        "published_on": date(2026, 8, 21),
+        "author_name": "MintiStudio Team",
+        "reading_time": "7 min read",
+        "sections": [
+            {
+                "step_number": "01",
+                "heading": "Open your account and land in My Videos",
+                "paragraphs": [
+                    (
+                        "Start by signing in to MintiStudio, then head straight to My Videos. This is your working library: "
+                        "the place where uploaded long videos, generated Shorts, and their current progress all come together."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/01-open-account.png",
+                        "alt": "MintiStudio account sign-in screen",
+                    },
+                    {
+                        "src": "img/blog/getting-started/02-my-videos.png",
+                        "alt": "My Videos library in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "02",
+                "heading": "Upload a long video and start the analysis",
+                "paragraphs": [
+                    (
+                        "Upload the long-form video you want to repurpose, then start analysis. MintiStudio prepares the video "
+                        "for the rest of the workflow by pulling together the media, transcript, and clip-planning context."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/03-start-analysis.png",
+                        "alt": "Start analysis action for a long video in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "03",
+                "heading": "Review and clean up the transcript",
+                "paragraphs": [
+                    (
+                        "Once the transcript is ready, skim through it and make any fixes that matter before clipping. A clean "
+                        "transcript gives Minti better material for suggestions and makes later caption editing much smoother."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/04-edit-transcript.png",
+                        "alt": "Transcript editing interface in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "04",
+                "heading": "Let Minti suggest the strongest moments",
+                "paragraphs": [
+                    (
+                        "Ask Minti to suggest clips from the full video. Instead of starting from a blank slate, you get a set "
+                        "of candidate moments that are already shaped around hooks, self-contained ideas, and short-form pacing."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/05-suggest-clips.png",
+                        "alt": "AI-generated clip suggestions in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "05",
+                "heading": "Choose a clip and style the frame",
+                "paragraphs": [
+                    (
+                        "Open the clip in the editor and set the look you want: crop, background, subtitles, and overall framing. "
+                        "This is where the Short starts to feel ready for publishing rather than just extracted."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/06-crop-style.png",
+                        "alt": "Crop and style controls for a Short in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "06",
+                "heading": "Create the clip from the chosen moment",
+                "paragraphs": [
+                    (
+                        "When the framing and styling look right, create the clip. Minti turns that selected range into a proper "
+                        "Short project that can now be rendered, reviewed, and published."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/07-create-clip.png",
+                        "alt": "Create clip action in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "07",
+                "heading": "Render the final Short",
+                "paragraphs": [
+                    (
+                        "Run the render once everything is set. Minti composes the vertical video, captions, title treatment, "
+                        "and background choices into the final export you can review and download."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/08-render.png",
+                        "alt": "Render progress for a Short in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "08",
+                "heading": "Schedule and publish across platforms",
+                "paragraphs": [
+                    (
+                        "After rendering, send the Short into your publishing flow. You can schedule the release and manage where "
+                        "it goes next, so YouTube, Instagram, and Facebook all fit into the same workflow instead of separate tools."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/09-schedule-publish.png",
+                        "alt": "Schedule and publish screen in MintiStudio",
+                    },
+                ],
+            },
+            {
+                "step_number": "09",
+                "heading": "Track the result and keep the loop going",
+                "paragraphs": [
+                    (
+                        "Once the Short is live, use the tracking view to see how it performed and carry that learning into the "
+                        "next batch. The workflow is meant to repeat: one long video in, several smarter Shorts out."
+                    ),
+                ],
+                "images": [
+                    {
+                        "src": "img/blog/getting-started/10-track.png",
+                        "alt": "Tracking and performance view for Shorts in MintiStudio",
+                    },
+                ],
+            },
+        ],
+        "sources": [],
+        "cta_title": "Turn one long video into a publishable Shorts workflow",
+        "cta_body": (
+            "Upload once, find the moments, style the clip, and publish across platforms from the same place."
+        ),
+    },
+    {
         "slug": "your-scheduled-time-is-only-as-good-as-your-time-zone",
         "title": "Your Scheduled Time Is Only as Good as Your Time Zone",
         "description": (
