@@ -2779,6 +2779,9 @@
     font-weight: 700;
     line-height: 1.1;
     border-radius: 16px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .shorts-preview-video {
     overflow: hidden;
@@ -6887,6 +6890,12 @@ const bindClipTitleAutofillTracking = () => {
       const baseline = String(input.dataset.autoTitleBaseline || "").trim();
       const currentValue = String(input.value || "").trim();
       input.dataset.autoTitleDirty = baseline && currentValue !== baseline ? "1" : "0";
+      document.dispatchEvent(new CustomEvent("clip-title-preview-sync", {
+        detail: {
+          title: currentValue,
+          isActive: Boolean(input.closest("#clip-detail-modal-mount") || input.closest(".clip-card.is-active")),
+        },
+      }));
     });
   });
 };
@@ -9629,6 +9638,19 @@ document.addEventListener("DOMContentLoaded", () => {
       setSelectedPreviewElement("");
     }
   };
+  const getActivePreviewTitleText = () => {
+    const activeCard = modalEl?.querySelector(".clip-card");
+    const activeTitle = activeCard?.querySelector(".clip-title-input")?.value;
+    const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
+    return String(activeTitle || fallbackTitle || "Title").trim() || "Title";
+  };
+  const syncPreviewTitleText = (nextTitle = null) => {
+    if (!previewTitle) {
+      return;
+    }
+    const resolved = String(nextTitle ?? getActivePreviewTitleText()).trim() || "Title";
+    previewTitle.textContent = resolved;
+  };
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
@@ -9720,12 +9742,12 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
-    const titleHeight = previewConfig.titleHeight;
+    const baseTitleHeight = previewConfig.titleHeight;
     const subtitleHeight = previewConfig.subtitleHeight;
     const titleTop = clampRenderValue(
       getNumericFieldValue(titleMarginInput, previewConfig.titleY),
       0,
-      Math.max(0, renderFrameHeight - titleHeight),
+      Math.max(0, renderFrameHeight - baseTitleHeight),
     );
     const videoTop = clampRenderValue(
       getNumericFieldValue(videoOverlayOffsetInput, dims.y),
@@ -9754,9 +9776,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
-      previewTitle.style.top = titleTop * overlayScale + "px";
-      previewTitle.style.height = previewConfig.titleHeight * overlayScale + "px";
       previewTitle.style.fontSize = titleFontSize * overlayScale + "px";
+      previewTitle.style.height = "auto";
+      const titleBottomPx = (titleTop + baseTitleHeight) * overlayScale;
+      const minTitleHeightPx = baseTitleHeight * overlayScale;
+      const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
+      const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
+      previewTitle.style.height = effectiveTitleHeightPx + "px";
+      previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
     }
     if (previewVideo) {
       previewVideo.classList.toggle("is-drag-disabled", !isPreviewElementDraggable("video"));
@@ -10582,11 +10609,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     rememberLoadedOverlayFieldValues();
     updateSplitUiState();
+    syncPreviewTitleText();
+    applyPreviewLayout();
     loadActivePreviewImage();
   });
 
   modalEl.addEventListener("hidden.bs.modal", () => {
     resetState();
+  });
+  document.addEventListener("clip-title-preview-sync", (event) => {
+    if (!modalEl.classList.contains("show")) {
+      return;
+    }
+    if (!event?.detail?.isActive) {
+      return;
+    }
+    syncPreviewTitleText(event.detail.title);
+    applyPreviewLayout();
   });
 
   const saveShortSettings = async () => {

@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from PIL import ImageFont
 from flask import current_app
 
 from app.video_shorts.config import (
@@ -46,6 +47,10 @@ PODCAST_LANDSCAPE_HEIGHT = 720
 VIDEO_DATE_BOTTOM_MARGIN = 250
 DEFAULT_VIDEO_DATE_TOP = VIDEO_TARGET_HEIGHT - VIDEO_DATE_BOTTOM_MARGIN - 24
 TITLE_WRAP_LENGTH = 35
+TITLE_WRAP_SIDE_MARGIN = 48
+TITLE_WRAP_MAX_LINES = 3
+TITLE_WRAP_MIN_FONT_SIZE = 30
+TITLE_BOX_BORDER_WIDTH = 22
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
 
 
@@ -73,21 +78,183 @@ def _sanitize_text_for_overlay(text: str, max_len: int = 160) -> str:
     return t
 
 
-def _wrap_text_for_title(text: str, max_line_len: int = 35) -> str:
+def _measure_text_width(font: ImageFont.FreeTypeFont, text: str) -> int:
     if not text:
-        return ""
+        return 0
+    try:
+        return int(round(float(font.getlength(text))))
+    except Exception:
+        bbox = font.getbbox(text)
+        return int(max(0, bbox[2] - bbox[0]))
+
+
+def _measure_line_height(font: ImageFont.FreeTypeFont) -> int:
+    try:
+        ascent, descent = font.getmetrics()
+        return int(max(1, ascent + descent))
+    except Exception:
+        bbox = font.getbbox("Ag")
+        return int(max(1, bbox[3] - bbox[1]))
+
+
+def _load_title_font(font_path: Optional[str], font_size: int) -> Optional[ImageFont.FreeTypeFont]:
+    candidate = Path(str(font_path or "")).expanduser() if font_path else None
+    if not candidate or not candidate.exists():
+        return None
+    try:
+        return ImageFont.truetype(str(candidate), int(font_size))
+    except Exception:
+        current_app.logger.warning("Could not load title font for wrap measurement: %s", candidate)
+        return None
+
+
+def _wrap_words_to_width(words: list[str], font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+    if not words:
+        return []
+    lines: list[str] = []
+    current_words: list[str] = []
+    current_width = 0
+    space_width = _measure_text_width(font, " ")
+    for word in words:
+        word_width = _measure_text_width(font, word)
+        candidate_width = word_width if not current_words else current_width + space_width + word_width
+        if current_words and candidate_width > max_width:
+            lines.append(" ".join(current_words))
+            current_words = [word]
+            current_width = word_width
+            continue
+        current_words.append(word)
+        current_width = candidate_width
+    if current_words:
+        lines.append(" ".join(current_words))
+    return lines
+
+
+def _title_side_margin(target_width: int) -> int:
+    scale = max(1.0, float(target_width) / float(VIDEO_TARGET_WIDTH))
+    return max(TITLE_WRAP_SIDE_MARGIN, int(round(TITLE_WRAP_SIDE_MARGIN * scale)))
+
+
+def _title_layout_metrics(
+    *,
+    base_y: int,
+    font_size: int,
+    line_count: int,
+    line_height: int,
+    line_spacing: int,
+) -> dict[str, int]:
+    safe_lines = max(1, int(line_count))
+    safe_line_height = max(1, int(line_height))
+    safe_spacing = int(line_spacing)
+    block_height = safe_line_height * safe_lines + safe_spacing * max(0, safe_lines - 1)
+    block_height = max(safe_line_height, block_height)
+    visual_y = _title_visual_y(base_y, font_size)
+    adjusted_y = visual_y - max(0, block_height - safe_line_height)
+    return {
+        "line_height": safe_line_height,
+        "block_height": block_height,
+        "draw_y": max(0, adjusted_y),
+    }
+
+
+def _fit_title_text(
+    text: str,
+    *,
+    font_path: Optional[str],
+    font_size: int,
+    target_width: int,
+    base_y: int,
+    line_spacing: int,
+    max_lines: int = TITLE_WRAP_MAX_LINES,
+    min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
+) -> dict[str, Any]:
+    if not text:
+        return {
+            "text": "",
+            "font_size": int(font_size),
+            "draw_y": _title_visual_y(base_y, font_size),
+            "line_count": 0,
+            "side_margin": _title_side_margin(target_width),
+        }
     words = text.split()
-    lines = []
-    current = []
-    for w in words:
-        if sum(len(x) for x in current) + len(current) + len(w) > max_line_len and current:
-            lines.append(" ".join(current))
-            current = [w]
-        else:
-            current.append(w)
-    if current:
-        lines.append(" ".join(current))
-    return "\n".join(lines)
+    if not words:
+        return {
+            "text": "",
+            "font_size": int(font_size),
+            "draw_y": _title_visual_y(base_y, font_size),
+            "line_count": 0,
+            "side_margin": _title_side_margin(target_width),
+        }
+
+    side_margin = _title_side_margin(target_width)
+    max_text_width = max(
+        120,
+        int(target_width) - (2 * side_margin) - (2 * TITLE_BOX_BORDER_WIDTH),
+    )
+    chosen_lines = [" ".join(words)]
+    chosen_font_size = max(int(font_size), int(min_font_size))
+    chosen_layout = _title_layout_metrics(
+        base_y=base_y,
+        font_size=chosen_font_size,
+        line_count=1,
+        line_height=max(chosen_font_size, 1),
+        line_spacing=line_spacing,
+    )
+    measured = False
+
+    for candidate_font_size in range(int(font_size), int(min_font_size) - 1, -1):
+        font = _load_title_font(font_path, candidate_font_size)
+        if font is None:
+            break
+        measured = True
+        lines = _wrap_words_to_width(words, font, max_text_width)
+        if len(lines) > max_lines:
+            continue
+        line_height = _measure_line_height(font)
+        layout = _title_layout_metrics(
+            base_y=base_y,
+            font_size=candidate_font_size,
+            line_count=len(lines),
+            line_height=line_height,
+            line_spacing=line_spacing,
+        )
+        if layout["draw_y"] < TITLE_BOX_BORDER_WIDTH:
+            continue
+        chosen_lines = lines
+        chosen_font_size = candidate_font_size
+        chosen_layout = layout
+        break
+
+    if not measured:
+        current_words: list[str] = []
+        fallback_lines: list[str] = []
+        for word in words:
+            candidate_words = current_words + [word]
+            candidate_line = " ".join(candidate_words)
+            if len(candidate_line) > TITLE_WRAP_LENGTH and current_words:
+                fallback_lines.append(" ".join(current_words))
+                current_words = [word]
+            else:
+                current_words = candidate_words
+        if current_words:
+            fallback_lines.append(" ".join(current_words))
+        chosen_lines = fallback_lines or chosen_lines
+        chosen_font_size = int(font_size)
+        chosen_layout = _title_layout_metrics(
+            base_y=base_y,
+            font_size=chosen_font_size,
+            line_count=len(chosen_lines),
+            line_height=max(chosen_font_size, 1),
+            line_spacing=line_spacing,
+        )
+
+    return {
+        "text": "\n".join(chosen_lines),
+        "font_size": chosen_font_size,
+        "draw_y": chosen_layout["draw_y"],
+        "line_count": len(chosen_lines),
+        "side_margin": side_margin,
+    }
 
 
 def _escape_ass_path(path: Path) -> str:
@@ -153,7 +320,7 @@ def _title_drawtext_style(
     parts = [
         "box=1",
         f"boxcolor={box_color}",
-        "boxborderw=22",
+        f"boxborderw={TITLE_BOX_BORDER_WIDTH}",
     ]
     if str(subtitle_preset or "").strip() == "green_pop":
         parts.extend([
@@ -516,7 +683,15 @@ def _compose_with_background(
 
     # Başlık metni, kısalt ve satırları biraz daha kısa tut
     title_txt = _sanitize_text_for_overlay(title or "", 140)
-    title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
+    title_layout = _fit_title_text(
+        title_txt,
+        font_path=font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        font_size=title_font_size,
+        target_width=VIDEO_TARGET_WIDTH,
+        base_y=max(80, min(title_margin, 250)),
+        line_spacing=5,
+    )
+    title_txt = title_layout["text"]
 
     overlay_y_expr = _overlay_y_expr(
         VIDEO_OVERLAY_TOP_OFFSET,
@@ -541,7 +716,6 @@ def _compose_with_background(
 
         # UI'dan gelen title_margin'i mantıklı aralığa sıkıştır
         # Çok yukarı veya çok aşağı kaçmasın
-        title_test_y = _title_visual_y(max(80, min(title_margin, 250)), title_font_size)
         title_style = _title_drawtext_style(
             subtitle_preset=subtitle_preset,
             title_bg_color=title_bg_color,
@@ -553,8 +727,8 @@ def _compose_with_background(
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
             "x=(w-text_w)/2:"
-            f"y={title_test_y}:"
-            f"fontsize={title_font_size}:"
+            f"y={title_layout['draw_y']}:"
+            f"fontsize={title_layout['font_size']}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
             "line_spacing=5:"
             f"{title_style}:"
@@ -739,7 +913,6 @@ def _compose_trimmed_with_background(
             target_width = PODCAST_LANDSCAPE_WIDTH
             target_height = PODCAST_LANDSCAPE_HEIGHT
         title_txt = _sanitize_text_for_overlay(title or "", 140)
-        title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
         effective_subtitle_path = subtitle_path if show_subtitle else None
         effective_subtitle_overlay_path = (
             Path(subtitle_overlay_video_path)
@@ -798,7 +971,15 @@ def _compose_trimmed_with_background(
                 final_label = "[pod_ov_out]"
         if show_title and title_txt:
             test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
+            title_layout = _fit_title_text(
+                title_txt,
+                font_path=test_font_file,
+                font_size=safe_title_font_size,
+                target_width=target_width,
+                base_y=safe_title_margin,
+                line_spacing=safe_title_line_spacing,
+            )
+            debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
             title_style = _title_drawtext_style(
                 subtitle_preset=subtitle_preset,
                 title_bg_color=title_bg_color,
@@ -809,8 +990,8 @@ def _compose_trimmed_with_background(
                 f"fontfile='{test_font_file}':"
                 f"textfile='{_escape_ass_path(debug_textfile)}':"
                 "x=(w-text_w)/2:"
-                f"y={_title_visual_y(safe_title_margin, safe_title_font_size)}:"
-                f"fontsize={safe_title_font_size}:"
+                f"y={title_layout['draw_y']}:"
+                f"fontsize={title_layout['font_size']}:"
                 f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
                 f"line_spacing={safe_title_line_spacing}:"
                 f"{title_style}:"
@@ -1329,7 +1510,6 @@ def _compose_trimmed_with_background(
 
     # Step 2: overlay trimmed onto background
     title_txt = _sanitize_text_for_overlay(title or "", 140)
-    title_txt = _wrap_text_for_title(title_txt, TITLE_WRAP_LENGTH)
     effective_subtitle_path = subtitle_path if show_subtitle else None
     effective_subtitle_overlay_path = (
         Path(subtitle_overlay_video_path)
@@ -1474,8 +1654,15 @@ def _compose_trimmed_with_background(
     base_final_label = final_label
     if show_title and title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
-        title_test_y = _title_visual_y(title_margin, title_font_size)
+        title_layout = _fit_title_text(
+            title_txt,
+            font_path=test_font_file,
+            font_size=title_font_size,
+            target_width=target_width,
+            base_y=title_margin,
+            line_spacing=safe_title_line_spacing_main,
+        )
+        debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
         title_style = _title_drawtext_style(
             subtitle_preset=subtitle_preset,
             title_bg_color=title_bg_color,
@@ -1487,8 +1674,8 @@ def _compose_trimmed_with_background(
             f"fontfile='{test_font_file}':"
             f"textfile='{_escape_ass_path(debug_textfile)}':"
             "x=(w-text_w)/2:"
-            f"y={title_test_y}:"
-            f"fontsize={title_font_size}:"
+            f"y={title_layout['draw_y']}:"
+            f"fontsize={title_layout['font_size']}:"
             f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
             f"line_spacing={safe_title_line_spacing_main}:"
             f"{title_style}:"
