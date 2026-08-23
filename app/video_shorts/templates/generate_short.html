@@ -2377,6 +2377,34 @@
     text-shadow: none;
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
   }
+  .style-template-card-preview--green-pop::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--green-pop .style-template-card-preview-title {
+    background: #14532d;
+    color: #ffffff;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  .style-template-card-preview--green-pop .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 900;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.75),
+      0 8px 14px rgba(0, 0, 0, 0.48);
+  }
+  .style-template-card-preview--green-pop .style-template-card-preview-word.is-active {
+    color: #3ce84a;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.75),
+      0 8px 14px rgba(0, 0, 0, 0.48);
+    box-shadow: none;
+  }
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
@@ -2777,19 +2805,22 @@
   }
   .word-highlight-preview-word {
     color: #ffffff;
-    font-weight: 700;
-    text-shadow:
+    font-family: var(--word-highlight-font-family, inherit);
+    font-weight: var(--word-highlight-font-weight, 700);
+    text-shadow: var(
+      --word-highlight-text-shadow,
       -2px -2px 0 rgba(0, 0, 0, 0.98),
       2px -2px 0 rgba(0, 0, 0, 0.98),
       -2px 2px 0 rgba(0, 0, 0, 0.98),
-      2px 2px 0 rgba(0, 0, 0, 0.98);
+      2px 2px 0 rgba(0, 0, 0, 0.98)
+    );
   }
   .word-highlight-preview-word.is-active {
     color: var(--word-highlight-active-color, #111827);
     background: var(--word-highlight-pill-color, #ffd84d);
-    padding: 0.14em 0.48em;
-    border-radius: 999px;
-    text-shadow: none;
+    padding: var(--word-highlight-active-padding, 0.14em 0.48em);
+    border-radius: var(--word-highlight-active-radius, 999px);
+    text-shadow: var(--word-highlight-active-text-shadow, none);
   }
   .shorts-preview-video canvas {
     display: block;
@@ -11129,6 +11160,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
+  // Editor preview is approximate; rendered MP4 output is the source of truth.
   const WORD_HIGHLIGHT_PRESETS = {
     word_highlight: {
       pillColor: "#FFD84D",
@@ -11144,6 +11176,17 @@ document.addEventListener("DOMContentLoaded", function () {
       pillColor: "#3B7DED",
       activeTextColor: "#FFFFFF",
       inactiveTextColor: "#FFFFFF",
+    },
+    green_pop: {
+      pillColor: "transparent",
+      activeTextColor: "#3CE84A",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Montserrat\", sans-serif",
+      fontWeight: "900",
     },
   };
   const wordHighlightSampleMarkup = `
@@ -11320,12 +11363,24 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
       subtitlePreview.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
       subtitlePreview.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
+      subtitlePreview.style.setProperty("--word-highlight-text-shadow", wordHighlightPreset?.textShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
+      subtitlePreview.style.setProperty("--word-highlight-active-text-shadow", wordHighlightPreset?.activeTextShadow || "none");
+      subtitlePreview.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
+      subtitlePreview.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
+      subtitlePreview.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
+      subtitlePreview.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
       previewSubtitle.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
       previewSubtitle.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
       previewSubtitle.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
+      previewSubtitle.style.setProperty("--word-highlight-text-shadow", wordHighlightPreset?.textShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
+      previewSubtitle.style.setProperty("--word-highlight-active-text-shadow", wordHighlightPreset?.activeTextShadow || "none");
+      previewSubtitle.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
+      previewSubtitle.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
+      previewSubtitle.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
+      previewSubtitle.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
     }
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;

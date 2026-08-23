@@ -14571,7 +14571,7 @@ def autoclip_video(video_pk):
                 if video_subtitle_style == "karaoke":
                     active_subtitle_preset = str(video_subtitle_preset or "").strip()
                     active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
-                    if bool(active_preset_config.get("active_pill")):
+                    if bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
                         subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
                             override_segments,
                             adj_start,
@@ -14650,7 +14650,7 @@ def autoclip_video(video_pk):
             if video_subtitle_style == "karaoke":
                 active_subtitle_preset = str(video_subtitle_preset or "").strip()
                 active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
-                if bool(active_preset_config.get("active_pill")):
+                if bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
                     subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
                         segments,
                         adj_start,

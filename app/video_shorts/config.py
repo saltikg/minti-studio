@@ -259,6 +259,25 @@ SUBTITLE_PRESETS = {
         "active_box_padding_spaces": 1,
         "active_pill": True,
     },
+    "green_pop": {
+        "active_color": "#3CE84A",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 0,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Montserrat Black",
+        "active_pill": False,
+        "pillow_engine": True,
+        "draw_pill": False,
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.7,
+        "shadow_offset_x": 0,
+        "shadow_offset_y": 6,
+        "shadow_blur_radius": 8,
+    },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
 DEFAULT_TITLE_BG_ALPHA = 92
@@ -434,6 +453,16 @@ STYLE_TEMPLATES = [
         "title_font_key": "anton",
         "title_text_color": "#FFFFFF",
         "title_bg_color": "#3B7DED",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
+        "key": "green_pop",
+        "label": "Green Pop",
+        "subtitle_preset": "green_pop",
+        "title_font": "Montserrat",
+        "title_font_key": "montserrat",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#14532D",
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
     },
     {
@@ -629,6 +658,10 @@ SUBTITLE_PILL_FONT_MAP = {
     "word_highlight_ocean": {
         "ass_font_name": "Open Sans SemiCondensed Medium",
         "font_path": STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf",
+    },
+    "green_pop": {
+        "ass_font_name": "Montserrat Black",
+        "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
     },
     "deep_blue": {
         "ass_font_name": "Anton",

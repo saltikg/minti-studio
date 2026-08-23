@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from flask import current_app
 
@@ -1103,6 +1103,72 @@ def _hex_to_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
     )
 
 
+def _build_blurred_shadow_region(
+    layout: Dict[str, Any],
+    *,
+    font: ImageFont.FreeTypeFont,
+    shadow_color: str,
+    shadow_opacity: float,
+    shadow_offset_x: int,
+    shadow_offset_y: int,
+    shadow_blur_radius: int,
+) -> Dict[str, Any] | None:
+    words = list(layout.get("words") or [])
+    if not words:
+        return None
+    if not str(shadow_color or "").strip():
+        return None
+    opacity = max(0.0, min(1.0, float(shadow_opacity or 0.0)))
+    if opacity <= 0.0:
+        return None
+
+    probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe_image)
+    word_bboxes: List[Tuple[int, int, int, int]] = []
+    for word in words:
+        bbox = probe_draw.textbbox(
+            (int(word["x"]), int(word["y"])),
+            str(word["word"]),
+            font=font,
+            anchor="la",
+            stroke_width=0,
+        )
+        word_bboxes.append((int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])))
+    min_x = min(bbox[0] for bbox in word_bboxes)
+    min_y = min(bbox[1] for bbox in word_bboxes)
+    max_x = max(bbox[2] for bbox in word_bboxes)
+    max_y = max(bbox[3] for bbox in word_bboxes)
+    blur_pad = max(2, int(round(max(0, shadow_blur_radius) * 3)))
+    region_left = max(0, min_x + min(0, int(shadow_offset_x)) - blur_pad)
+    region_top = max(0, min_y + min(0, int(shadow_offset_y)) - blur_pad)
+    region_right = min(_PILLOW_CAPTION_WIDTH, max_x + max(0, int(shadow_offset_x)) + blur_pad)
+    region_bottom = min(_PILLOW_CAPTION_HEIGHT, max_y + max(0, int(shadow_offset_y)) + blur_pad)
+    region_width = max(1, int(region_right - region_left))
+    region_height = max(1, int(region_bottom - region_top))
+
+    shadow_region = Image.new("RGBA", (region_width, region_height), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_region)
+    shadow_fill = _hex_to_rgba(shadow_color, int(round(opacity * 255)))
+    for word in words:
+        shadow_draw.text(
+            (
+                int(word["x"]) - region_left + int(shadow_offset_x),
+                int(word["y"]) - region_top + int(shadow_offset_y),
+            ),
+            str(word["word"]),
+            font=font,
+            fill=shadow_fill,
+            anchor="la",
+        )
+    if shadow_blur_radius > 0:
+        shadow_region = shadow_region.filter(ImageFilter.GaussianBlur(int(shadow_blur_radius)))
+    return {
+        "image": shadow_region,
+        "x": region_left,
+        "y": region_top,
+    }
+
+
 def _wrap_words_to_lines(
     words: List[str],
     font: ImageFont.FreeTypeFont,
@@ -1231,47 +1297,58 @@ def _render_word_highlight_caption_frame(
     outline_color: str,
     outline_width: int,
     pill_color: str,
+    draw_pill: bool = True,
+    precomputed_layout: Optional[Dict[str, Any]] = None,
+    shadow_region: Optional[Dict[str, Any]] = None,
     out_path: Path,
 ) -> Dict[str, Any]:
-    probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
-    probe_draw = ImageDraw.Draw(probe_image)
     base_pad_x = max(10, int(round(float(font_size) * 0.48)))
     pad_y = max(4, int(round(float(font_size) * 0.14)))
-    word_metrics: List[Dict[str, int]] = []
-    for word in words:
-        bbox = probe_draw.textbbox(
-            (0, 0),
-            str(word),
-            font=font,
-            anchor="la",
-            stroke_width=outline_width,
-        )
-        text_w = max(1, int(bbox[2] - bbox[0]))
-        text_h = max(1, int(bbox[3] - bbox[1]))
-        pill_h = text_h + (pad_y * 2)
-        desired_pill_w = max(text_w + (base_pad_x * 2), int(round(pill_h * 2.0)))
-        word_metrics.append(
-            {
-                "text_w": text_w,
-                "text_h": text_h,
-                "pill_h": pill_h,
-                "desired_pill_w": desired_pill_w,
-            }
-        )
+    if precomputed_layout is None:
+        probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+        probe_draw = ImageDraw.Draw(probe_image)
+        word_metrics: List[Dict[str, int]] = []
+        for word in words:
+            bbox = probe_draw.textbbox(
+                (0, 0),
+                str(word),
+                font=font,
+                anchor="la",
+                stroke_width=outline_width,
+            )
+            text_w = max(1, int(bbox[2] - bbox[0]))
+            text_h = max(1, int(bbox[3] - bbox[1]))
+            pill_h = text_h + (pad_y * 2)
+            desired_pill_w = max(text_w + (base_pad_x * 2), int(round(pill_h * 2.0)))
+            word_metrics.append(
+                {
+                    "text_w": text_w,
+                    "text_h": text_h,
+                    "pill_h": pill_h,
+                    "desired_pill_w": desired_pill_w,
+                }
+            )
 
-    slot_widths = [metric["text_w"] for metric in word_metrics]
-    slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
-    layout = _layout_wrapped_caption(
-        words,
-        font=font,
-        subtitle_margin=subtitle_margin,
-        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
-        canvas_width=_PILLOW_CAPTION_WIDTH,
-        canvas_height=_PILLOW_CAPTION_HEIGHT,
-        slot_widths=slot_widths,
-    )
+        slot_widths = [metric["text_w"] for metric in word_metrics]
+        slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
+        layout = _layout_wrapped_caption(
+            words,
+            font=font,
+            subtitle_margin=subtitle_margin,
+            max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
+            canvas_width=_PILLOW_CAPTION_WIDTH,
+            canvas_height=_PILLOW_CAPTION_HEIGHT,
+            slot_widths=slot_widths,
+        )
+    else:
+        layout = precomputed_layout
     image = Image.new("RGBA", (_PILLOW_CAPTION_WIDTH, _PILLOW_CAPTION_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
+    if shadow_region:
+        image.alpha_composite(
+            shadow_region["image"],
+            (int(shadow_region["x"]), int(shadow_region["y"])),
+        )
 
     active_word = layout["words"][active_index]
     active_bbox = draw.textbbox(
@@ -1284,53 +1361,59 @@ def _render_word_highlight_caption_frame(
     active_text_w = max(1, int(active_bbox[2] - active_bbox[0]))
     active_text_h = max(1, int(active_bbox[3] - active_bbox[1]))
     pill_h = active_text_h + (pad_y * 2)
-    radius = pill_h // 2
-    min_pill_w = int(round(pill_h * 2.0))
-    slot_width = max(int(active_word.get("slot_width") or active_text_w), min_pill_w)
-
-    line_words = layout["lines"][int(active_word["line_index"])]["words"]
-    line_index = next(
-        (
-            idx
-            for idx, candidate in enumerate(line_words)
-            if int(candidate["global_index"]) == int(active_word["global_index"])
-        ),
-        0,
-    )
-
     left_gap = None
     right_gap = None
-    if line_index > 0:
-        prev_word = line_words[line_index - 1]
-        prev_bbox = draw.textbbox(
-            (int(prev_word["x"]), int(prev_word["y"])),
-            str(prev_word["word"]),
-            font=font,
-            anchor="la",
-            stroke_width=outline_width,
-        )
-        left_gap = max(0, int(active_bbox[0] - prev_bbox[2]))
-    if line_index + 1 < len(line_words):
-        next_word = line_words[line_index + 1]
-        next_bbox = draw.textbbox(
-            (int(next_word["x"]), int(next_word["y"])),
-            str(next_word["word"]),
-            font=font,
-            anchor="la",
-            stroke_width=outline_width,
-        )
-        right_gap = max(0, int(next_bbox[0] - active_bbox[2]))
+    pill_w = 0
+    pill_left = 0
+    pill_top = 0
+    pad_left = 0
+    pad_right = 0
+    if draw_pill:
+        radius = pill_h // 2
+        min_pill_w = int(round(pill_h * 2.0))
+        slot_width = max(int(active_word.get("slot_width") or active_text_w), min_pill_w)
 
-    pill_w = slot_width
-    pill_left = int(round((int(active_word.get("slot_x") or active_bbox[0]) + (slot_width / 2.0)) - (pill_w / 2.0)))
-    pill_top = int(active_bbox[1] - pad_y)
-    pad_left = int(active_bbox[0] - pill_left)
-    pad_right = int((pill_left + pill_w) - active_bbox[2])
-    draw.rounded_rectangle(
-        [pill_left, pill_top, pill_left + pill_w, pill_top + pill_h],
-        radius=radius,
-        fill=_hex_to_rgba(pill_color),
-    )
+        line_words = layout["lines"][int(active_word["line_index"])]["words"]
+        line_index = next(
+            (
+                idx
+                for idx, candidate in enumerate(line_words)
+                if int(candidate["global_index"]) == int(active_word["global_index"])
+            ),
+            0,
+        )
+
+        if line_index > 0:
+            prev_word = line_words[line_index - 1]
+            prev_bbox = draw.textbbox(
+                (int(prev_word["x"]), int(prev_word["y"])),
+                str(prev_word["word"]),
+                font=font,
+                anchor="la",
+                stroke_width=outline_width,
+            )
+            left_gap = max(0, int(active_bbox[0] - prev_bbox[2]))
+        if line_index + 1 < len(line_words):
+            next_word = line_words[line_index + 1]
+            next_bbox = draw.textbbox(
+                (int(next_word["x"]), int(next_word["y"])),
+                str(next_word["word"]),
+                font=font,
+                anchor="la",
+                stroke_width=outline_width,
+            )
+            right_gap = max(0, int(next_bbox[0] - active_bbox[2]))
+
+        pill_w = slot_width
+        pill_left = int(round((int(active_word.get("slot_x") or active_bbox[0]) + (slot_width / 2.0)) - (pill_w / 2.0)))
+        pill_top = int(active_bbox[1] - pad_y)
+        pad_left = int(active_bbox[0] - pill_left)
+        pad_right = int((pill_left + pill_w) - active_bbox[2])
+        draw.rounded_rectangle(
+            [pill_left, pill_top, pill_left + pill_w, pill_top + pill_h],
+            radius=radius,
+            fill=_hex_to_rgba(pill_color),
+        )
 
     inactive_rgba = _hex_to_rgba(inactive_color)
     active_rgba = _hex_to_rgba(active_color)
@@ -1469,13 +1552,33 @@ def _build_word_highlight_caption_overlay(
     active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
     pill_color = str(preset.get("active_box_color") or "#FFD84D").strip() or "#FFD84D"
+    draw_pill = bool(preset.get("draw_pill", True))
+    shadow_color = str(preset.get("shadow_color") or "").strip()
     try:
         outline_width = max(0, int(preset.get("outline_width", 3) or 3))
     except Exception:
         outline_width = 3
+    try:
+        shadow_opacity = max(0.0, min(1.0, float(preset.get("shadow_opacity", 0.0) or 0.0)))
+    except Exception:
+        shadow_opacity = 0.0
+    try:
+        shadow_offset_x = int(preset.get("shadow_offset_x", 0) or 0)
+    except Exception:
+        shadow_offset_x = 0
+    try:
+        shadow_offset_y = int(preset.get("shadow_offset_y", 0) or 0)
+    except Exception:
+        shadow_offset_y = 0
+    try:
+        shadow_blur_radius = max(0, int(preset.get("shadow_blur_radius", 0) or 0))
+    except Exception:
+        shadow_blur_radius = 0
 
     overlay_specs: List[Dict[str, Any]] = []
     clip_duration = max(float(clip_end) - float(clip_start), 0.01)
+    layout_cache: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+    shadow_cache: Dict[Tuple[str, ...], Dict[str, Any] | None] = {}
 
     for seg in segments:
         try:
@@ -1561,6 +1664,44 @@ def _build_word_highlight_caption_overlay(
             word_tokens = [str(item["word"]).strip() for item in chunk_words if str(item.get("word") or "").strip()]
             if not word_tokens:
                 continue
+            chunk_key = tuple(word_tokens)
+            precomputed_layout = None
+            if not draw_pill:
+                precomputed_layout = layout_cache.get(chunk_key)
+                if precomputed_layout is None:
+                    precomputed_layout = _layout_wrapped_caption(
+                        word_tokens,
+                        font=font,
+                        subtitle_margin=subtitle_margin,
+                        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
+                        canvas_width=_PILLOW_CAPTION_WIDTH,
+                        canvas_height=_PILLOW_CAPTION_HEIGHT,
+                    )
+                    layout_cache[chunk_key] = precomputed_layout
+            shadow_region = None
+            if shadow_color and shadow_opacity > 0.0:
+                shadow_region = shadow_cache.get(chunk_key)
+                if chunk_key not in shadow_cache:
+                    layout_for_shadow = precomputed_layout or _layout_wrapped_caption(
+                        word_tokens,
+                        font=font,
+                        subtitle_margin=subtitle_margin,
+                        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
+                        canvas_width=_PILLOW_CAPTION_WIDTH,
+                        canvas_height=_PILLOW_CAPTION_HEIGHT,
+                    )
+                    shadow_region = _build_blurred_shadow_region(
+                        layout_for_shadow,
+                        font=font,
+                        shadow_color=shadow_color,
+                        shadow_opacity=shadow_opacity,
+                        shadow_offset_x=shadow_offset_x,
+                        shadow_offset_y=shadow_offset_y,
+                        shadow_blur_radius=shadow_blur_radius,
+                    )
+                    shadow_cache[chunk_key] = shadow_region
+                else:
+                    shadow_region = shadow_cache[chunk_key]
             for index, item in enumerate(chunk_words):
                 item_start = max(0.0, float(item["start"]) - clip_start)
                 next_start = (
@@ -1580,6 +1721,9 @@ def _build_word_highlight_caption_overlay(
                     outline_color=outline_color,
                     outline_width=outline_width,
                     pill_color=pill_color,
+                    draw_pill=draw_pill,
+                    precomputed_layout=precomputed_layout,
+                    shadow_region=shadow_region,
                     out_path=frame_path,
                 )
                 overlay_specs.append(
