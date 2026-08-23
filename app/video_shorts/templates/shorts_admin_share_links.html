@@ -279,10 +279,19 @@
                       class="admin-share-links-followup-copy-btn"
                       data-recipient-name="{{ link.recipient_name }}"
                       data-share-url="{{ link.share_url }}"
-                      data-language="{{ link.language }}"
+                      data-language="EN"
                       data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
-                      title="Copy follow-up email"
-                      aria-label="Copy follow-up email">2. email kopyala</button>
+                      title="Copy follow-up email in English"
+                      aria-label="Copy follow-up email in English">2. email (EN)</button>
+                    <button
+                      type="button"
+                      class="admin-share-links-followup-copy-btn"
+                      data-recipient-name="{{ link.recipient_name }}"
+                      data-share-url="{{ link.share_url }}"
+                      data-language="TR"
+                      data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
+                      title="Copy follow-up email in Turkish"
+                      aria-label="Copy follow-up email in Turkish">2. email (TR)</button>
                     <button
                       type="button"
                       class="admin-share-links-followup-mark-btn"
@@ -417,10 +426,11 @@ Gökhan`,
       if (followupCopyButton) {
         const row = followupCopyButton.closest(".admin-share-links-row");
         const originalLabel = followupCopyButton.textContent;
+        const language = String(followupCopyButton.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
         try {
           await navigator.clipboard.writeText(buildFollowupText(followupCopyButton));
-          followupCopyButton.textContent = "Kopyalandı";
-          setFollowupFeedback(row, "Follow-up metni panoya kopyalandı.", "is-success");
+          followupCopyButton.textContent = `Kopyalandı (${language})`;
+          setFollowupFeedback(row, `Follow-up metni panoya kopyalandı (${language}).`, "is-success");
         } catch (err) {
           followupCopyButton.textContent = "Kopyalama başarısız";
           setFollowupFeedback(row, "Panoya kopyalanamadı.", "is-error");
