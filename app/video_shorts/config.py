@@ -429,8 +429,8 @@ STYLE_TEMPLATES = [
         "key": "green_pop",
         "label": "Green Pop",
         "subtitle_preset": "green_pop",
-        "title_font": "Montserrat",
-        "title_font_key": "montserrat",
+        "title_font": "Montserrat Black",
+        "title_font_key": "montserrat_black",
         "title_text_color": "#FFFFFF",
         "title_bg_color": "#14532D",
         "title_bg_alpha": 0,
@@ -579,6 +579,14 @@ TITLE_FONTS = OrderedDict(
                 "label": "Montserrat",
                 "css_family": "'Montserrat', sans-serif",
                 "path": STATIC_FONTS_DIR / "Montserrat-VariableFont_wght.ttf",
+            },
+        ),
+        (
+            "montserrat_black",
+            {
+                "label": "Montserrat Black",
+                "css_family": "'Montserrat', sans-serif",
+                "path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
             },
         ),
         (
