@@ -273,10 +273,10 @@ SUBTITLE_PRESETS = {
         "pillow_engine": True,
         "draw_pill": False,
         "shadow_color": "#000000",
-        "shadow_opacity": 0.7,
+        "shadow_opacity": 0.55,
         "shadow_offset_x": 0,
-        "shadow_offset_y": 6,
-        "shadow_blur_radius": 8,
+        "shadow_offset_y": 8,
+        "shadow_blur_radius": 17,
     },
 }
 DEFAULT_SUBTITLE_PRESET = "classic_yellow"
