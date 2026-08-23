@@ -426,6 +426,16 @@ DEFAULT_TITLE_BG_COLOR = "#FFD600"
 DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "400"))
 STYLE_TEMPLATES = [
     {
+        "key": "green_pop",
+        "label": "Green Pop",
+        "subtitle_preset": "green_pop",
+        "title_font": "Montserrat",
+        "title_font_key": "montserrat",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#14532D",
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+    },
+    {
         "key": "word_highlight",
         "label": "Word Highlight",
         "subtitle_preset": "word_highlight",
@@ -453,16 +463,6 @@ STYLE_TEMPLATES = [
         "title_font_key": "anton",
         "title_text_color": "#FFFFFF",
         "title_bg_color": "#3B7DED",
-        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
-    },
-    {
-        "key": "green_pop",
-        "label": "Green Pop",
-        "subtitle_preset": "green_pop",
-        "title_font": "Montserrat",
-        "title_font_key": "montserrat",
-        "title_text_color": "#FFFFFF",
-        "title_bg_color": "#14532D",
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
     },
     {
