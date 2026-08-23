@@ -4792,6 +4792,31 @@
 })();
 </script>
 <script>
+const getActiveTitleTemplatePreset = () => {
+  const subtitlePresetField = document.getElementById("subtitlePresetValue");
+  const presetKey = String(subtitlePresetField?.value || "").trim();
+  if (!presetKey || typeof TITLE_TEMPLATE_PRESETS !== "object" || !TITLE_TEMPLATE_PRESETS) {
+    return null;
+  }
+  return TITLE_TEMPLATE_PRESETS[presetKey] || null;
+};
+const getPreviewTitleDisplayText = (value) => {
+  const preset = getActiveTitleTemplatePreset();
+  const resolved = String(value || "").trim() || "Life is full of fun";
+  return preset?.uppercase ? resolved.toLocaleUpperCase("tr-TR") : resolved;
+};
+const syncPreviewTitleText = (nextTitle = null) => {
+  const modalEl = document.getElementById("crop-area-modal");
+  const previewTitle = modalEl?.querySelector("#shorts-preview-title-band");
+  if (!previewTitle) {
+    return;
+  }
+  const activeCard = modalEl?.querySelector(".clip-card");
+  const activeTitle = activeCard?.querySelector(".clip-title-input")?.value;
+  const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
+  const resolvedTitle = String((nextTitle ?? activeTitle) || fallbackTitle || "Life is full of fun").trim() || "Life is full of fun";
+  previewTitle.textContent = getPreviewTitleDisplayText(resolvedTitle);
+};
 document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("step1-form");
   const step1Btn = document.getElementById("step1-btn");
@@ -9637,27 +9662,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if ((selectedPreviewElement === "title" && !titleVisible) || (selectedPreviewElement === "subtitle" && !subtitleVisible)) {
       setSelectedPreviewElement("");
     }
-  };
-  const getActivePreviewTitleText = () => {
-    const activeCard = modalEl?.querySelector(".clip-card");
-    const activeTitle = activeCard?.querySelector(".clip-title-input")?.value;
-    const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
-    return String(activeTitle || fallbackTitle || "Life is full of fun").trim() || "Life is full of fun";
-  };
-  const getActiveTitleTemplatePreset = () => (
-    TITLE_TEMPLATE_PRESETS[String(subtitlePresetField?.value || "").trim()] || null
-  );
-  const getPreviewTitleDisplayText = (value) => {
-    const preset = getActiveTitleTemplatePreset();
-    const resolved = String(value || "").trim() || "Life is full of fun";
-    return preset?.uppercase ? resolved.toLocaleUpperCase("tr-TR") : resolved;
-  };
-  const syncPreviewTitleText = (nextTitle = null) => {
-    if (!previewTitle) {
-      return;
-    }
-    const resolved = getPreviewTitleDisplayText(nextTitle ?? getActivePreviewTitleText());
-    previewTitle.textContent = resolved;
   };
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
