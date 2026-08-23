@@ -191,9 +191,9 @@
       <table class="admin-share-links-table">
         <thead>
           <tr>
+            <th>Sent</th>
             <th>Recipient</th>
             <th>Clip</th>
-            <th>Sent</th>
             <th>Views</th>
             <th>Plays</th>
             <th>Viewed?</th>
@@ -209,6 +209,20 @@
         <tbody>
           {% for link in links %}
             <tr>
+              <td>
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_emailed', share_link_id=link.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                  <label class="admin-share-links-sent">
+                    <input type="checkbox" name="emailed" value="1" {% if link.emailed %}checked{% endif %} onchange="this.form.submit()">
+                    <span class="admin-share-links-sent-label">
+                      <span>{{ 'Sent' if link.emailed else 'Not sent' }}</span>
+                      {% if link.emailed_at_pst %}
+                        <span class="admin-share-links-sent-time">{{ link.emailed_at_pst }}</span>
+                      {% endif %}
+                    </span>
+                  </label>
+                </form>
+              </td>
               <td>
                 <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">{{ link.recipient_email }}</div>
@@ -227,20 +241,6 @@
                     <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
                   </div>
                 {% endif %}
-              </td>
-              <td>
-                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_emailed', share_link_id=link.id) }}">
-                  <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
-                  <label class="admin-share-links-sent">
-                    <input type="checkbox" name="emailed" value="1" {% if link.emailed %}checked{% endif %} onchange="this.form.submit()">
-                    <span class="admin-share-links-sent-label">
-                      <span>{{ 'Sent' if link.emailed else 'Not sent' }}</span>
-                      {% if link.emailed_at_pst %}
-                        <span class="admin-share-links-sent-time">{{ link.emailed_at_pst }}</span>
-                      {% endif %}
-                    </span>
-                  </label>
-                </form>
               </td>
               <td>{{ link.views_count }}</td>
               <td>{{ link.plays_count }}</td>
