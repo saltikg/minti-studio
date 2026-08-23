@@ -1285,6 +1285,85 @@ def _draw_outlined_text(
     )
 
 
+def _build_vertical_gradient_strip(
+    height: int,
+    top_color: str,
+    mid_color: str,
+    bottom_color: str,
+) -> Image.Image:
+    safe_height = max(1, int(height))
+    top_rgba = _hex_to_rgba(top_color)
+    mid_rgba = _hex_to_rgba(mid_color)
+    bottom_rgba = _hex_to_rgba(bottom_color)
+    gradient = Image.new("RGBA", (1, safe_height), (0, 0, 0, 0))
+    pixels = gradient.load()
+    mid_position = 0.46
+    for y in range(safe_height):
+        ratio = 0.0 if safe_height <= 1 else float(y) / float(safe_height - 1)
+        if ratio <= mid_position:
+            local_ratio = 0.0 if mid_position <= 0 else ratio / mid_position
+            start = top_rgba
+            end = mid_rgba
+        else:
+            denom = max(1e-6, 1.0 - mid_position)
+            local_ratio = (ratio - mid_position) / denom
+            start = mid_rgba
+            end = bottom_rgba
+        pixels[0, y] = tuple(
+            int(round(start[channel] + ((end[channel] - start[channel]) * local_ratio)))
+            for channel in range(4)
+        )
+    return gradient
+
+
+def _build_gradient_word_layer(
+    word: Dict[str, Any],
+    *,
+    line_y: int,
+    line_height: int,
+    font: ImageFont.FreeTypeFont,
+    gradient_strip: Image.Image,
+) -> Dict[str, Any] | None:
+    probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe_image)
+    bbox = probe_draw.textbbox(
+        (int(word["x"]), int(word["y"])),
+        str(word["word"]),
+        font=font,
+        anchor="la",
+        stroke_width=0,
+    )
+    left = int(bbox[0])
+    top = int(bbox[1])
+    right = int(bbox[2])
+    bottom = int(bbox[3])
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    text_mask = Image.new("L", (width, height), 0)
+    mask_draw = ImageDraw.Draw(text_mask)
+    mask_draw.text(
+        (
+            int(word["x"]) - left,
+            int(word["y"]) - top,
+        ),
+        str(word["word"]),
+        font=font,
+        fill=255,
+        anchor="la",
+    )
+    relative_top = max(0, int(top - int(line_y)))
+    relative_bottom = max(relative_top + 1, min(int(line_height), int(bottom - int(line_y))))
+    gradient_region = gradient_strip.crop((0, relative_top, 1, relative_bottom)).resize((width, height))
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    layer.paste(gradient_region, (0, 0), text_mask)
+    return {
+        "image": layer,
+        "x": left,
+        "y": top,
+        "bbox": (left, top, right, bottom),
+    }
+
+
 def _render_word_highlight_caption_frame(
     words: List[str],
     *,
@@ -1300,6 +1379,8 @@ def _render_word_highlight_caption_frame(
     draw_pill: bool = True,
     precomputed_layout: Optional[Dict[str, Any]] = None,
     shadow_region: Optional[Dict[str, Any]] = None,
+    fill_mode: str = "flat",
+    gradient_layers: Optional[Dict[int, Dict[str, Dict[str, Any] | None]]] = None,
     out_path: Path,
 ) -> Dict[str, Any]:
     base_pad_x = max(10, int(round(float(font_size) * 0.48)))
@@ -1415,23 +1496,36 @@ def _render_word_highlight_caption_frame(
             fill=_hex_to_rgba(pill_color),
         )
 
-    inactive_rgba = _hex_to_rgba(inactive_color)
-    active_rgba = _hex_to_rgba(active_color)
-    outline_rgba = _hex_to_rgba(outline_color)
+    if str(fill_mode or "flat").strip().lower() == "gradient" and gradient_layers:
+        for word in layout["words"]:
+            is_active_word = int(word["global_index"]) == int(active_index)
+            layer_entry = (gradient_layers.get(int(word["global_index"])) or {}).get(
+                "active" if is_active_word else "inactive"
+            )
+            if not layer_entry:
+                continue
+            image.alpha_composite(
+                layer_entry["image"],
+                (int(layer_entry["x"]), int(layer_entry["y"])),
+            )
+    else:
+        inactive_rgba = _hex_to_rgba(inactive_color)
+        active_rgba = _hex_to_rgba(active_color)
+        outline_rgba = _hex_to_rgba(outline_color)
 
-    for word in layout["words"]:
-        is_active_word = int(word["global_index"]) == int(active_index)
-        fill = active_rgba if is_active_word else inactive_rgba
-        _draw_outlined_text(
-            draw,
-            int(word["x"]),
-            int(word["y"]),
-            str(word["word"]),
-            font=font,
-            fill=fill,
-            stroke_fill=outline_rgba,
-            stroke_width=0 if is_active_word else outline_width,
-        )
+        for word in layout["words"]:
+            is_active_word = int(word["global_index"]) == int(active_index)
+            fill = active_rgba if is_active_word else inactive_rgba
+            _draw_outlined_text(
+                draw,
+                int(word["x"]),
+                int(word["y"]),
+                str(word["word"]),
+                font=font,
+                fill=fill,
+                stroke_fill=outline_rgba,
+                stroke_width=0 if is_active_word else outline_width,
+            )
 
     image.save(out_path)
     return {
@@ -1579,6 +1673,17 @@ def _build_word_highlight_caption_overlay(
     clip_duration = max(float(clip_end) - float(clip_start), 0.01)
     layout_cache: Dict[Tuple[str, ...], Dict[str, Any]] = {}
     shadow_cache: Dict[Tuple[str, ...], Dict[str, Any] | None] = {}
+    gradient_strip_cache: Dict[Tuple[int, str, str, str, str], Image.Image] = {}
+    gradient_word_cache: Dict[Tuple[Tuple[str, ...], int, str], Dict[str, Any] | None] = {}
+    gradient_ramp_build_count = 0
+    gradient_word_build_count = 0
+    fill_mode = str(preset.get("fill_mode") or "flat").strip().lower() or "flat"
+    active_gradient_top = str(preset.get("active_gradient_top") or active_color).strip() or active_color
+    active_gradient_mid = str(preset.get("active_gradient_mid") or active_color).strip() or active_color
+    active_gradient_bottom = str(preset.get("active_gradient_bottom") or active_color).strip() or active_color
+    inactive_gradient_top = str(preset.get("inactive_gradient_top") or inactive_color).strip() or inactive_color
+    inactive_gradient_mid = str(preset.get("inactive_gradient_mid") or inactive_color).strip() or inactive_color
+    inactive_gradient_bottom = str(preset.get("inactive_gradient_bottom") or inactive_color).strip() or inactive_color
 
     for seg in segments:
         try:
@@ -1678,6 +1783,86 @@ def _build_word_highlight_caption_overlay(
                         canvas_height=_PILLOW_CAPTION_HEIGHT,
                     )
                     layout_cache[chunk_key] = precomputed_layout
+            gradient_layers = None
+            if fill_mode == "gradient":
+                layout_for_gradient = precomputed_layout or _layout_wrapped_caption(
+                    word_tokens,
+                    font=font,
+                    subtitle_margin=subtitle_margin,
+                    max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
+                    canvas_width=_PILLOW_CAPTION_WIDTH,
+                    canvas_height=_PILLOW_CAPTION_HEIGHT,
+                )
+                precomputed_layout = precomputed_layout or layout_for_gradient
+                active_ramp_key = (
+                    int(layout_for_gradient["line_height"]),
+                    "active",
+                    active_gradient_top,
+                    active_gradient_mid,
+                    active_gradient_bottom,
+                )
+                inactive_ramp_key = (
+                    int(layout_for_gradient["line_height"]),
+                    "inactive",
+                    inactive_gradient_top,
+                    inactive_gradient_mid,
+                    inactive_gradient_bottom,
+                )
+                active_strip = gradient_strip_cache.get(active_ramp_key)
+                if active_strip is None:
+                    active_strip = _build_vertical_gradient_strip(
+                        int(layout_for_gradient["line_height"]),
+                        active_gradient_top,
+                        active_gradient_mid,
+                        active_gradient_bottom,
+                    )
+                    gradient_strip_cache[active_ramp_key] = active_strip
+                    gradient_ramp_build_count += 1
+                inactive_strip = gradient_strip_cache.get(inactive_ramp_key)
+                if inactive_strip is None:
+                    inactive_strip = _build_vertical_gradient_strip(
+                        int(layout_for_gradient["line_height"]),
+                        inactive_gradient_top,
+                        inactive_gradient_mid,
+                        inactive_gradient_bottom,
+                    )
+                    gradient_strip_cache[inactive_ramp_key] = inactive_strip
+                    gradient_ramp_build_count += 1
+                gradient_layers = {}
+                for word in layout_for_gradient["words"]:
+                    line_entry = layout_for_gradient["lines"][int(word["line_index"])]
+                    active_layer_key = (chunk_key, int(word["global_index"]), "active")
+                    inactive_layer_key = (chunk_key, int(word["global_index"]), "inactive")
+                    active_layer = gradient_word_cache.get(active_layer_key)
+                    if active_layer is None and active_layer_key not in gradient_word_cache:
+                        active_layer = _build_gradient_word_layer(
+                            word,
+                            line_y=int(line_entry["y"]),
+                            line_height=int(layout_for_gradient["line_height"]),
+                            font=font,
+                            gradient_strip=active_strip,
+                        )
+                        gradient_word_cache[active_layer_key] = active_layer
+                        gradient_word_build_count += 1
+                    else:
+                        active_layer = gradient_word_cache.get(active_layer_key)
+                    inactive_layer = gradient_word_cache.get(inactive_layer_key)
+                    if inactive_layer is None and inactive_layer_key not in gradient_word_cache:
+                        inactive_layer = _build_gradient_word_layer(
+                            word,
+                            line_y=int(line_entry["y"]),
+                            line_height=int(layout_for_gradient["line_height"]),
+                            font=font,
+                            gradient_strip=inactive_strip,
+                        )
+                        gradient_word_cache[inactive_layer_key] = inactive_layer
+                        gradient_word_build_count += 1
+                    else:
+                        inactive_layer = gradient_word_cache.get(inactive_layer_key)
+                    gradient_layers[int(word["global_index"])] = {
+                        "active": active_layer,
+                        "inactive": inactive_layer,
+                    }
             shadow_region = None
             if shadow_color and shadow_opacity > 0.0:
                 shadow_region = shadow_cache.get(chunk_key)
@@ -1724,6 +1909,8 @@ def _build_word_highlight_caption_overlay(
                     draw_pill=draw_pill,
                     precomputed_layout=precomputed_layout,
                     shadow_region=shadow_region,
+                    fill_mode=fill_mode,
+                    gradient_layers=gradient_layers,
                     out_path=frame_path,
                 )
                 overlay_specs.append(
@@ -1749,6 +1936,9 @@ def _build_word_highlight_caption_overlay(
         "specs": [],
         "frame_count": len(overlay_specs),
         "timeline_segments": len(overlay_specs),
+        "gradient_fill_mode": fill_mode,
+        "gradient_ramp_build_count": gradient_ramp_build_count,
+        "gradient_word_build_count": gradient_word_build_count,
         "timing_events": [
             {
                 "start": float(spec["start"]),

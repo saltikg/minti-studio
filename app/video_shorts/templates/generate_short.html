@@ -2408,6 +2408,42 @@
       0 8px 14px rgba(0, 0, 0, 0.48);
     box-shadow: none;
   }
+  .style-template-card-preview--silver-pop::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--silver-pop .style-template-card-preview-title {
+    background: transparent;
+    color: #ffffff;
+    font-family: "Anton", sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.72),
+      0 8px 14px rgba(0, 0, 0, 0.45);
+  }
+  .style-template-card-preview--silver-pop .style-template-card-preview-word {
+    color: #e2e4e7;
+    font-family: "Anton", sans-serif;
+    font-weight: 400;
+    background: linear-gradient(180deg, #e2e4e7 0%, #f3f4f6 48%, #767c85 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.75),
+      0 8px 14px rgba(0, 0, 0, 0.48);
+  }
+  .style-template-card-preview--silver-pop .style-template-card-preview-word.is-active {
+    color: #ffffff;
+    background: linear-gradient(180deg, #f7f7f7 0%, #ffffff 48%, #b5bbc4 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.75),
+      0 8px 14px rgba(0, 0, 0, 0.48);
+    box-shadow: none;
+  }
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
@@ -2798,6 +2834,22 @@
   .short-font-preview.is-word-highlight {
     background: transparent !important;
     box-shadow: none;
+  }
+  .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word,
+  .short-font-preview.is-gradient-fill .word-highlight-preview-word {
+    background: var(--word-highlight-text-background, none);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word.is-active,
+  .short-font-preview.is-gradient-fill .word-highlight-preview-word.is-active {
+    background: var(--word-highlight-active-background, none);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
   }
   .shorts-preview-subtitle-band.is-word-highlight {
     gap: 6px;
@@ -11255,12 +11307,34 @@ document.addEventListener("DOMContentLoaded", function () {
       fontFamily: "\"Montserrat\", sans-serif",
       fontWeight: "900",
     },
+    silver_pop: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#E2E4E7",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Anton\", sans-serif",
+      fontWeight: "400",
+      fillMode: "gradient",
+      textBackground: "linear-gradient(180deg, #E2E4E7 0%, #F3F4F6 48%, #767C85 100%)",
+      activeBackground: "linear-gradient(180deg, #F7F7F7 0%, #FFFFFF 48%, #B5BBC4 100%)",
+    },
   };
   const TITLE_TEMPLATE_PRESETS = {
     green_pop: {
       engine: "pillow",
       uppercase: true,
       fontWeight: "900",
+      sideMargin: 48,
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+    silver_pop: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "400",
       sideMargin: 48,
       textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
       bgAlpha: "0",
@@ -11436,10 +11510,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const bgRgba = hexToRgba(bgHex, bgAlpha);
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
+      subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       subtitlePreview.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
+      previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       previewSubtitle.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
     }
     if (subtitlePreview) {
@@ -11453,6 +11529,8 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
       subtitlePreview.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
       subtitlePreview.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      subtitlePreview.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
+      subtitlePreview.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
@@ -11465,6 +11543,8 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
       previewSubtitle.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
       previewSubtitle.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      previewSubtitle.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
+      previewSubtitle.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
     }
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;
