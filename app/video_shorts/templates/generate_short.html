@@ -9644,11 +9644,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
     return String(activeTitle || fallbackTitle || "Life is full of fun").trim() || "Life is full of fun";
   };
+  const getActiveTitleTemplatePreset = () => (
+    TITLE_TEMPLATE_PRESETS[String(subtitlePresetField?.value || "").trim()] || null
+  );
+  const getPreviewTitleDisplayText = (value) => {
+    const preset = getActiveTitleTemplatePreset();
+    const resolved = String(value || "").trim() || "Life is full of fun";
+    return preset?.uppercase ? resolved.toLocaleUpperCase("tr-TR") : resolved;
+  };
   const syncPreviewTitleText = (nextTitle = null) => {
     if (!previewTitle) {
       return;
     }
-    const resolved = String(nextTitle ?? getActivePreviewTitleText()).trim() || "Life is full of fun";
+    const resolved = getPreviewTitleDisplayText(nextTitle ?? getActivePreviewTitleText());
     previewTitle.textContent = resolved;
   };
   const updateSplitUiState = () => {
@@ -9744,6 +9752,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const dims = getOverlayDims();
     const baseTitleHeight = previewConfig.titleHeight;
     const subtitleHeight = previewConfig.subtitleHeight;
+    const titleTemplatePreset = getActiveTitleTemplatePreset();
+    const titleUsesPillowLayout = titleTemplatePreset?.engine === "pillow";
+    const titleSideMargin = Number.isFinite(Number(titleTemplatePreset?.sideMargin))
+      ? Number(titleTemplatePreset.sideMargin)
+      : 32;
     const titleTop = clampRenderValue(
       getNumericFieldValue(titleMarginInput, previewConfig.titleY),
       0,
@@ -9777,13 +9790,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
       previewTitle.style.fontSize = titleFontSize * overlayScale + "px";
+      previewTitle.style.left = titleSideMargin * overlayScale + "px";
+      previewTitle.style.right = titleSideMargin * overlayScale + "px";
+      previewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
       previewTitle.style.height = "auto";
-      const titleBottomPx = (titleTop + baseTitleHeight) * overlayScale;
       const minTitleHeightPx = baseTitleHeight * overlayScale;
       const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
       const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
       previewTitle.style.height = effectiveTitleHeightPx + "px";
-      previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
+      if (titleUsesPillowLayout) {
+        previewTitle.style.top = Math.max(0, titleTop * overlayScale) + "px";
+      } else {
+        const titleBottomPx = (titleTop + baseTitleHeight) * overlayScale;
+        previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
+      }
     }
     if (previewVideo) {
       previewVideo.classList.toggle("is-drag-disabled", !isPreviewElementDraggable("video"));
@@ -11234,6 +11254,10 @@ document.addEventListener("DOMContentLoaded", function () {
   };
   const TITLE_TEMPLATE_PRESETS = {
     green_pop: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "900",
+      sideMargin: 48,
       textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
       bgAlpha: "0",
     },
@@ -11388,6 +11412,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (titleBgSwatch) titleBgSwatch.style.backgroundColor = rgba;
     if (titlePreview) titlePreview.style.textShadow = titleTemplatePreset?.textShadow || "none";
     if (previewTitle) previewTitle.style.textShadow = titleTemplatePreset?.textShadow || "none";
+    if (titlePreview) titlePreview.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
+    if (previewTitle) previewTitle.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
+    syncPreviewTitleText();
   };
   const applySubtitlePreview = () => {
     const subtitleTextHidden = document.getElementById("subtitleTextColorValue");
@@ -11451,6 +11478,7 @@ document.addEventListener("DOMContentLoaded", function () {
     syncSubtitlePresetCards();
     applySubtitlePreview();
     applyTitleBgPreview();
+    syncPreviewTitleText();
   };
   const applyTitleTextPreview = (hex) => {
     if (titlePreview) titlePreview.style.color = hex;

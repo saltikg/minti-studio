@@ -3,9 +3,9 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from flask import current_app
 
 from app.video_shorts.config import (
@@ -21,6 +21,7 @@ from app.video_shorts.config import (
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
     STATIC_VISUAL_PRESETS,
+    SUBTITLE_PRESETS,
     SUB_MARGIN_DEFAULT,
 )
 
@@ -254,6 +255,214 @@ def _fit_title_text(
         "draw_y": chosen_layout["draw_y"],
         "line_count": len(chosen_lines),
         "side_margin": side_margin,
+    }
+
+
+_TR_UPPER_MAP = str.maketrans({
+    "i": "İ",
+    "ı": "I",
+})
+
+
+def _turkish_upper(text: str) -> str:
+    return str(text or "").translate(_TR_UPPER_MAP).upper()
+
+
+def _hex_to_rgba(color: Optional[str], alpha: int = 255) -> tuple[int, int, int, int]:
+    value = str(color or "").strip()
+    if not value.startswith("#") or len(value) != 7:
+        value = "#FFFFFF"
+    try:
+        red = int(value[1:3], 16)
+        green = int(value[3:5], 16)
+        blue = int(value[5:7], 16)
+    except ValueError:
+        red, green, blue = 255, 255, 255
+    return (
+        red,
+        green,
+        blue,
+        max(0, min(255, int(alpha))),
+    )
+
+
+def _build_blurred_text_shadow(
+    entries: List[Dict[str, Any]],
+    *,
+    canvas_width: int,
+    canvas_height: int,
+    font: ImageFont.FreeTypeFont,
+    shadow_color: str,
+    shadow_opacity: float,
+    shadow_offset_x: int,
+    shadow_offset_y: int,
+    shadow_blur_radius: int,
+) -> Optional[Image.Image]:
+    if not entries:
+        return None
+    opacity = max(0.0, min(1.0, float(shadow_opacity or 0.0)))
+    if opacity <= 0.0:
+        return None
+    if not str(shadow_color or "").strip():
+        return None
+    shadow_layer = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    shadow_fill = _hex_to_rgba(shadow_color, int(round(opacity * 255)))
+    for entry in entries:
+        shadow_draw.text(
+            (
+                int(entry["x"]) + int(shadow_offset_x),
+                int(entry["y"]) + int(shadow_offset_y),
+            ),
+            str(entry["text"]),
+            font=font,
+            fill=shadow_fill,
+            anchor="la",
+        )
+    if shadow_blur_radius > 0:
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(int(shadow_blur_radius)))
+    return shadow_layer
+
+
+def _resolve_title_shadow_style(subtitle_preset: Optional[str]) -> dict[str, Any]:
+    preset = SUBTITLE_PRESETS.get(str(subtitle_preset or "").strip()) or {}
+    try:
+        shadow_opacity = max(0.0, min(1.0, float(preset.get("shadow_opacity", 0.0) or 0.0)))
+    except Exception:
+        shadow_opacity = 0.0
+    try:
+        shadow_offset_x = int(preset.get("shadow_offset_x", 0) or 0)
+    except Exception:
+        shadow_offset_x = 0
+    try:
+        shadow_offset_y = int(preset.get("shadow_offset_y", 0) or 0)
+    except Exception:
+        shadow_offset_y = 0
+    try:
+        shadow_blur_radius = max(0, int(preset.get("shadow_blur_radius", 0) or 0))
+    except Exception:
+        shadow_blur_radius = 0
+    return {
+        "shadow_color": str(preset.get("shadow_color") or "").strip(),
+        "shadow_opacity": shadow_opacity,
+        "shadow_offset_x": shadow_offset_x,
+        "shadow_offset_y": shadow_offset_y,
+        "shadow_blur_radius": shadow_blur_radius,
+    }
+
+
+def _render_title_overlay(
+    text: str,
+    *,
+    font_path: str,
+    font_size: int,
+    target_width: int,
+    target_height: int,
+    base_y: int,
+    line_spacing: int,
+    title_text_color: Optional[str],
+    subtitle_preset: Optional[str],
+    uppercase: bool,
+    video_top_limit: Optional[int],
+    max_lines: int = TITLE_WRAP_MAX_LINES,
+    min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
+) -> tuple[Path, dict[str, Any]]:
+    font = _load_title_font(font_path, font_size)
+    if font is None:
+        raise RuntimeError(f"Pillow title font could not be resolved: {font_path}")
+
+    display_text = _turkish_upper(text) if uppercase else str(text or "")
+    words = display_text.split()
+    if not words:
+        raise RuntimeError("Pillow title render requested with empty text")
+
+    side_margin = _title_side_margin(target_width)
+    max_text_width = max(120, int(target_width) - (2 * side_margin))
+    safe_line_spacing = int(line_spacing)
+    chosen_lines: list[str] = [" ".join(words)]
+    chosen_font_size = max(int(font_size), int(min_font_size))
+    chosen_font = font
+    chosen_line_height = _measure_line_height(font)
+
+    for candidate_font_size in range(int(font_size), int(min_font_size) - 1, -1):
+        candidate_font = _load_title_font(font_path, candidate_font_size)
+        if candidate_font is None:
+            continue
+        candidate_lines = _wrap_words_to_width(words, candidate_font, max_text_width)
+        if len(candidate_lines) > max_lines:
+            if candidate_font_size == int(min_font_size):
+                chosen_lines = candidate_lines
+                chosen_font_size = candidate_font_size
+                chosen_font = candidate_font
+                chosen_line_height = _measure_line_height(candidate_font)
+            continue
+        chosen_lines = candidate_lines
+        chosen_font_size = candidate_font_size
+        chosen_font = candidate_font
+        chosen_line_height = _measure_line_height(candidate_font)
+        break
+
+    block_height = (
+        chosen_line_height * len(chosen_lines)
+        + safe_line_spacing * max(0, len(chosen_lines) - 1)
+    )
+    draw_y = max(0, int(base_y))
+    if video_top_limit is not None and block_height > 0 and draw_y + block_height > int(video_top_limit):
+        draw_y = max(0, int(video_top_limit) - block_height)
+
+    line_entries: List[Dict[str, Any]] = []
+    for line_index, line in enumerate(chosen_lines):
+        line_width = _measure_text_width(chosen_font, line)
+        line_x = int(round((target_width - line_width) / 2.0))
+        line_y = draw_y + line_index * (chosen_line_height + safe_line_spacing)
+        line_entries.append(
+            {
+                "text": line,
+                "x": line_x,
+                "y": line_y,
+            }
+        )
+
+    overlay = Image.new("RGBA", (int(target_width), int(target_height)), (0, 0, 0, 0))
+    shadow_style = _resolve_title_shadow_style(subtitle_preset)
+    shadow_layer = _build_blurred_text_shadow(
+        line_entries,
+        canvas_width=int(target_width),
+        canvas_height=int(target_height),
+        font=chosen_font,
+        shadow_color=shadow_style["shadow_color"],
+        shadow_opacity=shadow_style["shadow_opacity"],
+        shadow_offset_x=shadow_style["shadow_offset_x"],
+        shadow_offset_y=shadow_style["shadow_offset_y"],
+        shadow_blur_radius=shadow_style["shadow_blur_radius"],
+    )
+    if shadow_layer is not None:
+        overlay = Image.alpha_composite(overlay, shadow_layer)
+
+    draw = ImageDraw.Draw(overlay)
+    text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
+    for entry in line_entries:
+        draw.text(
+            (int(entry["x"]), int(entry["y"])),
+            str(entry["text"]),
+            font=chosen_font,
+            fill=text_fill,
+            anchor="la",
+        )
+
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="title_overlay_")
+    handle.close()
+    output_path = Path(handle.name)
+    overlay.save(output_path)
+    return output_path, {
+        "text": display_text,
+        "font_size": chosen_font_size,
+        "line_count": len(chosen_lines),
+        "side_margin": side_margin,
+        "max_text_width": max_text_width,
+        "draw_y": draw_y,
+        "block_height": block_height,
+        "shadow": shadow_style,
     }
 
 
@@ -665,6 +874,8 @@ def _compose_with_background(
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
+    title_engine: str = "drawtext",
+    title_uppercase: bool = False,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
@@ -835,6 +1046,8 @@ def _compose_trimmed_with_background(
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
+    title_engine: str = "drawtext",
+    title_uppercase: bool = False,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
@@ -868,6 +1081,7 @@ def _compose_trimmed_with_background(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     resolved_ffmpeg = _resolve_ffmpeg()
     podcast_mode = bool(audio_override_source and Path(audio_override_source).exists())
+    normalized_title_engine = str(title_engine or "drawtext").strip().lower() or "drawtext"
     duration = max(end - start, 1.0)
     if music_only and video_override_source:
         override_duration = _probe_media_duration_seconds(video_override_source)
@@ -906,6 +1120,7 @@ def _compose_trimmed_with_background(
             safe_subtitle_margin = int(subtitle_margin if subtitle_margin is not None else SUB_MARGIN_DEFAULT)
         except (TypeError, ValueError):
             safe_subtitle_margin = 60
+        normalized_title_engine = str(title_engine or "drawtext").strip().lower() or "drawtext"
         if overlay_aspect == "portrait":
             target_width = VIDEO_TARGET_WIDTH
             target_height = VIDEO_TARGET_HEIGHT
@@ -913,6 +1128,7 @@ def _compose_trimmed_with_background(
             target_width = PODCAST_LANDSCAPE_WIDTH
             target_height = PODCAST_LANDSCAPE_HEIGHT
         title_txt = _sanitize_text_for_overlay(title or "", 140)
+        title_overlay_path = None
         effective_subtitle_path = subtitle_path if show_subtitle else None
         effective_subtitle_overlay_path = (
             Path(subtitle_overlay_video_path)
@@ -969,35 +1185,66 @@ def _compose_trimmed_with_background(
                     f"[pod_ov_tmp][pod_ov1]overlay={right_x}:(H-h)/2:shortest=1[pod_ov_out]"
                 )
                 final_label = "[pod_ov_out]"
+        next_video_input_index = 2 + len(overlay_sources)
         if show_title and title_txt:
             test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            title_layout = _fit_title_text(
-                title_txt,
-                font_path=test_font_file,
-                font_size=safe_title_font_size,
-                target_width=target_width,
-                base_y=safe_title_margin,
-                line_spacing=safe_title_line_spacing,
-            )
-            debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
-            title_style = _title_drawtext_style(
-                subtitle_preset=subtitle_preset,
-                title_bg_color=title_bg_color,
-                title_bg_alpha=title_bg_alpha,
-            )
-            filter_parts.append(
-                f"{final_label}drawtext="
-                f"fontfile='{test_font_file}':"
-                f"textfile='{_escape_ass_path(debug_textfile)}':"
-                "x=(w-text_w)/2:"
-                f"y={title_layout['draw_y']}:"
-                f"fontsize={title_layout['font_size']}:"
-                f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                f"line_spacing={safe_title_line_spacing}:"
-                f"{title_style}:"
-                "[ov_title]"
-            )
-            final_label = "[ov_title]"
+            if normalized_title_engine == "pillow":
+                title_overlay_path, title_overlay_meta = _render_title_overlay(
+                    title_txt,
+                    font_path=test_font_file,
+                    font_size=safe_title_font_size,
+                    target_width=target_width,
+                    target_height=target_height,
+                    base_y=safe_title_margin,
+                    line_spacing=safe_title_line_spacing,
+                    title_text_color=title_text_color,
+                    subtitle_preset=subtitle_preset,
+                    uppercase=bool(title_uppercase),
+                    video_top_limit=None,
+                )
+                current_app.logger.info(
+                    "Pillow title overlay (podcast fast-path) text_width=%s margin=%s font_size=%s lines=%s draw_y=%s",
+                    title_overlay_meta["max_text_width"],
+                    title_overlay_meta["side_margin"],
+                    title_overlay_meta["font_size"],
+                    title_overlay_meta["line_count"],
+                    title_overlay_meta["draw_y"],
+                )
+                title_input_index = next_video_input_index
+                filter_parts.append(f"[{title_input_index}:v]format=rgba[pod_title_src]")
+                filter_parts.append(
+                    f"{final_label}[pod_title_src]overlay=0:0:shortest=1[pod_title_out]"
+                )
+                final_label = "[pod_title_out]"
+                next_video_input_index += 1
+            else:
+                title_layout = _fit_title_text(
+                    title_txt,
+                    font_path=test_font_file,
+                    font_size=safe_title_font_size,
+                    target_width=target_width,
+                    base_y=safe_title_margin,
+                    line_spacing=safe_title_line_spacing,
+                )
+                debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
+                title_style = _title_drawtext_style(
+                    subtitle_preset=subtitle_preset,
+                    title_bg_color=title_bg_color,
+                    title_bg_alpha=title_bg_alpha,
+                )
+                filter_parts.append(
+                    f"{final_label}drawtext="
+                    f"fontfile='{test_font_file}':"
+                    f"textfile='{_escape_ass_path(debug_textfile)}':"
+                    "x=(w-text_w)/2:"
+                    f"y={title_layout['draw_y']}:"
+                    f"fontsize={title_layout['font_size']}:"
+                    f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
+                    f"line_spacing={safe_title_line_spacing}:"
+                    f"{title_style}:"
+                    "[ov_title]"
+                )
+                final_label = "[ov_title]"
         if effective_subtitle_path:
             style = _subtitle_force_style(
                 target_width=target_width,
@@ -1015,7 +1262,6 @@ def _compose_trimmed_with_background(
                 f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
             )
             final_label = "[subout]"
-        next_video_input_index = 2 + len(overlay_sources)
         if effective_subtitle_overlay_specs:
             final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
                 filter_parts,
@@ -1079,6 +1325,8 @@ def _compose_trimmed_with_background(
         ]
         for source in overlay_sources:
             cmd.extend(["-stream_loop", "-1", "-i", str(source)])
+        if title_overlay_path:
+            cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
         if effective_subtitle_overlay_specs:
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -1138,6 +1386,12 @@ def _compose_trimmed_with_background(
             raise RuntimeError(
                 f"FFmpeg podcast fast-path failed: {err.stderr.strip() or err.stdout.strip()}"
             ) from err
+        finally:
+            if title_overlay_path and Path(title_overlay_path).exists():
+                try:
+                    Path(title_overlay_path).unlink()
+                except Exception:
+                    pass
         return
 
 
@@ -1652,39 +1906,77 @@ def _compose_trimmed_with_background(
     overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
     base_filter_len = len(filter_parts)
     base_final_label = final_label
+    title_overlay_path: Optional[Path] = None
+    next_video_input_index = 3 if direct_audio_source else 2
     if show_title and title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        title_layout = _fit_title_text(
-            title_txt,
-            font_path=test_font_file,
-            font_size=title_font_size,
-            target_width=target_width,
-            base_y=title_margin,
-            line_spacing=safe_title_line_spacing_main,
-        )
-        debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
-        title_style = _title_drawtext_style(
-            subtitle_preset=subtitle_preset,
-            title_bg_color=title_bg_color,
-            title_bg_alpha=title_bg_alpha,
-        )
+        if normalized_title_engine == "pillow":
+            try:
+                requested_video_top = int(video_overlay_offset if video_overlay_offset is not None else VIDEO_OVERLAY_TOP_OFFSET)
+            except (TypeError, ValueError):
+                requested_video_top = VIDEO_OVERLAY_TOP_OFFSET
+            video_top_limit = None
+            if str(crop_aspect or "landscape").strip().lower() != "portrait":
+                video_top_limit = max(0, min(target_height, requested_video_top))
+            title_overlay_path, title_overlay_meta = _render_title_overlay(
+                title_txt,
+                font_path=test_font_file,
+                font_size=title_font_size,
+                target_width=target_width,
+                target_height=target_height,
+                base_y=title_margin,
+                line_spacing=safe_title_line_spacing_main,
+                title_text_color=title_text_color,
+                subtitle_preset=subtitle_preset,
+                uppercase=bool(title_uppercase),
+                video_top_limit=video_top_limit,
+            )
+            current_app.logger.info(
+                "Pillow title overlay text_width=%s margin=%s font_size=%s lines=%s draw_y=%s shadow=%s",
+                title_overlay_meta["max_text_width"],
+                title_overlay_meta["side_margin"],
+                title_overlay_meta["font_size"],
+                title_overlay_meta["line_count"],
+                title_overlay_meta["draw_y"],
+                title_overlay_meta["shadow"],
+            )
+            title_input_index = next_video_input_index
+            filter_parts.append(f"[{title_input_index}:v]format=rgba[title_src]")
+            filter_parts.append(
+                f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title_debug]"
+            )
+            final_label = "[ov_title_debug]"
+            next_video_input_index += 1
+        else:
+            title_layout = _fit_title_text(
+                title_txt,
+                font_path=test_font_file,
+                font_size=title_font_size,
+                target_width=target_width,
+                base_y=title_margin,
+                line_spacing=safe_title_line_spacing_main,
+            )
+            debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
+            title_style = _title_drawtext_style(
+                subtitle_preset=subtitle_preset,
+                title_bg_color=title_bg_color,
+                title_bg_alpha=title_bg_alpha,
+            )
 
-        debug_drawtext = (
-            f"{final_label}drawtext="
-            f"fontfile='{test_font_file}':"
-            f"textfile='{_escape_ass_path(debug_textfile)}':"
-            "x=(w-text_w)/2:"
-            f"y={title_layout['draw_y']}:"
-            f"fontsize={title_layout['font_size']}:"
-            f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-            f"line_spacing={safe_title_line_spacing_main}:"
-            f"{title_style}:"
-            "[ov_title_debug]"
-        )
-        filter_parts.append(debug_drawtext)
-        final_label = "[ov_title_debug]"
-
-
+            debug_drawtext = (
+                f"{final_label}drawtext="
+                f"fontfile='{test_font_file}':"
+                f"textfile='{_escape_ass_path(debug_textfile)}':"
+                "x=(w-text_w)/2:"
+                f"y={title_layout['draw_y']}:"
+                f"fontsize={title_layout['font_size']}:"
+                f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
+                f"line_spacing={safe_title_line_spacing_main}:"
+                f"{title_style}:"
+                "[ov_title_debug]"
+            )
+            filter_parts.append(debug_drawtext)
+            final_label = "[ov_title_debug]"
     if effective_subtitle_path:
         style = _subtitle_force_style(
             target_width=target_width,
@@ -1702,7 +1994,6 @@ def _compose_trimmed_with_background(
             f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
         )
         final_label = "[subout]"
-    next_video_input_index = 3 if direct_audio_source else 2
     if effective_subtitle_overlay_specs:
         final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
             filter_parts,
@@ -1789,6 +2080,8 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = "2:a"
+    if title_overlay_path:
+        cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
     if effective_subtitle_overlay_specs:
         for spec in effective_subtitle_overlay_specs:
             cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -1844,6 +2137,8 @@ def _compose_trimmed_with_background(
                 ]
             )
             audio_map_music_only = "2:a"
+        if title_overlay_path:
+            cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
         if effective_subtitle_overlay_specs:
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -1902,7 +2197,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, title_overlay_path):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

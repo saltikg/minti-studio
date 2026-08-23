@@ -569,6 +569,29 @@ def _build_title_font_choice(font_key: Optional[str]) -> Optional[Dict[str, Any]
     }
 
 
+def _resolve_title_template_behavior(
+    *,
+    subtitle_preset: Optional[str],
+    title_font_key: Optional[str],
+) -> Dict[str, Any]:
+    resolved_font_key = _resolve_title_font_key(title_font_key)
+    preset_key = str(subtitle_preset or "").strip()
+    for template in STYLE_TEMPLATES:
+        if str(template.get("subtitle_preset") or "").strip() != preset_key:
+            continue
+        template_font_key = _resolve_title_font_key(template.get("title_font_key"))
+        if template_font_key != resolved_font_key:
+            continue
+        return {
+            "title_engine": str(template.get("title_engine") or "drawtext").strip() or "drawtext",
+            "title_uppercase": bool(template.get("title_uppercase")),
+        }
+    return {
+        "title_engine": "drawtext",
+        "title_uppercase": False,
+    }
+
+
 def _format_publish_display(value, tz_name: Optional[str] = None):
     dt = _parse_to_utc(value)
     if not dt:
@@ -14527,6 +14550,10 @@ def autoclip_video(video_pk):
     )
     normalized_title_font_key = _resolve_title_font_key(video_font_key)
     selected_title_font_key = normalized_title_font_key
+    title_template_behavior = _resolve_title_template_behavior(
+        subtitle_preset=video_subtitle_preset,
+        title_font_key=normalized_title_font_key,
+    )
     font_path = font_choice["path"] if font_choice else None
     font_exists = Path(font_path).exists() if font_path else False
     current_app.logger.info(
@@ -14985,6 +15012,8 @@ def autoclip_video(video_pk):
                 title_font_size=title_font_size,
                 title_margin=title_margin,
                 title_line_spacing=video_title_line_spacing,
+                title_engine=title_template_behavior["title_engine"],
+                title_uppercase=title_template_behavior["title_uppercase"],
                 title_bg_color=title_bg_color,
                 title_bg_alpha=title_bg_alpha,
                 title_text_color=title_text_color,
