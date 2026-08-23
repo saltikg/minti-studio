@@ -6205,6 +6205,81 @@ def admin_share_link_set_emailed(share_link_id: int):
     return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
 
 
+@video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/followup-sent", methods=["POST"])
+def admin_share_link_set_followup_sent(share_link_id: int):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if not current_user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "followup_sent" not in share_link_columns or "followup_sent_at" not in share_link_columns:
+            return jsonify({"ok": False, "error": "followup_tracking_unavailable"}), 503
+        row = conn.execute(
+            """
+            SELECT followup_sent, followup_sent_at
+            FROM short_share_links
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [share_link_id],
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        if bool(row[0]) and row[1]:
+            return jsonify(
+                {
+                    "ok": True,
+                    "followup_sent_at": _format_datetime_pst(row[1]),
+                    "followup_sent_at_iso": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1] or ""),
+                }
+            )
+
+        conn.execute(
+            """
+            UPDATE short_share_links
+               SET followup_sent = TRUE,
+                   followup_sent_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+            """,
+            [share_link_id],
+        )
+        conn.commit()
+        updated_row = conn.execute(
+            """
+            SELECT followup_sent_at
+            FROM short_share_links
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [share_link_id],
+        ).fetchone()
+        followup_sent_at = updated_row[0] if updated_row else None
+        return jsonify(
+            {
+                "ok": True,
+                "followup_sent_at": _format_datetime_pst(followup_sent_at),
+                "followup_sent_at_iso": (
+                    followup_sent_at.isoformat() if hasattr(followup_sent_at, "isoformat") else str(followup_sent_at or "")
+                ),
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Failed to mark follow-up sent for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "update_failed"}), 500
+    finally:
+        conn.close()
+
+
 @video_shorts_bp.route("/api/generated-shorts/share-link/<int:share_link_id>/language", methods=["POST"])
 @require_admin
 def admin_generated_short_share_link_set_language(share_link_id: int):
@@ -7979,6 +8054,9 @@ def _load_admin_share_links(
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
+    has_language = "language" in share_link_columns
+    has_followup_sent = "followup_sent" in share_link_columns
+    has_followup_sent_at = "followup_sent_at" in share_link_columns
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
@@ -8037,9 +8115,12 @@ def _load_admin_share_links(
               sl.id,
               sl.generated_video_id,
               sl.token,
+              {("sl.language" if has_language else "'EN'")} AS language,
               COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
               {("sl.emailed_at" if has_emailed_at else "NULL")} AS emailed_at,
+              {("sl.followup_sent" if has_followup_sent else "FALSE")} AS followup_sent,
+              {("sl.followup_sent_at" if has_followup_sent_at else "NULL")} AS followup_sent_at,
               sl.created_at,
               COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
               SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
@@ -8056,9 +8137,12 @@ def _load_admin_share_links(
               sl.id,
               sl.generated_video_id,
               sl.token,
+              {("sl.language," if has_language else "")}
               sl.recipient_name,
               sl.recipient_email,
               {("sl.emailed_at," if has_emailed_at else "")}
+              {("sl.followup_sent," if has_followup_sent else "")}
+              {("sl.followup_sent_at," if has_followup_sent_at else "")}
               sl.created_at,
               gv.generated_title,
               gv.clip_filename
@@ -8093,9 +8177,12 @@ def _load_admin_share_links(
           sr.id,
           sr.generated_video_id,
           sr.token,
+          sr.language,
           sr.recipient_name,
           sr.recipient_email,
           sr.emailed_at,
+          sr.followup_sent,
+          sr.followup_sent_at,
           sr.clip_title,
           COALESCE(sr.views_count, 0) AS views_count,
           COALESCE(sr.plays_count, 0) AS plays_count,
@@ -8115,8 +8202,19 @@ def _load_admin_share_links(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        views_count = int(row[7] or 0)
-        plays_count = int(row[8] or 0)
+        views_count = int(row[10] or 0)
+        plays_count = int(row[11] or 0)
+        emailed_at = row[6]
+        followup_sent = bool(row[7])
+        followup_sent_at = row[8]
+        followup_eligible = False
+        if emailed_at and not followup_sent and (views_count > 0 or plays_count > 0):
+            try:
+                emailed_at_utc = emailed_at if emailed_at.tzinfo else emailed_at.replace(tzinfo=timezone.utc)
+            except AttributeError:
+                emailed_at_utc = None
+            if emailed_at_utc is not None:
+                followup_eligible = emailed_at_utc <= (datetime.now(timezone.utc) - timedelta(days=3))
         items.append(
             {
                 "id": row[0],
@@ -8124,29 +8222,34 @@ def _load_admin_share_links(
                 "share_token": str(row[2] or "").strip(),
                 "share_url": _share_public_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
                 "preview_url": _share_preview_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
-                "recipient_name": row[3],
-                "recipient_email": row[4],
-                "emailed_at": row[5],
-                "emailed_at_pst": _format_datetime_pst(row[5]),
-                "emailed": bool(row[5]),
-                "clip_title": row[6],
+                "language": normalize_outreach_language(row[3], default="EN"),
+                "recipient_name": row[4],
+                "recipient_email": row[5],
+                "emailed_at": emailed_at,
+                "emailed_at_pst": _format_datetime_pst(emailed_at),
+                "emailed": bool(emailed_at),
+                "followup_sent": followup_sent,
+                "followup_sent_at": followup_sent_at,
+                "followup_sent_at_pst": _format_datetime_pst(followup_sent_at),
+                "followup_eligible": followup_eligible,
+                "clip_title": row[9],
                 "views_count": views_count,
                 "plays_count": plays_count,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
-                "first_seen": row[9],
-                "first_seen_pst": _format_datetime_pst(row[9]),
-                "last_seen": row[10],
-                "last_seen_pst": _format_datetime_pst(row[10]),
-                "created_at": row[11],
-                "created_at_pst": _format_datetime_pst(row[11]),
-                "redeemed_at": row[12],
-                "redeemed_at_pst": _format_datetime_pst(row[12]),
-                "redeemed_user_id": str(row[13] or "").strip(),
-                "redeemed": bool(row[12]),
+                "first_seen": row[12],
+                "first_seen_pst": _format_datetime_pst(row[12]),
+                "last_seen": row[13],
+                "last_seen_pst": _format_datetime_pst(row[13]),
+                "created_at": row[14],
+                "created_at_pst": _format_datetime_pst(row[14]),
+                "redeemed_at": row[15],
+                "redeemed_at_pst": _format_datetime_pst(row[15]),
+                "redeemed_user_id": str(row[16] or "").strip(),
+                "redeemed": bool(row[15]),
                 "redeemed_user_detail_url": (
-                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[13]).strip())
-                    if str(row[13] or "").strip()
+                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[16]).strip())
+                    if str(row[16] or "").strip()
                     else ""
                 ),
             }

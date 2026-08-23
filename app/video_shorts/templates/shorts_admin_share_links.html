@@ -44,6 +44,12 @@
     .admin-share-links-table tr:last-child td {
       border-bottom: 0;
     }
+    .admin-share-links-row.is-followup-eligible td {
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .admin-share-links-row.is-followup-eligible td:first-child {
+      box-shadow: inset 4px 0 0 #f59e0b;
+    }
     .admin-share-links-recipient {
       font-weight: 600;
     }
@@ -96,6 +102,36 @@
     .admin-share-links-actions button:hover,
     .admin-share-links-actions button:focus {
       text-decoration: underline;
+    }
+    .admin-share-links-actions button[disabled] {
+      cursor: default;
+      opacity: 0.7;
+      text-decoration: none;
+    }
+    .admin-share-links-followup-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(245, 158, 11, 0.16);
+      color: #fbbf24;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+    .admin-share-links-followup-feedback {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.76rem;
+    }
+    .admin-share-links-followup-feedback.is-error {
+      color: #fca5a5;
+    }
+    .admin-share-links-followup-feedback.is-success {
+      color: #8ff3d8;
     }
     .admin-share-links-sent {
       display: inline-flex;
@@ -208,7 +244,7 @@
         </thead>
         <tbody>
           {% for link in links %}
-            <tr>
+            <tr class="admin-share-links-row {% if link.followup_eligible %}is-followup-eligible{% endif %}" data-share-link-id="{{ link.id }}" data-followup-eligible="{{ 'true' if link.followup_eligible else 'false' }}">
               <td>
                 <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_emailed', share_link_id=link.id) }}">
                   <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
@@ -238,7 +274,30 @@
                       data-copy-text="{{ link.share_url }}"
                       title="Copy share link"
                       aria-label="Copy share link">📋 Copy</button>
+                    <button
+                      type="button"
+                      class="admin-share-links-followup-copy-btn"
+                      data-recipient-name="{{ link.recipient_name }}"
+                      data-share-url="{{ link.share_url }}"
+                      data-language="{{ link.language }}"
+                      data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
+                      title="Copy follow-up email"
+                      aria-label="Copy follow-up email">2. email kopyala</button>
+                    <button
+                      type="button"
+                      class="admin-share-links-followup-mark-btn"
+                      data-endpoint="{{ url_for('video_shorts_bp.admin_share_link_set_followup_sent', share_link_id=link.id) }}"
+                      {% if link.followup_sent %}disabled{% endif %}
+                      aria-label="Mark follow-up as sent">{% if link.followup_sent %}✓ 2. email gönderildi{% else %}2. email gönderildi{% endif %}</button>
                     <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
+                  </div>
+                  {% if link.followup_eligible %}
+                    <div class="admin-share-links-followup-badge">Follow-up önerilir</div>
+                  {% endif %}
+                  <div class="admin-share-links-followup-feedback" data-followup-feedback>
+                    {% if link.followup_sent_at_pst %}
+                      Follow-up sent: {{ link.followup_sent_at_pst }}
+                    {% endif %}
                   </div>
                 {% endif %}
               </td>
@@ -284,7 +343,139 @@
 
 {% block extra_scripts %}
   <script>
+    const FOLLOWUP_TEMPLATES = {
+      A_EN: `Subject: Your Short is ready to try
+
+Hi [Name],
+
+You've seen what Minti did with your video. If you'd like to keep going, you can create your own Shorts the same way — right from that page.
+
+It's built for creators like you: turn your long-form videos into Shorts, publish across YouTube, Instagram, and Facebook, and grow your channel without the extra editing time.
+
+Tap "Make my own Short" to start — 3 months free, no signup.
+
+Best,
+Gokhan`,
+      A_TR: `Subject: Short'unuz denemeye hazır
+
+Merhaba [Name],
+
+Minti'nin videonuzdan ne çıkardığını gördünüz. Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — doğrudan o sayfadan.
+
+Sizin gibi içerik üreticileri için tasarlandı: uzun videolarınızı Short'a dönüştürün, YouTube, Instagram ve Facebook'ta yayınlayın, ekstra düzenleme zamanı harcamadan kanalınızı büyütün.
+
+Başlamak için "Kendi Short'unu oluştur"a dokunun — 3 ay ücretsiz, kayıt yok.
+
+İyi çalışmalar,
+Gökhan`,
+      B_EN: `Subject: Did you see the Short from your video?
+
+Hi [Name],
+
+I sent you a Short I made from your video last week — it may have slipped past your inbox. Here it is: [link]
+
+If you'd like to keep going, you can create your own Shorts the same way — just tap "Make my own Short" on that page. 3 months free, no signup.
+
+Best,
+Gokhan`,
+      B_TR: `Subject: Videonuzdan yaptığım Short'u gördünüz mü?
+
+Merhaba [Name],
+
+Geçen hafta videonuzdan yaptığım bir Short göndermiştim — gözden kaçmış olabilir. İşte burada: [link]
+
+Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — o sayfada "Kendi Short'unu oluştur"a dokunmanız yeterli. 3 ay ücretsiz, kayıt yok.
+
+İyi çalışmalar,
+Gökhan`,
+    };
+
+    function buildFollowupText(button) {
+      const recipientName = String(button.dataset.recipientName || "").trim() || "there";
+      const shareUrl = String(button.dataset.shareUrl || "").trim();
+      const normalizedLanguage = String(button.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
+      const engaged = String(button.dataset.engaged || "").trim().toLowerCase() === "true";
+      const key = `${engaged ? "A" : "B"}_${normalizedLanguage}`;
+      const template = FOLLOWUP_TEMPLATES[key] || FOLLOWUP_TEMPLATES.B_EN;
+      return template.replaceAll("[Name]", recipientName).replaceAll("[link]", shareUrl);
+    }
+
+    function setFollowupFeedback(row, message, kind = "") {
+      const feedback = row.querySelector("[data-followup-feedback]");
+      if (!feedback) {
+        return;
+      }
+      feedback.textContent = message || "";
+      feedback.classList.remove("is-error", "is-success");
+      if (kind) {
+        feedback.classList.add(kind);
+      }
+    }
+
     document.addEventListener("click", async (event) => {
+      const followupCopyButton = event.target.closest(".admin-share-links-followup-copy-btn");
+      if (followupCopyButton) {
+        const row = followupCopyButton.closest(".admin-share-links-row");
+        const originalLabel = followupCopyButton.textContent;
+        try {
+          await navigator.clipboard.writeText(buildFollowupText(followupCopyButton));
+          followupCopyButton.textContent = "Kopyalandı";
+          setFollowupFeedback(row, "Follow-up metni panoya kopyalandı.", "is-success");
+        } catch (err) {
+          followupCopyButton.textContent = "Kopyalama başarısız";
+          setFollowupFeedback(row, "Panoya kopyalanamadı.", "is-error");
+        }
+        setTimeout(() => {
+          followupCopyButton.textContent = originalLabel;
+        }, 1400);
+        return;
+      }
+
+      const followupMarkButton = event.target.closest(".admin-share-links-followup-mark-btn");
+      if (followupMarkButton) {
+        const row = followupMarkButton.closest(".admin-share-links-row");
+        const endpoint = String(followupMarkButton.dataset.endpoint || "").trim();
+        if (!endpoint || followupMarkButton.disabled) {
+          return;
+        }
+        const originalLabel = followupMarkButton.textContent;
+        followupMarkButton.disabled = true;
+        followupMarkButton.textContent = "Kaydediliyor...";
+        setFollowupFeedback(row, "");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({}),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || `HTTP ${response.status}`);
+          }
+          followupMarkButton.textContent = "✓ 2. email gönderildi";
+          row.classList.remove("is-followup-eligible");
+          setFollowupFeedback(
+            row,
+            payload.followup_sent_at ? `Follow-up sent: ${payload.followup_sent_at}` : "Follow-up işaretlendi.",
+            "is-success",
+          );
+          const badge = row.querySelector(".admin-share-links-followup-badge");
+          if (badge) {
+            badge.remove();
+          }
+          return;
+        } catch (err) {
+          followupMarkButton.disabled = false;
+          followupMarkButton.textContent = originalLabel;
+          setFollowupFeedback(row, err?.message || "Kaydetme başarısız.", "is-error");
+          return;
+        }
+      }
+
       const button = event.target.closest(".admin-share-links-copy-btn");
       if (!button) {
         return;
