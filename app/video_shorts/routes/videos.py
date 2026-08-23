@@ -99,6 +99,16 @@ def _pretty_duration(seconds):
     return f"{mins}:{secs:02d}"
 
 
+def _creator_name_looks_urlish(value: str) -> bool:
+    candidate = str(value or "").strip().lower()
+    if not candidate:
+        return False
+    blocked_fragments = ("http", "www.", ".com", ".net", ".org", "/", "@")
+    if any(fragment in candidate for fragment in blocked_fragments):
+        return True
+    return "." in candidate and "/" in candidate
+
+
 def _short_storage_key(filename: str) -> str:
     safe_name = Path(filename or "").name
     return f"shorts/{safe_name}" if safe_name else ""
@@ -3649,7 +3659,9 @@ def videos_page(channel_id):
           like_count,
           comment_count,
           video_url,
-          duration_seconds
+          duration_seconds,
+          creator_name,
+          creator_email
         FROM youtube_videos
         WHERE {where_sql}
     """
@@ -3830,6 +3842,7 @@ def videos_page(channel_id):
         "videos.html",
         channel=channel,
         videos=videos,
+        is_local_uploads_channel=is_local_uploads_channel,
         page=page,
         total_pages=total_pages,
         sort=sort_key,
@@ -5306,3 +5319,110 @@ def update_download_status(video_pk):
 
     redirect_params["dstatus"] = request.form.get("dstatus", "")
     return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+
+@video_shorts_bp.route("/api/admin/videos/<int:video_pk>/creator", methods=["POST"])
+def update_video_creator_fields(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, error="unauthorized", message="Unauthorized"), 401
+
+    active_brand_id = current_brand_id()
+    if not active_brand_id:
+        return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+
+    is_admin = current_user.get("role") == "admin"
+    brand_owner_user_id, _brand_name = _load_brand_scope_context(active_brand_id)
+
+    conn = get_db()
+    try:
+        ensure_channel_owner_schema(conn)
+        payload = request.get_json(silent=True) or {}
+        row = conn.execute(
+            """
+            SELECT id, video_id, owner_user_id, brand_id, channel_id, creator_name, creator_email
+            FROM youtube_videos
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [video_pk],
+        ).fetchone()
+        if not row:
+            return jsonify(ok=False, error="not_found", message="Video not found"), 404
+
+        record_video_id = str(row[1] or "").strip()
+        owner_user_id = str(row[2] or "").strip() or None
+        record_brand_id = str(row[3] or "").strip() or None
+        video_channel_id = str(row[4]) if row[4] is not None else None
+        resolved_owner_user_id = owner_user_id
+        if not resolved_owner_user_id and record_video_id:
+            _title, scope_owner_user_id, _video_brand_id, _scope_channel_id = _load_video_scope(record_video_id)
+            resolved_owner_user_id = scope_owner_user_id or None
+        if is_admin and not resolved_owner_user_id:
+            resolved_owner_user_id = brand_owner_user_id or current_user.get("id")
+
+        if record_brand_id != str(active_brand_id):
+            return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+        preferred_channel_ids = _preferred_brand_channel_ids(brand_owner_user_id or resolved_owner_user_id, active_brand_id)
+        if preferred_channel_ids and video_channel_id and video_channel_id not in preferred_channel_ids:
+            return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+        if not is_admin and resolved_owner_user_id and resolved_owner_user_id != current_user.get("id"):
+            return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+        if not is_admin and not resolved_owner_user_id:
+            return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+
+        assignments = []
+        params: List[Any] = []
+
+        if "creator_email" in payload:
+            raw_email = str(payload.get("creator_email") or "").strip()
+            if not raw_email:
+                assignments.append("creator_email = NULL")
+            else:
+                if "@" not in raw_email or "." not in raw_email:
+                    return jsonify(ok=False, error="invalid_email", message="Invalid email."), 400
+                assignments.append("creator_email = ?")
+                params.append(raw_email[:255])
+
+        if "creator_name" in payload:
+            raw_name = str(payload.get("creator_name") or "").strip()
+            if not raw_name:
+                assignments.append("creator_name = NULL")
+            else:
+                if _creator_name_looks_urlish(raw_name):
+                    return jsonify(ok=False, error="invalid_name", message="Invalid name."), 400
+                assignments.append("creator_name = ?")
+                params.append(raw_name[:255])
+
+        if not assignments:
+            return jsonify(
+                ok=True,
+                creator_name=row[5],
+                creator_email=row[6],
+            )
+
+        conn.execute(
+            f"""
+            UPDATE youtube_videos
+            SET {", ".join(assignments)}
+            WHERE id = ?
+            """,
+            params + [video_pk],
+        )
+        updated_row = conn.execute(
+            """
+            SELECT creator_name, creator_email
+            FROM youtube_videos
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [video_pk],
+        ).fetchone()
+        conn.commit()
+        return jsonify(
+            ok=True,
+            creator_name=updated_row[0] if updated_row else None,
+            creator_email=updated_row[1] if updated_row else None,
+        )
+    finally:
+        conn.close()

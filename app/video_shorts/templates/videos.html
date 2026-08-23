@@ -26,6 +26,50 @@
     gap: 10px;
     margin-top: 16px;
   }
+  .creator-inline-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .creator-inline-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .creator-inline-input {
+    min-width: 0;
+    height: 30px;
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  .creator-inline-name {
+    flex: 1 1 120px;
+  }
+  .creator-inline-email {
+    flex: 1 1 170px;
+  }
+  .creator-inline-save {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .creator-inline-status {
+    font-size: 11px;
+    line-height: 1.2;
+    min-height: 14px;
+  }
+  .creator-inline-status.is-error {
+    color: #ff8f8f;
+  }
+  .creator-inline-status.is-success {
+    color: #79e2a0;
+  }
 </style>
 
 
@@ -315,6 +359,30 @@
                     {{ v.duration_seconds // 60 if v.duration_seconds is not none else '-' }}:{{ "%02d"|format(v.duration_seconds % 60) if v.duration_seconds is not none else "00" }}
                   </span>
                 </div>
+                {% if is_local_uploads_channel %}
+                <div class="creator-inline-editor" data-creator-editor data-video-pk="{{ v.id }}">
+                  <div class="creator-inline-row">
+                    <input type="text"
+                           class="form-control form-control-sm creator-inline-input creator-inline-name"
+                           value="{{ v.creator_name or '' }}"
+                           placeholder="İsim"
+                           data-field="creator_name">
+                    <input type="text"
+                           class="form-control form-control-sm creator-inline-input creator-inline-email"
+                           value="{{ v.creator_email or '' }}"
+                           placeholder="Email"
+                           data-field="creator_email">
+                    <button type="button"
+                            class="vs-btn vs-btn-secondary creator-inline-save"
+                            title="Kaydet"
+                            aria-label="Kaydet"
+                            data-action="save-creator">
+                      <span class="material-symbols-outlined">save</span>
+                    </button>
+                  </div>
+                  <div class="creator-inline-status" data-role="creator-status"></div>
+                </div>
+                {% endif %}
               </div>
             </td>
 
@@ -499,6 +567,71 @@
         alert(error.message || "Server error occurred.");
       } finally {
         button.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-creator-editor]").forEach((editor) => {
+    const saveButton = editor.querySelector("[data-action='save-creator']");
+    const statusEl = editor.querySelector("[data-role='creator-status']");
+    const nameInput = editor.querySelector("[data-field='creator_name']");
+    const emailInput = editor.querySelector("[data-field='creator_email']");
+    const videoPk = editor.getAttribute("data-video-pk");
+    if (!saveButton || !statusEl || !nameInput || !emailInput || !videoPk) {
+      return;
+    }
+
+    const setStatus = (message, kind = "") => {
+      statusEl.textContent = message || "";
+      statusEl.classList.toggle("is-error", kind === "error");
+      statusEl.classList.toggle("is-success", kind === "success");
+    };
+
+    saveButton.addEventListener("click", async () => {
+      const originalLabel = saveButton.innerHTML;
+      const payload = {
+        creator_name: nameInput.value.trim(),
+        creator_email: emailInput.value.trim(),
+      };
+      saveButton.disabled = true;
+      nameInput.disabled = true;
+      emailInput.disabled = true;
+      saveButton.innerHTML = '<span class="material-symbols-outlined">progress_activity</span>';
+      setStatus("Kaydediliyor…");
+      try {
+        const response = await fetch(`/video_shorts/api/admin/videos/${encodeURIComponent(videoPk)}/creator`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || result.message || "Kaydedilemedi.");
+        }
+        nameInput.value = result.creator_name || "";
+        emailInput.value = result.creator_email || "";
+        setStatus("Kaydedildi.", "success");
+        window.setTimeout(() => setStatus(""), 1500);
+      } catch (error) {
+        const code = (error?.message || "").trim();
+        if (code === "invalid_email") {
+          setStatus("Geçersiz email.", "error");
+        } else if (code === "invalid_name") {
+          setStatus("Geçersiz isim.", "error");
+        } else if (code === "forbidden") {
+          setStatus("Yetki yok.", "error");
+        } else {
+          setStatus(error.message || "Kaydedilemedi.", "error");
+        }
+      } finally {
+        saveButton.disabled = false;
+        nameInput.disabled = false;
+        emailInput.disabled = false;
+        saveButton.innerHTML = originalLabel;
       }
     });
   });
