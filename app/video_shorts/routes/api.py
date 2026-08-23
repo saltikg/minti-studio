@@ -235,6 +235,25 @@ def _extract_creator_name(description: str | None, channel_title: str | None) ->
     return fallback[:255] if fallback else None
 
 
+def _resolve_auto_creator_email(channel_description: str | None, video_description: str | None) -> str | None:
+    return _extract_creator_email(channel_description) or _extract_creator_email(video_description)
+
+
+def _resolve_auto_creator_name(
+    channel_description: str | None,
+    video_description: str | None,
+    channel_title: str | None,
+) -> str | None:
+    from_channel = _extract_creator_name(channel_description, None)
+    if from_channel:
+        return from_channel
+    from_video = _extract_creator_name(video_description, None)
+    if from_video:
+        return from_video
+    fallback = str(channel_title or "").strip()
+    return fallback[:255] if fallback else None
+
+
 _CREATOR_FIELD_UNSET = object()
 
 
@@ -341,11 +360,21 @@ def admin_youtube_channel_diagnose():
         subscriber_count = subscriber_info.get("subscriber_count")
         gate_subscriber = _subscriber_gate(subscriber_count)
         gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
-        creator_name = None
-        creator_email = None
-        if video_meta:
-            creator_name = _extract_creator_name(video_meta.get("description"), video_meta.get("channel_title"))
-            creator_email = _extract_creator_email(video_meta.get("description"))
+        channel_title = (
+            subscriber_info.get("channel_title")
+            or (video_meta or {}).get("channel_title")
+            or None
+        )
+        channel_description = subscriber_info.get("channel_description")
+        creator_name = _resolve_auto_creator_name(
+            channel_description,
+            (video_meta or {}).get("description"),
+            channel_title,
+        )
+        creator_email = _resolve_auto_creator_email(
+            channel_description,
+            (video_meta or {}).get("description"),
+        )
         outreach_detail = None
         already_added = False
         channel_video_count = 0
@@ -369,12 +398,6 @@ def admin_youtube_channel_diagnose():
                     )
         finally:
             conn.close()
-
-        channel_title = (
-            subscriber_info.get("channel_title")
-            or (video_meta or {}).get("channel_title")
-            or None
-        )
         return jsonify(
             {
                 "channel_id": resolved_channel_id,
@@ -453,10 +476,32 @@ def admin_add_youtube_video():
 
     manual_creator_name_present = bool(str(payload.get("creator_name") or "").strip())
     manual_creator_email_present = bool(str(payload.get("creator_email") or "").strip())
-    fallback_creator_name = _extract_creator_name(meta.get("description"), meta.get("channel_title"))
-    fallback_creator_email = _extract_creator_email(meta.get("description"))
+    try:
+        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_key])
+    except YoutubeApiError as exc:
+        env_message = _youtube_env_error_message(exc)
+        if env_message:
+            return _json_error("server_config", env_message, 500)
+        message = str(exc or "").strip() or "YouTube API request failed."
+        return _json_error("youtube_api_error", message, 502)
+    subscriber_info = subscriber_map.get(resolved_channel_key) or {}
+    channel_title = (
+        subscriber_info.get("channel_title")
+        or meta.get("channel_title")
+        or None
+    )
+    channel_description = subscriber_info.get("channel_description")
+    fallback_creator_name = _resolve_auto_creator_name(
+        channel_description,
+        meta.get("description"),
+        channel_title,
+    )
+    fallback_creator_email = _resolve_auto_creator_email(
+        channel_description,
+        meta.get("description"),
+    )
     creator_name = (
-        _normalize_manual_creator_name(payload.get("creator_name"), meta.get("channel_title"))
+        _normalize_manual_creator_name(payload.get("creator_name"), channel_title)
         if manual_creator_name_present
         else fallback_creator_name
     )

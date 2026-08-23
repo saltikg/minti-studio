@@ -285,6 +285,7 @@ def fetch_channel_subscriber_counts(channel_ids: List[str]) -> Dict[str, Dict[st
             results[channel_id] = {
                 "subscriber_count": subscriber_count,
                 "channel_title": snippet.get("title"),
+                "channel_description": snippet.get("description"),
             }
     return results
 
