@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ 'tr' if language == 'TR' else 'en' }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -51,6 +51,12 @@
         text-align: center;
         font-size: 0.92rem;
       }
+      .watch-cta-subline {
+        max-width: 420px;
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.45;
+      }
       .watch-cta-primary {
         display: inline-flex;
         align-items: center;
@@ -100,11 +106,19 @@
             href="{{ onboarding_url }}"
             class="watch-cta-primary"
             rel="noreferrer">
-            Create from your own video
+            {% if language == 'TR' %}
+              Kendi Short'unu oluştur — ücretsiz
+            {% else %}
+              Make my own Short — free
+            {% endif %}
           </a>
-          <a href="https://mintistudio.com" target="_blank" rel="noreferrer" class="watch-cta-secondary">
-            Learn more about MintiStudio
-          </a>
+          <div class="watch-cta-subline">
+            {% if language == 'TR' %}
+              Bu Short senin videondan oluşturuldu. Kendi videonla dene — 3 ay ücretsiz, kayıt yok.
+            {% else %}
+              This Short was made from your video. Try your own — 3 months free, no signup.
+            {% endif %}
+          </div>
         {% else %}
           <a href="https://mintistudio.com" target="_blank" rel="noreferrer">MintiStudio ile uzun videolarını otomatik short'a çevir</a>
         {% endif %}

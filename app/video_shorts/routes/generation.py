@@ -6070,10 +6070,10 @@ def _render_public_short_watch_page(token: str):
 
     poster_url = _short_poster_public_url(clip_filename) or None
     onboarding_url = ""
+    resolved_language = normalize_outreach_language(row.get("language"), default="EN")
     recipient_email = str(row.get("recipient_email") or "").strip().lower()
     if recipient_email:
         try:
-            resolved_language = normalize_outreach_language(row.get("language"), default="EN")
             minted = mint_onboarding_magic_link(
                 recipient_email=recipient_email,
                 recipient_name=str(row.get("recipient_name") or "").strip(),
@@ -6095,6 +6095,7 @@ def _render_public_short_watch_page(token: str):
         poster_url=poster_url,
         event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
         onboarding_url=onboarding_url or None,
+        language=resolved_language,
         preview_mode=preview_mode,
     )
 
