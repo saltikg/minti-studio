@@ -210,6 +210,8 @@ def ensure_short_share_links_schema(conn) -> None:
                 recipient_email VARCHAR,
                 language VARCHAR,
                 emailed_at TIMESTAMP,
+                followup_sent BOOLEAN DEFAULT FALSE,
+                followup_sent_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -224,6 +226,8 @@ def ensure_short_share_links_schema(conn) -> None:
         ("recipient_email", "VARCHAR"),
         ("language", "VARCHAR"),
         ("emailed_at", "TIMESTAMP"),
+        ("followup_sent", "BOOLEAN DEFAULT FALSE"),
+        ("followup_sent_at", "TIMESTAMP"),
         ("created_at", "TIMESTAMP"),
     ):
         if col_name in cols:
