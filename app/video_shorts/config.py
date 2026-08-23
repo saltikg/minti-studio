@@ -433,6 +433,7 @@ STYLE_TEMPLATES = [
         "title_font_key": "montserrat",
         "title_text_color": "#FFFFFF",
         "title_bg_color": "#14532D",
+        "title_bg_alpha": 0,
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
     },
     {

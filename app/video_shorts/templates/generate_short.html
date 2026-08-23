@@ -2381,11 +2381,14 @@
     opacity: 0;
   }
   .style-template-card-preview--green-pop .style-template-card-preview-title {
-    background: #14532d;
+    background: transparent;
     color: #ffffff;
     font-family: "Montserrat", sans-serif;
     font-weight: 800;
     letter-spacing: 0.01em;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.72),
+      0 8px 14px rgba(0, 0, 0, 0.45);
   }
   .style-template-card-preview--green-pop .style-template-card-preview-word {
     color: #ffffff;
@@ -4111,13 +4114,14 @@
                       data-style-template-title-font-family="{{ template.title_font }}"
                       data-style-template-title-text-color="{{ template.title_text_color }}"
                       data-style-template-title-bg-color="{{ template.title_bg_color }}"
+                      data-style-template-title-bg-alpha="{{ template.title_bg_alpha if template.title_bg_alpha is defined else '' }}"
                       data-style-template-title-font-size="{{ template.title_font_size }}"
                       aria-pressed="false"
                     >
                       <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}">
                         <span
                           class="style-template-card-preview-title"
-                          style="background: {{ template.title_bg_color }}; color: {{ template.title_text_color }};"
+                          style="background: {{ 'transparent' if template.title_bg_alpha is defined and template.title_bg_alpha == 0 else template.title_bg_color }}; color: {{ template.title_text_color }};"
                         >
                           Minti Title
                         </span>
@@ -11189,6 +11193,12 @@ document.addEventListener("DOMContentLoaded", function () {
       fontWeight: "900",
     },
   };
+  const TITLE_TEMPLATE_PRESETS = {
+    green_pop: {
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+  };
   const wordHighlightSampleMarkup = `
     <span class="word-highlight-preview-word">Exactly.</span>
     <span class="word-highlight-preview-word">So</span>
@@ -11328,13 +11338,17 @@ document.addEventListener("DOMContentLoaded", function () {
   const applyTitleBgPreview = () => {
     const titleBgHidden = document.getElementById("titleBgColorValue");
     const previewTitle = document.getElementById("shorts-preview-title-band");
-    const alpha = alphaToOpacity(titleBgAlphaInput?.value, 92);
+    const activePreset = String(subtitlePresetField?.value || "").trim();
+    const titleTemplatePreset = TITLE_TEMPLATE_PRESETS[activePreset] || null;
+    const alpha = alphaToOpacity(titleTemplatePreset?.bgAlpha ?? titleBgAlphaInput?.value, 92);
     const hex = normalize(titleBgHidden?.value || "#FFD600");
     const rgba = hexToRgba(hex, alpha);
     if (titlePreview) titlePreview.style.backgroundColor = rgba;
     if (previewTitle) previewTitle.style.backgroundColor = rgba;
     const titleBgSwatch = document.getElementById("titleBgSwatch");
     if (titleBgSwatch) titleBgSwatch.style.backgroundColor = rgba;
+    if (titlePreview) titlePreview.style.textShadow = titleTemplatePreset?.textShadow || "none";
+    if (previewTitle) previewTitle.style.textShadow = titleTemplatePreset?.textShadow || "none";
   };
   const applySubtitlePreview = () => {
     const subtitleTextHidden = document.getElementById("subtitleTextColorValue");
@@ -11397,6 +11411,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     syncSubtitlePresetCards();
     applySubtitlePreview();
+    applyTitleBgPreview();
   };
   const applyTitleTextPreview = (hex) => {
     if (titlePreview) titlePreview.style.color = hex;
@@ -11409,6 +11424,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const activeFontKey = String(titleFont?.value || "").trim();
     const activeTitleColor = normalize(titleTextColorField?.value || "");
     const activeTitleBg = normalize(titleBgColorField?.value || "");
+    const activeTitleBgAlpha = String(titleBgAlphaInput?.value || "").trim();
     const activeTitleSize = String(titleFontSizeInput?.value || "").trim();
     styleTemplateCards.forEach((card) => {
       const isActive =
@@ -11416,6 +11432,7 @@ document.addEventListener("DOMContentLoaded", function () {
         String(card.dataset.styleTemplateTitleFontKey || "").trim() === activeFontKey &&
         normalize(card.dataset.styleTemplateTitleTextColor || "") === activeTitleColor &&
         normalize(card.dataset.styleTemplateTitleBgColor || "") === activeTitleBg &&
+        String(card.dataset.styleTemplateTitleBgAlpha || activeTitleBgAlpha).trim() === activeTitleBgAlpha &&
         String(card.dataset.styleTemplateTitleFontSize || "").trim() === activeTitleSize;
       card.classList.toggle("is-active", isActive);
       card.setAttribute("aria-pressed", isActive ? "true" : "false");
@@ -11478,8 +11495,12 @@ document.addEventListener("DOMContentLoaded", function () {
       if (titleBgCustomInput) {
         titleBgCustomInput.value = nextTitleBgColor;
       }
-      applyTitleBgPreview();
     }
+    const nextTitleBgAlpha = String(card.dataset.styleTemplateTitleBgAlpha || "").trim();
+    if (titleBgAlphaInput && nextTitleBgAlpha) {
+      titleBgAlphaInput.value = nextTitleBgAlpha;
+    }
+    applyTitleBgPreview();
     syncStyleTemplateCards();
   };
 
