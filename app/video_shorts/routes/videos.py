@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
-from flask import flash, redirect, render_template, request, url_for, jsonify, current_app, g, abort, has_request_context
+from flask import flash, redirect, render_template, request, url_for, jsonify, current_app, g, abort, has_request_context, session
 import json
 import requests
 
@@ -5327,9 +5327,11 @@ def update_video_creator_fields(video_pk: int):
     if not current_user:
         return jsonify(ok=False, error="unauthorized", message="Unauthorized"), 401
 
+    session_brand_id = str(session.get("vs_brand_id") or "").strip() or None
     active_brand_id = current_brand_id()
-    if not active_brand_id:
+    if not session_brand_id or not active_brand_id or session_brand_id != str(active_brand_id):
         return jsonify(ok=False, error="forbidden", message="Forbidden"), 403
+    active_brand_id = session_brand_id
 
     is_admin = current_user.get("role") == "admin"
     brand_owner_user_id, _brand_name = _load_brand_scope_context(active_brand_id)
