@@ -11124,6 +11124,7 @@ const initAdminShareLinkButtons = () => {
         const videoTitle = getVideoTitle();
         const currentShareUrl = String(resultInput.value || "").trim();
         const trialDuration = formatTrialDuration(resolveTrialDays(), language);
+        const trOfferDuration = trialDuration.endsWith(" ay") ? `${trialDuration}lık` : trialDuration;
         if (language === "tr") {
           return [
             "Subject: Videonuzdan hazırladığımız kısa bir örnek",
@@ -11139,9 +11140,9 @@ const initAdminShareLinkButtons = () => {
             "",
             "Buradaki örnekte uzun videonuzun içinden kısa videoya uygun bir bölüm Minti ile seçilerek altyazılı, dikey bir videoya dönüştürüldü.",
             "",
-            "Aynı sistem üzerinden uzun videolarınızdan kısa içerikler oluşturabilir, bunları YouTube Shorts, Instagram ve Facebook'a yayınlayabilir; sonrasında farklı platformlardaki yorumları ve performansı tek yerden takip edebilirsiniz.",
+            "Minti klip üretmekle kalmıyor — YouTube, Instagram ve Facebook'a yayınlıyor; yorumları yönetiyor ve hepsinin performansını tek yerden karşılaştırıyorsunuz.",
             "",
-            `Kendi videolarınızla denemek isterseniz, örnek sayfasındaki \"Create from your own video\" (kendi videonuzdan oluştur) butonuna basmanız yeterli. ${trialDuration} ücretsiz erişim otomatik olarak tanımlanıyor.`,
+            `Kendi videolarınızla denemek isterseniz, örnek sayfasındaki \"Create from your own video\" (kendi videonuzdan oluştur) butonuna basmanız yeterli. <strong>${trOfferDuration} ücretsiz erişim</strong> otomatik olarak tanımlanıyor.`,
             "",
             "Herhangi bir sorunuz olursa memnuniyetle yardımcı olurum.",
             "",
@@ -11165,9 +11166,9 @@ const initAdminShareLinkButtons = () => {
           "",
           "Minti identified a strong moment from your long-form video and turned it into a captioned, vertical Short.",
           "",
-          "Beyond creating clips, Minti also lets you publish across YouTube, Instagram, and Facebook, then manage comments and compare performance across platforms from one place.",
+          "Minti doesn't stop at clips — you publish to YouTube, Instagram, and Facebook, then manage comments and compare performance across all of them in one place.",
           "",
-          `If you'd like to try it with your own videos, just tap \"Create from your own video\" on that page — it sets you up with ${trialDuration} of complimentary access, no signup needed. Or reply here if you have any questions.`,
+          `If you'd like to try it with your own videos, just tap \"Create from your own video\" on that page — it sets you up with <strong>${trialDuration} of complimentary access</strong>, no signup needed. Or reply here if you have any questions.`,
           "",
           "Best,",
           "Gokhan Saltik",
