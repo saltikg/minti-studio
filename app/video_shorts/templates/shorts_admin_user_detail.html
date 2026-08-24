@@ -82,6 +82,33 @@
       color: #99f6e4;
       border: 1px solid rgba(45, 212, 191, 0.22);
     }
+    .admin-detail-trial-badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      line-height: 1.2;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .admin-detail-trial-badge.is-neutral {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+    .admin-detail-trial-badge.is-warning {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fcd34d;
+      border: 1px solid rgba(245, 158, 11, 0.28);
+    }
+    .admin-detail-trial-badge.is-danger {
+      background: rgba(248, 113, 113, 0.14);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.22);
+    }
     .admin-detail-timeline {
       display: grid;
       gap: 12px;
@@ -325,6 +352,9 @@
             <dd>
               {% if user_detail.trial_days and user_detail.trial_expires_at %}
                 {{ user_detail.trial_days_label }} · expires {{ user_detail.trial_expires_at.strftime('%b %-d, %Y · %H:%M') if user_detail.trial_expires_at and user_detail.trial_expires_at.strftime else user_detail.trial_expires_at }}
+                {% if user_detail.trial_status_label %}
+                  <span class="admin-detail-trial-badge {% if user_detail.trial_status_tone == 'warning' %}is-warning{% elif user_detail.trial_status_tone == 'danger' %}is-danger{% else %}is-neutral{% endif %}">{{ user_detail.trial_status_label }}</span>
+                {% endif %}
               {% else %}
                 —
               {% endif %}

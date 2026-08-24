@@ -1,5 +1,6 @@
 import json
 import errno
+import math
 import re
 import shutil
 import string
@@ -8673,6 +8674,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     latest_trial_days_label = ""
     latest_trial_used_at = None
     trial_expires_at = None
+    trial_status_label = ""
+    trial_status_tone = ""
     if onboarding_magic_link_columns and "user_id" in onboarding_magic_link_columns:
         trial_days_sql = "COALESCE(trial_days, ?)" if "trial_days" in onboarding_magic_link_columns else "?"
         used_at_sql = "used_at" if "used_at" in onboarding_magic_link_columns else "NULL"
@@ -8695,6 +8698,23 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
             latest_trial_used_at = trial_row[1]
             if isinstance(latest_trial_used_at, datetime) and latest_trial_days:
                 trial_expires_at = latest_trial_used_at + timedelta(days=latest_trial_days)
+                now_value = datetime.now(trial_expires_at.tzinfo) if trial_expires_at.tzinfo else datetime.now()
+                days_left = math.ceil((trial_expires_at - now_value).total_seconds() / 86400.0)
+                if days_left > 1:
+                    trial_status_label = f"{days_left} gün kaldı"
+                elif days_left == 1:
+                    trial_status_label = "1 gün kaldı"
+                elif days_left == 0:
+                    trial_status_label = "bugün doluyor"
+                else:
+                    trial_status_label = f"{abs(days_left)} gün önce doldu"
+
+                if days_left > 14:
+                    trial_status_tone = "neutral"
+                elif days_left > 0:
+                    trial_status_tone = "warning"
+                else:
+                    trial_status_tone = "danger"
 
     return {
         "id": row[0],
@@ -8712,6 +8732,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "trial_days_label": latest_trial_days_label,
         "trial_used_at": latest_trial_used_at,
         "trial_expires_at": trial_expires_at,
+        "trial_status_label": trial_status_label,
+        "trial_status_tone": trial_status_tone,
         "uploaded_videos": uploaded_videos,
         "shorts_generated": shorts_generated,
         "shorts_published": shorts_published,
