@@ -408,9 +408,10 @@ def _create_or_grant_magic_link_user(
                 role,
                 plan_id,
                 email_verified,
-                email_verified_at
+                email_verified_at,
+                created_at
             )
-            VALUES (?, ?, NULL, ?, ?, 'member', ?, TRUE, now())
+            VALUES (?, ?, NULL, ?, ?, 'member', ?, TRUE, now(), now())
             """,
             [
                 user_id,

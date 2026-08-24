@@ -8683,7 +8683,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
               {used_at_sql} AS used_at
             FROM onboarding_magic_links
             WHERE CAST(user_id AS VARCHAR) = ?
-            ORDER BY used_at DESC NULLS LAST, created_at DESC, id DESC
+              AND used_at IS NOT NULL
+            ORDER BY used_at ASC, created_at ASC, id ASC
             LIMIT 1
             """,
             [LEGACY_SHARE_TRIAL_DAYS, user_id],
@@ -8692,9 +8693,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
             latest_trial_days = normalize_trial_days(trial_row[0], default=LEGACY_SHARE_TRIAL_DAYS)
             latest_trial_days_label = _trial_duration_label(latest_trial_days, "EN")
             latest_trial_used_at = trial_row[1]
-            created_at = row[8] if isinstance(row[8], datetime) else None
-            if created_at and latest_trial_days:
-                trial_expires_at = created_at + timedelta(days=latest_trial_days)
+            if isinstance(latest_trial_used_at, datetime) and latest_trial_days:
+                trial_expires_at = latest_trial_used_at + timedelta(days=latest_trial_days)
 
     return {
         "id": row[0],
