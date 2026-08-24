@@ -202,7 +202,7 @@
   </div>
 </div>
 
-{% if videos|length == 0 and not search_q and not video_id_q and not download_filter and not duration_min and not duration_max and not short_filter %}
+{% if videos|length == 0 and not search_q and not video_id_q and not download_filter and not duration_min and not duration_max and not short_filter and not email_sent_filter and not has_email_filter %}
 <div class="videos-empty-state">
   <h4>Pull in your first videos</h4>
   <p>This source is connected, but there are no videos in this workspace yet. Fetch the next batch from YouTube or import one video by ID, then generate your first short from the list below.</p>
@@ -253,7 +253,14 @@
             <label class="small mb-0">Video ID</label>
             <input type="text" name="vid" class="form-control form-control-sm vs-input vs-input-140" placeholder="Video ID" value="{{ video_id_q }}">
           </div>
-
+          <label class="d-flex align-items-center gap-1 small mb-0">
+            <input type="checkbox" name="email_sent" value="1" {% if email_sent_filter %}checked{% endif %}>
+            <span>Email sent</span>
+          </label>
+          <label class="d-flex align-items-center gap-1 small mb-0">
+            <input type="checkbox" name="has_email" value="1" {% if has_email_filter %}checked{% endif %}>
+            <span>Has email</span>
+          </label>
         </div>
 
         <button class="vs-btn vs-btn-secondary">Search</button>
@@ -273,7 +280,7 @@
             <th class="vs-col-shorts">Shorts</th>
             <th class="vs-col-stats">Stats</th>
             <th class="vs-col-published">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='added', dir='asc' if sort!='added' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='added', dir='asc' if sort!='added' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
                 Added
               {% if sort == 'added' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -281,7 +288,7 @@
               </a>
             </th>
             <th class="vs-col-published">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
                 Published
               {% if sort == 'published' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -289,7 +296,7 @@
               </a>
             </th>
             <th class="vs-col-downloaded">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='downloaded', dir='asc' if sort!='downloaded' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='downloaded', dir='asc' if sort!='downloaded' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
                 Downloaded
               {% if sort == 'downloaded' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -425,9 +432,13 @@
                     <input type="hidden" name="dir" value="{{ sort_dir }}">
                     <input type="hidden" name="page" value="{{ page }}">
                     <input type="hidden" name="q" value="{{ search_q }}">
+                    <input type="hidden" name="vid" value="{{ video_id_q }}">
                     <input type="hidden" name="dstatus" value="{{ download_filter }}">
                     <input type="hidden" name="dmin" value="{{ duration_min }}">
                     <input type="hidden" name="dmax" value="{{ duration_max }}">
+                    <input type="hidden" name="short_filter" value="{{ short_filter }}">
+                    <input type="hidden" name="email_sent" value="{{ '1' if email_sent_filter else '' }}">
+                    <input type="hidden" name="has_email" value="{{ '1' if has_email_filter else '' }}">
                     {% if dstat == 'downloaded' %}
                       <span class="text-success" title="Downloaded">✅</span>
                     {% else %}

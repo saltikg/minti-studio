@@ -3187,6 +3187,8 @@ def videos_page(channel_id):
         for l in request.args.getlist("lstatus")
         if l and l.strip().lower() in ("downloaded", "not_downloaded")
     ]
+    email_sent_filter = (request.args.get("email_sent") or "").strip().lower() in {"1", "true", "yes", "on"}
+    has_email_filter = (request.args.get("has_email") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     # Kanal bilgisi
     row = conn.execute(
@@ -3525,6 +3527,30 @@ def videos_page(channel_id):
         where_clauses.append("duration_seconds <= ?")
         where_params.append(duration_max_seconds)
 
+    share_link_columns = table_columns(conn, "short_share_links")
+    generated_columns = table_columns(conn, "shorts_generated_videos")
+    has_emailed_at = "emailed_at" in share_link_columns
+
+    if has_email_filter:
+        where_clauses.append("trim(coalesce(creator_email, '')) <> ''")
+
+    if email_sent_filter:
+        if share_link_columns and generated_columns and has_emailed_at:
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM shorts_generated_videos gv
+                    JOIN short_share_links sl
+                      ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+                    WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(youtube_videos.video_id AS VARCHAR)
+                      AND sl.emailed_at IS NOT NULL
+                )
+                """
+            )
+        else:
+            where_clauses.append("1 = 0")
+
     where_sql = " AND ".join(where_clauses)
 
     total_count = conn.execute(
@@ -3680,9 +3706,6 @@ def videos_page(channel_id):
     share_link_stats: Dict[str, Dict[str, int]] = {}
     video_ids = [str(v.get("video_id") or "").strip() for v in videos if str(v.get("video_id") or "").strip()]
     if video_ids:
-        share_link_columns = table_columns(conn, "short_share_links")
-        generated_columns = table_columns(conn, "shorts_generated_videos")
-        has_emailed_at = "emailed_at" in share_link_columns
         if share_link_columns and generated_columns:
             placeholders = ", ".join("?" for _ in video_ids)
             sent_sql = (
@@ -3862,6 +3885,8 @@ def videos_page(channel_id):
         shorts_total_created=total_created,
         shorts_total_desc_ready=total_desc_ready,
         short_filter=short_filter,
+        email_sent_filter=email_sent_filter,
+        has_email_filter=has_email_filter,
         caption_filters=caption_filters,
         local_filters=local_filters,
         download_filter=download_filter,
@@ -5277,9 +5302,13 @@ def update_download_status(video_pk):
         "dir": request.form.get("dir", "desc"),
         "page": request.form.get("page", "1"),
         "q": request.form.get("q", ""),
+        "vid": request.form.get("vid", ""),
         "dstatus": request.form.get("dstatus", ""),
         "dmin": request.form.get("dmin", ""),
         "dmax": request.form.get("dmax", ""),
+        "short_filter": request.form.get("short_filter", ""),
+        "email_sent": request.form.get("email_sent", ""),
+        "has_email": request.form.get("has_email", ""),
     }
     if new_status not in allowed:
         flash("Invalid download status.", "danger")
