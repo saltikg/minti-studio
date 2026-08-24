@@ -8154,9 +8154,11 @@ def _load_admin_share_links(
     *,
     email_query: str = "",
     engagement_filter: str = "all",
+    sort_key: str = "created",
+    sort_dir: str = "desc",
     limit: int = 200,
     offset: int = 0,
-) -> Tuple[List[Dict[str, Any]], int, str]:
+) -> Tuple[List[Dict[str, Any]], int, str, str, str]:
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
@@ -8167,8 +8169,22 @@ def _load_admin_share_links(
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
+    normalized_sort_key = (sort_key or "created").strip().lower()
+    normalized_sort_dir = (sort_dir or "desc").strip().lower()
     if normalized_filter not in {"all", "viewed", "played"}:
         normalized_filter = "all"
+    if normalized_sort_key not in {"first_seen", "last_seen", "created"}:
+        normalized_sort_key = "created"
+    if normalized_sort_dir not in {"asc", "desc"}:
+        normalized_sort_dir = "desc"
+
+    sort_column_map = {
+        "first_seen": "sr.first_seen",
+        "last_seen": "sr.last_seen",
+        "created": "sr.created_at",
+    }
+    order_column = sort_column_map[normalized_sort_key]
+    order_direction = "ASC" if normalized_sort_dir == "asc" else "DESC"
 
     where_clauses = ["1=1"]
     params: List[Any] = []
@@ -8304,7 +8320,7 @@ def _load_admin_share_links(
         FROM share_rows sr
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
-        ORDER BY sr.created_at DESC, sr.id DESC
+        ORDER BY {order_column} {order_direction} NULLS LAST, sr.id DESC
         LIMIT ? OFFSET ?
         """,
         params + [limit, offset],
@@ -8368,7 +8384,7 @@ def _load_admin_share_links(
                 ),
             }
         )
-    return items, total_count, normalized_filter
+    return items, total_count, normalized_filter, normalized_sort_key, normalized_sort_dir
 
 
 def _directory_size_bytes(path: Path) -> int:
@@ -9403,6 +9419,8 @@ def admin_errors():
 def admin_share_links():
     email_query = (request.args.get("email") or "").strip()
     engagement_filter = (request.args.get("engagement") or "all").strip().lower()
+    sort_key = (request.args.get("sort") or "created").strip().lower()
+    sort_dir = (request.args.get("dir") or "desc").strip().lower()
     try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
@@ -9416,15 +9434,19 @@ def admin_share_links():
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
             limit=1,
             offset=0,
         )[1]
         total_pages = max(1, (total_links + per_page - 1) // per_page)
         page = min(page, total_pages)
-        links, total_links, normalized_filter = _load_admin_share_links(
+        links, total_links, normalized_filter, normalized_sort_key, normalized_sort_dir = _load_admin_share_links(
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
             limit=per_page,
             offset=(page - 1) * per_page,
         )
@@ -9437,6 +9459,8 @@ def admin_share_links():
         links=links,
         email_query=email_query,
         selected_engagement=normalized_filter,
+        sort_key=normalized_sort_key,
+        sort_dir=normalized_sort_dir,
         page=page,
         per_page=per_page,
         total_links=total_links,

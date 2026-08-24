@@ -41,6 +41,23 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
+    .admin-share-links-sort-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .admin-share-links-sort-link:hover,
+    .admin-share-links-sort-link:focus {
+      color: rgba(255, 255, 255, 0.82);
+      text-decoration: none;
+    }
+    .admin-share-links-sort-arrow {
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 0.78rem;
+      line-height: 1;
+    }
     .admin-share-links-table tr:last-child td {
       border-bottom: 0;
     }
@@ -212,6 +229,9 @@
 
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
+    {% set next_first_seen_dir = 'asc' if sort_key != 'first_seen' or sort_dir == 'desc' else 'desc' %}
+    {% set next_last_seen_dir = 'asc' if sort_key != 'last_seen' or sort_dir == 'desc' else 'desc' %}
+    {% set next_created_dir = 'asc' if sort_key != 'created' or sort_dir == 'desc' else 'desc' %}
     <form method="get" class="admin-share-links-toolbar">
       <div>
         <label for="admin-share-links-email" class="form-label mb-2">Recipient email contains</label>
@@ -225,6 +245,8 @@
           <option value="played" {% if selected_engagement == 'played' %}selected{% endif %}>Played only</option>
         </select>
       </div>
+      <input type="hidden" name="sort" value="{{ sort_key }}">
+      <input type="hidden" name="dir" value="{{ sort_dir }}">
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary">Apply</button>
         <a href="{{ url_for('video_shorts_bp.admin_share_links') }}" class="btn btn-outline-light">Reset</a>
@@ -248,9 +270,36 @@
             <th>Redeemed?</th>
             <th>Redeemed at</th>
             <th>User</th>
-            <th>First seen</th>
-            <th>Last seen</th>
-            <th>Created</th>
+            <th>
+              <a
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
+                class="admin-share-links-sort-link">
+                <span>First seen</span>
+                {% if sort_key == 'first_seen' %}
+                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th>
+              <a
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
+                class="admin-share-links-sort-link">
+                <span>Last seen</span>
+                {% if sort_key == 'last_seen' %}
+                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th>
+              <a
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='created', dir=next_created_dir, page=1) }}"
+                class="admin-share-links-sort-link">
+                <span>Created</span>
+                {% if sort_key == 'created' %}
+                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
+                {% endif %}
+              </a>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -369,10 +418,10 @@
       <div class="admin-share-links-meta">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-share-links-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>
