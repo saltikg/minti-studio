@@ -268,6 +268,15 @@ def _turkish_upper(text: str) -> str:
     return str(text or "").translate(_TR_UPPER_MAP).upper()
 
 
+def _normalize_title_language(language: Any) -> str:
+    value = str(language or "").strip().lower()
+    if not value:
+        return ""
+    if value.startswith("tr") or value[:2] == "tr":
+        return "tr"
+    return value[:2]
+
+
 def _hex_to_rgba(color: Optional[str], alpha: int = 255) -> tuple[int, int, int, int]:
     value = str(color or "").strip()
     if not value.startswith("#") or len(value) != 7:
@@ -364,6 +373,7 @@ def _render_title_overlay(
     subtitle_preset: Optional[str],
     uppercase: bool,
     video_top_limit: Optional[int],
+    title_language: Optional[str] = None,
     max_lines: int = TITLE_WRAP_MAX_LINES,
     min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
 ) -> tuple[Path, dict[str, Any]]:
@@ -371,7 +381,11 @@ def _render_title_overlay(
     if font is None:
         raise RuntimeError(f"Pillow title font could not be resolved: {font_path}")
 
-    display_text = _turkish_upper(text) if uppercase else str(text or "")
+    normalized_title_language = _normalize_title_language(title_language)
+    if uppercase:
+        display_text = _turkish_upper(text) if normalized_title_language == "tr" else str(text or "").upper()
+    else:
+        display_text = str(text or "")
     words = display_text.split()
     if not words:
         raise RuntimeError("Pillow title render requested with empty text")
@@ -876,6 +890,7 @@ def _compose_with_background(
     title_line_spacing: int = -4,
     title_engine: str = "drawtext",
     title_uppercase: bool = False,
+    title_language: Optional[str] = None,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
@@ -1200,6 +1215,7 @@ def _compose_trimmed_with_background(
                     title_text_color=title_text_color,
                     subtitle_preset=subtitle_preset,
                     uppercase=bool(title_uppercase),
+                    title_language=title_language,
                     video_top_limit=None,
                 )
                 current_app.logger.info(
@@ -1929,6 +1945,7 @@ def _compose_trimmed_with_background(
                 title_text_color=title_text_color,
                 subtitle_preset=subtitle_preset,
                 uppercase=bool(title_uppercase),
+                title_language=title_language,
                 video_top_limit=video_top_limit,
             )
             current_app.logger.info(

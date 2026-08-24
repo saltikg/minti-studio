@@ -15014,6 +15014,7 @@ def autoclip_video(video_pk):
                 title_line_spacing=video_title_line_spacing,
                 title_engine=title_template_behavior["title_engine"],
                 title_uppercase=title_template_behavior["title_uppercase"],
+                title_language=plan_entry.get("language"),
                 title_bg_color=title_bg_color,
                 title_bg_alpha=title_bg_alpha,
                 title_text_color=title_text_color,
