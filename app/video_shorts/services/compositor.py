@@ -1063,6 +1063,7 @@ def _compose_trimmed_with_background(
     title_line_spacing: int = -4,
     title_engine: str = "drawtext",
     title_uppercase: bool = False,
+    title_language: Optional[str] = None,
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
