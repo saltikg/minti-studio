@@ -260,16 +260,6 @@
         <thead>
           <tr>
             <th>Sent</th>
-            <th>Recipient</th>
-            <th>Clip</th>
-            <th>Trial</th>
-            <th>Views</th>
-            <th>Plays</th>
-            <th>Viewed?</th>
-            <th>Played?</th>
-            <th>Redeemed?</th>
-            <th>Redeemed at</th>
-            <th>User</th>
             <th>
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
@@ -280,6 +270,16 @@
                 {% endif %}
               </a>
             </th>
+            <th>Recipient</th>
+            <th>Clip</th>
+            <th>Trial</th>
+            <th>Views</th>
+            <th>Plays</th>
+            <th>Viewed?</th>
+            <th>Played?</th>
+            <th>Redeemed?</th>
+            <th>Redeemed at</th>
+            <th>User</th>
             <th>
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
@@ -319,6 +319,7 @@
                   </label>
                 </form>
               </td>
+              <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
               <td>
                 <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">{{ link.recipient_email }}</div>
@@ -401,7 +402,6 @@
                   —
                 {% endif %}
               </td>
-              <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
               <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
               <td class="admin-share-links-meta">{{ link.created_at_pst or '—' }}</td>
             </tr>
