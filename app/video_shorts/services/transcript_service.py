@@ -1496,23 +1496,34 @@ def _render_word_highlight_caption_frame(
             fill=_hex_to_rgba(pill_color),
         )
 
+    inactive_rgba = _hex_to_rgba(inactive_color)
+    active_rgba = _hex_to_rgba(active_color)
+    outline_rgba = _hex_to_rgba(outline_color)
+
     if str(fill_mode or "flat").strip().lower() == "gradient" and gradient_layers:
         for word in layout["words"]:
             is_active_word = int(word["global_index"]) == int(active_index)
             layer_entry = (gradient_layers.get(int(word["global_index"])) or {}).get(
                 "active" if is_active_word else "inactive"
             )
-            if not layer_entry:
+            if layer_entry:
+                image.alpha_composite(
+                    layer_entry["image"],
+                    (int(layer_entry["x"]), int(layer_entry["y"])),
+                )
                 continue
-            image.alpha_composite(
-                layer_entry["image"],
-                (int(layer_entry["x"]), int(layer_entry["y"])),
+            fill = active_rgba if is_active_word else inactive_rgba
+            _draw_outlined_text(
+                draw,
+                int(word["x"]),
+                int(word["y"]),
+                str(word["word"]),
+                font=font,
+                fill=fill,
+                stroke_fill=outline_rgba,
+                stroke_width=0 if is_active_word else outline_width,
             )
     else:
-        inactive_rgba = _hex_to_rgba(inactive_color)
-        active_rgba = _hex_to_rgba(active_color)
-        outline_rgba = _hex_to_rgba(outline_color)
-
         for word in layout["words"]:
             is_active_word = int(word["global_index"]) == int(active_index)
             fill = active_rgba if is_active_word else inactive_rgba
@@ -1678,6 +1689,9 @@ def _build_word_highlight_caption_overlay(
     gradient_ramp_build_count = 0
     gradient_word_build_count = 0
     fill_mode = str(preset.get("fill_mode") or "flat").strip().lower() or "flat"
+    active_fill_mode = str(preset.get("active_fill_mode") or fill_mode).strip().lower() or fill_mode
+    inactive_fill_mode = str(preset.get("inactive_fill_mode") or fill_mode).strip().lower() or fill_mode
+    uses_gradient_layers = active_fill_mode == "gradient" or inactive_fill_mode == "gradient"
     active_gradient_top = str(preset.get("active_gradient_top") or active_color).strip() or active_color
     active_gradient_mid = str(preset.get("active_gradient_mid") or active_color).strip() or active_color
     active_gradient_bottom = str(preset.get("active_gradient_bottom") or active_color).strip() or active_color
@@ -1784,7 +1798,7 @@ def _build_word_highlight_caption_overlay(
                     )
                     layout_cache[chunk_key] = precomputed_layout
             gradient_layers = None
-            if fill_mode == "gradient":
+            if uses_gradient_layers:
                 layout_for_gradient = precomputed_layout or _layout_wrapped_caption(
                     word_tokens,
                     font=font,
@@ -1794,71 +1808,79 @@ def _build_word_highlight_caption_overlay(
                     canvas_height=_PILLOW_CAPTION_HEIGHT,
                 )
                 precomputed_layout = precomputed_layout or layout_for_gradient
-                active_ramp_key = (
-                    int(layout_for_gradient["line_height"]),
-                    "active",
-                    active_gradient_top,
-                    active_gradient_mid,
-                    active_gradient_bottom,
-                )
-                inactive_ramp_key = (
-                    int(layout_for_gradient["line_height"]),
-                    "inactive",
-                    inactive_gradient_top,
-                    inactive_gradient_mid,
-                    inactive_gradient_bottom,
-                )
-                active_strip = gradient_strip_cache.get(active_ramp_key)
-                if active_strip is None:
-                    active_strip = _build_vertical_gradient_strip(
+                active_strip = None
+                inactive_strip = None
+                if active_fill_mode == "gradient":
+                    active_ramp_key = (
                         int(layout_for_gradient["line_height"]),
+                        "active",
                         active_gradient_top,
                         active_gradient_mid,
                         active_gradient_bottom,
                     )
-                    gradient_strip_cache[active_ramp_key] = active_strip
-                    gradient_ramp_build_count += 1
-                inactive_strip = gradient_strip_cache.get(inactive_ramp_key)
-                if inactive_strip is None:
-                    inactive_strip = _build_vertical_gradient_strip(
+                    active_strip = gradient_strip_cache.get(active_ramp_key)
+                    if active_strip is None:
+                        active_strip = _build_vertical_gradient_strip(
+                            int(layout_for_gradient["line_height"]),
+                            active_gradient_top,
+                            active_gradient_mid,
+                            active_gradient_bottom,
+                        )
+                        gradient_strip_cache[active_ramp_key] = active_strip
+                        gradient_ramp_build_count += 1
+                if inactive_fill_mode == "gradient":
+                    inactive_ramp_key = (
                         int(layout_for_gradient["line_height"]),
+                        "inactive",
                         inactive_gradient_top,
                         inactive_gradient_mid,
                         inactive_gradient_bottom,
                     )
-                    gradient_strip_cache[inactive_ramp_key] = inactive_strip
-                    gradient_ramp_build_count += 1
+                    inactive_strip = gradient_strip_cache.get(inactive_ramp_key)
+                    if inactive_strip is None:
+                        inactive_strip = _build_vertical_gradient_strip(
+                            int(layout_for_gradient["line_height"]),
+                            inactive_gradient_top,
+                            inactive_gradient_mid,
+                            inactive_gradient_bottom,
+                        )
+                        gradient_strip_cache[inactive_ramp_key] = inactive_strip
+                        gradient_ramp_build_count += 1
                 gradient_layers = {}
                 for word in layout_for_gradient["words"]:
                     line_entry = layout_for_gradient["lines"][int(word["line_index"])]
-                    active_layer_key = (chunk_key, int(word["global_index"]), "active")
-                    inactive_layer_key = (chunk_key, int(word["global_index"]), "inactive")
-                    active_layer = gradient_word_cache.get(active_layer_key)
-                    if active_layer is None and active_layer_key not in gradient_word_cache:
-                        active_layer = _build_gradient_word_layer(
-                            word,
-                            line_y=int(line_entry["y"]),
-                            line_height=int(layout_for_gradient["line_height"]),
-                            font=font,
-                            gradient_strip=active_strip,
-                        )
-                        gradient_word_cache[active_layer_key] = active_layer
-                        gradient_word_build_count += 1
-                    else:
+                    active_layer = None
+                    inactive_layer = None
+                    if active_fill_mode == "gradient" and active_strip is not None:
+                        active_layer_key = (chunk_key, int(word["global_index"]), "active")
                         active_layer = gradient_word_cache.get(active_layer_key)
-                    inactive_layer = gradient_word_cache.get(inactive_layer_key)
-                    if inactive_layer is None and inactive_layer_key not in gradient_word_cache:
-                        inactive_layer = _build_gradient_word_layer(
-                            word,
-                            line_y=int(line_entry["y"]),
-                            line_height=int(layout_for_gradient["line_height"]),
-                            font=font,
-                            gradient_strip=inactive_strip,
-                        )
-                        gradient_word_cache[inactive_layer_key] = inactive_layer
-                        gradient_word_build_count += 1
-                    else:
+                        if active_layer is None and active_layer_key not in gradient_word_cache:
+                            active_layer = _build_gradient_word_layer(
+                                word,
+                                line_y=int(line_entry["y"]),
+                                line_height=int(layout_for_gradient["line_height"]),
+                                font=font,
+                                gradient_strip=active_strip,
+                            )
+                            gradient_word_cache[active_layer_key] = active_layer
+                            gradient_word_build_count += 1
+                        else:
+                            active_layer = gradient_word_cache.get(active_layer_key)
+                    if inactive_fill_mode == "gradient" and inactive_strip is not None:
+                        inactive_layer_key = (chunk_key, int(word["global_index"]), "inactive")
                         inactive_layer = gradient_word_cache.get(inactive_layer_key)
+                        if inactive_layer is None and inactive_layer_key not in gradient_word_cache:
+                            inactive_layer = _build_gradient_word_layer(
+                                word,
+                                line_y=int(line_entry["y"]),
+                                line_height=int(layout_for_gradient["line_height"]),
+                                font=font,
+                                gradient_strip=inactive_strip,
+                            )
+                            gradient_word_cache[inactive_layer_key] = inactive_layer
+                            gradient_word_build_count += 1
+                        else:
+                            inactive_layer = gradient_word_cache.get(inactive_layer_key)
                     gradient_layers[int(word["global_index"])] = {
                         "active": active_layer,
                         "inactive": inactive_layer,
@@ -1909,7 +1931,7 @@ def _build_word_highlight_caption_overlay(
                     draw_pill=draw_pill,
                     precomputed_layout=precomputed_layout,
                     shadow_region=shadow_region,
-                    fill_mode=fill_mode,
+                    fill_mode="gradient" if uses_gradient_layers else "flat",
                     gradient_layers=gradient_layers,
                     out_path=frame_path,
                 )
@@ -1936,7 +1958,7 @@ def _build_word_highlight_caption_overlay(
         "specs": [],
         "frame_count": len(overlay_specs),
         "timeline_segments": len(overlay_specs),
-        "gradient_fill_mode": fill_mode,
+        "gradient_fill_mode": "gradient" if uses_gradient_layers else fill_mode,
         "gradient_ramp_build_count": gradient_ramp_build_count,
         "gradient_word_build_count": gradient_word_build_count,
         "timing_events": [

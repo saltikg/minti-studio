@@ -61,6 +61,30 @@
 <link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.css') }}">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Merriweather:wght@700&family=Source+Code+Pro:wght@700&family=Arimo:wght@400;700&family=Open+Sans+Condensed:wght@400;700&display=swap">
 <style>
+  @font-face {
+    font-family: "Fjalla One";
+    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/FjallaOne-Regular.ttf') }}") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Archivo Black";
+    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/ArchivoBlack-Regular.ttf') }}") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Teko";
+    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/Teko-Bold.ttf') }}") format("truetype");
+    font-weight: 700;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Roboto Slab";
+    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/RobotoSlab-Black.ttf') }}") format("truetype");
+    font-weight: 900;
+    font-style: normal;
+  }
   .editor-header {
     display: flex;
     align-items: center;
@@ -2444,6 +2468,73 @@
       0 8px 14px rgba(0, 0, 0, 0.34);
     box-shadow: none;
   }
+  .style-template-card-preview--amber-gold::after,
+  .style-template-card-preview--sky-cyan::after,
+  .style-template-card-preview--electric-lime::after,
+  .style-template-card-preview--serif-bordo::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--amber-gold .style-template-card-preview-title,
+  .style-template-card-preview--sky-cyan .style-template-card-preview-title,
+  .style-template-card-preview--electric-lime .style-template-card-preview-title,
+  .style-template-card-preview--serif-bordo .style-template-card-preview-title {
+    background: transparent;
+    color: #ffffff;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.72),
+      0 8px 14px rgba(0, 0, 0, 0.45);
+  }
+  .style-template-card-preview--amber-gold .style-template-card-preview-title,
+  .style-template-card-preview--amber-gold .style-template-card-preview-word {
+    font-family: "Fjalla One", sans-serif;
+    letter-spacing: 0.04em;
+  }
+  .style-template-card-preview--sky-cyan .style-template-card-preview-title,
+  .style-template-card-preview--sky-cyan .style-template-card-preview-word {
+    font-family: "Archivo Black", sans-serif;
+  }
+  .style-template-card-preview--electric-lime .style-template-card-preview-title,
+  .style-template-card-preview--electric-lime .style-template-card-preview-word {
+    font-family: "Teko", sans-serif;
+    letter-spacing: 0.03em;
+  }
+  .style-template-card-preview--serif-bordo .style-template-card-preview-title,
+  .style-template-card-preview--serif-bordo .style-template-card-preview-word {
+    font-family: "Roboto Slab", serif;
+  }
+  .style-template-card-preview--amber-gold .style-template-card-preview-word,
+  .style-template-card-preview--sky-cyan .style-template-card-preview-word,
+  .style-template-card-preview--electric-lime .style-template-card-preview-word,
+  .style-template-card-preview--serif-bordo .style-template-card-preview-word {
+    color: #ffffff;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.75),
+      0 8px 14px rgba(0, 0, 0, 0.48);
+  }
+  .style-template-card-preview--amber-gold .style-template-card-preview-word.is-active,
+  .style-template-card-preview--sky-cyan .style-template-card-preview-word.is-active,
+  .style-template-card-preview--electric-lime .style-template-card-preview-word.is-active,
+  .style-template-card-preview--serif-bordo .style-template-card-preview-word.is-active {
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .style-template-card-preview--amber-gold .style-template-card-preview-word.is-active {
+    background: linear-gradient(180deg, #ffe07a 0%, #ffc233 52%, #e89400 100%);
+  }
+  .style-template-card-preview--sky-cyan .style-template-card-preview-word.is-active {
+    background: linear-gradient(180deg, #9bf3f7 0%, #38d6e0 52%, #1aa6b5 100%);
+  }
+  .style-template-card-preview--electric-lime .style-template-card-preview-word.is-active {
+    background: linear-gradient(180deg, #e8ffa8 0%, #c6f24d 52%, #8ab800 100%);
+  }
+  .style-template-card-preview--serif-bordo .style-template-card-preview-word.is-active {
+    background: linear-gradient(180deg, #fbe9ec 0%, #e8a9b8 52%, #9b2d4f 100%);
+  }
   .crop-modal-tab-nav {
     display: flex;
     align-items: center;
@@ -2845,6 +2936,22 @@
   }
   .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word.is-active,
   .short-font-preview.is-gradient-fill .word-highlight-preview-word.is-active {
+    background: var(--word-highlight-active-background, none);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .shorts-preview-subtitle-band.is-active-gradient-fill .word-highlight-preview-word,
+  .short-font-preview.is-active-gradient-fill .word-highlight-preview-word {
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    -webkit-text-fill-color: initial;
+    color: var(--word-highlight-inactive-color, #ffffff);
+  }
+  .shorts-preview-subtitle-band.is-active-gradient-fill .word-highlight-preview-word.is-active,
+  .short-font-preview.is-active-gradient-fill .word-highlight-preview-word.is-active {
     background: var(--word-highlight-active-background, none);
     -webkit-background-clip: text;
     background-clip: text;
@@ -11321,6 +11428,58 @@ document.addEventListener("DOMContentLoaded", function () {
       textBackground: "linear-gradient(180deg, #E2E4E7 0%, #F3F4F6 56%, #767C85 100%)",
       activeBackground: "linear-gradient(180deg, #F7F7F7 0%, #FFFFFF 54%, #B5BBC4 100%)",
     },
+    amber_gold: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Fjalla One\", sans-serif",
+      fontWeight: "400",
+      fillMode: "active_gradient_only",
+      activeBackground: "linear-gradient(180deg, #FFE07A 0%, #FFC233 52%, #E89400 100%)",
+    },
+    sky_cyan: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Archivo Black\", sans-serif",
+      fontWeight: "400",
+      fillMode: "active_gradient_only",
+      activeBackground: "linear-gradient(180deg, #9BF3F7 0%, #38D6E0 52%, #1AA6B5 100%)",
+    },
+    electric_lime: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Teko\", sans-serif",
+      fontWeight: "700",
+      fillMode: "active_gradient_only",
+      activeBackground: "linear-gradient(180deg, #E8FFA8 0%, #C6F24D 52%, #8AB800 100%)",
+    },
+    serif_bordo: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Roboto Slab\", serif",
+      fontWeight: "900",
+      fillMode: "active_gradient_only",
+      activeBackground: "linear-gradient(180deg, #FBE9EC 0%, #E8A9B8 52%, #9B2D4F 100%)",
+    },
   };
   const TITLE_TEMPLATE_PRESETS = {
     green_pop: {
@@ -11335,6 +11494,38 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "400",
+      sideMargin: 48,
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+    amber_gold: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "400",
+      sideMargin: 48,
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+    sky_cyan: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "400",
+      sideMargin: 48,
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+    electric_lime: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "700",
+      sideMargin: 48,
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
+      bgAlpha: "0",
+    },
+    serif_bordo: {
+      engine: "pillow",
+      uppercase: true,
+      fontWeight: "900",
       sideMargin: 48,
       textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
       bgAlpha: "0",
@@ -11511,11 +11702,13 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
+      subtitlePreview.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
       subtitlePreview.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
       previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
+      previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
       previewSubtitle.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
     }
     if (subtitlePreview) {
@@ -11529,6 +11722,7 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
       subtitlePreview.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
       subtitlePreview.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      subtitlePreview.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       subtitlePreview.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       subtitlePreview.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
     }
@@ -11543,6 +11737,7 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
       previewSubtitle.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
       previewSubtitle.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      previewSubtitle.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       previewSubtitle.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       previewSubtitle.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
     }
