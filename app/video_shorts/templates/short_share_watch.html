@@ -114,9 +114,9 @@
           </a>
           <div class="watch-cta-subline">
             {% if language == 'TR' %}
-              Bu Short senin videondan oluşturuldu. Kendi videonla dene — 3 ay ücretsiz, kayıt yok.
+              Bu Short senin videondan oluşturuldu. Kendi videonla dene — {{ trial_duration_label }} ücretsiz, kayıt yok.
             {% else %}
-              This Short was made from your video. Try your own — 3 months free, no signup.
+              This Short was made from your video. Try your own — {{ trial_duration_label }} free, no signup.
             {% endif %}
           </div>
         {% else %}

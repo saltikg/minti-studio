@@ -197,6 +197,16 @@
         grid-template-columns: 1fr;
       }
     }
+    .admin-share-links-trial-form {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .admin-share-links-trial-input {
+      width: 92px;
+    }
   </style>
 {% endblock %}
 
@@ -230,6 +240,7 @@
             <th>Sent</th>
             <th>Recipient</th>
             <th>Clip</th>
+            <th>Trial</th>
             <th>Views</th>
             <th>Plays</th>
             <th>Viewed?</th>
@@ -281,6 +292,7 @@
                       data-share-url="{{ link.share_url }}"
                       data-language="EN"
                       data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
+                      data-trial-days="{{ link.trial_days }}"
                       title="Copy follow-up email in English"
                       aria-label="Copy follow-up email in English">2. email (EN)</button>
                     <button
@@ -290,6 +302,7 @@
                       data-share-url="{{ link.share_url }}"
                       data-language="TR"
                       data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
+                      data-trial-days="{{ link.trial_days }}"
                       title="Copy follow-up email in Turkish"
                       aria-label="Copy follow-up email in Turkish">2. email (TR)</button>
                     <button
@@ -310,6 +323,22 @@
                   </div>
                 {% endif %}
               </td>
+              <td>
+                <div>{{ link.trial_duration_label }}</div>
+                <div class="admin-share-links-trial-form">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="form-control form-control-sm admin-share-links-trial-input"
+                    value="{{ link.trial_days }}"
+                    data-trial-days-input>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light admin-share-links-trial-save-btn"
+                    data-endpoint="{{ url_for('video_shorts_bp.admin_generated_short_share_link_set_trial_days', share_link_id=link.id) }}">Save days</button>
+                </div>
+              </td>
               <td>{{ link.views_count }}</td>
               <td>{{ link.plays_count }}</td>
               <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
@@ -329,7 +358,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="13" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="14" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -361,7 +390,7 @@ You've seen what Minti did with your video. If you'd like to keep going, you can
 
 It's built for creators like you: turn your long-form videos into Shorts, publish across YouTube, Instagram, and Facebook, and grow your channel without the extra editing time.
 
-Tap "Make my own Short" to start — 3 months free, no signup.
+Tap "Make my own Short" to start — [trial] free, no signup.
 
 Best,
 Gokhan`,
@@ -373,7 +402,7 @@ Minti'nin videonuzdan ne çıkardığını gördünüz. Devam etmek isterseniz, 
 
 Sizin gibi içerik üreticileri için tasarlandı: uzun videolarınızı Short'a dönüştürün, YouTube, Instagram ve Facebook'ta yayınlayın, ekstra düzenleme zamanı harcamadan kanalınızı büyütün.
 
-Başlamak için "Kendi Short'unu oluştur"a dokunun — 3 ay ücretsiz, kayıt yok.
+Başlamak için "Kendi Short'unu oluştur"a dokunun — [trial] ücretsiz, kayıt yok.
 
 İyi çalışmalar,
 Gökhan`,
@@ -383,7 +412,7 @@ Hi [Name],
 
 I sent you a Short I made from your video last week — it may have slipped past your inbox. Here it is: [link]
 
-If you'd like to keep going, you can create your own Shorts the same way — just tap "Make my own Short" on that page. 3 months free, no signup.
+If you'd like to keep going, you can create your own Shorts the same way — just tap "Make my own Short" on that page. [trial] free, no signup.
 
 Best,
 Gokhan`,
@@ -393,7 +422,7 @@ Merhaba [Name],
 
 Geçen hafta videonuzdan yaptığım bir Short göndermiştim — gözden kaçmış olabilir. İşte burada: [link]
 
-Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — o sayfada "Kendi Short'unu oluştur"a dokunmanız yeterli. 3 ay ücretsiz, kayıt yok.
+Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — o sayfada "Kendi Short'unu oluştur"a dokunmanız yeterli. [trial] ücretsiz, kayıt yok.
 
 İyi çalışmalar,
 Gökhan`,
@@ -404,9 +433,16 @@ Gökhan`,
       const shareUrl = String(button.dataset.shareUrl || "").trim();
       const normalizedLanguage = String(button.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
       const engaged = String(button.dataset.engaged || "").trim().toLowerCase() === "true";
+      const trialDaysRaw = Number.parseInt(String(button.dataset.trialDays || "").trim(), 10);
+      const trialDays = Number.isFinite(trialDaysRaw) && trialDaysRaw > 0 ? trialDaysRaw : 90;
       const key = `${engaged ? "A" : "B"}_${normalizedLanguage}`;
       const template = FOLLOWUP_TEMPLATES[key] || FOLLOWUP_TEMPLATES.B_EN;
-      return template.replaceAll("[Name]", recipientName).replaceAll("[link]", shareUrl);
+      const trialLabel = trialDays % 30 === 0
+        ? (normalizedLanguage === "TR"
+          ? `${Math.round(trialDays / 30)} ay`
+          : `${Math.round(trialDays / 30)} ${Math.round(trialDays / 30) === 1 ? "month" : "months"}`)
+        : (normalizedLanguage === "TR" ? `${trialDays} gün` : `${trialDays} days`);
+      return template.replaceAll("[Name]", recipientName).replaceAll("[link]", shareUrl).replaceAll("[trial]", trialLabel);
     }
 
     function setFollowupFeedback(row, message, kind = "") {
@@ -484,6 +520,52 @@ Gökhan`,
           setFollowupFeedback(row, err?.message || "Kaydetme başarısız.", "is-error");
           return;
         }
+      }
+
+      const trialSaveButton = event.target.closest(".admin-share-links-trial-save-btn");
+      if (trialSaveButton) {
+        const row = trialSaveButton.closest(".admin-share-links-row");
+        const endpoint = String(trialSaveButton.dataset.endpoint || "").trim();
+        const input = row?.querySelector("[data-trial-days-input]");
+        if (!endpoint || !input || trialSaveButton.disabled) {
+          return;
+        }
+        const parsed = Number.parseInt(String(input.value || "").trim(), 10);
+        const trialDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+        const originalLabel = trialSaveButton.textContent;
+        trialSaveButton.disabled = true;
+        trialSaveButton.textContent = "Saving...";
+        setFollowupFeedback(row, "");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({ trial_days: trialDays }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || `HTTP ${response.status}`);
+          }
+          row.querySelectorAll(".admin-share-links-followup-copy-btn").forEach((button) => {
+            button.dataset.trialDays = String(payload.trial_days || trialDays);
+          });
+          const labelContainer = input.closest("td")?.querySelector("div");
+          if (labelContainer) {
+            labelContainer.textContent = String(payload.trial_duration_label_en || `${payload.trial_days} days`);
+          }
+          input.value = String(payload.trial_days || trialDays);
+          setFollowupFeedback(row, `Trial updated: ${payload.trial_days} days.`, "is-success");
+        } catch (err) {
+          setFollowupFeedback(row, err?.message || "Trial days could not be saved.", "is-error");
+        } finally {
+          trialSaveButton.disabled = false;
+          trialSaveButton.textContent = originalLabel;
+        }
+        return;
       }
 
       const button = event.target.closest(".admin-share-links-copy-btn");

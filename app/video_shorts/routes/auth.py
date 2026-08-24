@@ -78,6 +78,10 @@ from app.video_shorts.services.onboarding_magic_links import (
     hash_onboarding_magic_token,
     normalize_outreach_language,
 )
+from app.video_shorts.services.trial_copy import (
+    DEFAULT_SHARE_TRIAL_DAYS,
+    normalize_trial_days,
+)
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
@@ -1423,6 +1427,7 @@ def redeem_onboarding_magic_link(token: str):
     conn = get_db()
     is_new_user = False
     outreach_language = "EN"
+    welcome_trial_days = DEFAULT_SHARE_TRIAL_DAYS
     welcome_email_context: tuple[str, str, str] | None = None
     try:
         ensure_storage_user_schema(conn)
@@ -1436,6 +1441,7 @@ def redeem_onboarding_magic_link(token: str):
                 recipient_email,
                 recipient_name,
                 language,
+                trial_days,
                 expires_at,
                 used_at
             FROM onboarding_magic_links
@@ -1447,10 +1453,10 @@ def redeem_onboarding_magic_link(token: str):
         if not row:
             return _render_onboarding_magic_link_status_page(status="invalid", status_code=404)
 
-        expires_at = row[4]
+        expires_at = row[5]
         if expires_at and getattr(expires_at, "tzinfo", None) is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        used_at = row[5]
+        used_at = row[6]
         if used_at:
             return _render_onboarding_magic_link_status_page(status="used", status_code=410)
         if not expires_at or expires_at < datetime.now(timezone.utc):
@@ -1459,6 +1465,7 @@ def redeem_onboarding_magic_link(token: str):
         recipient_email = _normalize_auth_email(row[1] or "")
         recipient_name = str(row[2] or "").strip()
         outreach_language = normalize_outreach_language(row[3], default="EN")
+        welcome_trial_days = normalize_trial_days(row[4], default=DEFAULT_SHARE_TRIAL_DAYS)
         if not recipient_email:
             return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
         existing_user = _lookup_user_by_email(recipient_email)
@@ -1513,6 +1520,7 @@ def redeem_onboarding_magic_link(token: str):
                 set_password_url=set_password_url,
                 recipient_name=welcome_name,
                 language=outreach_language,
+                trial_days=welcome_trial_days,
             )
             current_app.logger.info(
                 "Onboarding welcome email sent: user_id=%s to=%s status=%s request_id=%s language=%s",

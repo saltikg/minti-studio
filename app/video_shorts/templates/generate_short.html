@@ -3802,6 +3802,14 @@
                                       value="{{ row.recipient_email or video.creator_email or '' }}"
                                       placeholder="Recipient email (optional)"
                                       aria-label="Recipient email">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      class="form-control form-control-sm admin-share-link-trial-days"
+                                      value="{{ row.trial_days or 60 }}"
+                                      placeholder="Trial days"
+                                      aria-label="Trial days">
                                     <button
                                       type="button"
                                       class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center justify-content-center gap-1 admin-share-link-btn"
@@ -11078,15 +11086,31 @@ const initAdminShareLinkButtons = () => {
       const wrapper = button.closest(".clip-card-action-primary, .clip-card");
       const recipientNameInput = wrapper?.querySelector(".admin-share-link-recipient-name");
       const recipientEmailInput = wrapper?.querySelector(".admin-share-link-recipient-email");
+      const trialDaysInput = wrapper?.querySelector(".admin-share-link-trial-days");
       const resultGroup = wrapper?.querySelector(".admin-share-link-result");
       const resultInput = wrapper?.querySelector(".admin-share-link-input");
       const copyButton = wrapper?.querySelector(".admin-share-link-copy-btn");
       const copyTrButton = wrapper?.querySelector(".admin-share-link-copy-tr-btn");
       const copyEnButton = wrapper?.querySelector(".admin-share-link-copy-en-btn");
       const feedback = wrapper?.querySelector(".admin-share-link-feedback");
-      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !copyTrButton || !copyEnButton || !feedback || !recipientNameInput || !recipientEmailInput) {
+      if (!generatedVideoId || !shareUrl || !resultGroup || !resultInput || !copyButton || !copyTrButton || !copyEnButton || !feedback || !recipientNameInput || !recipientEmailInput || !trialDaysInput) {
         return;
       }
+      const resolveTrialDays = () => {
+        const parsed = Number.parseInt(String(trialDaysInput.value || "").trim(), 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+      };
+      const formatTrialDuration = (days, language) => {
+        const normalizedLanguage = String(language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
+        if (days % 30 === 0) {
+          const months = Math.round(days / 30);
+          if (normalizedLanguage === "TR") {
+            return `${months} ay`;
+          }
+          return months === 1 ? "1 month" : `${months} months`;
+        }
+        return normalizedLanguage === "TR" ? `${days} gün` : `${days} days`;
+      };
       const getVideoTitle = () => clipTitle || parentVideoTitle || "Untitled video";
       const getRecipientName = () => String(recipientNameInput.value || "").trim();
       const buildGreeting = (language) => {
@@ -11099,6 +11123,7 @@ const initAdminShareLinkButtons = () => {
       const buildEmailText = (language) => {
         const videoTitle = getVideoTitle();
         const currentShareUrl = String(resultInput.value || "").trim();
+        const trialDuration = formatTrialDuration(resolveTrialDays(), language);
         if (language === "tr") {
           return [
             "Subject: Videonuzdan hazırladığımız kısa bir örnek",
@@ -11116,7 +11141,7 @@ const initAdminShareLinkButtons = () => {
             "",
             "Aynı sistem üzerinden uzun videolarınızdan kısa içerikler oluşturabilir, bunları YouTube Shorts, Instagram ve Facebook'a yayınlayabilir; sonrasında farklı platformlardaki yorumları ve performansı tek yerden takip edebilirsiniz.",
             "",
-            "Kendi videolarınızla denemek isterseniz, örnek sayfasındaki \"Create from your own video\" (kendi videonuzdan oluştur) butonuna basmanız yeterli. 3 aylık ücretsiz erişim otomatik olarak tanımlanıyor.",
+            `Kendi videolarınızla denemek isterseniz, örnek sayfasındaki \"Create from your own video\" (kendi videonuzdan oluştur) butonuna basmanız yeterli. ${trialDuration} ücretsiz erişim otomatik olarak tanımlanıyor.`,
             "",
             "Herhangi bir sorunuz olursa memnuniyetle yardımcı olurum.",
             "",
@@ -11142,7 +11167,7 @@ const initAdminShareLinkButtons = () => {
           "",
           "Beyond creating clips, Minti also lets you publish across YouTube, Instagram, and Facebook, then manage comments and compare performance across platforms from one place.",
           "",
-          "If you'd like to try it with your own videos, just tap \"Create from your own video\" on that page — it sets you up with 3 months of complimentary access, no signup needed. Or reply here if you have any questions.",
+          `If you'd like to try it with your own videos, just tap \"Create from your own video\" on that page — it sets you up with ${trialDuration} of complimentary access, no signup needed. Or reply here if you have any questions.`,
           "",
           "Best,",
           "Gokhan Saltik",
@@ -11244,6 +11269,7 @@ const initAdminShareLinkButtons = () => {
       };
       const recipientName = getRecipientName();
       const recipientEmail = String(recipientEmailInput.value || "").trim();
+      const trialDays = resolveTrialDays();
       const originalHtml = button.innerHTML;
       button.disabled = true;
       button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
@@ -11261,6 +11287,7 @@ const initAdminShareLinkButtons = () => {
             generated_video_id: generatedVideoId,
             recipient_name: recipientName,
             recipient_email: recipientEmail,
+            trial_days: trialDays,
           }),
         });
         const payload = await response.json().catch(() => ({}));

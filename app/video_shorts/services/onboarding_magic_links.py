@@ -11,6 +11,10 @@ from app.video_shorts.services.db import (
     ensure_onboarding_magic_links_schema,
     get_db,
 )
+from app.video_shorts.services.trial_copy import (
+    DEFAULT_SHARE_TRIAL_DAYS,
+    normalize_trial_days,
+)
 
 ONBOARDING_MAGIC_LINK_TTL_DAYS = 14
 ONBOARDING_MAGIC_LINK_PLAN_ID = "plan_10gb"
@@ -54,12 +58,14 @@ def mint_onboarding_magic_link(
     share_link_id: Optional[int] = None,
     share_link_token: str = "",
     language: str | None = None,
+    trial_days: Any = DEFAULT_SHARE_TRIAL_DAYS,
     conn=None,
 ) -> Dict[str, Any]:
     normalized_email = str(recipient_email or "").strip().lower()
     if not normalized_email:
         raise ValueError("recipient_email is required")
     normalized_language = normalize_outreach_language(language, default="EN")
+    normalized_trial_days = normalize_trial_days(trial_days)
     raw_token = generate_onboarding_magic_token()
     token_hash = hash_onboarding_magic_token(raw_token)
     expires_at = onboarding_magic_token_expiry()
@@ -77,11 +83,12 @@ def mint_onboarding_magic_link(
                 share_link_id,
                 share_link_token,
                 language,
+                trial_days,
                 expires_at,
                 used_at,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, now())
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, now())
             """,
             [
                 token_hash,
@@ -90,6 +97,7 @@ def mint_onboarding_magic_link(
                 share_link_id,
                 str(share_link_token or "").strip() or None,
                 normalized_language,
+                normalized_trial_days,
                 expires_at,
             ],
         )
@@ -108,4 +116,5 @@ def mint_onboarding_magic_link(
         "share_link_id": share_link_id,
         "share_link_token": str(share_link_token or "").strip() or None,
         "language": normalized_language,
+        "trial_days": normalized_trial_days,
     }

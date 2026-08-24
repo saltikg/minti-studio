@@ -119,6 +119,12 @@ from app.video_shorts.services.onboarding_magic_links import (
     mint_onboarding_magic_link,
     normalize_outreach_language,
 )
+from app.video_shorts.services.trial_copy import (
+    DEFAULT_SHARE_TRIAL_DAYS,
+    LEGACY_SHARE_TRIAL_DAYS,
+    normalize_trial_days,
+    trial_duration_text,
+)
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
     load_user_bool_preference,
@@ -2516,6 +2522,10 @@ def _format_datetime_pst(value: Any) -> str:
             return str(value)
         dt_value = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     return dt_value.astimezone(PST_ZONE).strftime("%b %-d, %Y · %H:%M:%S")
+
+
+def _trial_duration_label(days: Any, language: str = "EN") -> str:
+    return trial_duration_text(days, language)
 
 
 def _safe_long_comp_name(name: str) -> bool:
@@ -5140,7 +5150,8 @@ def generate_short(video_pk):
                             SELECT
                               CAST(sl.generated_video_id AS VARCHAR) AS generated_video_id,
                               sl.recipient_name,
-                              sl.recipient_email
+                              sl.recipient_email,
+                              COALESCE(sl.trial_days, ?) AS trial_days
                             FROM short_share_links sl
                             JOIN (
                               SELECT generated_video_id, MAX(id) AS latest_id
@@ -5150,7 +5161,7 @@ def generate_short(video_pk):
                             ) latest
                               ON CAST(latest.latest_id AS BIGINT) = CAST(sl.id AS BIGINT)
                             """,
-                            generated_video_ids,
+                            [DEFAULT_SHARE_TRIAL_DAYS, *generated_video_ids],
                         ).fetchall()
                         for recipient_row in recipient_rows:
                             generated_id = str(recipient_row[0] or "").strip()
@@ -5159,6 +5170,7 @@ def generate_short(video_pk):
                             generated_recipient_map[generated_id] = {
                                 "recipient_name": str(recipient_row[1] or "").strip(),
                                 "recipient_email": str(recipient_row[2] or "").strip(),
+                                "trial_days": normalize_trial_days(recipient_row[3], default=DEFAULT_SHARE_TRIAL_DAYS),
                             }
                 for generated_row in generated_rows:
                     clip_name = str(generated_row[1] or "").strip()
@@ -5174,6 +5186,7 @@ def generate_short(video_pk):
                         "share_token": generated_row[5] if len(generated_row) > 5 else None,
                         "recipient_name": str(recipient_info.get("recipient_name") or "").strip(),
                         "recipient_email": str(recipient_info.get("recipient_email") or "").strip(),
+                        "trial_days": normalize_trial_days(recipient_info.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS),
                     }
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
@@ -5846,6 +5859,7 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
               sl.recipient_name,
               sl.recipient_email,
               sl.language,
+              COALESCE(sl.trial_days, ?) AS trial_days,
               'recipient' AS token_source
             FROM short_share_links sl
             JOIN shorts_generated_videos gv
@@ -5857,7 +5871,7 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
             WHERE sl.token = ?
             LIMIT 1
             """,
-            [normalized_token],
+            [DEFAULT_SHARE_TRIAL_DAYS, normalized_token],
         ).fetchone()
         if row:
             return {
@@ -5870,7 +5884,8 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
                 "recipient_name": str(row[7] or "").strip(),
                 "recipient_email": str(row[8] or "").strip().lower(),
                 "language": str(row[9] or "").strip().upper(),
-                "token_source": str(row[10] or "recipient").strip() or "recipient",
+                "trial_days": normalize_trial_days(row[10], default=DEFAULT_SHARE_TRIAL_DAYS),
+                "token_source": str(row[11] or "recipient").strip() or "recipient",
             }
 
     generated_columns = table_columns(conn, "shorts_generated_videos")
@@ -5905,6 +5920,7 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
         "recipient_name": "",
         "recipient_email": "",
         "language": "",
+        "trial_days": DEFAULT_SHARE_TRIAL_DAYS,
         "token": normalized_token,
         "token_source": "legacy",
     }
@@ -5917,6 +5933,7 @@ def create_generated_short_share_link():
     generated_video_id = str(payload.get("generated_video_id") or "").strip()
     recipient_name = str(payload.get("recipient_name") or "").strip()
     recipient_email = str(payload.get("recipient_email") or "").strip()
+    trial_days = normalize_trial_days(payload.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS)
     normalized_recipient_email = recipient_email.lower()
     if not generated_video_id:
         return jsonify({"success": False, "message": "Generated short id is required."}), 400
@@ -5972,10 +5989,11 @@ def create_generated_short_share_link():
                         """
                         UPDATE short_share_links
                            SET recipient_name = ?,
-                               recipient_email = ?
+                               recipient_email = ?,
+                               trial_days = ?
                          WHERE id = ?
                         """,
-                        [recipient_name or None, recipient_email or None, existing_share_row[0]],
+                        [recipient_name or None, recipient_email or None, trial_days, existing_share_row[0]],
                     )
         else:
             existing_share_row = conn.execute(
@@ -5991,6 +6009,16 @@ def create_generated_short_share_link():
             ).fetchone()
 
         if existing_share_row:
+            conn.execute(
+                """
+                UPDATE short_share_links
+                   SET recipient_name = ?,
+                       recipient_email = ?,
+                       trial_days = ?
+                 WHERE id = ?
+                """,
+                [recipient_name or None, recipient_email or None, trial_days, existing_share_row[0]],
+            )
             share_token = str(existing_share_row[1] or "").strip()
             conn.commit()
             _ensure_shared_short_poster(clip_filename)
@@ -6002,6 +6030,7 @@ def create_generated_short_share_link():
                     "share_token": share_token,
                     "share_url": _share_public_url(share_token),
                     "reused": True,
+                    "trial_days": trial_days,
                 }
             )
 
@@ -6021,15 +6050,17 @@ def create_generated_short_share_link():
                     token,
                     recipient_name,
                     recipient_email,
+                    trial_days,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, now())
+                VALUES (?, ?, ?, ?, ?, now())
                 """,
                 [
                     str(row[0] or generated_video_id),
                     candidate,
                     recipient_name or None,
                     recipient_email or None,
+                    trial_days,
                 ],
             )
             share_token = candidate
@@ -6054,6 +6085,7 @@ def create_generated_short_share_link():
                 "generated_video_id": str(row[0] or generated_video_id),
                 "share_token": share_token,
                 "share_url": _share_public_url(share_token),
+                "trial_days": trial_days,
             }
         )
     except Exception:
@@ -6103,6 +6135,7 @@ def _render_public_short_watch_page(token: str):
                 share_link_id=int(row["share_link_id"]) if row.get("share_link_id") else None,
                 share_link_token=str(row.get("token") or "").strip(),
                 language=resolved_language,
+                trial_days=row.get("trial_days"),
             )
             onboarding_url = str(minted.get("url") or "").strip()
         except Exception:
@@ -6119,6 +6152,7 @@ def _render_public_short_watch_page(token: str):
         event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
         onboarding_url=onboarding_url or None,
         language=resolved_language,
+        trial_duration_label=_trial_duration_label(row.get("trial_days"), resolved_language),
         preview_mode=preview_mode,
     )
 
@@ -6341,6 +6375,54 @@ def admin_generated_short_share_link_set_language(share_link_id: int):
         except Exception:
             pass
         return jsonify({"success": False, "message": "Share-link language could not be updated."}), 500
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/api/generated-shorts/share-link/<int:share_link_id>/trial-days", methods=["POST"])
+@require_admin
+def admin_generated_short_share_link_set_trial_days(share_link_id: int):
+    payload = request.get_json(silent=True) or request.form or {}
+    trial_days = normalize_trial_days(payload.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS)
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"success": False, "message": "Share links are not available until the database migration is applied."}), 503
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "trial_days" not in share_link_columns:
+            return jsonify({"success": False, "message": "Share-link trial days are not available until the database migration is applied."}), 503
+        exists = conn.execute(
+            "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
+            [share_link_id],
+        ).fetchone()
+        if not exists:
+            return jsonify({"success": False, "message": "Share link not found."}), 404
+        conn.execute(
+            """
+            UPDATE short_share_links
+            SET trial_days = ?
+            WHERE id = ?
+            """,
+            [trial_days, share_link_id],
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "share_link_id": share_link_id,
+                "trial_days": trial_days,
+                "trial_duration_label_tr": _trial_duration_label(trial_days, "TR"),
+                "trial_duration_label_en": _trial_duration_label(trial_days, "EN"),
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Failed to update trial_days for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"success": False, "message": "Share-link trial days could not be updated."}), 500
     finally:
         conn.close()
 
@@ -8078,6 +8160,7 @@ def _load_admin_share_links(
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
     has_language = "language" in share_link_columns
+    has_trial_days = "trial_days" in share_link_columns
     has_followup_sent = "followup_sent" in share_link_columns
     has_followup_sent_at = "followup_sent_at" in share_link_columns
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
@@ -8139,6 +8222,7 @@ def _load_admin_share_links(
               sl.generated_video_id,
               sl.token,
               {("sl.language" if has_language else "'EN'")} AS language,
+              {("COALESCE(sl.trial_days, 90)" if has_trial_days else "90")} AS trial_days,
               COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
               {("sl.emailed_at" if has_emailed_at else "NULL")} AS emailed_at,
@@ -8161,6 +8245,7 @@ def _load_admin_share_links(
               sl.generated_video_id,
               sl.token,
               {("sl.language," if has_language else "")}
+              {("sl.trial_days," if has_trial_days else "")}
               sl.recipient_name,
               sl.recipient_email,
               {("sl.emailed_at," if has_emailed_at else "")}
@@ -8201,6 +8286,7 @@ def _load_admin_share_links(
           sr.generated_video_id,
           sr.token,
           sr.language,
+          sr.trial_days,
           sr.recipient_name,
           sr.recipient_email,
           sr.emailed_at,
@@ -8225,11 +8311,13 @@ def _load_admin_share_links(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        views_count = int(row[10] or 0)
-        plays_count = int(row[11] or 0)
-        emailed_at = row[6]
-        followup_sent = bool(row[7])
-        followup_sent_at = row[8]
+        views_count = int(row[11] or 0)
+        plays_count = int(row[12] or 0)
+        emailed_at = row[7]
+        followup_sent = bool(row[8])
+        followup_sent_at = row[9]
+        trial_days = normalize_trial_days(row[4], default=LEGACY_SHARE_TRIAL_DAYS)
+        language = normalize_outreach_language(row[3], default="EN")
         followup_eligible = False
         if emailed_at and not followup_sent and (views_count > 0 or plays_count > 0):
             try:
@@ -8245,9 +8333,11 @@ def _load_admin_share_links(
                 "share_token": str(row[2] or "").strip(),
                 "share_url": _share_public_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
                 "preview_url": _share_preview_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
-                "language": normalize_outreach_language(row[3], default="EN"),
-                "recipient_name": row[4],
-                "recipient_email": row[5],
+                "language": language,
+                "trial_days": trial_days,
+                "trial_duration_label": _trial_duration_label(trial_days, language),
+                "recipient_name": row[5],
+                "recipient_email": row[6],
                 "emailed_at": emailed_at,
                 "emailed_at_pst": _format_datetime_pst(emailed_at),
                 "emailed": bool(emailed_at),
@@ -8255,24 +8345,24 @@ def _load_admin_share_links(
                 "followup_sent_at": followup_sent_at,
                 "followup_sent_at_pst": _format_datetime_pst(followup_sent_at),
                 "followup_eligible": followup_eligible,
-                "clip_title": row[9],
+                "clip_title": row[10],
                 "views_count": views_count,
                 "plays_count": plays_count,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
-                "first_seen": row[12],
-                "first_seen_pst": _format_datetime_pst(row[12]),
-                "last_seen": row[13],
-                "last_seen_pst": _format_datetime_pst(row[13]),
-                "created_at": row[14],
-                "created_at_pst": _format_datetime_pst(row[14]),
-                "redeemed_at": row[15],
-                "redeemed_at_pst": _format_datetime_pst(row[15]),
-                "redeemed_user_id": str(row[16] or "").strip(),
-                "redeemed": bool(row[15]),
+                "first_seen": row[13],
+                "first_seen_pst": _format_datetime_pst(row[13]),
+                "last_seen": row[14],
+                "last_seen_pst": _format_datetime_pst(row[14]),
+                "created_at": row[15],
+                "created_at_pst": _format_datetime_pst(row[15]),
+                "redeemed_at": row[16],
+                "redeemed_at_pst": _format_datetime_pst(row[16]),
+                "redeemed_user_id": str(row[17] or "").strip(),
+                "redeemed": bool(row[16]),
                 "redeemed_user_detail_url": (
-                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[16]).strip())
-                    if str(row[16] or "").strip()
+                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[17]).strip())
+                    if str(row[17] or "").strip()
                     else ""
                 ),
             }
@@ -8337,6 +8427,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     youtube_columns = table_columns(conn, "youtube_videos")
     generated_columns = table_columns(conn, "shorts_generated_videos")
     render_job_columns = table_columns(conn, "shorts_render_jobs")
+    onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
 
     row = conn.execute(
         """
@@ -8578,6 +8669,33 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         current_app.logger.exception("Admin transcription usage detail unavailable for user %s: %s", user_id, exc)
         transcription_usage = {"display": "—"}
 
+    latest_trial_days = None
+    latest_trial_days_label = ""
+    latest_trial_used_at = None
+    trial_expires_at = None
+    if onboarding_magic_link_columns and "user_id" in onboarding_magic_link_columns:
+        trial_days_sql = "COALESCE(trial_days, ?)" if "trial_days" in onboarding_magic_link_columns else "?"
+        used_at_sql = "used_at" if "used_at" in onboarding_magic_link_columns else "NULL"
+        trial_row = conn.execute(
+            f"""
+            SELECT
+              {trial_days_sql} AS trial_days,
+              {used_at_sql} AS used_at
+            FROM onboarding_magic_links
+            WHERE CAST(user_id AS VARCHAR) = ?
+            ORDER BY used_at DESC NULLS LAST, created_at DESC, id DESC
+            LIMIT 1
+            """,
+            [LEGACY_SHARE_TRIAL_DAYS, user_id],
+        ).fetchone()
+        if trial_row:
+            latest_trial_days = normalize_trial_days(trial_row[0], default=LEGACY_SHARE_TRIAL_DAYS)
+            latest_trial_days_label = _trial_duration_label(latest_trial_days, "EN")
+            latest_trial_used_at = trial_row[1]
+            created_at = row[8] if isinstance(row[8], datetime) else None
+            if created_at and latest_trial_days:
+                trial_expires_at = created_at + timedelta(days=latest_trial_days)
+
     return {
         "id": row[0],
         "username": row[1] or "",
@@ -8590,6 +8708,10 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "created_at": row[8],
         "updated_at": row[9],
         "google_sub_present": bool((row[10] or "").strip()),
+        "trial_days": latest_trial_days,
+        "trial_days_label": latest_trial_days_label,
+        "trial_used_at": latest_trial_used_at,
+        "trial_expires_at": trial_expires_at,
         "uploaded_videos": uploaded_videos,
         "shorts_generated": shorts_generated,
         "shorts_published": shorts_published,

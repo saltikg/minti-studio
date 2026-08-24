@@ -321,6 +321,15 @@
             <dt>Created</dt>
             <dd>{{ user_detail.created_at.strftime('%b %-d, %Y · %H:%M') if user_detail.created_at and user_detail.created_at.strftime else (user_detail.created_at or '—') }}</dd>
 
+            <dt>Trial reminder</dt>
+            <dd>
+              {% if user_detail.trial_days and user_detail.trial_expires_at %}
+                {{ user_detail.trial_days_label }} · expires {{ user_detail.trial_expires_at.strftime('%b %-d, %Y · %H:%M') if user_detail.trial_expires_at and user_detail.trial_expires_at.strftime else user_detail.trial_expires_at }}
+              {% else %}
+                —
+              {% endif %}
+            </dd>
+
             <dt>Google sub present</dt>
             <dd>{{ 'Yes' if user_detail.google_sub_present else 'No' }}</dd>
           </dl>
