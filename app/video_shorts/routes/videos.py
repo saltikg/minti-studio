@@ -3546,19 +3546,32 @@ def videos_page(channel_id):
 
     if email_sent_filter:
         if share_link_columns and generated_columns and has_emailed_at:
-            emailed_at_condition = "sl.emailed_at IS NOT NULL" if email_sent_filter == "sent" else "sl.emailed_at IS NULL"
-            where_clauses.append(
-                f"""
-                EXISTS (
-                    SELECT 1
-                    FROM shorts_generated_videos gv
-                    JOIN short_share_links sl
-                      ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
-                    WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(youtube_videos.video_id AS VARCHAR)
-                      AND {emailed_at_condition}
+            if email_sent_filter == "sent":
+                where_clauses.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM shorts_generated_videos gv
+                        JOIN short_share_links sl
+                          ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+                        WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(youtube_videos.video_id AS VARCHAR)
+                          AND sl.emailed_at IS NOT NULL
+                    )
+                    """
                 )
-                """
-            )
+            else:
+                where_clauses.append(
+                    """
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM shorts_generated_videos gv
+                        JOIN short_share_links sl
+                          ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
+                        WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(youtube_videos.video_id AS VARCHAR)
+                          AND sl.emailed_at IS NOT NULL
+                    )
+                    """
+                )
         elif email_sent_filter == "sent":
             where_clauses.append("1 = 0")
 
