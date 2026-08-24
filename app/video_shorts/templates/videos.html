@@ -253,14 +253,22 @@
             <label class="small mb-0">Video ID</label>
             <input type="text" name="vid" class="form-control form-control-sm vs-input vs-input-140" placeholder="Video ID" value="{{ video_id_q }}">
           </div>
-          <label class="d-flex align-items-center gap-1 small mb-0">
-            <input type="checkbox" name="email_sent" value="1" {% if email_sent_filter %}checked{% endif %}>
-            <span>Email sent</span>
-          </label>
-          <label class="d-flex align-items-center gap-1 small mb-0">
-            <input type="checkbox" name="has_email" value="1" {% if has_email_filter %}checked{% endif %}>
-            <span>Has email</span>
-          </label>
+          <div class="d-flex align-items-center gap-1">
+            <label for="email_sent" class="small mb-0">Email status</label>
+            <select name="email_sent" id="email_sent" class="form-select form-select-sm vs-select">
+              <option value="">All</option>
+              <option value="sent" {% if email_sent_filter == 'sent' %}selected{% endif %}>Email sent</option>
+              <option value="not_sent" {% if email_sent_filter == 'not_sent' %}selected{% endif %}>Email not sent</option>
+            </select>
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <label for="has_email" class="small mb-0">Email field</label>
+            <select name="has_email" id="has_email" class="form-select form-select-sm vs-select">
+              <option value="">All</option>
+              <option value="has_email" {% if has_email_filter == 'has_email' %}selected{% endif %}>Has Email</option>
+              <option value="no_email" {% if has_email_filter == 'no_email' %}selected{% endif %}>No Email</option>
+            </select>
+          </div>
         </div>
 
         <button class="vs-btn vs-btn-secondary">Search</button>
@@ -280,7 +288,7 @@
             <th class="vs-col-shorts">Shorts</th>
             <th class="vs-col-stats">Stats</th>
             <th class="vs-col-published">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='added', dir='asc' if sort!='added' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='added', dir='asc' if sort!='added' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None) }}" class="text-decoration-none">
                 Added
               {% if sort == 'added' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -288,7 +296,7 @@
               </a>
             </th>
             <th class="vs-col-published">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='published', dir='asc' if sort!='published' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None) }}" class="text-decoration-none">
                 Published
               {% if sort == 'published' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -296,7 +304,7 @@
               </a>
             </th>
             <th class="vs-col-downloaded">
-              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='downloaded', dir='asc' if sort!='downloaded' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None) }}" class="text-decoration-none">
+              <a href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, sort='downloaded', dir='asc' if sort!='downloaded' or sort_dir!='asc' else 'desc', page=1, q=search_q, caption=caption_filters, tstatus=transcript_filters, dstatus=download_filter, dmin=duration_min, dmax=duration_max, vid=video_id_q, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None) }}" class="text-decoration-none">
                 Downloaded
               {% if sort == 'downloaded' %}
                 <span class="text-muted">{{ '▲' if sort_dir=='asc' else '▼' }}</span>
@@ -437,8 +445,8 @@
                     <input type="hidden" name="dmin" value="{{ duration_min }}">
                     <input type="hidden" name="dmax" value="{{ duration_max }}">
                     <input type="hidden" name="short_filter" value="{{ short_filter }}">
-                    <input type="hidden" name="email_sent" value="{{ '1' if email_sent_filter else '' }}">
-                    <input type="hidden" name="has_email" value="{{ '1' if has_email_filter else '' }}">
+                    <input type="hidden" name="email_sent" value="{{ email_sent_filter }}">
+                    <input type="hidden" name="has_email" value="{{ has_email_filter }}">
                     {% if dstat == 'downloaded' %}
                       <span class="text-success" title="Downloaded">✅</span>
                     {% else %}

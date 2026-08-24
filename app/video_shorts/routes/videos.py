@@ -3187,8 +3187,16 @@ def videos_page(channel_id):
         for l in request.args.getlist("lstatus")
         if l and l.strip().lower() in ("downloaded", "not_downloaded")
     ]
-    email_sent_filter = (request.args.get("email_sent") or "").strip().lower() in {"1", "true", "yes", "on"}
-    has_email_filter = (request.args.get("has_email") or "").strip().lower() in {"1", "true", "yes", "on"}
+    email_sent_filter = (request.args.get("email_sent") or "").strip().lower()
+    if email_sent_filter in {"1", "true", "yes", "on"}:
+        email_sent_filter = "sent"
+    elif email_sent_filter not in {"sent", "not_sent"}:
+        email_sent_filter = ""
+    has_email_filter = (request.args.get("has_email") or "").strip().lower()
+    if has_email_filter in {"1", "true", "yes", "on"}:
+        has_email_filter = "has_email"
+    elif has_email_filter not in {"has_email", "no_email"}:
+        has_email_filter = ""
 
     # Kanal bilgisi
     row = conn.execute(
@@ -3531,24 +3539,27 @@ def videos_page(channel_id):
     generated_columns = table_columns(conn, "shorts_generated_videos")
     has_emailed_at = "emailed_at" in share_link_columns
 
-    if has_email_filter:
+    if has_email_filter == "has_email":
         where_clauses.append("trim(coalesce(creator_email, '')) <> ''")
+    elif has_email_filter == "no_email":
+        where_clauses.append("trim(coalesce(creator_email, '')) = ''")
 
     if email_sent_filter:
         if share_link_columns and generated_columns and has_emailed_at:
+            emailed_at_condition = "sl.emailed_at IS NOT NULL" if email_sent_filter == "sent" else "sl.emailed_at IS NULL"
             where_clauses.append(
-                """
+                f"""
                 EXISTS (
                     SELECT 1
                     FROM shorts_generated_videos gv
                     JOIN short_share_links sl
                       ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
                     WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(youtube_videos.video_id AS VARCHAR)
-                      AND sl.emailed_at IS NOT NULL
+                      AND {emailed_at_condition}
                 )
                 """
             )
-        else:
+        elif email_sent_filter == "sent":
             where_clauses.append("1 = 0")
 
     where_sql = " AND ".join(where_clauses)

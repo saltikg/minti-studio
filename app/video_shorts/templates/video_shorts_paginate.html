@@ -7,13 +7,13 @@
     {% set prev_page = page - 1 %}
     {% set next_page = page + 1 %}
     <a class="btn btn-outline-secondary {% if page <= 1 %}disabled{% endif %}"
-       href="{% if page > 1 %}{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=prev_page, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}{% else %}#{% endif %}">
+       href="{% if page > 1 %}{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=prev_page, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}{% else %}#{% endif %}">
       ← Prev
     </a>
     {% for p in range(1, total_pages + 1) %}
       {% if total_pages <= 7 or p in [1,2,total_pages-1,total_pages, page-1, page, page+1] %}
         <a class="btn {% if p == page %}btn-primary{% else %}btn-outline-secondary{% endif %}"
-           href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=p, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}">
+           href="{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=p, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}">
           {{ p }}
         </a>
       {% elif p == 3 and page > 4 %}
@@ -23,7 +23,7 @@
       {% endif %}
     {% endfor %}
     <a class="btn btn-outline-secondary {% if page >= total_pages %}disabled{% endif %}"
-       href="{% if page < total_pages %}{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=next_page, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent='1' if email_sent_filter else None, has_email='1' if has_email_filter else None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}{% else %}#{% endif %}">
+       href="{% if page < total_pages %}{{ url_for('video_shorts_bp.videos_page', channel_id=channel.channel_id, page=next_page, sort=sort, dir=sort_dir, q=search_q, vid=video_id_q, dstatus=download_filter, dmin=duration_min, dmax=duration_max, short_filter=short_filter, email_sent=email_sent_filter or None, has_email=has_email_filter or None, lstatus=local_filters|default([]), caption=caption_filters|default([]), tstatus=transcript_filters|default([])) }}{% else %}#{% endif %}">
       Next →
     </a>
   </div>
