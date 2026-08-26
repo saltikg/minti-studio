@@ -78,6 +78,24 @@
     color: rgba(226, 232, 240, 0.76);
     font-size: 0.92rem;
   }
+  .mv-upload-note {
+    color: rgba(226, 232, 240, 0.76);
+    font-size: 0.92rem;
+  }
+  .mv-mobile-notice {
+    display: none;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(251, 191, 36, 0.28);
+    background: rgba(120, 53, 15, 0.28);
+    color: #fde68a;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .mv-mobile-notice.is-visible {
+    display: block;
+  }
   .mv-progress {
     height: 10px;
     border-radius: 999px;
@@ -410,14 +428,16 @@
   <section class="mv-hero">
     <div class="mv-title">My videos</div>
     <div class="mv-subtitle">Upload a video, then turn it into shorts.</div>
+    <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
     <div class="mv-upload-grid">
       <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
         <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
         <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
           <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-          <span class="mv-dropzone-meta">Desktop uploads up to 3GB. We compress larger videos to 720p before upload when possible.</span>
+          <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
         </label>
         <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
+        <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
         <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
           <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
         </div>
@@ -493,10 +513,12 @@
   const uploadInput = document.getElementById('mv-upload-file');
   const dropzone = document.getElementById('mv-upload-dropzone');
   const uploadMeta = document.getElementById('mv-upload-meta');
+  const uploadNote = document.getElementById('mv-upload-note');
   const uploadFeedback = document.getElementById('mv-upload-feedback');
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
+  const mobileNotice = document.getElementById('mv-mobile-notice');
   const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
   const compressedUploadTargetBytes = 500 * 1024 * 1024;
   const compressionTimeoutMs = 20 * 60 * 1000;
@@ -701,10 +723,23 @@
     if (!uploadMeta) return;
     if (!selectedFile) {
       uploadMeta.textContent = '';
+      if (uploadNote) uploadNote.textContent = '';
       return;
     }
     const sizeMb = (selectedFile.size / (1024 * 1024)).toFixed(1);
+    const sizeGb = selectedFile.size / (1024 * 1024 * 1024);
     uploadMeta.textContent = `${selectedFile.name} · ${sizeMb} MB · ${selectedFile.type || 'video'}`;
+    if (uploadNote) {
+      uploadNote.textContent = sizeGb > 1
+        ? `Oops, your video is ${sizeGb.toFixed(1)}GB. Smaller files upload faster.`
+        : '';
+    }
+  };
+
+  const isLikelyMobileDevice = () => {
+    const ua = navigator.userAgent || '';
+    return /Android|iPhone|iPad|iPod|Mobile|Opera Mini|IEMobile/i.test(ua)
+      || window.matchMedia('(max-width: 767px)').matches;
   };
 
   const readDurationSeconds = (file) => new Promise((resolve) => {
@@ -1612,6 +1647,10 @@
       setFeedback('');
     }
   });
+
+  if (mobileNotice && isLikelyMobileDevice()) {
+    mobileNotice.classList.add('is-visible');
+  }
 
   uploadSubmit?.addEventListener('click', uploadFile);
   firstVideoAction?.addEventListener('click', () => {
