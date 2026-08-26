@@ -868,26 +868,51 @@
     if (!supportsHardwareH264Compression()) {
       throw buildCompressionError('WebCodecs H.264 compression is unavailable here.');
     }
-    const requestedConfig = {
-      codec: 'avc1.42E01E',
-      width: target.width,
-      height: target.height,
-      bitrate: Math.max(2_000_000, Math.min(3_000_000, bitrates.videoBitsPerSecond)),
-      framerate: 30,
-      hardwareAcceleration: 'prefer-hardware',
-      latencyMode: 'realtime',
-      avc: { format: 'annexb' },
-    };
-    const support = await VideoEncoder.isConfigSupported(requestedConfig);
-    logCompressionEvent('webcodecs-config-check', {
-      requestedConfig,
-      supported: Boolean(support?.supported),
-      appliedConfig: support?.config || null,
-    });
-    if (!support?.supported) {
-      throw buildCompressionError('Hardware H.264 encoding is unavailable in this browser.');
+    const bitrate = Math.max(2_000_000, Math.min(3_000_000, bitrates.videoBitsPerSecond));
+    const candidateConfigs = [
+      {
+        codec: 'avc1.42E01E',
+        width: target.width,
+        height: target.height,
+        bitrate,
+        framerate: 30,
+        hardwareAcceleration: 'no-preference',
+        latencyMode: 'realtime',
+        avc: { format: 'annexb' },
+      },
+      {
+        codec: 'avc1.4D401F',
+        width: target.width,
+        height: target.height,
+        bitrate,
+        framerate: 30,
+        hardwareAcceleration: 'no-preference',
+        latencyMode: 'realtime',
+        avc: { format: 'annexb' },
+      },
+      {
+        codec: 'avc1.64001F',
+        width: target.width,
+        height: target.height,
+        bitrate,
+        framerate: 30,
+        hardwareAcceleration: 'no-preference',
+        latencyMode: 'realtime',
+        avc: { format: 'annexb' },
+      },
+    ];
+    for (const requestedConfig of candidateConfigs) {
+      const support = await VideoEncoder.isConfigSupported(requestedConfig);
+      logCompressionEvent('webcodecs-config-check', {
+        requestedConfig,
+        supported: Boolean(support?.supported),
+        appliedConfig: support?.config || null,
+      });
+      if (support?.supported) {
+        return support.config || requestedConfig;
+      }
     }
-    return support.config || requestedConfig;
+    throw buildCompressionError('WebCodecs H.264 encoding is unavailable in this browser.');
   };
 
   const muxEncodedVideoWithSourceAudio = async (encodedVideoFile, sourceFile, audioBitsPerSecond) => {
