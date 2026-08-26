@@ -735,18 +735,32 @@
     uploadProgressBar.style.width = `${value}%`;
   };
 
-  const compressionProgressMax = 70;
-  const uploadProgressStart = compressionProgressMax;
-  const uploadProgressSpan = 100 - uploadProgressStart;
+  const progressPhases = {
+    compression: { start: 0, end: 50 },
+    audioMux: { start: 50, end: 70 },
+    upload: { start: 70, end: 100 },
+    fallbackCompression: { start: 0, end: 70 },
+  };
+  let currentFfmpegProgressPhase = 'fallbackCompression';
+
+  const setPhaseProgress = (phaseName, percent) => {
+    const phase = progressPhases[phaseName];
+    if (!phase) return;
+    const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
+    const span = phase.end - phase.start;
+    setProgress(phase.start + ((normalized / 100) * span));
+  };
 
   const setCompressionProgress = (percent) => {
-    const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
-    setProgress((normalized / 100) * compressionProgressMax);
+    setPhaseProgress('compression', percent);
+  };
+
+  const setAudioMuxProgress = (percent) => {
+    setPhaseProgress('audioMux', percent);
   };
 
   const setUploadPhaseProgress = (percent) => {
-    const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
-    setProgress(uploadProgressStart + ((normalized / 100) * uploadProgressSpan));
+    setPhaseProgress('upload', percent);
   };
 
   const resetProgress = () => {
@@ -820,7 +834,14 @@
           const sorted = frameDeltas.slice().sort((a, b) => a - b);
           const medianDelta = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
           const estimatedFps = medianDelta > 0 ? (1 / medianDelta) : 30;
-          fpsResolve(Math.max(23.976, Math.min(60, estimatedFps)));
+          const normalizedFps = Math.max(23.976, Math.min(60, estimatedFps));
+          logCompressionEvent('source-fps-estimated', {
+            samples: frameDeltas.length,
+            medianDelta,
+            estimatedFps: Number(normalizedFps.toFixed(3)),
+            fallbackUsed: !frameDeltas.length,
+          });
+          fpsResolve(normalizedFps);
         };
         const timer = window.setTimeout(finish, 1200);
         const handleFrame = (_, metadata) => {
@@ -851,6 +872,13 @@
           })
           .catch(() => {
             window.clearTimeout(timer);
+            logCompressionEvent('source-fps-estimated', {
+              samples: 0,
+              medianDelta: 0,
+              estimatedFps: 30,
+              fallbackUsed: true,
+              reason: 'playback-blocked',
+            });
             fpsResolve(30);
           });
       });
@@ -993,6 +1021,7 @@
     const encodedName = `encoded-${Date.now()}.mp4`;
     const sourceName = `source-${Date.now()}-${sourceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.mp4'}`;
     const outputName = `muxed-${Date.now()}.mp4`;
+    currentFfmpegProgressPhase = 'audioMux';
     await ffmpeg.writeFile(encodedName, await fetchFile(encodedVideoFile));
     await ffmpeg.writeFile(sourceName, await fetchFile(sourceFile));
     try {
@@ -1023,8 +1052,10 @@
       if (!blob.size) {
         throw buildCompressionError('The browser finished muxing without producing an MP4.');
       }
+      setAudioMuxProgress(100);
       return blob;
     } finally {
+      currentFfmpegProgressPhase = 'fallbackCompression';
       try { await ffmpeg.deleteFile(encodedName); } catch (error) {}
       try { await ffmpeg.deleteFile(sourceName); } catch (error) {}
       try { await ffmpeg.deleteFile(outputName); } catch (error) {}
@@ -1058,7 +1089,7 @@
     video.playbackRate = playbackRate;
     video.defaultPlaybackRate = playbackRate;
     video.preservesPitch = false;
-    const targetFrameRate = Math.max(24, Math.min(30, Math.round(Number(probeInfo.fps || 30) || 30)));
+    const targetFrameRate = Math.max(23.976, Math.min(60, Number(probeInfo.fps || 30) || 30));
     const nominalFrameDurationUs = Math.max(1, Math.round(1_000_000 / targetFrameRate));
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
@@ -1204,7 +1235,12 @@
         const ffmpeg = new FFmpeg();
         ffmpeg.on('progress', ({ progress }) => {
           if (Number.isFinite(progress)) {
-            setCompressionProgress(Math.min(94, 5 + Math.round(progress * 89)));
+            const mappedProgress = Math.min(94, 5 + Math.round(progress * 89));
+            if (currentFfmpegProgressPhase === 'audioMux') {
+              setAudioMuxProgress(mappedProgress);
+            } else {
+              setPhaseProgress('fallbackCompression', mappedProgress);
+            }
             setFeedback('Preparing your video…');
           }
         });
@@ -1234,6 +1270,7 @@
     const outputName = `output-${Date.now()}.mp4`;
     const target = computeTargetDimensions(probeInfo);
     const bitrates = computeTargetBitrates(probeInfo.duration);
+    currentFfmpegProgressPhase = 'fallbackCompression';
     await ffmpeg.writeFile(inputName, await fetchFile(file));
     try {
       await withTimeout(
