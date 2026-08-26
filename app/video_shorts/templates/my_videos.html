@@ -503,6 +503,12 @@
   const ffmpegCoreVersion = '0.12.10';
   const ffmpegUtilVersion = '0.12.1';
   const mp4MuxerVersion = '5.2.2';
+  const ffmpegStaticBaseURL = '{{ url_for("video_shorts.static", filename="vendor/ffmpeg") }}';
+  const ffmpegModuleURL = `${ffmpegStaticBaseURL}/ffmpeg/index.js`;
+  const ffmpegUtilModuleURL = `${ffmpegStaticBaseURL}/util/index.js`;
+  const ffmpegClassWorkerURL = `${ffmpegStaticBaseURL}/ffmpeg/worker.js`;
+  const ffmpegCoreURL = `${ffmpegStaticBaseURL}/core/ffmpeg-core.js`;
+  const ffmpegWasmURL = `${ffmpegStaticBaseURL}/core/ffmpeg-core.wasm`;
   const firstVideoRow = document.getElementById('mv-first-video-row');
   const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
   const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
@@ -1099,8 +1105,8 @@
   const loadFfmpegModules = async () => {
     if (!ffmpegModulePromise) {
       ffmpegModulePromise = Promise.all([
-        import(`https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${ffmpegCoreVersion}/dist/esm/index.js`),
-        import(`https://cdn.jsdelivr.net/npm/@ffmpeg/util@${ffmpegUtilVersion}/dist/esm/index.js`),
+        import(ffmpegModuleURL),
+        import(ffmpegUtilModuleURL),
       ]);
     }
     return ffmpegModulePromise;
@@ -1109,18 +1115,26 @@
   const getFfmpegInstance = async () => {
     if (!ffmpegInstancePromise) {
       ffmpegInstancePromise = (async () => {
-        const [{ FFmpeg }, { toBlobURL }] = await loadFfmpegModules();
+        const [{ FFmpeg }] = await loadFfmpegModules();
         const ffmpeg = new FFmpeg();
-        const baseURL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${ffmpegCoreVersion}/dist/esm`;
         ffmpeg.on('progress', ({ progress }) => {
           if (Number.isFinite(progress)) {
             setProgress(Math.min(94, 5 + Math.round(progress * 89)));
             setFeedback('Preparing your video…');
           }
         });
+        logCompressionEvent('ffmpeg-wasm-same-origin-load', {
+          moduleURL: ffmpegModuleURL,
+          workerURL: ffmpegClassWorkerURL,
+          coreURL: ffmpegCoreURL,
+          wasmURL: ffmpegWasmURL,
+          ffmpegCoreVersion,
+          ffmpegUtilVersion,
+        });
         await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          classWorkerURL: ffmpegClassWorkerURL,
+          coreURL: ffmpegCoreURL,
+          wasmURL: ffmpegWasmURL,
         });
         return ffmpeg;
       })();
