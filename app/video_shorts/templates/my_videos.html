@@ -1013,7 +1013,7 @@
     if (!supportsHardwareH264Compression()) {
       throw buildCompressionError('WebCodecs H.264 compression is unavailable here.');
     }
-    const bitrate = Math.max(2_000_000, Math.min(3_000_000, bitrates.videoBitsPerSecond));
+    const bitrate = Math.max(1_500_000, Math.min(1_500_000, bitrates.videoBitsPerSecond));
     const candidateConfigs = [
       {
         codec: 'avc1.42E01E',
