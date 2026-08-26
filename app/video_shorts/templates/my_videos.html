@@ -790,12 +790,64 @@
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
-    video.onloadedmetadata = () => {
+    const estimateSourceFps = async () => {
+      if (typeof video.requestVideoFrameCallback !== 'function') {
+        return 30;
+      }
+      return new Promise((fpsResolve) => {
+        const frameDeltas = [];
+        let finished = false;
+        let firstMediaTime = null;
+        let lastMediaTime = null;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          video.pause();
+          const sorted = frameDeltas.slice().sort((a, b) => a - b);
+          const medianDelta = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+          const estimatedFps = medianDelta > 0 ? (1 / medianDelta) : 30;
+          fpsResolve(Math.max(23.976, Math.min(60, estimatedFps)));
+        };
+        const timer = window.setTimeout(finish, 1200);
+        const handleFrame = (_, metadata) => {
+          const mediaTime = Number(metadata?.mediaTime || video.currentTime || 0);
+          if (firstMediaTime === null) {
+            firstMediaTime = mediaTime;
+          }
+          if (lastMediaTime !== null) {
+            const delta = mediaTime - lastMediaTime;
+            if (delta > 0 && delta < 1) {
+              frameDeltas.push(delta);
+            }
+          }
+          lastMediaTime = mediaTime;
+          if (frameDeltas.length >= 12 || (mediaTime - firstMediaTime) >= 0.5 || video.ended) {
+            window.clearTimeout(timer);
+            finish();
+            return;
+          }
+          video.requestVideoFrameCallback(handleFrame);
+        };
+        video.currentTime = 0;
+        video.playbackRate = 1;
+        video.defaultPlaybackRate = 1;
+        video.play()
+          .then(() => {
+            video.requestVideoFrameCallback(handleFrame);
+          })
+          .catch(() => {
+            window.clearTimeout(timer);
+            fpsResolve(30);
+          });
+      });
+    };
+    video.onloadedmetadata = async () => {
       const width = Number(video.videoWidth || 0);
       const height = Number(video.videoHeight || 0);
       const duration = Number.isFinite(video.duration) ? video.duration : null;
+      const fps = await estimateSourceFps();
       cleanup();
-      resolve({ width, height, duration, fps: 30 });
+      resolve({ width, height, duration, fps });
     };
     video.onerror = () => {
       cleanup();
@@ -944,6 +996,7 @@
           '-c:v', 'copy',
           '-c:a', 'aac',
           '-b:a', `${Math.round(audioBitsPerSecond / 1000)}k`,
+          '-af', 'aresample=async=1:first_pts=0',
           '-movflags', '+faststart',
           '-shortest',
           outputName,
