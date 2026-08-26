@@ -122,6 +122,7 @@ def _find_source_video(video_id: str):
         VIDEOS_DIR / f"{video_id}.mp4",
         VIDEOS_DIR / f"{video_id}.mov",
         VIDEOS_DIR / f"{video_id}.mkv",
+        VIDEOS_DIR / f"{video_id}.webm",
         VIDEOS_DIR / f"{video_id}.mp3",
         VIDEOS_DIR / f"{video_id}.wav",
         VIDEOS_DIR / f"{video_id}.m4a",
@@ -131,6 +132,7 @@ def _find_source_video(video_id: str):
         SHORTS_DIR / f"{video_id}.mp4",
         SHORTS_DIR / f"{video_id}.mov",
         SHORTS_DIR / f"{video_id}.mkv",
+        SHORTS_DIR / f"{video_id}.webm",
         SHORTS_DIR / f"{video_id}.mp3",
         SHORTS_DIR / f"{video_id}.wav",
         SHORTS_DIR / f"{video_id}.m4a",
@@ -158,7 +160,7 @@ def _resolve_source_video(video_id: str):
         except Exception:
             logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
 
-    for suffix in (".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+    for suffix in (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
         key = f"videos/{video_id}{suffix}"
         for storage in storages:
             if getattr(storage, "backend_name", "local") != "s3":
@@ -273,7 +275,7 @@ def _resolve_s3_source_video_key(video_id: str, preferred_suffix: str | None = N
     candidate_suffixes: list[str] = []
     if preferred_suffix:
         candidate_suffixes.append(str(preferred_suffix))
-    candidate_suffixes.extend([".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"])
+    candidate_suffixes.extend([".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"])
     seen: set[str] = set()
     suffixes = []
     for suffix in candidate_suffixes:

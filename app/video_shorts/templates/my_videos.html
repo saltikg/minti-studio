@@ -415,7 +415,7 @@
         <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
         <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
           <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-          <span class="mv-dropzone-meta">Video files up to 500MB per file</span>
+          <span class="mv-dropzone-meta">Desktop uploads up to 3GB. We compress larger videos to 720p before upload when possible.</span>
         </label>
         <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
         <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
@@ -497,7 +497,11 @@
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
-  const maxUploadBytesPerFile = 500 * 1024 * 1024;
+  const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
+  const compressedUploadTargetBytes = 500 * 1024 * 1024;
+  const compressionTimeoutMs = 20 * 60 * 1000;
+  const ffmpegCoreVersion = '0.12.10';
+  const ffmpegUtilVersion = '0.12.1';
   const firstVideoRow = document.getElementById('mv-first-video-row');
   const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
   const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
@@ -507,6 +511,8 @@
   let selectedFile = null;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
+  let ffmpegModulePromise = null;
+  let ffmpegInstancePromise = null;
 
   const coachmarkSteps = {
     1: {
@@ -729,6 +735,321 @@
 
   let isUploading = false;
 
+  const formatBytesLabel = (bytes) => {
+    const value = Number(bytes || 0);
+    if (!Number.isFinite(value) || value <= 0) return '0 MB';
+    const gb = 1024 * 1024 * 1024;
+    const mb = 1024 * 1024;
+    if (value >= gb) {
+      return `${(value / gb).toFixed(1)} GB`;
+    }
+    return `${(value / mb).toFixed(1)} MB`;
+  };
+
+  const buildCompressionError = (message) => {
+    const error = new Error(message);
+    error.isCompressionError = true;
+    return error;
+  };
+
+  const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(buildCompressionError(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+
+  const probeVideoFile = (file) => new Promise((resolve, reject) => {
+    if (!file) {
+      reject(buildCompressionError('Choose a video first.'));
+      return;
+    }
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(objectUrl);
+    };
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
+      const duration = Number.isFinite(video.duration) ? video.duration : null;
+      cleanup();
+      resolve({ width, height, duration, fps: 30 });
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(buildCompressionError('We could not read this video file in your browser.'));
+    };
+    video.src = objectUrl;
+  });
+
+  const computeTargetDimensions = ({ width, height }) => {
+    const safeWidth = Math.max(2, Number(width || 0));
+    const safeHeight = Math.max(2, Number(height || 0));
+    if (safeHeight <= 720) {
+      return {
+        width: safeWidth - (safeWidth % 2),
+        height: safeHeight - (safeHeight % 2),
+      };
+    }
+    const ratio = 720 / safeHeight;
+    return {
+      width: Math.max(2, Math.round((safeWidth * ratio) / 2) * 2),
+      height: 720,
+    };
+  };
+
+  const computeTargetBitrates = (durationSeconds) => {
+    const safeDuration = Math.max(1, Number(durationSeconds || 0));
+    const audioBitsPerSecond = 128_000;
+    const totalBitsBudget = Math.floor(compressedUploadTargetBytes * 8 * 0.94);
+    const totalBitsPerSecond = Math.max(1_800_000, Math.floor(totalBitsBudget / safeDuration));
+    return {
+      audioBitsPerSecond,
+      videoBitsPerSecond: Math.max(1_500_000, Math.min(5_000_000, totalBitsPerSecond - audioBitsPerSecond)),
+    };
+  };
+
+  const supportsWebCodecsCompression = () => (
+    typeof window.VideoEncoder !== 'undefined'
+    && typeof window.MediaRecorder !== 'undefined'
+    && typeof document.createElement('canvas').captureStream === 'function'
+    && (
+      typeof HTMLMediaElement.prototype.captureStream === 'function'
+      || typeof HTMLMediaElement.prototype.webkitCaptureStream === 'function'
+    )
+  );
+
+  const pickRecorderMimeType = () => {
+    const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+    ];
+    return candidates.find((candidate) => window.MediaRecorder?.isTypeSupported?.(candidate)) || '';
+  };
+
+  const compressWithBrowserPipeline = async (file, probeInfo) => {
+    if (!supportsWebCodecsCompression()) {
+      throw buildCompressionError('Browser-native compression is unavailable here.');
+    }
+    const mimeType = pickRecorderMimeType();
+    if (!mimeType) {
+      throw buildCompressionError('This browser cannot record compressed WebM output.');
+    }
+    const target = computeTargetDimensions(probeInfo);
+    const bitrates = computeTargetBitrates(probeInfo.duration);
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    let sourceStream = null;
+    const cleanup = () => {
+      canvasStream?.getTracks?.().forEach((track) => track.stop());
+      if (sourceStream) {
+        sourceStream.getTracks().forEach((track) => track.stop());
+      }
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(objectUrl);
+    };
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) {
+      URL.revokeObjectURL(objectUrl);
+      throw buildCompressionError('Canvas compression is unavailable in this browser.');
+    }
+    canvas.width = target.width;
+    canvas.height = target.height;
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = objectUrl;
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => resolve(null);
+      video.onerror = () => reject(buildCompressionError('The browser could not decode this video for compression.'));
+    });
+    const canvasStream = canvas.captureStream(Math.min(30, Number(probeInfo.fps || 30)));
+    const captureStream = typeof video.captureStream === 'function'
+      ? video.captureStream.bind(video)
+      : (typeof video.webkitCaptureStream === 'function' ? video.webkitCaptureStream.bind(video) : null);
+    if (!captureStream) {
+      cleanup();
+      throw buildCompressionError('This browser cannot capture compressed video with audio.');
+    }
+    sourceStream = captureStream();
+    if (sourceStream) {
+      sourceStream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
+    }
+    const chunks = [];
+    let recorder = null;
+    let rafId = 0;
+    const drawFrame = () => {
+      try {
+        ctx.drawImage(video, 0, 0, target.width, target.height);
+      } catch (error) {
+        return;
+      }
+      const progress = Math.min(92, 5 + Math.round(((video.currentTime || 0) / Math.max(1, probeInfo.duration || 1)) * 87));
+      setProgress(progress);
+      setFeedback('Preparing your video…');
+      rafId = window.requestAnimationFrame(drawFrame);
+    };
+    const blob = await withTimeout(new Promise((resolve, reject) => {
+      try {
+        recorder = new MediaRecorder(canvasStream, {
+          mimeType,
+          videoBitsPerSecond: bitrates.videoBitsPerSecond,
+          audioBitsPerSecond: bitrates.audioBitsPerSecond,
+        });
+      } catch (error) {
+        reject(buildCompressionError('The browser could not start native video compression.'));
+        return;
+      }
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          chunks.push(event.data);
+        }
+      };
+      recorder.onerror = () => reject(buildCompressionError('The browser-native compression pipeline failed.'));
+      recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType || 'video/webm' }));
+      video.onended = () => {
+        if (recorder && recorder.state !== 'inactive') {
+          recorder.stop();
+        }
+      };
+      recorder.start(1000);
+      drawFrame();
+      video.play().catch(() => reject(buildCompressionError('The browser blocked video playback during compression.')));
+    }), compressionTimeoutMs, 'Compression took too long in the browser.');
+    window.cancelAnimationFrame(rafId);
+    cleanup();
+    if (!blob || !blob.size) {
+      throw buildCompressionError('Compression finished without producing a file.');
+    }
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'upload';
+    return new File([blob], `${baseName}.webm`, {
+      type: mimeType || 'video/webm',
+      lastModified: Date.now(),
+    });
+  };
+
+  const loadFfmpegModules = async () => {
+    if (!ffmpegModulePromise) {
+      ffmpegModulePromise = Promise.all([
+        import(`https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${ffmpegCoreVersion}/dist/esm/index.js`),
+        import(`https://cdn.jsdelivr.net/npm/@ffmpeg/util@${ffmpegUtilVersion}/dist/esm/index.js`),
+      ]);
+    }
+    return ffmpegModulePromise;
+  };
+
+  const getFfmpegInstance = async () => {
+    if (!ffmpegInstancePromise) {
+      ffmpegInstancePromise = (async () => {
+        const [{ FFmpeg }, { toBlobURL }] = await loadFfmpegModules();
+        const ffmpeg = new FFmpeg();
+        const baseURL = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${ffmpegCoreVersion}/dist/esm`;
+        ffmpeg.on('progress', ({ progress }) => {
+          if (Number.isFinite(progress)) {
+            setProgress(Math.min(94, 5 + Math.round(progress * 89)));
+            setFeedback('Preparing your video…');
+          }
+        });
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+        return ffmpeg;
+      })();
+    }
+    return ffmpegInstancePromise;
+  };
+
+  const compressWithFfmpegWasm = async (file, probeInfo) => {
+    const ffmpeg = await getFfmpegInstance();
+    const [, { fetchFile }] = await loadFfmpegModules();
+    const inputName = `input-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.mp4'}`;
+    const outputName = `output-${Date.now()}.mp4`;
+    const target = computeTargetDimensions(probeInfo);
+    const bitrates = computeTargetBitrates(probeInfo.duration);
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    try {
+      await withTimeout(
+        ffmpeg.exec([
+          '-i', inputName,
+          '-vf', `scale=${target.width}:${target.height}`,
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-b:v', String(bitrates.videoBitsPerSecond),
+          '-maxrate', String(Math.round(bitrates.videoBitsPerSecond * 1.2)),
+          '-bufsize', String(Math.round(bitrates.videoBitsPerSecond * 2)),
+          '-c:a', 'aac',
+          '-b:a', `${Math.round(bitrates.audioBitsPerSecond / 1000)}k`,
+          '-movflags', '+faststart',
+          outputName,
+        ]),
+        compressionTimeoutMs,
+        'ffmpeg.wasm compression timed out.',
+      );
+      const data = await ffmpeg.readFile(outputName);
+      const blob = new Blob([data.buffer], { type: 'video/mp4' });
+      if (!blob.size) {
+        throw buildCompressionError('ffmpeg.wasm finished without producing a file.');
+      }
+      const baseName = file.name.replace(/\.[^.]+$/, '') || 'upload';
+      return new File([blob], `${baseName}.mp4`, {
+        type: 'video/mp4',
+        lastModified: Date.now(),
+      });
+    } finally {
+      try { await ffmpeg.deleteFile(inputName); } catch (error) {}
+      try { await ffmpeg.deleteFile(outputName); } catch (error) {}
+    }
+  };
+
+  const prepareUploadFile = async (file) => {
+    if (!file) {
+      throw new Error('Choose a video first.');
+    }
+    if (Number(file.size || 0) > maxUploadBytesPerFile) {
+      throw new Error(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`);
+    }
+    const probeInfo = await probeVideoFile(file);
+    if (Number(probeInfo.height || 0) <= 720 && Number(file.size || 0) <= compressedUploadTargetBytes) {
+      return { file, strategy: 'original', compressed: false };
+    }
+    try {
+      const browserFile = await compressWithBrowserPipeline(file, probeInfo);
+      if (browserFile.size > 0 && browserFile.size < file.size) {
+        return { file: browserFile, strategy: 'webcodecs', compressed: true };
+      }
+    } catch (error) {
+      console.warn('Browser-native compression failed. Falling back to ffmpeg.wasm.', error);
+    }
+    try {
+      const ffmpegFile = await compressWithFfmpegWasm(file, probeInfo);
+      if (ffmpegFile.size > 0 && ffmpegFile.size < file.size) {
+        return { file: ffmpegFile, strategy: 'ffmpeg-wasm', compressed: true };
+      }
+    } catch (error) {
+      console.warn('ffmpeg.wasm compression failed. Falling back to original upload.', error);
+    }
+    return { file, strategy: 'original', compressed: false };
+  };
+
   const reportUploadFailed = (message) => {
     window.MintiErrorReporter?.report({
       error_type: 'upload_failed',
@@ -920,17 +1241,25 @@
       return;
     }
     if (isFileOverPerFileLimit(selectedFile)) {
-      setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+      setFeedback(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`, true);
       return;
     }
     setCoachmarkState('uploading');
     renderCoachmark(2);
     setUploadControlsDisabled(true);
-    setFeedback('Preparing upload…');
+    setFeedback('Preparing your video…');
     resetProgress();
     try {
       await readDurationSeconds(selectedFile);
-      await uploadViaMultipart(selectedFile);
+      setProgress(5);
+      const preparedUpload = await prepareUploadFile(selectedFile);
+      if (preparedUpload.compressed) {
+        const strategyLabel = preparedUpload.strategy === 'webcodecs' ? 'browser-native' : 'ffmpeg.wasm';
+        setFeedback(`Preparing your video… done. Uploading ${formatBytesLabel(preparedUpload.file.size)} ${strategyLabel} output.`);
+      } else {
+        setFeedback('Preparing your video… done. Uploading the original file.');
+      }
+      await uploadViaMultipart(preparedUpload.file);
       setProgress(100);
       setFeedback('Upload complete. Your video is now transcribing.');
       setCoachmarkState('uploaded');
@@ -951,7 +1280,7 @@
     const [file] = Array.from(event.target.files || []);
     setSelectedFile(file || null);
     if (file && isFileOverPerFileLimit(file)) {
-      setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+      setFeedback(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`, true);
       return;
     }
     setFeedback('');
@@ -982,7 +1311,7 @@
       }
       setSelectedFile(file);
       if (isFileOverPerFileLimit(file)) {
-        setFeedback('This file is over the 500MB per-file limit. Please choose a smaller file.', true);
+        setFeedback(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`, true);
         return;
       }
       setFeedback('');

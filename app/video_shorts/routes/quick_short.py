@@ -66,7 +66,7 @@ from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata,
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
 MAX_QUICK_SHORT_SECONDS = 25 * 60
-ALLOWED_UPLOAD_EXTS = {".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+ALLOWED_UPLOAD_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 LOCAL_CHANNEL_NAME = "Local uploads"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
@@ -74,7 +74,7 @@ MULTIPART_UPLOAD_PART_SIZE_BYTES = 10 * 1024 * 1024
 MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024
 MULTIPART_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
 MULTIPART_UPLOAD_MAX_PARTS = 10_000
-MAX_UPLOAD_BYTES_PER_FILE = 500 * 1024 * 1024
+MAX_UPLOAD_BYTES_PER_FILE = 3 * 1024 * 1024 * 1024
 
 
 def _normalize_timestamp(value):
@@ -449,7 +449,7 @@ def _size_limit_message(*, size_bytes: int, plan_label: str, limit_bytes: int) -
 
 
 def _per_file_size_limit_message() -> str:
-    return "This file is over the 500MB per-file limit. Please choose a smaller file."
+    return "This file is over the 3GB per-file limit. Please choose a smaller file."
 
 
 def _duration_limit_message(*, duration_seconds: int, plan_label: str, limit_seconds: int) -> str:
@@ -902,7 +902,7 @@ def _source_video_public_url(video_id: str, stored_source: str = "") -> str:
                 return storage.public_url(streamable_key)
         except Exception:
             pass
-    for suffix in (".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+    for suffix in (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
         key = f"videos/{video_id}{suffix}"
         local_candidate = VIDEOS_DIR / f"{video_id}{suffix}"
         if local_candidate.exists():
