@@ -730,7 +730,9 @@
 
   const setProgress = (percent) => {
     if (!uploadProgress || !uploadProgressBar) return;
-    const value = Math.max(0, Math.min(100, Number(percent) || 0));
+    const requestedValue = Math.max(0, Math.min(100, Number(percent) || 0));
+    const value = Math.max(currentUploadProgressValue, requestedValue);
+    currentUploadProgressValue = value;
     uploadProgress.classList.add('is-visible');
     uploadProgressBar.style.width = `${value}%`;
   };
@@ -742,6 +744,7 @@
     fallbackCompression: { start: 0, end: 70 },
   };
   let currentFfmpegProgressPhase = 'fallbackCompression';
+  let currentUploadProgressValue = 0;
 
   const setPhaseProgress = (phaseName, percent) => {
     const phase = progressPhases[phaseName];
@@ -765,6 +768,7 @@
 
   const resetProgress = () => {
     if (!uploadProgress || !uploadProgressBar) return;
+    currentUploadProgressValue = 0;
     uploadProgress.classList.remove('is-visible');
     uploadProgressBar.style.width = '0%';
   };
@@ -1089,15 +1093,16 @@
     video.playbackRate = playbackRate;
     video.defaultPlaybackRate = playbackRate;
     video.preservesPitch = false;
-    const targetFrameRate = Math.max(23.976, Math.min(60, Number(probeInfo.fps || 30) || 30));
-    const nominalFrameDurationUs = Math.max(1, Math.round(1_000_000 / targetFrameRate));
+    const sourceFrameRate = Math.max(23.976, Math.min(60, Number(probeInfo.fps || 30) || 30));
+    const muxerFrameRate = Math.max(1, Math.round(sourceFrameRate));
+    const nominalFrameDurationUs = Math.max(1, Math.round(1_000_000 / sourceFrameRate));
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: {
         codec: 'avc',
         width: target.width,
         height: target.height,
-        frameRate: targetFrameRate,
+        frameRate: muxerFrameRate,
       },
       firstTimestampBehavior: 'offset',
       fastStart: 'in-memory',
@@ -1116,7 +1121,8 @@
       bitrate: encoderConfig.bitrate,
       dimensions: `${target.width}x${target.height}`,
       playbackRate,
-      frameRate: targetFrameRate,
+      sourceFrameRate: Number(sourceFrameRate.toFixed(3)),
+      muxerFrameRate,
       nominalFrameDurationUs,
     });
     let frameCount = 0;
@@ -1195,7 +1201,8 @@
       codec: encoderConfig.codec,
       dimensions: `${target.width}x${target.height}`,
       frameCount,
-      frameRate: targetFrameRate,
+      sourceFrameRate: Number(sourceFrameRate.toFixed(3)),
+      muxerFrameRate,
       sourceTimestampJumpCount,
     });
     const encodedBlob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
