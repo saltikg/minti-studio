@@ -993,6 +993,7 @@
         height: target.height,
         frameRate: Math.max(24, Math.min(30, Math.round(Number(probeInfo.fps || 30) || 30))),
       },
+      firstTimestampBehavior: 'offset',
       fastStart: 'in-memory',
     });
     let encoderError = null;
@@ -1071,6 +1072,10 @@
       throw buildCompressionError(encoderError.message || 'The browser H.264 encoder failed.');
     }
     muxer.finalize();
+    logCompressionEvent('webcodecs-mux-complete', {
+      codec: encoderConfig.codec,
+      dimensions: `${target.width}x${target.height}`,
+    });
     const encodedBlob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
     if (!encodedBlob.size) {
       throw buildCompressionError('Hardware H.264 encoding finished without producing a file.');
@@ -1081,6 +1086,10 @@
       lastModified: Date.now(),
     });
     const muxedBlob = await muxEncodedVideoWithSourceAudio(encodedVideoFile, file, bitrates.audioBitsPerSecond);
+    logCompressionEvent('webcodecs-final-compressed-size', {
+      bytes: muxedBlob.size,
+      megabytes: Number((muxedBlob.size / (1024 * 1024)).toFixed(1)),
+    });
     return new File([muxedBlob], `${baseName}.mp4`, {
       type: 'video/mp4',
       lastModified: Date.now(),
