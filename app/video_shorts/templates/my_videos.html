@@ -735,6 +735,20 @@
     uploadProgressBar.style.width = `${value}%`;
   };
 
+  const compressionProgressMax = 70;
+  const uploadProgressStart = compressionProgressMax;
+  const uploadProgressSpan = 100 - uploadProgressStart;
+
+  const setCompressionProgress = (percent) => {
+    const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
+    setProgress((normalized / 100) * compressionProgressMax);
+  };
+
+  const setUploadPhaseProgress = (percent) => {
+    const normalized = Math.max(0, Math.min(100, Number(percent) || 0));
+    setProgress(uploadProgressStart + ((normalized / 100) * uploadProgressSpan));
+  };
+
   const resetProgress = () => {
     if (!uploadProgress || !uploadProgressBar) return;
     uploadProgress.classList.remove('is-visible');
@@ -1113,7 +1127,7 @@
           frame.close();
           await waitForEncoderQueue(encoder, 10);
           const progress = Math.min(88, 5 + Math.round((mediaTime / Math.max(1, probeInfo.duration || 1)) * 83));
-          setProgress(progress);
+          setCompressionProgress(progress);
           setFeedback('Preparing your video…');
           if (video.ended) {
             cleanup();
@@ -1190,7 +1204,7 @@
         const ffmpeg = new FFmpeg();
         ffmpeg.on('progress', ({ progress }) => {
           if (Number.isFinite(progress)) {
-            setProgress(Math.min(94, 5 + Math.round(progress * 89)));
+            setCompressionProgress(Math.min(94, 5 + Math.round(progress * 89)));
             setFeedback('Preparing your video…');
           }
         });
@@ -1420,7 +1434,7 @@
     const updatePartProgress = (completedCount) => {
       if (!totalParts) return;
       const percent = Math.round((completedCount / totalParts) * 100);
-      setProgress(percent);
+      setUploadPhaseProgress(percent);
       setFeedback(`Uploading… part ${completedCount} of ${totalParts}`);
     };
 
@@ -1464,9 +1478,7 @@
       });
       throw error;
     } finally {
-      if (aborted) {
-        resetProgress();
-      }
+      void aborted;
     }
   };
 
@@ -1489,7 +1501,7 @@
     resetProgress();
     try {
       await readDurationSeconds(selectedFile);
-      setProgress(5);
+      setCompressionProgress(5);
       const preparedUpload = await prepareUploadFile(selectedFile);
       if (preparedUpload.compressed) {
         const strategyLabel = preparedUpload.strategy === 'webcodecs-h264' ? 'WebCodecs H.264' : 'ffmpeg.wasm';
@@ -1497,8 +1509,9 @@
       } else {
         setFeedback('Preparing your video… done. Uploading the original file.');
       }
+      setUploadPhaseProgress(0);
       await uploadViaMultipart(preparedUpload.file);
-      setProgress(100);
+      setUploadPhaseProgress(100);
       setFeedback('Upload complete. Your video is now transcribing.');
       setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);
