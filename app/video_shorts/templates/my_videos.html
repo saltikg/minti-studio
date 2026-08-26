@@ -987,17 +987,19 @@
       video.onloadedmetadata = () => resolve(null);
       video.onerror = () => reject(buildCompressionError('The browser could not decode this video for compression.'));
     });
-    const playbackRate = getPreferredPlaybackRate(probeInfo.duration);
+    const playbackRate = 1;
     video.playbackRate = playbackRate;
     video.defaultPlaybackRate = playbackRate;
     video.preservesPitch = false;
+    const targetFrameRate = Math.max(24, Math.min(30, Math.round(Number(probeInfo.fps || 30) || 30)));
+    const nominalFrameDurationUs = Math.max(1, Math.round(1_000_000 / targetFrameRate));
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: {
         codec: 'avc',
         width: target.width,
         height: target.height,
-        frameRate: Math.max(24, Math.min(30, Math.round(Number(probeInfo.fps || 30) || 30))),
+        frameRate: targetFrameRate,
       },
       firstTimestampBehavior: 'offset',
       fastStart: 'in-memory',
@@ -1016,8 +1018,11 @@
       bitrate: encoderConfig.bitrate,
       dimensions: `${target.width}x${target.height}`,
       playbackRate,
+      frameRate: targetFrameRate,
+      nominalFrameDurationUs,
     });
     let frameCount = 0;
+    let lastFrameTimestampUs = null;
     const encodePromise = withTimeout(new Promise((resolve, reject) => {
       const cleanup = () => {
         video.pause();
@@ -1037,9 +1042,16 @@
           }
           ctx.drawImage(video, 0, 0, target.width, target.height);
           const mediaTime = Number(metadata?.mediaTime || video.currentTime || 0);
-          const timestamp = Math.max(0, Math.round(mediaTime * 1_000_000));
-          const frame = new VideoFrame(canvas, { timestamp });
+          let timestamp = Math.max(0, Math.round(mediaTime * 1_000_000));
+          if (lastFrameTimestampUs !== null && timestamp <= lastFrameTimestampUs) {
+            timestamp = lastFrameTimestampUs + nominalFrameDurationUs;
+          }
+          const duration = lastFrameTimestampUs === null
+            ? nominalFrameDurationUs
+            : Math.max(Math.round(nominalFrameDurationUs * 0.5), timestamp - lastFrameTimestampUs);
+          const frame = new VideoFrame(canvas, { timestamp, duration });
           frameCount += 1;
+          lastFrameTimestampUs = timestamp;
           const framesPerKeyframe = Math.max(30, Math.round((Number(encoderConfig.framerate || 30) || 30) * 2));
           encoder.encode(frame, { keyFrame: frameCount === 1 || frameCount % framesPerKeyframe === 0 });
           frame.close();
