@@ -962,7 +962,7 @@
     const target = computeTargetDimensions(probeInfo);
     const bitrates = computeTargetBitrates(probeInfo.duration);
     const encoderConfig = await getPreferredEncoderConfig(target, bitrates);
-    const [{ Muxer, ArrayBufferTarget }] = await loadMp4MuxerModule();
+    const { Muxer, ArrayBufferTarget } = await loadMp4MuxerModule();
     const objectUrl = URL.createObjectURL(file);
     const video = document.createElement('video');
     const canvas = document.createElement('canvas');
