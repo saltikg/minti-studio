@@ -946,16 +946,16 @@
   const computeTargetDimensions = ({ width, height }) => {
     const safeWidth = Math.max(2, Number(width || 0));
     const safeHeight = Math.max(2, Number(height || 0));
-    if (safeHeight <= 720) {
+    if (safeHeight <= 540) {
       return {
         width: safeWidth - (safeWidth % 2),
         height: safeHeight - (safeHeight % 2),
       };
     }
-    const ratio = 720 / safeHeight;
+    const ratio = 540 / safeHeight;
     return {
       width: Math.max(2, Math.round((safeWidth * ratio) / 2) * 2),
-      height: 720,
+      height: 540,
     };
   };
 
@@ -1108,6 +1108,13 @@
   };
 
   const compressWithWebCodecsH264 = async (file, probeInfo) => {
+    const compressionStartedAt = Date.now();
+    logCompressionEvent('compression-start', {
+      fileSizeMB: Number(((Number(file?.size || 0)) / (1024 * 1024)).toFixed(1)),
+      videoDurationSec: Number.isFinite(Number(probeInfo?.duration))
+        ? Number(Number(probeInfo.duration).toFixed(2))
+        : null,
+    });
     const target = computeTargetDimensions(probeInfo);
     const bitrates = computeTargetBitrates(probeInfo.duration);
     const encoderConfig = await getPreferredEncoderConfig(target, bitrates);
@@ -1259,6 +1266,12 @@
     logCompressionEvent('webcodecs-final-compressed-size', {
       bytes: muxedBlob.size,
       megabytes: Number((muxedBlob.size / (1024 * 1024)).toFixed(1)),
+    });
+    logCompressionEvent('compression-complete', {
+      totalSec: Number(((Date.now() - compressionStartedAt) / 1000).toFixed(2)),
+      fileSizeMB: Number(((Number(file?.size || 0)) / (1024 * 1024)).toFixed(1)),
+      compressedMB: Number((muxedBlob.size / (1024 * 1024)).toFixed(1)),
+      fps: Number(sourceFrameRate.toFixed(3)),
     });
     return new File([muxedBlob], `${baseName}.mp4`, {
       type: 'video/mp4',
