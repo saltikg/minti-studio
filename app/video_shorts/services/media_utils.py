@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from app.video_shorts.config import (
     FFMPEG_BIN,
@@ -90,6 +90,108 @@ def run_media_subprocess(
     try:
         return subprocess.run(cmd, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired as exc:
+        _cleanup_partial_outputs(output_paths)
+        active_logger.error(
+            "Media subprocess timeout binary=%s timeout=%ss operation=%s context=%s",
+            binary,
+            timeout,
+            operation,
+            context or "-",
+        )
+        raise MediaSubprocessTimeoutError(
+            binary=binary,
+            timeout_seconds=timeout,
+            operation=operation,
+            context=context,
+        ) from exc
+
+
+def run_ffmpeg_subprocess_with_progress(
+    cmd,
+    *,
+    timeout: int,
+    operation: str,
+    duration_seconds: Optional[float] = None,
+    context: str = "",
+    output_paths: Optional[Iterable[os.PathLike | str]] = None,
+    log: Optional[logging.Logger] = None,
+    progress_callback: Optional[Callable[[int], None]] = None,
+):
+    active_logger = log or logger
+    binary = Path(str(cmd[0])).name if cmd else "subprocess"
+    process = None
+    start_time = time.time()
+    last_progress = -1
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        progress_fields: dict[str, str] = {}
+        while True:
+            if process.poll() is not None:
+                break
+            if timeout and (time.time() - start_time) > timeout:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            if process.stdout is None:
+                time.sleep(0.1)
+                continue
+            line = process.stdout.readline()
+            if line:
+                stdout_lines.append(line)
+                stripped = line.strip()
+                if "=" in stripped:
+                    key, value = stripped.split("=", 1)
+                    progress_fields[key.strip()] = value.strip()
+                    if key.strip() == "progress":
+                        out_time_ms_raw = progress_fields.get("out_time_ms") or "0"
+                        try:
+                            out_time_ms = int(out_time_ms_raw)
+                        except (TypeError, ValueError):
+                            out_time_ms = 0
+                        if duration_seconds and duration_seconds > 0:
+                            computed = int(round(max(0.0, min(100.0, (out_time_ms / 1_000_000.0) / float(duration_seconds) * 100.0))))
+                            if progress_callback and computed > last_progress:
+                                last_progress = computed
+                                progress_callback(computed)
+                        progress_fields = {}
+                continue
+            time.sleep(0.1)
+        stdout_rest, stderr_rest = process.communicate(timeout=5)
+        if stdout_rest:
+            stdout_lines.append(stdout_rest)
+        if stderr_rest:
+            stderr_lines.append(stderr_rest)
+        if process.returncode:
+            raise subprocess.CalledProcessError(
+                process.returncode,
+                cmd,
+                output="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+            )
+        if progress_callback and last_progress < 100:
+            progress_callback(100)
+        return subprocess.CompletedProcess(
+            cmd,
+            process.returncode,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
+        )
+    except subprocess.TimeoutExpired as exc:
+        if process is not None:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                process.communicate(timeout=5)
+            except Exception:
+                pass
         _cleanup_partial_outputs(output_paths)
         active_logger.error(
             "Media subprocess timeout binary=%s timeout=%ss operation=%s context=%s",
@@ -486,6 +588,7 @@ def normalize_s3_source_video_for_upload(
     *,
     target_key: str | None = None,
     log: logging.Logger | None = None,
+    progress_callback: Optional[Callable[[int], None]] = None,
 ) -> str | None:
     active_logger = log or logger
     suffix = local_path.suffix.lower()
@@ -613,6 +716,9 @@ def normalize_s3_source_video_for_upload(
         "-y",
         "-i",
         str(local_path),
+        "-progress",
+        "pipe:1",
+        "-nostats",
         "-vf",
         "scale=-2:720",
         "-c:v",
@@ -642,16 +748,15 @@ def normalize_s3_source_video_for_upload(
             timeout_seconds,
             " ".join(cmd),
         )
-        run_media_subprocess(
+        run_ffmpeg_subprocess_with_progress(
             cmd,
             operation="source_transcode_to_720p",
             context=f"video_id={video_id} key={source_key} target_key={upload_key}",
+            duration_seconds=duration_seconds,
             output_paths=[temp_output],
             log=active_logger,
-            check=True,
             timeout=timeout_seconds,
-            capture_output=True,
-            text=True,
+            progress_callback=progress_callback,
         )
         if not temp_output.exists() or temp_output.stat().st_size <= 0:
             raise RuntimeError("720p transcode output missing or empty")

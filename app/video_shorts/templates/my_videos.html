@@ -1570,6 +1570,7 @@
   };
 
   const isCompletedSessionStep = (status) => ['completed', 'ready', 'skipped', 'fallback'].includes(String(status || '').trim().toLowerCase());
+  const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
 
   const nudgeProgressToward = (targetPercent, step = 0.8) => {
     const target = Math.max(0, Math.min(100, Number(targetPercent) || 0));
@@ -1598,14 +1599,14 @@
     const normalize = result.normalize || {};
     const transcript = result.transcript || {};
     if (!isCompletedSessionStep(normalize.status)) {
-      setServerPrepareProgress(10);
-      nudgeProgressToward(96, 0.5);
+      setServerPrepareProgress(clampPercent(normalize.percent));
       setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
     if (!isCompletedSessionStep(transcript.status)) {
-      setTranscriptPhaseProgress(10);
-      nudgeProgressToward(99, 0.35);
+      const transcriptPercent = clampPercent(transcript.percent);
+      setTranscriptPhaseProgress(transcriptPercent > 0 ? transcriptPercent : 15);
+      nudgeProgressToward(99, 0.2);
       setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }

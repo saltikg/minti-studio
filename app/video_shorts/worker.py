@@ -219,6 +219,13 @@ def _processing_message_from_result(result_payload: Dict[str, Any]) -> str:
     return "Ready to review."
 
 
+def _normalize_percent_payload(percent: Any) -> int:
+    try:
+        return max(0, min(100, int(round(float(percent)))))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _update_upload_session_progress(
     session_id: Optional[str],
     *,
@@ -537,7 +544,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     _update_upload_session_progress(
         session_id,
         user_id=owner_user_id,
-        transcript={"status": "processing", "message": "Preparing your transcript..."},
+        transcript={"status": "processing", "message": "Preparing your transcript...", "percent": 5},
     )
     _set_job_progress(job["id"], stage="uploaded", message="Preparing your video.", status="processing")
     source_path, is_temp = _resolve_source_video(video_id)
@@ -584,7 +591,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         _update_upload_session_progress(
             session_id,
             user_id=owner_user_id,
-            transcript={"status": "completed", "message": "Transcript ready."},
+            transcript={"status": "completed", "message": "Transcript ready.", "percent": 100},
             clip_updates={
                 "video_pk": video_pk,
                 "video_id": video_id,
@@ -616,10 +623,21 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     storage = get_media_storage()
     source_path = None
     try:
+        def handle_normalize_progress(percent: int) -> None:
+            _update_upload_session_progress(
+                session_id,
+                user_id=str(job.get("user_id") or "").strip(),
+                normalize={
+                    "status": "processing",
+                    "message": "Preparing your video on the server...",
+                    "percent": _normalize_percent_payload(percent),
+                },
+            )
+
         _update_upload_session_progress(
             session_id,
             user_id=str(job.get("user_id") or "").strip(),
-            normalize={"status": "processing", "message": "Preparing your video on the server..."},
+            normalize={"status": "processing", "message": "Preparing your video on the server...", "percent": 0},
         )
         source_path = storage.download_to_temp(source_key)
         new_key = normalize_s3_source_video_for_upload(
@@ -628,12 +646,13 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             Path(source_path),
             target_key=source_key,
             log=app.logger,
+            progress_callback=handle_normalize_progress,
         )
         if not new_key:
             _update_upload_session_progress(
                 session_id,
                 user_id=str(job.get("user_id") or "").strip(),
-                normalize={"status": "completed", "message": "Video preparation finished."},
+                normalize={"status": "completed", "message": "Video preparation finished.", "percent": 100},
             )
             return {
                 "normalized": False,
@@ -656,7 +675,7 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         _update_upload_session_progress(
             session_id,
             user_id=str(job.get("user_id") or "").strip(),
-            normalize={"status": "completed", "message": "Video preparation finished."},
+            normalize={"status": "completed", "message": "Video preparation finished.", "percent": 100},
         )
         return {
             "normalized": True,
@@ -675,7 +694,7 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         _update_upload_session_progress(
             session_id,
             user_id=str(job.get("user_id") or "").strip(),
-            normalize={"status": "fallback", "message": "Video preparation finished."},
+            normalize={"status": "fallback", "message": "Video preparation finished.", "percent": 100},
         )
         return {
             "normalized": False,
