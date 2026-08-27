@@ -1016,12 +1016,12 @@
     const bitrate = Math.max(1_500_000, Math.min(1_500_000, bitrates.videoBitsPerSecond));
     const candidateConfigs = [
       {
-        codec: 'avc1.42E01E',
+        codec: 'avc1.4D401F',
         width: target.width,
         height: target.height,
         bitrate,
         framerate: 30,
-        hardwareAcceleration: 'no-preference',
+        hardwareAcceleration: 'prefer-hardware',
         latencyMode: 'realtime',
         avc: { format: 'annexb' },
       },
@@ -1036,7 +1036,7 @@
         avc: { format: 'annexb' },
       },
       {
-        codec: 'avc1.64001F',
+        codec: 'avc1.42E01E',
         width: target.width,
         height: target.height,
         bitrate,
