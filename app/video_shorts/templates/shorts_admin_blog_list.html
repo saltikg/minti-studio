@@ -54,7 +54,11 @@
                 {% endif %}
               </td>
               <td>
-                <div class="fw-semibold">{{ article.title }}</div>
+                <div class="fw-semibold">
+                  <a href="{{ url_for('video_shorts_bp.blog_article', slug=article.slug) }}" target="_blank" rel="noopener noreferrer" class="link-light text-decoration-none">
+                    {{ article.title }}
+                  </a>
+                </div>
                 <div class="vs-admin-muted small">/{{ article.slug }}/</div>
               </td>
               <td><span class="badge text-bg-secondary text-uppercase">{{ article.status }}</span></td>
