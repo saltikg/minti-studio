@@ -719,6 +719,12 @@
     uploadFeedback.classList.toggle('is-error', Boolean(isError));
   };
 
+  const formatProgressPercent = (value) => `${Math.max(0, Math.min(100, Math.round(Number(value) || 0)))}%`;
+
+  const setUploadPhaseFeedback = (label) => {
+    setFeedback(`${label} ${formatProgressPercent(currentUploadProgressValue)}`);
+  };
+
   const setCompressionFeedback = (percent, detail = '') => {
     const normalized = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
     const suffix = detail ? ` ${detail}` : '';
@@ -780,12 +786,12 @@
   };
 
   const progressPhases = {
-    compression: { start: 0, end: 25 },
-    audioMux: { start: 25, end: 40 },
-    upload: { start: 40, end: 70 },
-    serverPrepare: { start: 70, end: 90 },
-    transcript: { start: 90, end: 99 },
-    fallbackCompression: { start: 0, end: 40 },
+    compression: { start: 0, end: 20 },
+    audioMux: { start: 20, end: 35 },
+    upload: { start: 35, end: 65 },
+    serverPrepare: { start: 65, end: 88 },
+    transcript: { start: 88, end: 99 },
+    fallbackCompression: { start: 0, end: 35 },
   };
   let currentFfmpegProgressPhase = 'fallbackCompression';
   let currentUploadProgressValue = 0;
@@ -800,22 +806,27 @@
 
   const setCompressionProgress = (percent) => {
     setPhaseProgress('compression', percent);
+    setUploadPhaseFeedback('Preparing your video…');
   };
 
   const setAudioMuxProgress = (percent) => {
     setPhaseProgress('audioMux', percent);
+    setUploadPhaseFeedback('Preparing your video…');
   };
 
   const setUploadPhaseProgress = (percent) => {
     setPhaseProgress('upload', percent);
+    setUploadPhaseFeedback('Uploading…');
   };
 
   const setServerPrepareProgress = (percent) => {
     setPhaseProgress('serverPrepare', percent);
+    setUploadPhaseFeedback('Analyzing your video…');
   };
 
   const setTranscriptPhaseProgress = (percent) => {
     setPhaseProgress('transcript', percent);
+    setUploadPhaseFeedback('Analyzing your video…');
   };
 
   const resetProgress = () => {
@@ -1571,7 +1582,7 @@
   const syncUploadSessionProgress = (session) => {
     if (!session) {
       nudgeProgressToward(75, 0.5);
-      setFeedback('Preparing your video...');
+      setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
     if (String(session.status || '').trim().toLowerCase() === 'failed') {
@@ -1580,7 +1591,7 @@
     }
     if (String(session.status || '').trim().toLowerCase() === 'review') {
       setProgress(100);
-      setFeedback('Your video is ready.');
+      setUploadPhaseFeedback('Your video is ready.');
       return true;
     }
     const result = session.result || {};
@@ -1589,17 +1600,17 @@
     if (!isCompletedSessionStep(normalize.status)) {
       setServerPrepareProgress(10);
       nudgeProgressToward(progressPhases.serverPrepare.end, 0.75);
-      setFeedback(normalize.message || result.message || 'Preparing your video on the server...');
+      setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
     if (!isCompletedSessionStep(transcript.status)) {
       setTranscriptPhaseProgress(10);
       nudgeProgressToward(progressPhases.transcript.end, 0.45);
-      setFeedback(transcript.message || result.message || 'Preparing your transcript...');
+      setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
     nudgeProgressToward(99, 0.25);
-    setFeedback(result.message || 'Preparing your video...');
+    setUploadPhaseFeedback('Analyzing your video…');
     return false;
   };
 
@@ -1625,7 +1636,6 @@
       if (!totalParts) return;
       const percent = Math.round((completedCount / totalParts) * 100);
       setUploadPhaseProgress(percent);
-      setFeedback(`Uploading… part ${completedCount} of ${totalParts}`);
     };
 
     try {
@@ -1687,17 +1697,16 @@
     setCoachmarkState('uploading');
     renderCoachmark(2);
     setUploadControlsDisabled(true);
-    setFeedback('Preparing your video…');
+    setUploadPhaseFeedback('Preparing your video…');
     resetProgress();
     try {
       await readDurationSeconds(selectedFile);
       setCompressionProgress(5);
       const preparedUpload = await prepareUploadFile(selectedFile);
       if (preparedUpload.compressed) {
-        const strategyLabel = preparedUpload.strategy === 'webcodecs-h264' ? 'WebCodecs H.264' : 'ffmpeg.wasm';
-        setFeedback(`Preparing your video… done. Uploading ${formatBytesLabel(preparedUpload.file.size)} ${strategyLabel} output.`);
+        setUploadPhaseFeedback('Preparing your video…');
       } else {
-        setFeedback('Preparing your video… done. Uploading the original file.');
+        setUploadPhaseFeedback('Uploading…');
       }
       setUploadPhaseProgress(0);
       const uploadPayload = await uploadViaMultipart(preparedUpload.file);
@@ -1706,7 +1715,7 @@
       if (!uploadedSessionId) {
         throw new Error('Upload finished, but we could not track server processing.');
       }
-      setFeedback('Preparing your video...');
+      setUploadPhaseFeedback('Analyzing your video…');
       await waitForUploadSessionReady(uploadedSessionId);
       setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);
