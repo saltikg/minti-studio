@@ -20,6 +20,34 @@
     min-height: 1.25rem;
     font-size: 0.875rem;
   }
+
+  .blog-article-images-grid {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .blog-article-image-card {
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .blog-article-image-preview {
+    width: 160px;
+    max-width: 100%;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .blog-article-image-field {
+    width: 100%;
+    min-height: 3.25rem;
+    resize: vertical;
+  }
 </style>
 {% endblock %}
 
@@ -90,6 +118,39 @@
         <button type="submit" class="btn btn-primary">{% if form_mode == 'edit' %}Save changes{% else %}Create article{% endif %}</button>
       </div>
     </form>
+  </section>
+
+  <section class="vs-admin-card p-3 mt-3">
+    <h2 class="h5 mb-2">Article images</h2>
+    {% if form_mode == 'edit' and form_article.id %}
+      <p class="vs-admin-muted mb-3">Upload inline article images here, then copy one of the Markdown snippets into the content field manually.</p>
+      <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_article_images_upload', article_id=form_article.id) }}" enctype="multipart/form-data" class="d-flex flex-column flex-lg-row gap-2 align-items-lg-center mb-3">
+        <input type="file" name="images" class="form-control" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple required>
+        <button type="submit" class="btn btn-outline-light">Upload images</button>
+      </form>
+
+      {% if article_images %}
+        <div class="blog-article-images-grid">
+          {% for image in article_images %}
+            <article class="blog-article-image-card">
+              <img src="{{ image.public_url }}" alt="{{ image.filename }}" class="blog-article-image-preview" loading="lazy">
+              <div>
+                <label class="form-label small mb-1">Public URL</label>
+                <input type="text" class="form-control" value="{{ image.public_url }}" readonly>
+              </div>
+              <div>
+                <label class="form-label small mb-1">Markdown snippet</label>
+                <textarea class="form-control font-monospace blog-article-image-field" readonly>{{ image.markdown_snippet }}</textarea>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="vs-admin-muted mb-0">No article images uploaded yet.</p>
+      {% endif %}
+    {% else %}
+      <p class="vs-admin-muted mb-0">Save the article first before uploading images.</p>
+    {% endif %}
   </section>
 {% endblock %}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 import boto3
@@ -25,9 +26,12 @@ _ALLOWED_COVER_MIME_TYPES = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
+_ALLOWED_ARTICLE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _MAX_COVER_IMAGE_BYTES = 5 * 1024 * 1024
+_MAX_ARTICLE_IMAGE_BYTES = 5 * 1024 * 1024
 _BLOG_MEDIA_BUCKET_DEFAULT = "minti-studio-blog"
 _BLOG_MEDIA_REGION_DEFAULT = "us-east-1"
+_BLOG_STATIC_IMAGE_ROOT = Path(__file__).resolve().parents[1] / "static" / "img" / "blog"
 
 
 def _form_article_context(article: dict | None = None) -> dict:
@@ -58,6 +62,63 @@ def _cover_upload_slug(raw_slug: str) -> str:
     if cleaned:
         return cleaned
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _article_image_slug(raw_slug: str) -> str:
+    return _cover_upload_slug(raw_slug)
+
+
+def _article_image_dir(slug: str) -> Path:
+    return (_BLOG_STATIC_IMAGE_ROOT / _article_image_slug(slug)).resolve()
+
+
+def _article_image_public_url(slug: str, filename: str) -> str:
+    safe_slug = _article_image_slug(slug)
+    safe_name = Path(filename).name
+    return f"/video_shorts/static/img/blog/{quote(safe_slug)}/{quote(safe_name)}"
+
+
+def _article_image_markdown_snippet(slug: str, filename: str, alt_text: str = "Alt text") -> str:
+    return f"![{alt_text}]({_article_image_public_url(slug, filename)})"
+
+
+def _unique_article_image_path(slug: str, filename: str) -> Path:
+    target_dir = _article_image_dir(slug)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    candidate_name = secure_filename(Path(filename or "").name)
+    stem = Path(candidate_name).stem
+    suffix = Path(candidate_name).suffix.lower()
+    candidate = target_dir / f"{stem}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = target_dir / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def list_article_images(article: dict | None) -> list[dict[str, str]]:
+    slug = str((article or {}).get("slug") or "").strip()
+    if not slug:
+        return []
+    target_dir = _article_image_dir(slug)
+    if not target_dir.exists() or not target_dir.is_dir():
+        return []
+    items: list[dict[str, str]] = []
+    for path in sorted(target_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in _ALLOWED_ARTICLE_IMAGE_EXTENSIONS:
+            continue
+        filename = path.name
+        public_url = _article_image_public_url(slug, filename)
+        items.append(
+            {
+                "filename": filename,
+                "public_url": public_url,
+                "markdown_snippet": _article_image_markdown_snippet(slug, filename),
+            }
+        )
+    return items
 
 
 def _blog_media_bucket() -> str:
@@ -143,6 +204,7 @@ def admin_blog_article_create():
         admin_title="New blog article",
         form_article=_form_article_context(),
         form_mode="create",
+        article_images=[],
     )
 
 
@@ -163,6 +225,7 @@ def admin_blog_article_edit(article_id: int):
                 admin_title="Edit blog article",
                 form_article=_form_article_context({**article, **request.form}),
                 form_mode="edit",
+                article_images=list_article_images(article),
             ), 400
         if not updated:
             abort(404)
@@ -173,7 +236,54 @@ def admin_blog_article_edit(article_id: int):
         admin_title="Edit blog article",
         form_article=_form_article_context(article),
         form_mode="edit",
+        article_images=list_article_images(article),
     )
+
+
+@video_shorts_bp.route("/admin/blog/<int:article_id>/images", methods=["POST"])
+@require_admin
+def admin_blog_article_images_upload(article_id: int):
+    ensure_default_blog_articles_seeded()
+    article = get_blog_article_by_id(article_id)
+    if not article:
+        abort(404)
+    article_slug = str(article.get("slug") or "").strip()
+    if not article_slug:
+        flash("Save the article with a valid slug before uploading images.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_blog_article_edit", article_id=article_id))
+
+    uploads = [item for item in request.files.getlist("images") if item and item.filename]
+    if not uploads:
+        flash("Choose one or more image files to upload.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_blog_article_edit", article_id=article_id))
+
+    saved = 0
+    rejected: list[str] = []
+    for upload in uploads:
+        original_name = Path(upload.filename or "").name
+        safe_name = secure_filename(original_name)
+        ext = Path(safe_name).suffix.lower()
+        if not safe_name or ext not in _ALLOWED_ARTICLE_IMAGE_EXTENSIONS:
+            rejected.append(original_name or "unnamed file")
+            continue
+        data = upload.read()
+        if not data or len(data) > _MAX_ARTICLE_IMAGE_BYTES:
+            rejected.append(original_name or safe_name)
+            continue
+        target_path = _unique_article_image_path(article_slug, safe_name)
+        target_path.write_bytes(data)
+        saved += 1
+
+    if saved and rejected:
+        flash(f"Uploaded {saved} image(s). Rejected: {', '.join(rejected)}.", "warning")
+    elif saved:
+        flash(f"Uploaded {saved} image(s).", "success")
+    else:
+        flash(
+            "No images were uploaded. Only .png, .jpg, .jpeg, .webp files up to 5 MB are accepted.",
+            "danger",
+        )
+    return redirect(url_for("video_shorts_bp.admin_blog_article_edit", article_id=article_id))
 
 
 @video_shorts_bp.route("/admin/blog/<int:article_id>/status", methods=["POST"])
