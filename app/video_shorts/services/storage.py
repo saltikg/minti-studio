@@ -184,13 +184,18 @@ class Storage:
                     size_bytes=path.stat().st_size,
                     modified_at=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc),
                 )
-        if self.backend_name != "local" and self.exists(key):
-            return StorageEntry(
-                key=key,
-                backend=self.backend_name,
-                exists=True,
-                public_url=self.public_url(key),
-            )
+        if self.backend_name != "local":
+            try:
+                remote_exists = self.exists(key)
+            except Exception:
+                remote_exists = False
+            if remote_exists:
+                return StorageEntry(
+                    key=key,
+                    backend=self.backend_name,
+                    exists=True,
+                    public_url=self.public_url(key),
+                )
         return StorageEntry(key=key, backend=self.backend_name, exists=False)
 
 
@@ -297,7 +302,7 @@ class S3Storage(Storage):
             return True
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code") or "")
-            if code in {"404", "NoSuchKey", "NotFound"}:
+            if code in {"403", "404", "AccessDenied", "NoSuchKey", "NotFound"}:
                 return False
             raise
 
@@ -323,24 +328,30 @@ class S3Storage(Storage):
     def list_prefix(self, prefix: str) -> List[StorageEntry]:
         paginator = self.client.get_paginator("list_objects_v2")
         rows: List[StorageEntry] = []
-        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-            for item in page.get("Contents", []):
-                key = str(item.get("Key") or "")
-                if not key or key.endswith("/"):
-                    continue
-                last_modified = item.get("LastModified")
-                if isinstance(last_modified, datetime) and last_modified.tzinfo is None:
-                    last_modified = last_modified.replace(tzinfo=timezone.utc)
-                rows.append(
-                    StorageEntry(
-                        key=key,
-                        backend="s3",
-                        exists=True,
-                        public_url=self.public_url(key),
-                        size_bytes=int(item.get("Size") or 0),
-                        modified_at=last_modified,
+        try:
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+                for item in page.get("Contents", []):
+                    key = str(item.get("Key") or "")
+                    if not key or key.endswith("/"):
+                        continue
+                    last_modified = item.get("LastModified")
+                    if isinstance(last_modified, datetime) and last_modified.tzinfo is None:
+                        last_modified = last_modified.replace(tzinfo=timezone.utc)
+                    rows.append(
+                        StorageEntry(
+                            key=key,
+                            backend="s3",
+                            exists=True,
+                            public_url=self.public_url(key),
+                            size_bytes=int(item.get("Size") or 0),
+                            modified_at=last_modified,
+                        )
                     )
-                )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code") or "")
+            if code in {"403", "AccessDenied"}:
+                return []
+            raise
         rows.sort(key=lambda entry: entry.modified_at or datetime.fromtimestamp(0, tz=timezone.utc), reverse=True)
         return rows
 
