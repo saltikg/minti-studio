@@ -185,6 +185,14 @@
           </span>
         </a>
         <a
+          href="{{ url_for('video_shorts_bp.admin_blog_articles') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/blog') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Blog</span>
+          </span>
+        </a>
+        <a
           href="{{ url_for('video_shorts_bp.admin_errors') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/errors') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>

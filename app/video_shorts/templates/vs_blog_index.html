@@ -131,11 +131,20 @@
     <div class="vs-blog-grid">
       {% for article in articles %}
         <article class="vs-blog-card">
+          {% if article.cover_image_url %}
+            <a href="{{ article.url }}">
+              <img
+                src="{{ article.cover_image_url }}"
+                alt="{{ article.title }}"
+                style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:16px;border:1px solid rgba(255,255,255,0.08);"
+                loading="lazy">
+            </a>
+          {% endif %}
           <div class="vs-blog-card-date">{{ article.published_on_display }}</div>
           <h2 class="vs-blog-card-title">
             <a href="{{ article.url }}">{{ article.title }}</a>
           </h2>
-          <p class="vs-blog-card-text">{{ article.description }}</p>
+          <p class="vs-blog-card-text">{{ article.summary }}</p>
           <a class="vs-blog-card-link" href="{{ article.url }}">Read article</a>
         </article>
       {% endfor %}

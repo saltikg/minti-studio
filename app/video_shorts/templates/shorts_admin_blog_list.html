@@ -1,0 +1,65 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_subheading %}
+  <p>Manage active blog articles served from <code>blog_articles</code>.</p>
+{% endblock %}
+
+{% block content %}
+  <div class="d-flex justify-content-end mb-3">
+    <a href="{{ url_for('video_shorts_bp.admin_blog_article_create') }}" class="btn btn-primary">New article</a>
+  </div>
+
+  {% if blog_seed_table_missing %}
+    <div class="alert alert-warning" role="alert">
+      <strong>Migration not applied.</strong> <code>blog_articles</code> does not exist yet, so default seed data could not be inserted.
+    </div>
+  {% endif %}
+
+  <section class="vs-admin-card p-3 p-lg-4">
+    <div class="table-responsive">
+      <table class="table table-dark table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Published</th>
+            <th>Views</th>
+            <th>Updated</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for article in blog_articles %}
+            <tr>
+              <td>
+                <div class="fw-semibold">{{ article.title }}</div>
+                <div class="vs-admin-muted small">/{{ article.slug }}/</div>
+              </td>
+              <td><span class="badge text-bg-secondary text-uppercase">{{ article.status }}</span></td>
+              <td>{{ article.published_at|fmt_dt if article.published_at else '—' }}</td>
+              <td>{{ article.view_count }}</td>
+              <td>{{ article.updated_at|fmt_dt if article.updated_at else '—' }}</td>
+              <td class="text-end">
+                <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
+                  <a href="{{ url_for('video_shorts_bp.admin_blog_article_edit', article_id=article.id) }}" class="btn btn-sm btn-outline-light">Edit</a>
+                  {% for next_status in ['published', 'draft', 'archived'] %}
+                    {% if article.status != next_status %}
+                      <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_article_status', article_id=article.id) }}" class="m-0">
+                        <input type="hidden" name="status" value="{{ next_status }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary text-uppercase">{{ next_status }}</button>
+                      </form>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="6" class="text-center py-4 vs-admin-muted">No blog articles found.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

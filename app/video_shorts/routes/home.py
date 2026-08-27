@@ -1,21 +1,24 @@
 from flask import render_template, url_for
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.services.blog_content import get_latest_blog_articles
+from app.video_shorts.services.blog_articles import ensure_default_blog_articles_seeded, list_published_blog_articles
 from app.video_shorts.services.usage_metering import load_storage_plan_catalog
 
 
 @video_shorts_bp.route("/", methods=["GET"])
 def home():
+    ensure_default_blog_articles_seeded()
     latest_articles = []
-    for article in get_latest_blog_articles(limit=3):
-        published_on = article["published_on"]
+    for article in list_published_blog_articles(limit=3):
+        published_at = article["published_at"]
         latest_articles.append(
             {
                 "slug": article["slug"],
                 "title": article["title"],
-                "description": article["description"],
-                "published_on_display": f"{published_on.strftime('%B')} {published_on.day}, {published_on.year}",
+                "summary": article["summary"],
+                "published_on_display": (
+                    f"{published_at.strftime('%B')} {published_at.day}, {published_at.year}" if published_at else ""
+                ),
                 "url": url_for("video_shorts_bp.blog_article", slug=article["slug"]),
             }
         )

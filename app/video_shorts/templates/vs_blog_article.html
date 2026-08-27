@@ -11,7 +11,12 @@
   <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:site_name" content="MintiStudio">
-  <meta property="article:published_time" content="{{ article.published_on_iso }}">
+  {% if article.cover_image_absolute_url %}
+    <meta property="og:image" content="{{ article.cover_image_absolute_url }}">
+  {% endif %}
+  {% if article.published_on_iso %}
+    <meta property="article:published_time" content="{{ article.published_on_iso }}">
+  {% endif %}
   <script type="application/ld+json">{{ article_json_ld|safe }}</script>
 {% endblock %}
 
@@ -19,16 +24,15 @@
 <style>
   .vs-blog-article-page {
     width: 100%;
-    max-width: 1160px;
+    max-width: 860px;
     margin: 0 auto;
     display: grid;
-    gap: 2.4rem;
+    gap: 2rem;
   }
 
-  .vs-blog-article-shell {
-    max-width: 1120px;
-    margin: 0 auto;
-    width: 100%;
+  .vs-blog-article-head {
+    display: grid;
+    gap: 1rem;
   }
 
   .vs-blog-breadcrumb {
@@ -36,7 +40,6 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
-    margin-bottom: 1.15rem;
     color: rgba(148, 163, 184, 0.88);
     font-size: 0.9rem;
   }
@@ -44,11 +47,6 @@
   .vs-blog-breadcrumb a {
     color: rgba(226, 232, 240, 0.9);
     text-decoration: none;
-  }
-
-  .vs-blog-breadcrumb a:hover,
-  .vs-blog-breadcrumb a:focus {
-    color: #ffffff;
   }
 
   .vs-blog-article-title {
@@ -59,12 +57,11 @@
     letter-spacing: -0.03em;
   }
 
-  .vs-blog-article-description {
-    margin: 1rem 0 0;
+  .vs-blog-article-summary {
+    margin: 0;
     color: var(--text-2);
     font-size: 1.05rem;
     line-height: 1.75;
-    max-width: 46rem;
   }
 
   .vs-blog-article-meta {
@@ -72,335 +69,60 @@
     align-items: center;
     gap: 0.8rem;
     flex-wrap: wrap;
-    margin-top: 1rem;
     color: rgba(148, 163, 184, 0.9);
     font-size: 0.9rem;
   }
 
-  .vs-blog-article-body {
-    display: grid;
-    gap: 1.8rem;
-    max-width: 1120px;
-    margin: 0 auto;
-  }
-
-  .gs-carousel{position:relative;background:#0f1620;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;max-width:1120px;margin:0 auto;}
-  .gs-carousel .stage{position:relative;display:flex;align-items:center;gap:14px;}
-  .gs-carousel .nav{flex:0 0 auto;width:52px;height:52px;border-radius:50%;background:#0c1420;border:1px solid rgba(255,255,255,.08);color:#e8edf2;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;transition:background .2s,border-color .2s,opacity .2s,transform .2s;user-select:none;}
-  .gs-carousel .nav:hover:not([disabled]){border-color:#2dd4bf;color:#2dd4bf;transform:translateY(-1px);}
-  .gs-carousel .nav[disabled]{opacity:.28;cursor:default;}
-  .gs-carousel .frame{flex:1 1 auto;min-width:0;position:relative;height:56vh;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 50px -24px rgba(0,0,0,.7);background:#0a1420;}
-  .gs-carousel .frame::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#2dd4bf,transparent);z-index:3;}
-  .gs-carousel .slide{position:absolute;inset:0;display:none;align-items:center;justify-content:center;}
-  .gs-carousel .slide.active{display:flex;}
-  .gs-carousel .slide img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;cursor:zoom-in;}
-  .gs-carousel .zoom-hint{position:absolute;right:12px;bottom:12px;z-index:4;background:rgba(10,20,32,.8);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:12px;padding:5px 10px;border-radius:8px;display:flex;align-items:center;gap:6px;opacity:0;transition:opacity .2s;pointer-events:none;}
-  .gs-carousel .frame:hover .zoom-hint{opacity:1;}
-  .gs-carousel .caption{margin-top:22px;min-height:96px;}
-  .gs-carousel .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.4);color:#2dd4bf;font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:14px;}
-  .gs-carousel .cap-title{font-size:26px;font-weight:700;letter-spacing:-.01em;margin:0 0 10px;color:#e8edf2;line-height:1.2;}
-  .gs-carousel .cap-body{color:var(--text-2);font-size:16px;line-height:1.7;margin:0;max-width:64ch;}
-  .gs-carousel .foot{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:16px;}
-  .gs-carousel .counter{color:#8a97a6;font-size:14px;font-variant-numeric:tabular-nums;}
-  .gs-carousel .dots{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;}
-  .gs-carousel .dot{width:9px;height:9px;border-radius:50%;background:#2a3543;border:none;cursor:pointer;padding:0;transition:background .2s,transform .2s;}
-  .gs-carousel .dot.active{background:#2dd4bf;transform:scale(1.15);}
-  .gs-lightbox{position:fixed;inset:0;z-index:9999;background:rgba(5,8,12,.94);display:none;align-items:center;justify-content:center;padding:32px;cursor:zoom-out;}
-  .gs-lightbox.open{display:flex;}
-  .gs-lightbox img{max-width:96vw;max-height:92vh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 30px 80px -20px rgba(0,0,0,.8);}
-  .gs-lightbox .close{position:absolute;top:20px;right:24px;width:44px;height:44px;border-radius:50%;background:rgba(20,30,42,.9);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-  .gs-lightbox .close:hover{border-color:#2dd4bf;color:#2dd4bf;}
-  .gs-lightbox .lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;background:rgba(20,30,42,.9);border:1px solid rgba(255,255,255,.08);color:#e8edf2;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-  .gs-lightbox .lb-nav:hover:not([disabled]){border-color:#2dd4bf;color:#2dd4bf;}
-  .gs-lightbox .lb-nav[disabled]{opacity:.25;cursor:default;}
-  .gs-lightbox .lb-prev{left:20px;}.gs-lightbox .lb-next{right:20px;}
-  .gs-lightbox .lb-counter{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);color:#8a97a6;font-size:14px;}
-
-  .vs-blog-section {
-    display: grid;
-    gap: 0.9rem;
-  }
-
-  .vs-blog-step-heading {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .vs-blog-step-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.2rem;
-    min-height: 2.2rem;
-    padding: 0 0.72rem;
-    border-radius: 999px;
-    background: linear-gradient(135deg, rgba(45, 212, 191, 0.22), rgba(45, 212, 191, 0.1));
-    border: 1px solid rgba(45, 212, 191, 0.3);
-    color: #7cead9;
-    font-size: 0.82rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-
-  .vs-blog-section h2 {
-    margin: 0;
-    font-size: clamp(1.35rem, 2.2vw, 1.7rem);
-    line-height: 1.2;
-    font-weight: 600;
-  }
-
-  .vs-blog-section p {
-    margin: 0;
-    color: rgba(226, 232, 240, 0.94);
-    line-height: 1.8;
-    font-size: 1rem;
-  }
-
-  .vs-blog-section ul {
-    margin: 0;
-    padding-left: 1.2rem;
-    color: rgba(226, 232, 240, 0.94);
-    line-height: 1.8;
-  }
-
-  .vs-blog-section li + li {
-    margin-top: 0.45rem;
-  }
-
-  .vs-blog-step-gallery {
-    display: grid;
-    gap: 1rem;
-    margin-top: 0.15rem;
-  }
-
-  .vs-blog-step-figure {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 500px;
-    margin: 0;
-    overflow: hidden;
-    border-radius: 10px;
+  .vs-blog-cover {
+    width: 100%;
+    border-radius: 22px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background:
-      linear-gradient(90deg, rgba(45, 212, 191, 0.92), rgba(45, 212, 191, 0) 26px),
-      rgba(15, 23, 42, 0.58);
-    box-shadow: 0 24px 60px -22px rgba(0, 0, 0, 0.7);
-    transition: transform 180ms ease, box-shadow 180ms ease;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.03);
   }
 
-  .vs-blog-step-figure:hover,
-  .vs-blog-step-figure:focus-within {
-    transform: translateY(-4px);
-    box-shadow: 0 30px 78px -24px rgba(0, 0, 0, 0.82);
-  }
-
-  .vs-blog-step-figure img {
+  .vs-blog-cover img {
     display: block;
     width: 100%;
-    max-height: 500px;
     height: auto;
-    margin: 0 auto;
-    object-fit: contain;
-    background: rgba(3, 7, 18, 0.45);
   }
 
-  .vs-blog-step-caption {
-    position: absolute;
-    left: 0.95rem;
-    top: 0.95rem;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.72rem;
-    border-radius: 999px;
-    background: rgba(8, 15, 25, 0.82);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: rgba(241, 245, 249, 0.96);
-    font-size: 0.8rem;
-    line-height: 1.2;
-    backdrop-filter: blur(10px);
-  }
-
-  .vs-blog-step-caption strong {
-    color: #7cead9;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .vs-blog-step-slide-copy {
+  .vs-blog-richtext {
     display: grid;
-    gap: 0.7rem;
-    min-height: 15.5rem;
-    padding: 0.2rem 0.1rem 0.35rem;
+    gap: 1rem;
+    color: rgba(226, 232, 240, 0.95);
   }
 
-  .vs-blog-step-slide-copy p {
-    margin: 0;
-    color: rgba(226, 232, 240, 0.94);
-    line-height: 1.78;
-    font-size: 1rem;
+  .vs-blog-richtext h1,
+  .vs-blog-richtext h2,
+  .vs-blog-richtext h3,
+  .vs-blog-richtext h4 {
+    margin: 1rem 0 0;
+    line-height: 1.2;
   }
 
-  .vs-blog-step-slide-copy ul {
-    margin: 0;
-    padding-left: 1.2rem;
-    color: rgba(226, 232, 240, 0.94);
+  .vs-blog-richtext p,
+  .vs-blog-richtext li,
+  .vs-blog-richtext blockquote {
     line-height: 1.8;
   }
 
-  .vs-blog-step-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.9rem;
-  }
-
-  .vs-blog-step-nav-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 3rem;
-    height: 3rem;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(15, 23, 42, 0.78);
-    color: rgba(241, 245, 249, 0.96);
-    box-shadow: 0 16px 30px -22px rgba(0, 0, 0, 0.75);
-    transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
-  }
-
-  .vs-blog-step-nav-btn:hover,
-  .vs-blog-step-nav-btn:focus {
-    transform: translateY(-2px);
-    background: rgba(20, 33, 54, 0.92);
-    border-color: rgba(45, 212, 191, 0.28);
-    color: #ffffff;
-  }
-
-  .vs-blog-step-nav-btn[disabled] {
-    opacity: 0.45;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .vs-blog-step-nav-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: rgba(148, 163, 184, 0.92);
-    font-size: 0.92rem;
-  }
-
-  .vs-blog-step-dots {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .vs-blog-step-dot {
-    width: 0.62rem;
-    height: 0.62rem;
-    border: 0;
-    padding: 0;
-    border-radius: 999px;
-    background: rgba(148, 163, 184, 0.34);
-    transition: transform 180ms ease, background 180ms ease;
-  }
-
-  .vs-blog-step-dot.is-active {
-    transform: scale(1.16);
-    background: #2dd4bf;
-  }
-
-  .vs-blog-sources,
-  .vs-blog-cta-card,
-  .vs-blog-related {
-    max-width: 1120px;
-    margin: 0 auto;
-    width: 100%;
-  }
-
-  .vs-blog-sources {
-    padding: 1.2rem 1.25rem;
-    border-radius: 22px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-  }
-
-  .vs-blog-sources h2,
-  .vs-blog-related h2 {
-    margin: 0 0 0.9rem;
-    font-size: 1.15rem;
-    font-weight: 600;
-  }
-
-  .vs-blog-sources ul {
-    margin: 0;
-    padding-left: 1.15rem;
-  }
-
-  .vs-blog-sources a {
-    color: rgba(93, 202, 165, 0.98);
-    text-decoration: none;
-  }
-
-  .vs-blog-sources a:hover,
-  .vs-blog-sources a:focus {
+  .vs-blog-richtext a {
     color: #89e2c3;
   }
 
-  .vs-blog-cta-card {
-    padding: 1.35rem 1.35rem 1.4rem;
-    border-radius: 26px;
-    background:
-      radial-gradient(circle at top left, rgba(93, 202, 165, 0.16), transparent 34%),
-      linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(17, 24, 39, 0.92));
+  .vs-blog-richtext img {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 0.75rem 0;
+    border-radius: 16px;
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  .vs-blog-cta-card h2 {
-    margin: 0;
-    font-size: clamp(1.45rem, 2.6vw, 2rem);
-    line-height: 1.12;
-    font-weight: 500;
-  }
-
-  .vs-blog-cta-card p {
-    margin: 0.7rem 0 0;
-    color: var(--text-2);
-    line-height: 1.75;
-  }
-
-  .vs-blog-cta-actions {
-    margin-top: 1.1rem;
-  }
-
-  .vs-blog-cta-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 44px;
-    padding: 0.9rem 1.3rem;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #5dcaa5, #1d9e75);
-    color: #07131a;
-    text-decoration: none;
-    font-weight: 600;
-    box-shadow: 0 10px 24px rgba(29, 158, 117, 0.24);
-  }
-
-  .vs-blog-cta-btn:hover,
-  .vs-blog-cta-btn:focus {
-    background: linear-gradient(135deg, #69d4b0, #26aa81);
-    color: #07131a;
+  .vs-blog-related {
+    display: grid;
+    gap: 1rem;
   }
 
   .vs-blog-related-grid {
@@ -411,204 +133,54 @@
 
   .vs-blog-related-card {
     display: grid;
-    gap: 0.6rem;
-    padding: 1rem 1.05rem;
+    gap: 0.65rem;
+    padding: 1.1rem;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.025);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .vs-blog-related-card h3 {
-    margin: 0;
-    font-size: 1rem;
-    line-height: 1.35;
-    font-weight: 600;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
   }
 
   .vs-blog-related-card a {
-    color: rgba(248, 250, 252, 0.98);
+    color: #fff;
     text-decoration: none;
   }
 
-  .vs-blog-related-card a:hover,
-  .vs-blog-related-card a:focus {
-    color: #ffffff;
-  }
-
-  .vs-blog-related-date {
-    color: rgba(148, 163, 184, 0.86);
-    font-size: 0.82rem;
-  }
-
-  .vs-blog-related-text {
-    margin: 0;
-    color: var(--text-2);
-    line-height: 1.65;
-    font-size: 0.95rem;
-  }
-
-  @media (max-width: 767px) {
-    .gs-carousel .nav{width:42px;height:42px;font-size:17px;}
-    .gs-carousel .cap-title{font-size:21px;}
-    .gs-carousel .frame{height:42vh;}
-    .gs-carousel .caption{min-height:120px;}
-    .gs-lightbox .lb-nav{width:42px;height:42px;}
-
-    .vs-blog-step-caption {
-      left: 0.8rem;
-      top: 0.8rem;
-      font-size: 0.76rem;
-    }
-
-    .vs-blog-step-nav {
-      gap: 0.7rem;
-    }
-
-    .vs-blog-step-nav-btn {
-      width: 2.65rem;
-      height: 2.65rem;
-    }
-
+  @media (max-width: 991px) {
     .vs-blog-related-grid {
       grid-template-columns: 1fr;
     }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .gs-carousel .nav,.gs-carousel .dot{transition:none;}
   }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="vs-blog-article-page">
-  <article class="vs-blog-article-shell">
+<article class="vs-blog-article-page">
+  <header class="vs-blog-article-head">
     <nav class="vs-blog-breadcrumb" aria-label="Breadcrumb">
       <a href="{{ url_for('video_shorts_bp.home') }}">Home</a>
       <span>/</span>
       <a href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
-      <span>/</span>
-      <span aria-current="page">{{ article.title }}</span>
     </nav>
+    <h1 class="vs-blog-article-title">{{ article.title }}</h1>
+    {% if article.summary %}
+      <p class="vs-blog-article-summary">{{ article.summary }}</p>
+    {% endif %}
+    <div class="vs-blog-article-meta">
+      {% if article.author_name %}<span>{{ article.author_name }}</span>{% endif %}
+      {% if article.published_on_display %}<span>{{ article.published_on_display }}</span>{% endif %}
+      {% if article.reading_time %}<span>{{ article.reading_time }} min read</span>{% endif %}
+      <span>{{ article.view_count }} views</span>
+    </div>
+  </header>
 
-    <header>
-      <h1 class="vs-blog-article-title">{{ article.title }}</h1>
-      <p class="vs-blog-article-description">{{ article.description }}</p>
-      <div class="vs-blog-article-meta">
-        <span>{{ article.published_on_display }}</span>
-        <span>•</span>
-        <span>{{ article.reading_time }}</span>
-      </div>
-    </header>
-  </article>
-
-  {% if article.display_mode == 'step_carousel' %}
-    <div class="gs-carousel" data-carousel tabindex="0">
-      <div class="stage">
-        <button class="nav" data-prev aria-label="Previous step">&#8592;</button>
-        <div class="frame" data-frame>
-          {% for section in article.sections %}
-            {% set primary_image = (section.images or [])[0] if section.images else None %}
-            <div class="slide{% if loop.first %} active{% endif %}">
-              {% if primary_image %}
-                <img
-                  src="{{ url_for('video_shorts_bp.static', filename=primary_image.src) }}"
-                  alt="{{ primary_image.alt or ('Step ' ~ (section.step_number or loop.index)) }}"
-                >
-              {% endif %}
-            </div>
-          {% endfor %}
-          <div class="zoom-hint">&#10530; Click to enlarge</div>
-        </div>
-        <button class="nav" data-next aria-label="Next step">&#8594;</button>
-      </div>
-      <div class="caption">
-        <span class="badge" data-badge>Step 01</span>
-        <h3 class="cap-title" data-title></h3>
-        <p class="cap-body" data-body></p>
-      </div>
-      <div class="foot">
-        <div class="counter"><span data-current>1</span> / <span data-total>{{ article.sections|length }}</span></div>
-        <div class="dots" data-dots></div>
-      </div>
-    </div>
-    <div class="gs-lightbox" data-lightbox>
-      <button class="close" data-lb-close aria-label="Close">&times;</button>
-      <button class="lb-nav lb-prev" data-lb-prev aria-label="Previous">&#8592;</button>
-      <img data-lb-img src="" alt="">
-      <button class="lb-nav lb-next" data-lb-next aria-label="Next">&#8594;</button>
-      <div class="lb-counter"><span data-lb-current>1</span> / <span data-lb-total>{{ article.sections|length }}</span></div>
-    </div>
-  {% else %}
-    <div class="vs-blog-article-body">
-      {% for section in article.sections %}
-        <section class="vs-blog-section">
-          <div class="vs-blog-step-heading">
-            {% if section.step_number %}
-              <span class="vs-blog-step-badge">Step {{ section.step_number }}</span>
-            {% endif %}
-            <h2>{{ section.heading }}</h2>
-          </div>
-          {% for paragraph in section.paragraphs %}
-            <p>{{ paragraph }}</p>
-          {% endfor %}
-          {% if section.bullets %}
-            <ul>
-              {% for bullet in section.bullets %}
-                <li>{{ bullet }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-          {% if section.images %}
-            <div class="vs-blog-step-gallery">
-              {% for image in section.images %}
-                <figure class="vs-blog-step-figure">
-                  <img
-                    src="{{ url_for('video_shorts_bp.static', filename=image.src) }}"
-                    alt="{{ image.alt or section.heading }}"
-                    loading="lazy"
-                  >
-                  {% if section.step_number or image.caption %}
-                    <figcaption class="vs-blog-step-caption">
-                      {% if section.step_number %}
-                        <strong>Step {{ section.step_number }}</strong>
-                      {% endif %}
-                      {% if image.caption %}
-                        <span>{{ image.caption }}</span>
-                      {% endif %}
-                    </figcaption>
-                  {% endif %}
-                </figure>
-              {% endfor %}
-            </div>
-          {% endif %}
-        </section>
-      {% endfor %}
-    </div>
+  {% if article.cover_image_url %}
+    <figure class="vs-blog-cover">
+      <img src="{{ article.cover_image_url }}" alt="{{ article.title }}" loading="eager">
+    </figure>
   {% endif %}
 
-  {% if article.sources %}
-    <section class="vs-blog-sources" aria-labelledby="article-sources-title">
-      <h2 id="article-sources-title">Sources</h2>
-      <ul>
-        {% for source in article.sources %}
-          <li><a href="{{ source.url }}" rel="noopener noreferrer" target="_blank">{{ source.label }}</a></li>
-        {% endfor %}
-      </ul>
-    </section>
-  {% endif %}
-
-  <section class="vs-blog-cta-card" aria-labelledby="article-cta-title">
-    <h2 id="article-cta-title">{{ article.cta_title }}</h2>
-    <p>{{ article.cta_body }}</p>
-    <div class="vs-blog-cta-actions">
-      <a
-        class="vs-blog-cta-btn"
-        href="{{ url_for('video_shorts_bp.register') }}"
-        data-minti-cta
-        data-cta-location="blog_article"
-      >Try MintiStudio</a>
-    </div>
+  <section class="vs-blog-richtext">
+    {{ article.content_html|safe }}
   </section>
 
   {% if related_articles %}
@@ -617,54 +189,13 @@
       <div class="vs-blog-related-grid">
         {% for related in related_articles %}
           <article class="vs-blog-related-card">
-            <div class="vs-blog-related-date">{{ related.published_on_display }}</div>
+            <div class="vs-admin-muted">{{ related.published_on_display }}</div>
             <h3><a href="{{ related.url }}">{{ related.title }}</a></h3>
-            <p class="vs-blog-related-text">{{ related.description }}</p>
+            <p>{{ related.summary }}</p>
           </article>
         {% endfor %}
       </div>
     </section>
   {% endif %}
-</div>
-{% endblock %}
-
-{% block scripts %}
-  {{ super() }}
-<script>
-(function(){
-  var steps=[
-    {% for section in article.sections %}
-    {badge:{{ ("Step " ~ (section.step_number or "%02d"|format(loop.index)))|tojson }},title:{{ section.heading|tojson }},body:{{ (section.paragraphs|join(' '))|tojson }}}{% if not loop.last %},{% endif %}
-    {% endfor %}
-  ];
-  var root=document.querySelector('[data-carousel]');if(!root)return;
-  var slides=root.querySelectorAll('.slide');
-  var prev=root.querySelector('[data-prev]'),next=root.querySelector('[data-next]');
-  var badge=root.querySelector('[data-badge]'),title=root.querySelector('[data-title]'),body=root.querySelector('[data-body]');
-  var curEl=root.querySelector('[data-current]'),totalEl=root.querySelector('[data-total]'),dotsWrap=root.querySelector('[data-dots]');
-  var frame=root.querySelector('[data-frame]');
-  var i=0,n=slides.length;totalEl.textContent=n;
-  for(var d=0;d<n;d++){var b=document.createElement('button');b.className='dot'+(d===0?' active':'');b.setAttribute('aria-label','Go to step '+(d+1));(function(idx){b.addEventListener('click',function(){go(idx);});})(d);dotsWrap.appendChild(b);}
-  var dots=dotsWrap.querySelectorAll('.dot');
-  function render(){slides.forEach(function(s,idx){s.classList.toggle('active',idx===i);});dots.forEach(function(dt,idx){dt.classList.toggle('active',idx===i);});var st=steps[i]||{};if(badge)badge.textContent=st.badge||('Step '+String(i+1).padStart(2,'0'));if(title)title.textContent=st.title||'';if(body)body.textContent=st.body||'';curEl.textContent=i+1;prev.disabled=(i===0);next.disabled=(i===n-1);}
-  function go(idx){i=Math.max(0,Math.min(n-1,idx));render();if(lbOpen)renderLB();}
-  prev.addEventListener('click',function(){go(i-1);});next.addEventListener('click',function(){go(i+1);});
-  var lb=document.querySelector('[data-lightbox]');
-  var lbImg=lb.querySelector('[data-lb-img]'),lbClose=lb.querySelector('[data-lb-close]');
-  var lbPrev=lb.querySelector('[data-lb-prev]'),lbNext=lb.querySelector('[data-lb-next]');
-  var lbCur=lb.querySelector('[data-lb-current]'),lbTot=lb.querySelector('[data-lb-total]');
-  var lbOpen=false;lbTot.textContent=n;
-  function getSrc(idx){var im=slides[idx].querySelector('img');return im?im.src:null;}
-  function renderLB(){var src=getSrc(i);if(src){lbImg.src=src;lbImg.alt='Step '+(i+1);}lbCur.textContent=i+1;lbPrev.disabled=(i===0);lbNext.disabled=(i===n-1);}
-  function openLB(){lbOpen=true;lb.classList.add('open');renderLB();document.body.style.overflow='hidden';}
-  function closeLB(){lbOpen=false;lb.classList.remove('open');document.body.style.overflow='';}
-  frame.addEventListener('click',function(){openLB();});
-  lb.addEventListener('click',function(e){if(e.target===lb||e.target===lbImg){closeLB();}});
-  lbClose.addEventListener('click',function(e){e.stopPropagation();closeLB();});
-  lbPrev.addEventListener('click',function(e){e.stopPropagation();go(i-1);});
-  lbNext.addEventListener('click',function(e){e.stopPropagation();go(i+1);});
-  document.addEventListener('keydown',function(e){if(lbOpen){if(e.key==='Escape')closeLB();if(e.key==='ArrowLeft')go(i-1);if(e.key==='ArrowRight')go(i+1);}else if(root.contains(document.activeElement)){if(e.key==='ArrowLeft')go(i-1);if(e.key==='ArrowRight')go(i+1);}});
-  render();
-    })();
-  </script>
+</article>
 {% endblock %}

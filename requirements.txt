@@ -17,3 +17,5 @@ google-api-python-client
 boto3
 psycopg[binary]
 stripe
+Markdown
+bleach

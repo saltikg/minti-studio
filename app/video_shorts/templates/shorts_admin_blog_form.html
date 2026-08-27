@@ -1,0 +1,70 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_subheading %}
+  <p>Write Markdown content for the active Minti blog.</p>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="post" class="row g-3">
+      <div class="col-12 col-lg-8">
+        <label class="form-label" for="blog-title">Title</label>
+        <input id="blog-title" type="text" name="title" class="form-control" required value="{{ form_article.title }}">
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="blog-slug">Slug</label>
+        <input id="blog-slug" type="text" name="slug" class="form-control" value="{{ form_article.slug }}" placeholder="auto-from-title">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label" for="blog-summary">Summary</label>
+        <textarea id="blog-summary" name="summary" class="form-control" rows="3">{{ form_article.summary }}</textarea>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label" for="blog-content">Content (Markdown)</label>
+        <textarea id="blog-content" name="content" class="form-control font-monospace" rows="18" required>{{ form_article.content }}</textarea>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="blog-cover-image-url">Cover image URL</label>
+        <input id="blog-cover-image-url" type="text" name="cover_image_url" class="form-control" value="{{ form_article.cover_image_url }}">
+      </div>
+      <div class="col-12 col-lg-3">
+        <label class="form-label" for="blog-author-name">Author</label>
+        <input id="blog-author-name" type="text" name="author_name" class="form-control" value="{{ form_article.author_name }}">
+      </div>
+      <div class="col-12 col-lg-3">
+        <label class="form-label" for="blog-reading-time">Reading time (minutes)</label>
+        <input id="blog-reading-time" type="number" min="1" name="reading_time" class="form-control" value="{{ form_article.reading_time }}">
+      </div>
+
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="blog-status">Status</label>
+        <select id="blog-status" name="status" class="form-select">
+          {% for option in ['draft', 'published', 'archived'] %}
+            <option value="{{ option }}" {% if form_article.status == option %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-lg-8">
+        <label class="form-label" for="blog-published-at">Published at</label>
+        <input id="blog-published-at" type="datetime-local" name="published_at" class="form-control" value="{{ form_article.published_at }}">
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="blog-meta-title">Meta title</label>
+        <input id="blog-meta-title" type="text" name="meta_title" class="form-control" value="{{ form_article.meta_title }}">
+      </div>
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="blog-meta-description">Meta description</label>
+        <textarea id="blog-meta-description" name="meta_description" class="form-control" rows="3">{{ form_article.meta_description }}</textarea>
+      </div>
+
+      <div class="col-12 d-flex gap-2 justify-content-end">
+        <a href="{{ url_for('video_shorts_bp.admin_blog_articles') }}" class="btn btn-outline-light">Back</a>
+        <button type="submit" class="btn btn-primary">{% if form_mode == 'edit' %}Save changes{% else %}Create article{% endif %}</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
