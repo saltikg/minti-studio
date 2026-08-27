@@ -4,6 +4,25 @@
   <p>Write Markdown content for the active Minti blog.</p>
 {% endblock %}
 
+{% block extra_styles %}
+<style>
+  .blog-cover-upload-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .blog-cover-upload-row .form-control {
+    flex: 1 1 auto;
+  }
+
+  .blog-cover-upload-feedback {
+    min-height: 1.25rem;
+    font-size: 0.875rem;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
     <form method="post" class="row g-3">
@@ -28,7 +47,12 @@
 
       <div class="col-12 col-lg-6">
         <label class="form-label" for="blog-cover-image-url">Cover image URL</label>
-        <input id="blog-cover-image-url" type="text" name="cover_image_url" class="form-control" value="{{ form_article.cover_image_url }}">
+        <div class="blog-cover-upload-row">
+          <input id="blog-cover-image-url" type="text" name="cover_image_url" class="form-control" value="{{ form_article.cover_image_url }}">
+          <input id="blog-cover-upload-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          <button id="blog-cover-upload-button" type="button" class="btn btn-outline-light">Upload</button>
+        </div>
+        <div id="blog-cover-upload-feedback" class="blog-cover-upload-feedback vs-admin-muted mt-2" aria-live="polite"></div>
       </div>
       <div class="col-12 col-lg-3">
         <label class="form-label" for="blog-author-name">Author</label>
@@ -67,4 +91,63 @@
       </div>
     </form>
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  (function () {
+    var uploadButton = document.getElementById("blog-cover-upload-button");
+    var uploadInput = document.getElementById("blog-cover-upload-input");
+    var slugInput = document.getElementById("blog-slug");
+    var coverUrlInput = document.getElementById("blog-cover-image-url");
+    var feedback = document.getElementById("blog-cover-upload-feedback");
+
+    if (!uploadButton || !uploadInput || !coverUrlInput || !feedback) {
+      return;
+    }
+
+    function setFeedback(message, isError) {
+      feedback.textContent = message || "";
+      feedback.classList.toggle("text-danger", !!isError);
+      feedback.classList.toggle("text-success", !isError && !!message);
+    }
+
+    uploadButton.addEventListener("click", function () {
+      uploadInput.click();
+    });
+
+    uploadInput.addEventListener("change", async function () {
+      var file = uploadInput.files && uploadInput.files[0];
+      if (!file) {
+        return;
+      }
+
+      var formData = new FormData();
+      formData.append("file", file);
+      formData.append("slug", slugInput ? slugInput.value : "");
+
+      uploadButton.disabled = true;
+      setFeedback("Uploading...", false);
+
+      try {
+        var response = await fetch("{{ url_for('video_shorts_bp.admin_blog_upload_cover') }}", {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin"
+        });
+        var payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Upload failed.");
+        }
+        coverUrlInput.value = payload.url || "";
+        setFeedback("Upload complete. Cover URL filled in.", false);
+      } catch (error) {
+        setFeedback(error.message || "Upload failed.", true);
+      } finally {
+        uploadButton.disabled = false;
+        uploadInput.value = "";
+      }
+    });
+  })();
+</script>
 {% endblock %}
