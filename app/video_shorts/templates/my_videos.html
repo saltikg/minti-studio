@@ -520,6 +520,7 @@
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
   const mobileNotice = document.getElementById('mv-mobile-notice');
   const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
+  const rawDirectUploadLimitBytes = 3 * 1024 * 1024 * 1024;
   const compressedUploadTargetBytes = 500 * 1024 * 1024;
   const compressionTimeoutMs = 20 * 60 * 1000;
   const ffmpegCoreVersion = '0.12.10';
@@ -1376,6 +1377,9 @@
       throw new Error(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`);
     }
     const probeInfo = await probeVideoFile(file);
+    if (Number(file.size || 0) <= rawDirectUploadLimitBytes && Number(file.size || 0) > compressedUploadTargetBytes) {
+      return { file, strategy: 'original', compressed: false };
+    }
     if (Number(probeInfo.height || 0) <= 720 && Number(file.size || 0) <= compressedUploadTargetBytes) {
       return { file, strategy: 'original', compressed: false };
     }

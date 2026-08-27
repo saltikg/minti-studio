@@ -1,8 +1,10 @@
+import json
 import logging
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -196,6 +198,60 @@ def _resolve_ffmpeg():
         if Path(resolved).is_file():
             return str(Path(resolved))
     raise FileNotFoundError(f"ffmpeg not found (FFMPEG_BIN={FFMPEG_BIN})")
+
+
+def _resolve_ffprobe() -> str:
+    ffmpeg_path = Path(_resolve_ffmpeg())
+    candidate = ffmpeg_path.with_name("ffprobe")
+    if candidate.is_file():
+        return str(candidate)
+    resolved = shutil.which("ffprobe")
+    if resolved:
+        return resolved
+    fallback = Path("/usr/bin/ffprobe")
+    if fallback.is_file():
+        return str(fallback)
+    raise FileNotFoundError("ffprobe not found")
+
+
+def _probe_video_stream_info(path: Path, *, log: logging.Logger | None = None) -> dict[str, float | int | None]:
+    active_logger = log or logger
+    result = run_media_subprocess(
+        [
+            _resolve_ffprobe(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height:format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        operation="source_probe_video_stream",
+        context=f"path={path.name}",
+        timeout=max(SOURCE_FASTSTART_TIMEOUT_SECONDS, FFMPEG_SHORT_TIMEOUT),
+        capture_output=True,
+        text=True,
+        check=True,
+        log=active_logger,
+    )
+    payload = json.loads(result.stdout or "{}")
+    stream = ((payload.get("streams") or [None])[0]) or {}
+    format_info = payload.get("format") or {}
+    duration_raw = format_info.get("duration")
+    try:
+        duration_seconds = float(duration_raw) if duration_raw is not None else None
+    except (TypeError, ValueError):
+        duration_seconds = None
+    width = stream.get("width")
+    height = stream.get("height")
+    return {
+        "width": int(width) if width is not None else None,
+        "height": int(height) if height is not None else None,
+        "duration_seconds": duration_seconds,
+    }
 
 
 def _top_level_atom_offsets(path: Path) -> dict[str, int]:
@@ -416,6 +472,223 @@ def remux_s3_source_video_if_needed(
         except Exception:
             pass
         return None
+    finally:
+        try:
+            temp_output.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def normalize_s3_source_video_for_upload(
+    video_id: str,
+    source_key: str,
+    local_path: Path,
+    *,
+    target_key: str | None = None,
+    log: logging.Logger | None = None,
+) -> str | None:
+    active_logger = log or logger
+    suffix = local_path.suffix.lower()
+    upload_key = str(target_key or "").strip() or str(source_key or "").strip()
+    if not upload_key:
+        active_logger.warning(
+            "normalize fallback video_id=%s key=%s path=%s reason=missing-upload-key",
+            video_id,
+            source_key,
+            local_path,
+        )
+        return None
+    try:
+        probe = _probe_video_stream_info(local_path, log=active_logger)
+    except Exception as exc:
+        active_logger.warning(
+            "normalize probe fallback video_id=%s key=%s path=%s error=%s",
+            video_id,
+            source_key,
+            local_path,
+            exc,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+
+    width = int(probe.get("width") or 0)
+    height = int(probe.get("height") or 0)
+    duration_seconds = probe.get("duration_seconds")
+    try:
+        source_size_bytes = int(local_path.stat().st_size)
+    except Exception:
+        source_size_bytes = 0
+    active_logger.info(
+        "normalize probe video_id=%s key=%s path=%s width=%s height=%s size_bytes=%s duration_seconds=%s",
+        video_id,
+        source_key,
+        local_path,
+        width or 0,
+        height or 0,
+        source_size_bytes,
+        duration_seconds,
+    )
+
+    if height <= 720:
+        active_logger.info(
+            "normalize transcode skip video_id=%s key=%s path=%s width=%s height=%s reason=height_lte_720",
+            video_id,
+            source_key,
+            local_path,
+            width or 0,
+            height or 0,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+
+    if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
+        active_logger.warning(
+            "normalize transcode fallback video_id=%s key=%s path=%s width=%s height=%s reason=unsupported_suffix",
+            video_id,
+            source_key,
+            local_path,
+            width or 0,
+            height or 0,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+
+    storage, _ = _resolve_s3_source_video_key(video_id, suffix)
+    if not storage:
+        primary_storage = get_media_storage()
+        if getattr(primary_storage, "backend_name", "local") == "s3":
+            storage = primary_storage
+        elif S3_BUCKET_NAME:
+            try:
+                storage = get_media_storage("s3")
+            except Exception:
+                active_logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
+                return remux_s3_source_video_if_needed(
+                    video_id,
+                    source_key,
+                    local_path,
+                    target_key=upload_key,
+                    log=active_logger,
+                )
+    if not storage:
+        active_logger.warning(
+            "normalize transcode fallback video_id=%s key=%s path=%s reason=s3-unavailable",
+            video_id,
+            source_key,
+            local_path,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+
+    temp_output = local_path.with_name(f"{local_path.stem}.720p.{os.getpid()}{suffix}")
+    transcode_started_at = time.time()
+    timeout_seconds = scale_media_timeout(
+        max(SOURCE_FASTSTART_TIMEOUT_SECONDS * 4, FFMPEG_SHORT_TIMEOUT),
+        duration_seconds=duration_seconds,
+        multiplier=4.0,
+        extra_seconds=300,
+    )
+    cmd = [
+        _resolve_ffmpeg(),
+        "-y",
+        "-i",
+        str(local_path),
+        "-vf",
+        "scale=-2:720",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "fast",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(temp_output),
+    ]
+    try:
+        active_logger.info(
+            "normalize transcode start video_id=%s key=%s target_key=%s path=%s width=%s height=%s size_bytes=%s timeout=%ss cmd=%s",
+            video_id,
+            source_key,
+            upload_key,
+            local_path,
+            width or 0,
+            height or 0,
+            source_size_bytes,
+            timeout_seconds,
+            " ".join(cmd),
+        )
+        run_media_subprocess(
+            cmd,
+            operation="source_transcode_to_720p",
+            context=f"video_id={video_id} key={source_key} target_key={upload_key}",
+            output_paths=[temp_output],
+            log=active_logger,
+            check=True,
+            timeout=timeout_seconds,
+            capture_output=True,
+            text=True,
+        )
+        if not temp_output.exists() or temp_output.stat().st_size <= 0:
+            raise RuntimeError("720p transcode output missing or empty")
+        output_size_bytes = int(temp_output.stat().st_size)
+        storage.put_file(temp_output, upload_key)
+        active_logger.info(
+            "normalize transcode success video_id=%s key=%s target_key=%s output_size_bytes=%s transcode_seconds=%s",
+            video_id,
+            source_key,
+            upload_key,
+            output_size_bytes,
+            round(time.time() - transcode_started_at, 2),
+        )
+        return upload_key
+    except Exception as exc:
+        active_logger.warning(
+            "normalize transcode fallback video_id=%s key=%s target_key=%s path=%s width=%s height=%s error=%s",
+            video_id,
+            source_key,
+            upload_key,
+            local_path,
+            width or 0,
+            height or 0,
+            exc,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+    finally:
+        try:
+            temp_output.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def normalize_source_video_for_streaming(path: Path, *, log: logging.Logger | None = None) -> Path:

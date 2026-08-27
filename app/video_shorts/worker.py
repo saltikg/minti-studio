@@ -25,7 +25,7 @@ from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _resolve_source_video,
-    remux_s3_source_video_if_needed,
+    normalize_s3_source_video_for_upload,
 )
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts.services.quick_short_flow import (
@@ -543,12 +543,11 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     source_path = None
     try:
         source_path = storage.download_to_temp(source_key)
-        streamable_key = f"videos/{video_id}_streamable.mp4"
-        new_key = remux_s3_source_video_if_needed(
+        new_key = normalize_s3_source_video_for_upload(
             video_id,
             source_key,
             Path(source_path),
-            target_key=streamable_key,
+            target_key=source_key,
             log=app.logger,
         )
         if not new_key:
