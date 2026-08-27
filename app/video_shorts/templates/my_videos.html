@@ -1581,7 +1581,7 @@
 
   const syncUploadSessionProgress = (session) => {
     if (!session) {
-      nudgeProgressToward(75, 0.5);
+      nudgeProgressToward(80, 0.5);
       setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
@@ -1599,13 +1599,13 @@
     const transcript = result.transcript || {};
     if (!isCompletedSessionStep(normalize.status)) {
       setServerPrepareProgress(10);
-      nudgeProgressToward(progressPhases.serverPrepare.end, 0.75);
+      nudgeProgressToward(96, 0.5);
       setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
     if (!isCompletedSessionStep(transcript.status)) {
       setTranscriptPhaseProgress(10);
-      nudgeProgressToward(progressPhases.transcript.end, 0.45);
+      nudgeProgressToward(99, 0.35);
       setUploadPhaseFeedback('Analyzing your video…');
       return false;
     }
