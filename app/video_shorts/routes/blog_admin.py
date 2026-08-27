@@ -19,8 +19,6 @@ from app.video_shorts.services.blog_articles import (
     update_blog_article,
     update_blog_article_status,
 )
-from app.video_shorts.services.storage import get_media_storage
-
 _ALLOWED_COVER_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -159,11 +157,11 @@ def admin_blog_upload_cover():
     bucket_name = _blog_media_bucket()
     region_name = _blog_media_region()
     try:
-        storage = get_media_storage("s3")
-        storage.bucket_name = bucket_name
-        storage.region_name = region_name
-        storage.client = boto3.session.Session(region_name=region_name).client("s3", region_name=region_name)
-        storage.put_bytes(data, key, content_type=content_type)
+        client = boto3.session.Session(region_name=region_name).client("s3", region_name=region_name)
+        put_kwargs = {"Bucket": bucket_name, "Key": key, "Body": data}
+        if content_type:
+            put_kwargs["ContentType"] = content_type
+        client.put_object(**put_kwargs)
         return jsonify({"url": _public_blog_cover_url(bucket_name, key)})
     except Exception as exc:
         current_app.logger.exception("Blog cover upload failed for key=%s", key)
