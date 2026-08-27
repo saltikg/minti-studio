@@ -780,10 +780,12 @@
   };
 
   const progressPhases = {
-    compression: { start: 0, end: 50 },
-    audioMux: { start: 50, end: 70 },
-    upload: { start: 70, end: 100 },
-    fallbackCompression: { start: 0, end: 70 },
+    compression: { start: 0, end: 25 },
+    audioMux: { start: 25, end: 40 },
+    upload: { start: 40, end: 70 },
+    serverPrepare: { start: 70, end: 90 },
+    transcript: { start: 90, end: 99 },
+    fallbackCompression: { start: 0, end: 40 },
   };
   let currentFfmpegProgressPhase = 'fallbackCompression';
   let currentUploadProgressValue = 0;
@@ -806,6 +808,14 @@
 
   const setUploadPhaseProgress = (percent) => {
     setPhaseProgress('upload', percent);
+  };
+
+  const setServerPrepareProgress = (percent) => {
+    setPhaseProgress('serverPrepare', percent);
+  };
+
+  const setTranscriptPhaseProgress = (percent) => {
+    setPhaseProgress('transcript', percent);
   };
 
   const resetProgress = () => {
@@ -1432,6 +1442,8 @@
   };
 
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const uploadSessionPollIntervalMs = 2000;
+  const uploadSessionTimeoutMs = 45 * 60 * 1000;
 
   const isFileOverPerFileLimit = (file) => {
     if (!file) return false;
@@ -1528,6 +1540,81 @@
     }
   };
 
+  const fetchQuickUploadSession = async (sessionId) => {
+    const response = await fetch(`{{ url_for("video_shorts_bp.quick_short_session_api") }}?session_id=${encodeURIComponent(sessionId)}`, {
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = {};
+    }
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || payload.error || 'We could not check your upload status right now.');
+    }
+    return payload.session || null;
+  };
+
+  const isCompletedSessionStep = (status) => ['completed', 'ready', 'skipped', 'fallback'].includes(String(status || '').trim().toLowerCase());
+
+  const nudgeProgressToward = (targetPercent, step = 0.8) => {
+    const target = Math.max(0, Math.min(100, Number(targetPercent) || 0));
+    if (currentUploadProgressValue >= target) {
+      return;
+    }
+    setProgress(Math.min(target, currentUploadProgressValue + step));
+  };
+
+  const syncUploadSessionProgress = (session) => {
+    if (!session) {
+      nudgeProgressToward(75, 0.5);
+      setFeedback('Preparing your video...');
+      return false;
+    }
+    if (String(session.status || '').trim().toLowerCase() === 'failed') {
+      const failureMessage = session?.result?.message || session?.job?.error || 'Your video could not be prepared right now. Please try again.';
+      throw new Error(failureMessage);
+    }
+    if (String(session.status || '').trim().toLowerCase() === 'review') {
+      setProgress(100);
+      setFeedback('Your video is ready.');
+      return true;
+    }
+    const result = session.result || {};
+    const normalize = result.normalize || {};
+    const transcript = result.transcript || {};
+    if (!isCompletedSessionStep(normalize.status)) {
+      setServerPrepareProgress(10);
+      nudgeProgressToward(progressPhases.serverPrepare.end, 0.75);
+      setFeedback(normalize.message || result.message || 'Preparing your video on the server...');
+      return false;
+    }
+    if (!isCompletedSessionStep(transcript.status)) {
+      setTranscriptPhaseProgress(10);
+      nudgeProgressToward(progressPhases.transcript.end, 0.45);
+      setFeedback(transcript.message || result.message || 'Preparing your transcript...');
+      return false;
+    }
+    nudgeProgressToward(99, 0.25);
+    setFeedback(result.message || 'Preparing your video...');
+    return false;
+  };
+
+  const waitForUploadSessionReady = async (sessionId) => {
+    const startedAt = Date.now();
+    while ((Date.now() - startedAt) < uploadSessionTimeoutMs) {
+      const session = await fetchQuickUploadSession(sessionId);
+      if (syncUploadSessionProgress(session)) {
+        return session;
+      }
+      await sleep(uploadSessionPollIntervalMs);
+    }
+    throw new Error('Preparing your video is taking longer than expected. Please refresh in a moment.');
+  };
+
   const uploadViaMultipart = async (file) => {
     const startPayload = await startMultipartUpload(file);
     const completedParts = [];
@@ -1613,9 +1700,14 @@
         setFeedback('Preparing your video… done. Uploading the original file.');
       }
       setUploadPhaseProgress(0);
-      await uploadViaMultipart(preparedUpload.file);
+      const uploadPayload = await uploadViaMultipart(preparedUpload.file);
       setUploadPhaseProgress(100);
-      setFeedback('Upload complete. Your video is now transcribing.');
+      const uploadedSessionId = String(uploadPayload?.session?.id || '').trim();
+      if (!uploadedSessionId) {
+        throw new Error('Upload finished, but we could not track server processing.');
+      }
+      setFeedback('Preparing your video...');
+      await waitForUploadSessionReady(uploadedSessionId);
       setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {

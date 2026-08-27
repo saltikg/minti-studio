@@ -675,6 +675,7 @@ def _enqueue_uploaded_video_jobs(
         user_id=current_user["id"],
         job_type=JOB_TYPE_NORMALIZE_UPLOAD,
         payload={
+            "quick_session_id": session_id,
             "video_pk": int(video_pk),
             "video_id": video_id,
             "source_key": source_key,
@@ -701,7 +702,12 @@ def _enqueue_uploaded_video_jobs(
         video_pk=int(video_pk),
         video_id=video_id,
         ingest_job_id=job.get("id"),
-        result={"stage": "uploaded", "message": "Upload complete. Starting transcription."},
+        result={
+            "stage": "preparing",
+            "message": "Preparing your video...",
+            "normalize": {"status": "queued", "message": "Preparing your video on the server..."},
+            "transcript": {"status": "queued", "message": "Preparing your transcript..."},
+        },
     ), job
 
 

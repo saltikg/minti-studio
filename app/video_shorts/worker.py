@@ -194,6 +194,64 @@ def _set_quick_session_state(session_id: Optional[str], **updates: Any) -> None:
         pass
 
 
+def _session_result_status_done(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized in {"completed", "ready", "skipped", "fallback"}
+
+
+def _merge_session_nested(existing: Dict[str, Any], key: str, value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not value:
+        return existing
+    current = existing.get(key)
+    merged_child = dict(current) if isinstance(current, dict) else {}
+    merged_child.update(value)
+    existing[key] = merged_child
+    return existing
+
+
+def _processing_message_from_result(result_payload: Dict[str, Any]) -> str:
+    normalize_status = ((result_payload.get("normalize") or {}).get("status"))
+    transcript_status = ((result_payload.get("transcript") or {}).get("status"))
+    if not _session_result_status_done(normalize_status):
+        return "Preparing your video on the server..."
+    if not _session_result_status_done(transcript_status):
+        return "Preparing your transcript..."
+    return "Ready to review."
+
+
+def _update_upload_session_progress(
+    session_id: Optional[str],
+    *,
+    user_id: Optional[str],
+    normalize: Optional[Dict[str, Any]] = None,
+    transcript: Optional[Dict[str, Any]] = None,
+    clip_updates: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not session_id:
+        return
+    try:
+        quick_session = get_session(session_id, user_id=user_id) or {}
+        existing_result = dict((quick_session.get("result") or {}))
+        _merge_session_nested(existing_result, "normalize", normalize)
+        _merge_session_nested(existing_result, "transcript", transcript)
+        normalize_done = _session_result_status_done(((existing_result.get("normalize") or {}).get("status")))
+        transcript_done = _session_result_status_done(((existing_result.get("transcript") or {}).get("status")))
+        updates: Dict[str, Any] = {"result": existing_result}
+        if clip_updates:
+            updates.update(clip_updates)
+        if normalize_done and transcript_done:
+            existing_result["stage"] = "ready"
+            existing_result["message"] = "Ready to review."
+            updates["status"] = STATUS_REVIEW
+        else:
+            existing_result["stage"] = "preparing"
+            existing_result["message"] = _processing_message_from_result(existing_result)
+            updates["status"] = STATUS_INGESTING
+        update_session(session_id, **updates)
+    except Exception:
+        pass
+
+
 def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
     if job.get("type") == JOB_TYPE_RENDER_SHORT:
         _mark_plan_failure(job, message)
@@ -476,12 +534,17 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
             )
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
-    _set_job_progress(job["id"], stage="uploaded", message="Upload complete. Preparing transcription.", status="processing")
+    _update_upload_session_progress(
+        session_id,
+        user_id=owner_user_id,
+        transcript={"status": "processing", "message": "Preparing your transcript..."},
+    )
+    _set_job_progress(job["id"], stage="uploaded", message="Preparing your video.", status="processing")
     source_path, is_temp = _resolve_source_video(video_id)
     if not source_path or not source_path.exists():
         raise PermanentRenderJobError("Uploaded source file could not be found.")
     try:
-        _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
+        _set_job_progress(job["id"], stage="transcribing", message="Preparing your transcript.", status="processing")
         transcript_text, segments = _transcribe_with_whisper(source_path)
         _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
@@ -512,13 +575,23 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         }
         _set_quick_session_state(
             session_id,
-            status=STATUS_REVIEW,
             video_pk=video_pk,
             video_id=video_id,
             clip_start_seconds=clip_start,
             clip_end_seconds=clip_end,
             clip_title=clip_title,
-            result=result,
+        )
+        _update_upload_session_progress(
+            session_id,
+            user_id=owner_user_id,
+            transcript={"status": "completed", "message": "Transcript ready."},
+            clip_updates={
+                "video_pk": video_pk,
+                "video_id": video_id,
+                "clip_start_seconds": clip_start,
+                "clip_end_seconds": clip_end,
+                "clip_title": clip_title,
+            },
         )
         return result
     finally:
@@ -527,6 +600,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
 
 def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
+    session_id = str(payload.get("quick_session_id") or "").strip()
     video_id = str(payload.get("video_id") or "").strip()
     source_key = str(payload.get("source_key") or "").strip()
     video_pk = int(payload.get("video_pk") or 0)
@@ -542,6 +616,11 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     storage = get_media_storage()
     source_path = None
     try:
+        _update_upload_session_progress(
+            session_id,
+            user_id=str(job.get("user_id") or "").strip(),
+            normalize={"status": "processing", "message": "Preparing your video on the server..."},
+        )
         source_path = storage.download_to_temp(source_key)
         new_key = normalize_s3_source_video_for_upload(
             video_id,
@@ -551,6 +630,11 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             log=app.logger,
         )
         if not new_key:
+            _update_upload_session_progress(
+                session_id,
+                user_id=str(job.get("user_id") or "").strip(),
+                normalize={"status": "completed", "message": "Video preparation finished."},
+            )
             return {
                 "normalized": False,
                 "reason": "already-streamable-or-fallback",
@@ -569,6 +653,11 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             conn.commit()
         finally:
             conn.close()
+        _update_upload_session_progress(
+            session_id,
+            user_id=str(job.get("user_id") or "").strip(),
+            normalize={"status": "completed", "message": "Video preparation finished."},
+        )
         return {
             "normalized": True,
             "source_key": source_key,
@@ -582,6 +671,11 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             video_id,
             source_key,
             exc,
+        )
+        _update_upload_session_progress(
+            session_id,
+            user_id=str(job.get("user_id") or "").strip(),
+            normalize={"status": "fallback", "message": "Video preparation finished."},
         )
         return {
             "normalized": False,
