@@ -4,12 +4,19 @@
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
+  var mintiHasInternalTrafficCookie = document.cookie.split(';').some(function (item) {
+    return item.trim() === 'minti_internal_traffic=true';
+  });
+  var mintiGaSharedParams = mintiHasInternalTrafficCookie ? { traffic_type: 'internal' } : {};
 
-  gtag('config', 'G-BFML4VLWMF');
+  gtag('config', 'G-BFML4VLWMF', mintiGaSharedParams);
 
   function trackMintiEvent(eventName, params = {}) {
     if (typeof gtag === 'function') {
-      gtag('event', eventName, params);
+      var eventParams = mintiHasInternalTrafficCookie
+        ? Object.assign({ traffic_type: 'internal' }, params)
+        : params;
+      gtag('event', eventName, eventParams);
     }
   }
 </script>
