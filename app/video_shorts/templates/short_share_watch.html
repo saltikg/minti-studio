@@ -58,48 +58,76 @@
         box-shadow: 0 10px 24px rgba(110, 231, 216, 0.18);
       }
       .watch-intro {
-        margin: 0 0 14px;
+        margin: 0 0 10px;
         text-align: center;
         color: var(--text);
-        font-size: 0.96rem;
+        font-size: 0.92rem;
         line-height: 1.4;
         font-weight: 600;
       }
       .watch-steps {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-bottom: 16px;
-      }
-      .watch-step {
-        padding: 12px 10px;
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(126, 239, 217, 0.12);
-        text-align: center;
-      }
-      .watch-step-num {
-        display: block;
-        margin-bottom: 6px;
-        color: var(--accent);
-        font-size: 0.74rem;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-      }
-      .watch-step-text {
-        display: block;
-        color: var(--text);
-        font-size: 0.82rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+        color: var(--muted);
+        font-size: 0.78rem;
         line-height: 1.35;
+      }
+      .watch-step-label {
+        color: var(--text);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .watch-step-arrow {
+        color: rgba(110, 231, 216, 0.72);
+        font-size: 0.86rem;
       }
       .watch-video-wrap {
         position: relative;
+        width: min(100%, 360px);
+        margin: 0 auto;
       }
       video {
         display: block;
         width: 100%;
         border-radius: 18px;
         background: #000;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+      }
+      .watch-play-button {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        min-height: 58px;
+        padding: 0 24px;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(8, 17, 27, 0.82);
+        color: var(--text);
+        font: inherit;
+        font-weight: 700;
+        font-size: 0.98rem;
+        cursor: pointer;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+        backdrop-filter: blur(12px);
+        transition: opacity 180ms ease, transform 180ms ease, background 180ms ease;
+      }
+      .watch-play-button:hover,
+      .watch-play-button:focus-visible {
+        background: rgba(10, 24, 37, 0.92);
+      }
+      .watch-play-button.is-hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -50%) scale(0.96);
       }
       .watch-prompt-banner {
         margin-top: 12px;
@@ -149,7 +177,7 @@
         cursor: pointer;
       }
       .watch-footer {
-        margin-top: 18px;
+        margin-top: 14px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -215,19 +243,20 @@
           border-radius: 20px;
         }
         .watch-intro {
-          font-size: 0.9rem;
-          margin-bottom: 12px;
+          font-size: 0.88rem;
+          margin-bottom: 10px;
         }
         .watch-steps {
-          grid-template-columns: 1fr;
-          gap: 8px;
-          margin-bottom: 14px;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 6px;
+          margin: 0 auto 12px;
+          width: min(100%, 280px);
+          font-size: 0.76rem;
         }
-        .watch-step {
-          padding: 10px 12px;
-        }
-        .watch-step-text {
-          font-size: 0.8rem;
+        .watch-step-arrow {
+          margin-left: 4px;
+          font-size: 0.78rem;
         }
         .watch-prompt-card {
           padding: 12px 14px;
@@ -256,41 +285,44 @@
         {% endif %}
       </p>
       <div class="watch-steps" aria-label="How it works">
-        <div class="watch-step">
-          <span class="watch-step-num">01</span>
-          <span class="watch-step-text">
-            {% if language == 'TR' %}
-              Videonu yükle
-            {% else %}
-              Upload your video
-            {% endif %}
-          </span>
-        </div>
-        <div class="watch-step">
-          <span class="watch-step-num">02</span>
-          <span class="watch-step-text">
-            {% if language == 'TR' %}
-              Anları seç veya AI seçsin
-            {% else %}
-              Pick the moments or let AI choose
-            {% endif %}
-          </span>
-        </div>
-        <div class="watch-step">
-          <span class="watch-step-num">03</span>
-          <span class="watch-step-text">
-            {% if language == 'TR' %}
-              Short'unu oluştur
-            {% else %}
-              Generate your Short
-            {% endif %}
-          </span>
-        </div>
+        <span class="watch-step-label">
+          {% if language == 'TR' %}
+            Videonu yükle
+          {% else %}
+            Upload your video
+          {% endif %}
+        </span>
+        <span class="watch-step-arrow" aria-hidden="true">→</span>
+        <span class="watch-step-label">
+          {% if language == 'TR' %}
+            AI en iyi anları bulur
+          {% else %}
+            AI finds the best moments
+          {% endif %}
+        </span>
+        <span class="watch-step-arrow" aria-hidden="true">→</span>
+        <span class="watch-step-label">
+          {% if language == 'TR' %}
+            Short'larını oluştur ve yayınla
+          {% else %}
+            Create &amp; publish your Shorts
+          {% endif %}
+        </span>
       </div>
       <div class="watch-video-wrap">
         <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
+        <button type="button" class="watch-play-button" id="watch-play-button">
+          <span aria-hidden="true">▶</span>
+          <span>
+            {% if language == 'TR' %}
+              Short'unu izle
+            {% else %}
+              Watch your Short
+            {% endif %}
+          </span>
+        </button>
         {% if onboarding_url %}
           <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="true">
             <div class="watch-prompt-card">
@@ -366,6 +398,7 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
+        const playButton = document.getElementById("watch-play-button");
         const promptBanner = document.getElementById("watch-prompt-banner");
         const replayButton = document.getElementById("watch-replay-btn");
         const promptTriggerSeconds = 7;
@@ -390,6 +423,14 @@
         fireEvent("view");
         let playTracked = false;
         let promptShown = false;
+        const hidePlayButton = () => {
+          playButton?.classList.add("is-hidden");
+        };
+        const showPlayButton = () => {
+          if (!video.ended && video.paused) {
+            playButton?.classList.remove("is-hidden");
+          }
+        };
         const showPrompt = () => {
           if (!promptBanner || promptShown) {
             return;
@@ -406,11 +447,15 @@
           promptBanner.setAttribute("aria-hidden", "true");
         };
         video.addEventListener("play", () => {
+          hidePlayButton();
           if (playTracked) {
             return;
           }
           playTracked = true;
           fireEvent("play");
+        }, { passive: true });
+        video.addEventListener("pause", () => {
+          showPlayButton();
         }, { passive: true });
         if (promptBanner) {
           video.addEventListener("timeupdate", () => {
@@ -419,15 +464,23 @@
             }
           }, { passive: true });
           video.addEventListener("ended", () => {
+            showPlayButton();
             showPrompt();
           }, { passive: true });
         }
+        playButton?.addEventListener("click", () => {
+          hidePlayButton();
+          video.play().catch(() => {
+            showPlayButton();
+          });
+        });
         replayButton?.addEventListener("click", () => {
           hidePrompt();
           promptShown = false;
           video.currentTime = 0;
           video.play().catch(() => {});
         });
+        showPlayButton();
       })();
     </script>
   </body>
