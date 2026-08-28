@@ -405,7 +405,6 @@ SUBTITLE_PRESETS = {
         "shadow_blur_radius": 17,
     },
 }
-DEFAULT_SUBTITLE_PRESET = "classic_yellow"
 DEFAULT_TITLE_BG_ALPHA = 92
 DEFAULT_SUBTITLE_BG_ALPHA = 85
 DEFAULT_SUBTITLE_TEXT_ALPHA = 100
@@ -549,7 +548,7 @@ DEFAULT_SUB_FONT_KEY = "arimo"
 DEFAULT_SUB_FONT_SIZE = 40
 DEFAULT_TITLE_MARGIN = 220
 DEFAULT_TITLE_BG_COLOR = "#FFD600"
-DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "400"))
+DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "350"))
 STYLE_TEMPLATES = [
     {
         "key": "green_pop",
@@ -738,6 +737,31 @@ STYLE_TEMPLATES = [
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
     },
 ]
+DEFAULT_STYLE_TEMPLATE_KEY = "amber_gold"
+DEFAULT_STYLE_TEMPLATE = next(
+    (template for template in STYLE_TEMPLATES if str(template.get("key") or "").strip() == DEFAULT_STYLE_TEMPLATE_KEY),
+    STYLE_TEMPLATES[0] if STYLE_TEMPLATES else {},
+)
+DEFAULT_SUBTITLE_PRESET = str(
+    DEFAULT_STYLE_TEMPLATE.get("subtitle_preset") or "classic_yellow"
+).strip() or "classic_yellow"
+DEFAULT_EDITOR_TITLE_FONT_KEY = str(
+    DEFAULT_STYLE_TEMPLATE.get("title_font_key") or DEFAULT_TITLE_FONT_KEY
+).strip() or DEFAULT_TITLE_FONT_KEY
+DEFAULT_EDITOR_TITLE_TEXT_COLOR = str(
+    DEFAULT_STYLE_TEMPLATE.get("title_text_color") or DEFAULT_TITLE_TEXT_COLOR
+).strip() or DEFAULT_TITLE_TEXT_COLOR
+DEFAULT_EDITOR_TITLE_BG_COLOR = str(
+    DEFAULT_STYLE_TEMPLATE.get("title_bg_color") or DEFAULT_TITLE_BG_COLOR
+).strip() or DEFAULT_TITLE_BG_COLOR
+DEFAULT_EDITOR_TITLE_BG_ALPHA = int(
+    DEFAULT_STYLE_TEMPLATE.get("title_bg_alpha")
+    if DEFAULT_STYLE_TEMPLATE.get("title_bg_alpha") is not None
+    else DEFAULT_TITLE_BG_ALPHA
+)
+DEFAULT_EDITOR_TITLE_FONT_SIZE = int(
+    DEFAULT_STYLE_TEMPLATE.get("title_font_size") or DEFAULT_TITLE_FONT_SIZE
+)
 
 STATIC_FONTS_DIR = Path(__file__).resolve().parent / "static" / "fonts"
 MINTI_BACKGROUNDS_DIR = Path(__file__).resolve().parent / "static" / "mintibackgrounds"
@@ -947,7 +971,7 @@ SUBTITLE_PILL_FONT_MAP = {
 
 TITLE_FONT_SIZES = [8, 20, 24, 28, 30, 34, 40, 44]
 SUB_FONT_SIZES = [8, 9, 10, 12, 14, 16]
-SUB_MARGIN_DEFAULT = 80
+SUB_MARGIN_DEFAULT = 405
 
 STATIC_IMG_DIR = Path(__file__).resolve().parent / "static" / "img"
 STATIC_USER_IMAGES_DIR = Path(__file__).resolve().parent / "static" / "user_images"

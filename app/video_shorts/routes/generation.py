@@ -32,11 +32,17 @@ from app.video_shorts.config import (
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
     DEFAULT_SUBTITLE_PRESET,
+    DEFAULT_STYLE_TEMPLATE_KEY,
     SUBTITLE_HIGHLIGHT_COLOR,
     SUBTITLE_PRESETS,
     STYLE_TEMPLATES,
     DEFAULT_TITLE_BG_COLOR,
     DEFAULT_TITLE_BG_ALPHA,
+    DEFAULT_EDITOR_TITLE_BG_ALPHA,
+    DEFAULT_EDITOR_TITLE_BG_COLOR,
+    DEFAULT_EDITOR_TITLE_FONT_KEY,
+    DEFAULT_EDITOR_TITLE_FONT_SIZE,
+    DEFAULT_EDITOR_TITLE_TEXT_COLOR,
     DEFAULT_SUBTITLE_TEXT_ALPHA,
     DEFAULT_TITLE_TEXT_COLOR,
     DEFAULT_TITLE_FONT_KEY,
@@ -4356,7 +4362,7 @@ def _get_font_settings_from_session(
     subtitle_bg_alpha_override: Optional[int] = None,
     subtitle_text_alpha_override: Optional[int] = None,
 ) -> Tuple[Optional[Dict[str, Any]], str, int, int, int, int, str, int, str, str, str, int, int]:
-    font_key = video_font_key or DEFAULT_TITLE_FONT_KEY
+    font_key = video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY
     font_choice = _build_title_font_choice(font_key)
     sub_font_key = video_sub_font_key or DEFAULT_SUB_FONT_KEY
     sub_font_choice = next(
@@ -4369,7 +4375,7 @@ def _get_font_settings_from_session(
     )
     sub_font_name = sub_font_choice["fontname"] if sub_font_choice else "DejaVu Sans"
     title_font_size = (
-        title_font_size_override or DEFAULT_TITLE_FONT_SIZE
+        title_font_size_override or DEFAULT_EDITOR_TITLE_FONT_SIZE
     )
     sub_font_size = (
         subtitle_font_size_override or DEFAULT_SUB_FONT_SIZE
@@ -4385,13 +4391,13 @@ def _get_font_settings_from_session(
     if title_bg_color_override is not None:
         title_bg_color = _normalize_hex_color(title_bg_color_override, DEFAULT_TITLE_BG_COLOR)
     else:
-        title_bg_color = _normalize_hex_color(DEFAULT_TITLE_BG_COLOR, DEFAULT_TITLE_BG_COLOR)
+        title_bg_color = _normalize_hex_color(DEFAULT_EDITOR_TITLE_BG_COLOR, DEFAULT_TITLE_BG_COLOR)
     title_bg_alpha = _normalize_alpha_percent(
-        title_bg_alpha_override if title_bg_alpha_override is not None else DEFAULT_TITLE_BG_ALPHA,
+        title_bg_alpha_override if title_bg_alpha_override is not None else DEFAULT_EDITOR_TITLE_BG_ALPHA,
         DEFAULT_TITLE_BG_ALPHA,
     )
     title_text_color = _normalize_hex_color(
-        title_text_color_override if title_text_color_override is not None else DEFAULT_TITLE_TEXT_COLOR,
+        title_text_color_override if title_text_color_override is not None else DEFAULT_EDITOR_TITLE_TEXT_COLOR,
         DEFAULT_TITLE_TEXT_COLOR,
     )
     subtitle_text_color = _normalize_hex_color(
@@ -4644,11 +4650,11 @@ def generate_short(video_pk):
         if Path(cfg.get("path") or "").exists()
     ]
     if not title_font_options:
-        default_cfg = TITLE_FONTS.get(DEFAULT_TITLE_FONT_KEY)
+        default_cfg = TITLE_FONTS.get(DEFAULT_EDITOR_TITLE_FONT_KEY)
         if default_cfg:
             title_font_options = [
                 {
-                    "key": DEFAULT_TITLE_FONT_KEY,
+                    "key": DEFAULT_EDITOR_TITLE_FONT_KEY,
                     "label": default_cfg["label"],
                     "css_family": default_cfg["css_family"],
                 }
@@ -4663,8 +4669,8 @@ def generate_short(video_pk):
     if not sub_fonts:
         sub_fonts.append({"key": "dejavu", "label": "DejaVu Sans", "path": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "fontname": "DejaVu Sans"})
 
-    video_font_key = video.get("title_font_key") or DEFAULT_TITLE_FONT_KEY
-    video_title_font_size = video.get("title_font_size") or DEFAULT_TITLE_FONT_SIZE
+    video_font_key = video.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY
+    video_title_font_size = video.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
     video_sub_font_key = video.get("subtitle_font_key") or DEFAULT_SUB_FONT_KEY
     video_sub_font_size = video.get("subtitle_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin = video.get("subtitle_margin") or SUB_MARGIN_DEFAULT
@@ -4680,9 +4686,9 @@ def generate_short(video_pk):
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
         video_title_line_spacing = -4
-    video_title_bg_color = video.get("title_bg_color") or DEFAULT_TITLE_BG_COLOR
-    video_title_bg_alpha = _normalize_alpha_percent(video.get("title_bg_alpha"), DEFAULT_TITLE_BG_ALPHA)
-    video_title_text_color = video.get("title_text_color") or DEFAULT_TITLE_TEXT_COLOR
+    video_title_bg_color = video.get("title_bg_color") or DEFAULT_EDITOR_TITLE_BG_COLOR
+    video_title_bg_alpha = _normalize_alpha_percent(video.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
+    video_title_text_color = video.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR
     video_subtitle_text_color = video.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR
     video_subtitle_bg_color = video.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR
     video_subtitle_bg_alpha = _normalize_alpha_percent(video.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA)
@@ -4722,8 +4728,8 @@ def generate_short(video_pk):
     except Exception:
         video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
 
-    video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
-    video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_TITLE_TEXT_COLOR)
+    video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
+    video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
 
@@ -4968,7 +4974,7 @@ def generate_short(video_pk):
     selected_title_font_key = _resolve_title_font_key(video_font_key)
     if selected_title_font_key not in available_title_font_keys and title_font_options:
         selected_title_font_key = title_font_options[0]["key"]
-    default_font_css = TITLE_FONTS.get(DEFAULT_TITLE_FONT_KEY, {}).get("css_family", "inherit")
+    default_font_css = TITLE_FONTS.get(DEFAULT_EDITOR_TITLE_FONT_KEY, {}).get("css_family", "inherit")
     selected_title_font_css = TITLE_FONTS.get(selected_title_font_key, {}).get("css_family", default_font_css)
     selected_video_date = video_date_text
     selected_video_date_top = video_date_top
@@ -13205,7 +13211,7 @@ def create_clip_plan_v2(video_pk):
         except Exception:
             computed_duration = 0
 
-    font_key = request.form.get("font") or session.get("vs_font") or DEFAULT_TITLE_FONT_KEY
+    font_key = request.form.get("font") or session.get("vs_font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     session["vs_font"] = font_key
     sub_font_key = request.form.get("sub_font") or session.get("vs_sub_font") or DEFAULT_SUB_FONT_KEY
     session["vs_sub_font"] = sub_font_key
@@ -13213,10 +13219,10 @@ def create_clip_plan_v2(video_pk):
         title_font_size = int(
             request.form.get("title_font_size")
             or session.get("vs_title_font_size")
-            or DEFAULT_TITLE_FONT_SIZE
+            or DEFAULT_EDITOR_TITLE_FONT_SIZE
         )
     except Exception:
-        title_font_size = DEFAULT_TITLE_FONT_SIZE
+        title_font_size = DEFAULT_EDITOR_TITLE_FONT_SIZE
     try:
         sub_font_size = int(request.form.get("sub_font_size") or session.get("vs_sub_font_size") or DEFAULT_SUB_FONT_SIZE)
     except Exception:
@@ -13236,19 +13242,19 @@ def create_clip_plan_v2(video_pk):
     title_bg_color = _normalize_hex_color(
         request.form.get("title_bg_color")
         or session.get("vs_title_bg_color")
-        or DEFAULT_TITLE_BG_COLOR,
+        or DEFAULT_EDITOR_TITLE_BG_COLOR,
         DEFAULT_TITLE_BG_COLOR,
     )
     title_bg_alpha = _normalize_alpha_percent(
         request.form.get("title_bg_alpha")
         or session.get("vs_title_bg_alpha")
-        or DEFAULT_TITLE_BG_ALPHA,
+        or DEFAULT_EDITOR_TITLE_BG_ALPHA,
         DEFAULT_TITLE_BG_ALPHA,
     )
     title_text_color = _normalize_hex_color(
         request.form.get("title_text_color")
         or session.get("vs_title_text_color")
-        or DEFAULT_TITLE_TEXT_COLOR,
+        or DEFAULT_EDITOR_TITLE_TEXT_COLOR,
         DEFAULT_TITLE_TEXT_COLOR,
     )
     subtitle_text_color = _normalize_hex_color(
@@ -13633,12 +13639,12 @@ def add_v2_non_speech_keyword(video_pk):
 def save_short_settings(video_pk):
     brand_id = current_brand_id()
     current_user = getattr(g, "vs_current_user", None)
-    font_key = request.form.get("font") or DEFAULT_TITLE_FONT_KEY
+    font_key = request.form.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
-        title_font_size = int(request.form.get("title_font_size") or DEFAULT_TITLE_FONT_SIZE)
+        title_font_size = int(request.form.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE)
     except Exception:
-        title_font_size = DEFAULT_TITLE_FONT_SIZE
+        title_font_size = DEFAULT_EDITOR_TITLE_FONT_SIZE
     try:
         subtitle_font_size = int(request.form.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE)
     except Exception:
@@ -13663,9 +13669,9 @@ def save_short_settings(video_pk):
         video_date_top = int(request.form.get("video_date_top") or DEFAULT_VIDEO_DATE_TOP)
     except Exception:
         video_date_top = DEFAULT_VIDEO_DATE_TOP
-    title_bg_color = _normalize_hex_color(request.form.get("title_bg_color") or DEFAULT_TITLE_BG_COLOR, DEFAULT_TITLE_BG_COLOR)
-    title_bg_alpha = _normalize_alpha_percent(request.form.get("title_bg_alpha") or DEFAULT_TITLE_BG_ALPHA, DEFAULT_TITLE_BG_ALPHA)
-    title_text_color = _normalize_hex_color(request.form.get("title_text_color") or DEFAULT_TITLE_TEXT_COLOR, DEFAULT_TITLE_TEXT_COLOR)
+    title_bg_color = _normalize_hex_color(request.form.get("title_bg_color") or DEFAULT_EDITOR_TITLE_BG_COLOR, DEFAULT_TITLE_BG_COLOR)
+    title_bg_alpha = _normalize_alpha_percent(request.form.get("title_bg_alpha") or DEFAULT_EDITOR_TITLE_BG_ALPHA, DEFAULT_TITLE_BG_ALPHA)
+    title_text_color = _normalize_hex_color(request.form.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR, DEFAULT_TITLE_TEXT_COLOR)
     subtitle_text_color = _normalize_hex_color(request.form.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR, DEFAULT_SUBTITLE_TEXT_COLOR)
     subtitle_bg_color = _normalize_hex_color(request.form.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_COLOR)
     subtitle_bg_alpha = _normalize_alpha_percent(request.form.get("subtitle_bg_alpha") or DEFAULT_SUBTITLE_BG_ALPHA, DEFAULT_SUBTITLE_BG_ALPHA)
@@ -13914,7 +13920,7 @@ def autoclip_video(video_pk):
     video_title_margin = None
     video_title_line_spacing = -4
     video_title_bg_color = None
-    video_title_bg_alpha = DEFAULT_TITLE_BG_ALPHA
+    video_title_bg_alpha = DEFAULT_EDITOR_TITLE_BG_ALPHA
     video_title_text_color = None
     video_subtitle_text_color = None
     video_subtitle_bg_color = None
@@ -14401,8 +14407,10 @@ def autoclip_video(video_pk):
             video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     finally:
         conn.close()
-    video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_TITLE_BG_COLOR)
-    video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_TITLE_TEXT_COLOR)
+    video_font_key = video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY
+    video_title_font_size = video_title_font_size or DEFAULT_EDITOR_TITLE_FONT_SIZE
+    video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
+    video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
     if video_subtitle_style not in {"plain", "karaoke"}:
         video_subtitle_style = "plain"
@@ -14703,7 +14711,7 @@ def autoclip_video(video_pk):
         subtitle_bg_alpha_override=video_subtitle_bg_alpha,
         subtitle_text_alpha_override=video_subtitle_text_alpha,
     )
-    fallback_font_choice = _build_title_font_choice(DEFAULT_TITLE_FONT_KEY)
+    fallback_font_choice = _build_title_font_choice(DEFAULT_EDITOR_TITLE_FONT_KEY)
     if not font_choice and fallback_font_choice:
         font_choice = fallback_font_choice
     default_font_label = (
@@ -14716,7 +14724,7 @@ def autoclip_video(video_pk):
         if font_choice and font_choice.get("label")
         else default_font_label
     )
-    normalized_title_font_key = _resolve_title_font_key(video_font_key)
+    normalized_title_font_key = _resolve_title_font_key(video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY)
     selected_title_font_key = normalized_title_font_key
     title_template_behavior = _resolve_title_template_behavior(
         subtitle_preset=video_subtitle_preset,

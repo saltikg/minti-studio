@@ -14,11 +14,11 @@
 {% set VIDEO_OVERLAY_HEIGHT_LANDSCAPE = (VIDEO_OVERLAY_WIDTH * 9 / 16) | round(2) %}
 {% set VIDEO_OVERLAY_HEIGHT_PORTRAIT = OVERLAY_HEIGHT %}
 {% set VIDEO_OVERLAY_X = 0 %}
-{% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 400) %}
+{% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 350) %}
 {% set TITLE_BAND_Y = 220 %}
 {% set TITLE_BAND_HEIGHT = 70 %}
 {% set SUBTITLE_BAND_HEIGHT = 90 %}
-{% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - 80 %}
+{% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - (selected_sub_margin if selected_sub_margin is not none else 405) %}
 {% set PREVIEW_CONFIG = {
   "frameWidth": PREVIEW_BG_WIDTH,
   "frameHeight": PREVIEW_BG_HEIGHT,
@@ -4414,7 +4414,7 @@
                       <input type="number"
                              name="video_overlay_offset"
                              class="form-control form-control-sm short-input-small"
-                             value="{{ selected_video_overlay_offset or 400 }}"
+                             value="{{ selected_video_overlay_offset or 350 }}"
                              min="0"
                              max="1200">
                       </div>
@@ -4597,7 +4597,7 @@
                     </div>
                   </div>
                   <div class="crop-modal-tab-panel caption-tab-panel" data-crop-modal-panel="caption" hidden>
-                    {% set subtitle_preset_value = selected_subtitle_preset or 'classic_yellow' %}
+                    {% set subtitle_preset_value = selected_subtitle_preset or 'amber_gold' %}
                     <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
                     <div id="crop-preview-toolbar-subtitle" class="crop-modal-element-editor">
                       <div class="crop-modal-element-header">
@@ -4630,7 +4630,7 @@
                             <span class="advanced-field-label-main">Position</span>
                             <span class="advanced-field-label-direction">from bottom</span>
                           </span>
-                          <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 80 }}" min="0" max="2000">
+                          <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 405 }}" min="0" max="2000">
                         </div>
                       </div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
@@ -4786,10 +4786,10 @@
                                 {% endfor %}
                                 <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
                                   <label for="titleTextCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                                  <input type="text" id="titleTextCustomColor" class="form-control form-control-sm" value="{{ selected_title_text_color or '#000000' }}" placeholder="#RRGGBB">
+                                  <input type="text" id="titleTextCustomColor" class="form-control form-control-sm" value="{{ selected_title_text_color or '#FFFFFF' }}" placeholder="#RRGGBB">
                                 </div>
                               </div>
-                              <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#000000' }}">
+                              <input type="hidden" name="title_text_color" id="titleTextColorValue" value="{{ selected_title_text_color or '#FFFFFF' }}">
                             </div>
                           </div>
                         </div>
@@ -4816,17 +4816,17 @@
                                 {% endfor %}
                                 <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
                                   <label for="titleBgCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
-                                  <input type="text" id="titleBgCustomColor" class="form-control form-control-sm" value="{{ selected_title_bg_color or '#FFD600' }}" placeholder="#RRGGBB">
+                                  <input type="text" id="titleBgCustomColor" class="form-control form-control-sm" value="{{ selected_title_bg_color or '#111827' }}" placeholder="#RRGGBB">
                                 </div>
                               </div>
-                              <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#FFD600' }}">
+                              <input type="hidden" name="title_bg_color" id="titleBgColorValue" value="{{ selected_title_bg_color or '#111827' }}">
                             </div>
                           </div>
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">BG alpha</span>
-                            <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 92 }}">
+                            <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
                           </div>
                         </div>
                       </div>
@@ -11701,7 +11701,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const activePreset = String(subtitlePresetField?.value || "").trim();
     const titleTemplatePreset = TITLE_TEMPLATE_PRESETS[activePreset] || null;
     const alpha = alphaToOpacity(titleTemplatePreset?.bgAlpha ?? titleBgAlphaInput?.value, 92);
-    const hex = normalize(titleBgHidden?.value || "#FFD600");
+    const hex = normalize(titleBgHidden?.value || "#111827");
     const rgba = hexToRgba(hex, alpha);
     if (titlePreview) titlePreview.style.backgroundColor = rgba;
     if (previewTitle) previewTitle.style.backgroundColor = rgba;
@@ -11919,7 +11919,7 @@ document.addEventListener("DOMContentLoaded", function () {
   subtitleTextAlphaInput?.addEventListener("input", applySubtitlePreview);
   subtitleBgAlphaInput?.addEventListener("input", applySubtitlePreview);
   const syncSubtitlePresetCards = () => {
-    const activeValue = String(subtitlePresetField?.value || "classic_yellow").trim() || "classic_yellow";
+    const activeValue = String(subtitlePresetField?.value || "amber_gold").trim() || "amber_gold";
     subtitlePresetCards.forEach((card) => {
       const isActive = card.dataset.subtitlePresetValue === activeValue;
       card.classList.toggle("is-active", isActive);
