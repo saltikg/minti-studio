@@ -9885,6 +9885,12 @@ def add_clip_section(video_pk):
                 pass
 
     clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
+    inferred_language = _infer_clip_language_from_segments(
+        segments,
+        start_time,
+        end_time,
+        excerpt=transcript_full or clip_title,
+    )
     new_entry = {
         "origin": "manual",
         "plan_index": next_plan_index,
@@ -9896,6 +9902,8 @@ def add_clip_section(video_pk):
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
     }
+    if inferred_language:
+        new_entry["language"] = inferred_language
     plan_entries.insert(0, new_entry)
     try:
         _write_plan_entries(video_id, plan_entries)

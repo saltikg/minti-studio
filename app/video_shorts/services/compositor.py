@@ -272,7 +272,7 @@ def _normalize_title_language(language: Any) -> str:
     value = str(language or "").strip().lower()
     if not value:
         return ""
-    if value.startswith("tr") or value[:2] == "tr":
+    if value.startswith("tr") or value in {"tur", "turkish", "turkce"}:
         return "tr"
     return value[:2]
 
