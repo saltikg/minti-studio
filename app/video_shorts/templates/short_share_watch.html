@@ -66,28 +66,25 @@
         border-radius: 18px;
         background: #000;
       }
-      .watch-prompt-overlay {
-        position: absolute;
-        left: 16px;
-        right: 16px;
-        bottom: 16px;
+      .watch-prompt-banner {
+        margin-top: 12px;
         display: flex;
         justify-content: center;
-        padding: 0;
-        border-radius: 18px;
-        background: none;
         opacity: 0;
         pointer-events: none;
         transform: translateY(10px);
         transition: opacity 180ms ease, transform 180ms ease;
+        max-height: 0;
+        overflow: hidden;
       }
-      .watch-prompt-overlay.is-visible {
+      .watch-prompt-banner.is-visible {
         opacity: 1;
         pointer-events: auto;
         transform: translateY(0);
+        max-height: 260px;
       }
       .watch-prompt-card {
-        width: min(100%, 420px);
+        width: 100%;
         padding: 14px 16px;
         border-radius: 18px;
         background: rgba(8, 17, 27, 0.92);
@@ -182,11 +179,6 @@
           padding: 16px;
           border-radius: 20px;
         }
-        .watch-prompt-overlay {
-          left: 10px;
-          right: 10px;
-          bottom: 10px;
-        }
         .watch-prompt-card {
           padding: 12px 14px;
           border-radius: 16px;
@@ -211,7 +203,7 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
         {% if onboarding_url %}
-          <div class="watch-prompt-overlay" id="watch-prompt-overlay" aria-hidden="true">
+          <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="true">
             <div class="watch-prompt-card">
               <p class="watch-prompt-title">
                 {% if language == 'TR' %}
@@ -285,7 +277,7 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
-        const promptOverlay = document.getElementById("watch-prompt-overlay");
+        const promptBanner = document.getElementById("watch-prompt-banner");
         const replayButton = document.getElementById("watch-replay-btn");
         const promptTriggerSeconds = 7;
         if (!eventUrl || !video) {
@@ -310,19 +302,19 @@
         let playTracked = false;
         let promptShown = false;
         const showPrompt = () => {
-          if (!promptOverlay || promptShown) {
+          if (!promptBanner || promptShown) {
             return;
           }
           promptShown = true;
-          promptOverlay.classList.add("is-visible");
-          promptOverlay.setAttribute("aria-hidden", "false");
+          promptBanner.classList.add("is-visible");
+          promptBanner.setAttribute("aria-hidden", "false");
         };
         const hidePrompt = () => {
-          if (!promptOverlay) {
+          if (!promptBanner) {
             return;
           }
-          promptOverlay.classList.remove("is-visible");
-          promptOverlay.setAttribute("aria-hidden", "true");
+          promptBanner.classList.remove("is-visible");
+          promptBanner.setAttribute("aria-hidden", "true");
         };
         video.addEventListener("play", () => {
           if (playTracked) {
@@ -331,7 +323,7 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
-        if (promptOverlay) {
+        if (promptBanner) {
           video.addEventListener("timeupdate", () => {
             if (!promptShown && video.currentTime >= promptTriggerSeconds) {
               showPrompt();
