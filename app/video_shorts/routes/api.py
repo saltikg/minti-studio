@@ -117,8 +117,10 @@ def _subscriber_gate(subscriber_count):
         count = int(subscriber_count)
     except (TypeError, ValueError):
         return "hedef_disi"
-    if count < 100_000:
-        return "ideal"
+    if 5_000 <= count <= 100_000:
+        return "uygun"
+    if count < 5_000:
+        return "hedef_disi"
     if count <= 300_000:
         return "uygun"
     return "hedef_disi"
