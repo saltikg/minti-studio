@@ -35,11 +35,82 @@
         padding: 24px;
         box-shadow: 0 28px 72px rgba(0, 0, 0, 0.34);
       }
+      .watch-brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 14px;
+        color: var(--muted);
+        font-size: 0.84rem;
+        letter-spacing: 0.02em;
+      }
+      .watch-brand-mark {
+        width: 26px;
+        height: 26px;
+        border-radius: 9px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, rgba(110, 231, 216, 0.95), rgba(110, 231, 216, 0.58));
+        color: #06212a;
+        font-weight: 800;
+        box-shadow: 0 10px 24px rgba(110, 231, 216, 0.18);
+      }
+      .watch-video-wrap {
+        position: relative;
+      }
       video {
         display: block;
         width: 100%;
         border-radius: 18px;
         background: #000;
+      }
+      .watch-ended-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(6, 15, 24, 0.28), rgba(6, 15, 24, 0.88));
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+      .watch-ended-overlay.is-visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .watch-ended-card {
+        width: min(100%, 320px);
+        padding: 20px 18px;
+        border-radius: 22px;
+        background: rgba(8, 17, 27, 0.9);
+        border: 1px solid rgba(110, 231, 216, 0.18);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+        text-align: center;
+      }
+      .watch-ended-title {
+        margin: 0 0 14px;
+        font-size: 1.18rem;
+        line-height: 1.25;
+        font-weight: 700;
+      }
+      .watch-ended-meta {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .watch-ended-replay {
+        margin-top: 12px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--accent);
+        font: inherit;
+        cursor: pointer;
       }
       .watch-footer {
         margin-top: 18px;
@@ -55,6 +126,12 @@
         max-width: 420px;
         color: var(--muted);
         font-size: 0.84rem;
+        line-height: 1.45;
+      }
+      .watch-value-line {
+        max-width: 440px;
+        color: var(--text);
+        font-size: 0.94rem;
         line-height: 1.45;
       }
       .watch-cta-primary {
@@ -93,15 +170,89 @@
       .watch-footer a:focus-visible {
         text-decoration: underline;
       }
+      @media (max-width: 640px) {
+        body {
+          padding: 12px;
+        }
+        .watch-shell {
+          padding: 16px;
+          border-radius: 20px;
+        }
+        .watch-ended-overlay {
+          padding: 16px;
+        }
+        .watch-ended-card {
+          padding: 16px 14px;
+          border-radius: 18px;
+        }
+        .watch-ended-title {
+          font-size: 1.05rem;
+        }
+        .watch-value-line {
+          font-size: 0.88rem;
+        }
+      }
     </style>
   </head>
   <body>
     <main class="watch-shell">
-      <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
-        <source src="{{ playback_url }}" type="video/mp4">
-      </video>
+      <div class="watch-brand" aria-label="MintiStudio">
+        <span class="watch-brand-mark">M</span>
+        <span>mintistudio.com</span>
+      </div>
+      <div class="watch-video-wrap">
+        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
+          <source src="{{ playback_url }}" type="video/mp4">
+        </video>
+        {% if onboarding_url %}
+          <div class="watch-ended-overlay" id="watch-ended-overlay" aria-hidden="true">
+            <div class="watch-ended-card">
+              <p class="watch-ended-title">
+                {% if language == 'TR' %}
+                  Beğendin mi? 3 tıkta kendininkini oluştur.
+                {% else %}
+                  Loved it? Make your own in 3 clicks.
+                {% endif %}
+              </p>
+              <a
+                href="{{ onboarding_url }}"
+                class="watch-cta-primary"
+                rel="noreferrer">
+                {% if language == 'TR' %}
+                  Kendi Short'unu oluştur — ücretsiz
+                {% else %}
+                  Make my own Short — free
+                {% endif %}
+              </a>
+              <div class="watch-ended-meta">
+                {% if language == 'TR' %}
+                  Kayıt yok, kart yok.
+                {% else %}
+                  No signup, no card.
+                {% endif %}
+              </div>
+              <button type="button" class="watch-ended-replay" id="watch-replay-btn">
+                {% if language == 'TR' %}
+                  Tekrar oynat
+                {% else %}
+                  Replay
+                {% endif %}
+              </button>
+            </div>
+          </div>
+        {% endif %}
+      </div>
       <div class="watch-footer">
         {% if onboarding_url %}
+          <div class="watch-value-line">
+            {% if language == 'TR' %}
+              Minti bu Short'u senin videondan otomatik oluşturdu. Uzun videolarının tamamını bu şekilde Short'lara dönüştür
+              — ücretsiz, kayıt yok, kart yok.
+            {% else %}
+              Minti made this Short from your video automatically. Turn all your long videos into Shorts like this
+              — free, no signup, no card.
+            {% endif %}
+          </div>
           <a
             href="{{ onboarding_url }}"
             class="watch-cta-primary"
@@ -128,6 +279,8 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
+        const endedOverlay = document.getElementById("watch-ended-overlay");
+        const replayButton = document.getElementById("watch-replay-btn");
         if (!eventUrl || !video) {
           return;
         }
@@ -155,6 +308,24 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
+        if (endedOverlay) {
+          video.addEventListener("ended", () => {
+            endedOverlay.classList.add("is-visible");
+            endedOverlay.setAttribute("aria-hidden", "false");
+          }, { passive: true });
+          video.addEventListener("play", () => {
+            endedOverlay.classList.remove("is-visible");
+            endedOverlay.setAttribute("aria-hidden", "true");
+          }, { passive: true });
+        }
+        replayButton?.addEventListener("click", () => {
+          if (endedOverlay) {
+            endedOverlay.classList.remove("is-visible");
+            endedOverlay.setAttribute("aria-hidden", "true");
+          }
+          video.currentTime = 0;
+          video.play().catch(() => {});
+        });
       })();
     </script>
   </body>
