@@ -160,46 +160,6 @@
         background: #000;
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
       }
-      .watch-play-button {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        min-height: 58px;
-        padding: 0 24px;
-        border: 0;
-        border-radius: 999px;
-        background: #3fe0c5;
-        color: #07121b;
-        font: inherit;
-        font-weight: 700;
-        font-size: 0.98rem;
-        cursor: pointer;
-        z-index: 3;
-        box-shadow:
-          0 18px 40px rgba(0, 0, 0, 0.34),
-          0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-        transition: opacity 180ms ease, transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
-        -webkit-appearance: none;
-        appearance: none;
-        touch-action: manipulation;
-      }
-      .watch-play-button:hover,
-      .watch-play-button:focus-visible {
-        background: #67ead3;
-        box-shadow:
-          0 22px 44px rgba(63, 224, 197, 0.28),
-          0 0 0 1px rgba(255, 255, 255, 0.12) inset;
-      }
-      .watch-play-button.is-hidden {
-        opacity: 0;
-        pointer-events: none;
-        transform: translate(-50%, -50%) scale(0.96);
-      }
       .watch-prompt-banner {
         margin-top: 12px;
         display: flex;
@@ -409,16 +369,6 @@
         <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
-        <button type="button" class="watch-play-button" id="watch-play-button">
-          <span aria-hidden="true">▶</span>
-          <span>
-            {% if language == 'TR' %}
-              Short'unu izle
-            {% else %}
-              Watch your Short
-            {% endif %}
-          </span>
-        </button>
         {% if onboarding_url %}
           <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="true">
             <div class="watch-prompt-card">
@@ -494,7 +444,6 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
-        const playButton = document.getElementById("watch-play-button");
         const promptBanner = document.getElementById("watch-prompt-banner");
         const replayButton = document.getElementById("watch-replay-btn");
         const promptTriggerSeconds = 7;
@@ -519,24 +468,6 @@
         fireEvent("view");
         let playTracked = false;
         let promptShown = false;
-        const startPlayback = async () => {
-          hidePlayButton();
-          try {
-            video.playsInline = true;
-            video.setAttribute("playsinline", "");
-            await video.play();
-          } catch (_error) {
-            showPlayButton();
-          }
-        };
-        const hidePlayButton = () => {
-          playButton?.classList.add("is-hidden");
-        };
-        const showPlayButton = () => {
-          if (!video.ended && video.paused) {
-            playButton?.classList.remove("is-hidden");
-          }
-        };
         const showPrompt = () => {
           if (!promptBanner || promptShown) {
             return;
@@ -553,15 +484,11 @@
           promptBanner.setAttribute("aria-hidden", "true");
         };
         video.addEventListener("play", () => {
-          hidePlayButton();
           if (playTracked) {
             return;
           }
           playTracked = true;
           fireEvent("play");
-        }, { passive: true });
-        video.addEventListener("pause", () => {
-          showPlayButton();
         }, { passive: true });
         if (promptBanner) {
           video.addEventListener("timeupdate", () => {
@@ -570,32 +497,15 @@
             }
           }, { passive: true });
           video.addEventListener("ended", () => {
-            showPlayButton();
             showPrompt();
           }, { passive: true });
         }
-        playButton?.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          startPlayback();
-        });
-        playButton?.addEventListener("touchend", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          startPlayback();
-        }, { passive: false });
-        playButton?.addEventListener("pointerup", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          startPlayback();
-        });
         replayButton?.addEventListener("click", () => {
           hidePrompt();
           promptShown = false;
           video.currentTime = 0;
           video.play().catch(() => {});
         });
-        showPlayButton();
       })();
     </script>
   </body>
