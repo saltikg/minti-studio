@@ -5429,6 +5429,7 @@ def delete_video_row(video_pk: int):
         return redirect(url_for("video_shorts_bp.login", next=request.url))
 
     active_brand_id = str(current_brand_id() or "").strip() or None
+    requested_channel_id = request.form.get("channel_id", "").strip()
     redirect_params = {
         "sort": request.form.get("sort", ""),
         "dir": request.form.get("dir", ""),
@@ -5459,6 +5460,8 @@ def delete_video_row(video_pk: int):
         ).fetchone()
         if not row:
             flash("Video not found.", "danger")
+            if requested_channel_id:
+                return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id, **redirect_params))
             return redirect(url_for("video_shorts_bp.channels_page"))
 
         source_video_id = str(row[1] or "").strip()
@@ -5469,10 +5472,10 @@ def delete_video_row(video_pk: int):
 
         if record_brand_id != active_brand_id:
             flash("Forbidden.", "danger")
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
         if not is_admin and owner_user_id != current_user.get("id"):
             flash("Forbidden.", "danger")
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
 
         generated_columns = table_columns(conn, "shorts_generated_videos")
         share_link_columns = table_columns(conn, "short_share_links")
@@ -5588,11 +5591,13 @@ def delete_video_row(video_pk: int):
                 current_app.logger.warning("Failed to clear render cache for deleted video %s: %s", source_video_id, exc)
 
         flash("Video deleted.", "success")
-        return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
     except Exception as exc:
         conn.rollback()
         current_app.logger.exception("Failed to delete video row %s: %s", video_pk, exc)
         flash("Delete failed.", "danger")
+        if requested_channel_id:
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id, **redirect_params))
         fallback_row = conn.execute("SELECT channel_id FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()
         if fallback_row:
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=fallback_row[0], **redirect_params))
