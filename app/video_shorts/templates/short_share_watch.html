@@ -40,7 +40,7 @@
         align-items: center;
         justify-content: center;
         gap: 10px;
-        margin-bottom: 14px;
+        margin-bottom: 10px;
         color: var(--muted);
         font-size: 0.84rem;
         letter-spacing: 0.02em;
@@ -56,6 +56,41 @@
         color: #06212a;
         font-weight: 800;
         box-shadow: 0 10px 24px rgba(110, 231, 216, 0.18);
+      }
+      .watch-intro {
+        margin: 0 0 14px;
+        text-align: center;
+        color: var(--text);
+        font-size: 0.96rem;
+        line-height: 1.4;
+        font-weight: 600;
+      }
+      .watch-steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .watch-step {
+        padding: 12px 10px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(126, 239, 217, 0.12);
+        text-align: center;
+      }
+      .watch-step-num {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--accent);
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+      .watch-step-text {
+        display: block;
+        color: var(--text);
+        font-size: 0.82rem;
+        line-height: 1.35;
       }
       .watch-video-wrap {
         position: relative;
@@ -179,6 +214,21 @@
           padding: 16px;
           border-radius: 20px;
         }
+        .watch-intro {
+          font-size: 0.9rem;
+          margin-bottom: 12px;
+        }
+        .watch-steps {
+          grid-template-columns: 1fr;
+          gap: 8px;
+          margin-bottom: 14px;
+        }
+        .watch-step {
+          padding: 10px 12px;
+        }
+        .watch-step-text {
+          font-size: 0.8rem;
+        }
         .watch-prompt-card {
           padding: 12px 14px;
           border-radius: 16px;
@@ -197,6 +247,45 @@
       <div class="watch-brand" aria-label="MintiStudio">
         <span class="watch-brand-mark">M</span>
         <span>mintistudio.com</span>
+      </div>
+      <p class="watch-intro">
+        {% if language == 'TR' %}
+          Bu Short'u videondan 3 adımda yaptık. Şimdi sırada seninki var.
+        {% else %}
+          We made this Short from your video in 3 steps — now make yours.
+        {% endif %}
+      </p>
+      <div class="watch-steps" aria-label="How it works">
+        <div class="watch-step">
+          <span class="watch-step-num">01</span>
+          <span class="watch-step-text">
+            {% if language == 'TR' %}
+              Videonu yükle
+            {% else %}
+              Upload your video
+            {% endif %}
+          </span>
+        </div>
+        <div class="watch-step">
+          <span class="watch-step-num">02</span>
+          <span class="watch-step-text">
+            {% if language == 'TR' %}
+              Anları seç veya AI seçsin
+            {% else %}
+              Pick the moments or let AI choose
+            {% endif %}
+          </span>
+        </div>
+        <div class="watch-step">
+          <span class="watch-step-num">03</span>
+          <span class="watch-step-text">
+            {% if language == 'TR' %}
+              Short'unu oluştur
+            {% else %}
+              Generate your Short
+            {% endif %}
+          </span>
+        </div>
       </div>
       <div class="watch-video-wrap">
         <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
