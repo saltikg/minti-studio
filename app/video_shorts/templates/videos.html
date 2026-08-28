@@ -314,6 +314,7 @@
             <th class="vs-col-status">Status</th>
             <th class="vs-col-status">Shared link</th>
             <th class="vs-col-generate">Generate short</th>
+            <th class="vs-col-generate">Delete</th>
           </tr>
         </thead>
         <tbody>
@@ -494,12 +495,34 @@
                 </button>
               {% endif %}
             </td>
+
+            <td class="small text-end">
+              <form method="post"
+                    action="{{ url_for('video_shorts_bp.delete_video_row', video_pk=v.id) }}"
+                    class="m-0"
+                    onsubmit="return confirm('Delete this video and its related files?');">
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ sort_dir }}">
+                <input type="hidden" name="page" value="{{ page }}">
+                <input type="hidden" name="q" value="{{ search_q }}">
+                <input type="hidden" name="vid" value="{{ video_id_q }}">
+                <input type="hidden" name="dstatus" value="{{ download_filter }}">
+                <input type="hidden" name="dmin" value="{{ duration_min }}">
+                <input type="hidden" name="dmax" value="{{ duration_max }}">
+                <input type="hidden" name="short_filter" value="{{ short_filter }}">
+                <input type="hidden" name="email_sent" value="{{ email_sent_filter }}">
+                <input type="hidden" name="has_email" value="{{ has_email_filter }}">
+                <button type="submit" class="vs-btn vs-btn-danger" title="Delete">
+                  Delete
+                </button>
+              </form>
+            </td>
           </tr>
           {% endfor %}
 
           {% if videos|length == 0 %}
           <tr>
-            <td colspan="8" class="text-center text-muted py-3">
+            <td colspan="9" class="text-center text-muted py-3">
               No videos in database yet. Click "Fetch next batch" to import.
             </td>
           </tr>

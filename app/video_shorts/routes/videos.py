@@ -32,6 +32,7 @@ from app.video_shorts.services.db import (
     ensure_youtube_video_local_bucket_schema,
     table_columns,
 )
+from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import (
     upsert_comment_records,
@@ -86,6 +87,8 @@ from app.video_shorts.services.youtube_oauth import build_authenticated_youtube
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
 
+SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
+
 
 def _pretty_duration(seconds):
     try:
@@ -133,6 +136,51 @@ def _short_s3_index() -> Optional[set[str]]:
         keys = set()
     g._vs_short_s3_index = keys
     return keys
+
+
+def _delete_source_video_media(video_id: str) -> None:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return
+    storage = get_media_storage()
+    local_storage = get_media_storage("local")
+    for suffix in SOURCE_VIDEO_SUFFIXES:
+        key = f"videos/{clean_video_id}{suffix}"
+        if getattr(storage, "backend_name", "local") == "s3":
+            try:
+                if storage.exists(key):
+                    storage.delete(key)
+            except Exception:
+                current_app.logger.warning("Failed to delete source video from storage key=%s", key)
+        try:
+            local_storage.delete(key)
+        except Exception:
+            current_app.logger.warning("Failed to delete local source video key=%s", key)
+
+
+def _delete_short_media(filename: str) -> None:
+    safe_name = Path(filename or "").name
+    if not safe_name:
+        return
+    key = f"shorts/{safe_name}"
+    storage = get_media_storage()
+    local_storage = get_media_storage("local")
+    if getattr(storage, "backend_name", "local") == "s3":
+        try:
+            if storage.exists(key):
+                storage.delete(key)
+        except Exception:
+            current_app.logger.warning("Failed to delete short from storage key=%s", key)
+    try:
+        local_storage.delete(key)
+    except Exception:
+        current_app.logger.warning("Failed to delete local short key=%s", key)
+    local_path = SHORTS_DIR / safe_name
+    if local_path.exists() and local_path.is_file():
+        try:
+            local_path.unlink()
+        except Exception:
+            current_app.logger.warning("Failed to unlink local short path=%s", local_path)
 
 
 def _short_public_url(filename: str) -> Optional[str]:
@@ -5372,6 +5420,185 @@ def update_download_status(video_pk):
 
     redirect_params["dstatus"] = request.form.get("dstatus", "")
     return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+
+@video_shorts_bp.route("/videos/<int:video_pk>/delete", methods=["POST"])
+def delete_video_row(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+
+    active_brand_id = str(current_brand_id() or "").strip() or None
+    redirect_params = {
+        "sort": request.form.get("sort", ""),
+        "dir": request.form.get("dir", ""),
+        "page": request.form.get("page", "1"),
+        "q": request.form.get("q", ""),
+        "vid": request.form.get("vid", ""),
+        "dstatus": request.form.get("dstatus", ""),
+        "dmin": request.form.get("dmin", ""),
+        "dmax": request.form.get("dmax", ""),
+        "short_filter": request.form.get("short_filter", ""),
+        "email_sent": request.form.get("email_sent", ""),
+        "has_email": request.form.get("has_email", ""),
+    }
+
+    conn = get_db()
+    ensure_brand_schema(conn)
+    ensure_channel_owner_schema(conn)
+    ensure_youtube_video_local_bucket_schema(conn)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, video_id, owner_user_id, brand_id, channel_id
+            FROM youtube_videos
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [video_pk],
+        ).fetchone()
+        if not row:
+            flash("Video not found.", "danger")
+            return redirect(url_for("video_shorts_bp.channels_page"))
+
+        source_video_id = str(row[1] or "").strip()
+        owner_user_id = str(row[2] or "").strip() or None
+        record_brand_id = str(row[3] or "").strip() or None
+        channel_id = row[4]
+        is_admin = current_user.get("role") == "admin"
+
+        if record_brand_id != active_brand_id:
+            flash("Forbidden.", "danger")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+        if not is_admin and owner_user_id != current_user.get("id"):
+            flash("Forbidden.", "danger")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        share_link_columns = table_columns(conn, "short_share_links")
+        onboarding_columns = table_columns(conn, "onboarding_magic_links")
+
+        generated_ids: list[str] = []
+        clip_filenames: set[str] = set()
+        if generated_columns and source_video_id:
+            if record_brand_id:
+                generated_rows = conn.execute(
+                    """
+                    SELECT id, clip_filename, output_filename
+                    FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND brand_id = ?
+                    """,
+                    [source_video_id, record_brand_id],
+                ).fetchall()
+            else:
+                generated_rows = conn.execute(
+                    """
+                    SELECT id, clip_filename, output_filename
+                    FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND brand_id IS NULL
+                    """,
+                    [source_video_id],
+                ).fetchall()
+            for generated_row in generated_rows:
+                generated_id = str(generated_row[0] or "").strip()
+                if generated_id:
+                    generated_ids.append(generated_id)
+                for value in generated_row[1:]:
+                    safe_name = Path(str(value or "")).name
+                    if safe_name:
+                        clip_filenames.add(safe_name)
+
+        for clip_filename in clip_filenames:
+            _delete_short_media(clip_filename)
+        if source_video_id:
+            _delete_source_video_media(source_video_id)
+
+        clip_asset_keys = [f"short:{name}" for name in clip_filenames]
+        source_asset_keys = [f"downloaded:{source_video_id}{suffix}" for suffix in SOURCE_VIDEO_SUFFIXES if source_video_id]
+        if clip_asset_keys:
+            placeholders = ", ".join("?" for _ in clip_asset_keys)
+            conn.execute(
+                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({placeholders})",
+                clip_asset_keys,
+            )
+        if source_asset_keys:
+            placeholders = ", ".join("?" for _ in source_asset_keys)
+            conn.execute(
+                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({placeholders})",
+                source_asset_keys,
+            )
+
+        if generated_ids and share_link_columns:
+            generated_placeholders = ", ".join("?" for _ in generated_ids)
+            share_link_rows = conn.execute(
+                f"""
+                SELECT id
+                FROM short_share_links
+                WHERE CAST(generated_video_id AS VARCHAR) IN ({generated_placeholders})
+                """,
+                generated_ids,
+            ).fetchall()
+            share_link_ids = [str(link_row[0] or "").strip() for link_row in share_link_rows if str(link_row[0] or "").strip()]
+            if share_link_ids and onboarding_columns:
+                share_link_placeholders = ", ".join("?" for _ in share_link_ids)
+                conn.execute(
+                    f"DELETE FROM onboarding_magic_links WHERE CAST(share_link_id AS VARCHAR) IN ({share_link_placeholders})",
+                    share_link_ids,
+                )
+            conn.execute(
+                f"DELETE FROM short_share_links WHERE CAST(generated_video_id AS VARCHAR) IN ({generated_placeholders})",
+                generated_ids,
+            )
+
+        if source_video_id and generated_columns:
+            if record_brand_id:
+                conn.execute(
+                    """
+                    DELETE FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND brand_id = ?
+                    """,
+                    [source_video_id, record_brand_id],
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND brand_id IS NULL
+                    """,
+                    [source_video_id],
+                )
+
+        if source_video_id:
+            conn.execute("DELETE FROM youtube_transcripts WHERE video_id = ?", [source_video_id])
+
+        conn.execute("DELETE FROM youtube_videos WHERE id = ?", [video_pk])
+        conn.commit()
+
+        if source_video_id and owner_user_id:
+            try:
+                clear_done_job_cache_for_videos(
+                    user_id=str(owner_user_id),
+                    source_video_ids=[source_video_id],
+                )
+            except Exception as exc:
+                current_app.logger.warning("Failed to clear render cache for deleted video %s: %s", source_video_id, exc)
+
+        flash("Video deleted.", "success")
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+    except Exception as exc:
+        conn.rollback()
+        current_app.logger.exception("Failed to delete video row %s: %s", video_pk, exc)
+        flash("Delete failed.", "danger")
+        fallback_row = conn.execute("SELECT channel_id FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()
+        if fallback_row:
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=fallback_row[0], **redirect_params))
+        return redirect(url_for("video_shorts_bp.channels_page"))
+    finally:
+        conn.close()
 
 
 @video_shorts_bp.route("/api/admin/videos/<int:video_pk>/creator", methods=["POST"])
