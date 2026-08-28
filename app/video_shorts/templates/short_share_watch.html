@@ -66,45 +66,49 @@
         border-radius: 18px;
         background: #000;
       }
-      .watch-ended-overlay {
+      .watch-prompt-overlay {
         position: absolute;
-        inset: 0;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
         display: flex;
-        align-items: center;
         justify-content: center;
-        padding: 24px;
+        padding: 0;
         border-radius: 18px;
-        background: linear-gradient(180deg, rgba(6, 15, 24, 0.28), rgba(6, 15, 24, 0.88));
+        background: none;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 180ms ease;
+        transform: translateY(10px);
+        transition: opacity 180ms ease, transform 180ms ease;
       }
-      .watch-ended-overlay.is-visible {
+      .watch-prompt-overlay.is-visible {
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0);
       }
-      .watch-ended-card {
-        width: min(100%, 320px);
-        padding: 20px 18px;
-        border-radius: 22px;
-        background: rgba(8, 17, 27, 0.9);
+      .watch-prompt-card {
+        width: min(100%, 420px);
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(8, 17, 27, 0.92);
         border: 1px solid rgba(110, 231, 216, 0.18);
         box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
         text-align: center;
+        backdrop-filter: blur(10px);
       }
-      .watch-ended-title {
-        margin: 0 0 14px;
-        font-size: 1.18rem;
-        line-height: 1.25;
+      .watch-prompt-title {
+        margin: 0 0 10px;
+        font-size: 0.96rem;
+        line-height: 1.35;
         font-weight: 700;
       }
-      .watch-ended-meta {
-        margin-top: 10px;
+      .watch-prompt-meta {
+        margin-top: 8px;
         color: var(--muted);
-        font-size: 0.82rem;
+        font-size: 0.76rem;
       }
-      .watch-ended-replay {
-        margin-top: 12px;
+      .watch-prompt-replay {
+        margin-top: 8px;
         border: 0;
         padding: 0;
         background: transparent;
@@ -178,15 +182,17 @@
           padding: 16px;
           border-radius: 20px;
         }
-        .watch-ended-overlay {
-          padding: 16px;
+        .watch-prompt-overlay {
+          left: 10px;
+          right: 10px;
+          bottom: 10px;
         }
-        .watch-ended-card {
-          padding: 16px 14px;
-          border-radius: 18px;
+        .watch-prompt-card {
+          padding: 12px 14px;
+          border-radius: 16px;
         }
-        .watch-ended-title {
-          font-size: 1.05rem;
+        .watch-prompt-title {
+          font-size: 0.88rem;
         }
         .watch-value-line {
           font-size: 0.88rem;
@@ -205,13 +211,13 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
         {% if onboarding_url %}
-          <div class="watch-ended-overlay" id="watch-ended-overlay" aria-hidden="true">
-            <div class="watch-ended-card">
-              <p class="watch-ended-title">
+          <div class="watch-prompt-overlay" id="watch-prompt-overlay" aria-hidden="true">
+            <div class="watch-prompt-card">
+              <p class="watch-prompt-title">
                 {% if language == 'TR' %}
-                  Beğendin mi? 3 tıkta kendininkini oluştur.
+                  Bu senin içeriğin. 3 tıkta kendininkini oluştur.
                 {% else %}
-                  Loved it? Make your own in 3 clicks.
+                  This is your content. Make your own in 3 clicks.
                 {% endif %}
               </p>
               <a
@@ -224,14 +230,14 @@
                   Make my own Short — free
                 {% endif %}
               </a>
-              <div class="watch-ended-meta">
+              <div class="watch-prompt-meta">
                 {% if language == 'TR' %}
                   Kayıt yok, kart yok.
                 {% else %}
                   No signup, no card.
                 {% endif %}
               </div>
-              <button type="button" class="watch-ended-replay" id="watch-replay-btn">
+              <button type="button" class="watch-prompt-replay" id="watch-replay-btn">
                 {% if language == 'TR' %}
                   Tekrar oynat
                 {% else %}
@@ -279,8 +285,9 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
-        const endedOverlay = document.getElementById("watch-ended-overlay");
+        const promptOverlay = document.getElementById("watch-prompt-overlay");
         const replayButton = document.getElementById("watch-replay-btn");
+        const promptTriggerSeconds = 7;
         if (!eventUrl || !video) {
           return;
         }
@@ -301,6 +308,22 @@
         };
         fireEvent("view");
         let playTracked = false;
+        let promptShown = false;
+        const showPrompt = () => {
+          if (!promptOverlay || promptShown) {
+            return;
+          }
+          promptShown = true;
+          promptOverlay.classList.add("is-visible");
+          promptOverlay.setAttribute("aria-hidden", "false");
+        };
+        const hidePrompt = () => {
+          if (!promptOverlay) {
+            return;
+          }
+          promptOverlay.classList.remove("is-visible");
+          promptOverlay.setAttribute("aria-hidden", "true");
+        };
         video.addEventListener("play", () => {
           if (playTracked) {
             return;
@@ -308,21 +331,19 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
-        if (endedOverlay) {
-          video.addEventListener("ended", () => {
-            endedOverlay.classList.add("is-visible");
-            endedOverlay.setAttribute("aria-hidden", "false");
+        if (promptOverlay) {
+          video.addEventListener("timeupdate", () => {
+            if (!promptShown && video.currentTime >= promptTriggerSeconds) {
+              showPrompt();
+            }
           }, { passive: true });
-          video.addEventListener("play", () => {
-            endedOverlay.classList.remove("is-visible");
-            endedOverlay.setAttribute("aria-hidden", "true");
+          video.addEventListener("ended", () => {
+            showPrompt();
           }, { passive: true });
         }
         replayButton?.addEventListener("click", () => {
-          if (endedOverlay) {
-            endedOverlay.classList.remove("is-visible");
-            endedOverlay.setAttribute("aria-hidden", "true");
-          }
+          hidePrompt();
+          promptShown = false;
           video.currentTime = 0;
           video.play().catch(() => {});
         });
