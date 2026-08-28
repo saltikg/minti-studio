@@ -44,6 +44,11 @@
         color: var(--muted);
         font-size: 0.84rem;
         letter-spacing: 0.02em;
+        text-decoration: none;
+      }
+      .watch-brand:hover,
+      .watch-brand:focus-visible {
+        color: var(--text);
       }
       .watch-brand-mark {
         width: 26px;
@@ -65,25 +70,69 @@
         line-height: 1.4;
         font-weight: 600;
       }
+      .watch-intro-accent {
+        color: #3fe0c5;
+      }
       .watch-steps {
         display: flex;
         align-items: center;
         justify-content: center;
-        flex-wrap: wrap;
-        gap: 8px;
+        gap: 10px;
         margin-bottom: 14px;
-        color: var(--muted);
+        flex-wrap: nowrap;
+      }
+      .watch-step-card,
+      .watch-step-arrow {
+        opacity: 0;
+        animation: watch-step-pop 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
+      .watch-step-card {
+        min-width: 0;
+        flex: 1 1 0;
+        max-width: 156px;
+        padding: 12px 10px;
+        border-radius: 14px;
+        background: #101d2e;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: center;
+      }
+      .watch-step-card:nth-child(1) { animation-delay: 0.15s; }
+      .watch-step-card:nth-child(3) { animation-delay: 0.75s; }
+      .watch-step-card:nth-child(5) { animation-delay: 1.35s; }
+      .watch-step-icon {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 1rem;
+        line-height: 1;
+      }
+      .watch-step-label {
+        display: block;
+        color: var(--text);
+        font-weight: 600;
         font-size: 0.78rem;
         line-height: 1.35;
       }
-      .watch-step-label {
-        color: var(--text);
-        font-weight: 600;
-        white-space: nowrap;
-      }
       .watch-step-arrow {
-        color: rgba(110, 231, 216, 0.72);
-        font-size: 0.86rem;
+        color: #3fe0c5;
+        font-size: 1rem;
+        animation-delay: 0.55s;
+      }
+      .watch-step-arrow:nth-child(4) {
+        animation-delay: 1.15s;
+      }
+      @keyframes watch-step-pop {
+        0% {
+          opacity: 0;
+          transform: translateY(10px) scale(0.96);
+        }
+        60% {
+          opacity: 1;
+          transform: translateY(-2px) scale(1.02);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
       }
       .watch-video-wrap {
         position: relative;
@@ -248,14 +297,16 @@
         }
         .watch-steps {
           flex-direction: column;
-          align-items: flex-start;
+          align-items: stretch;
           gap: 6px;
           margin: 0 auto 12px;
           width: min(100%, 280px);
-          font-size: 0.76rem;
+        }
+        .watch-step-card {
+          max-width: none;
         }
         .watch-step-arrow {
-          margin-left: 4px;
+          align-self: center;
           font-size: 0.78rem;
         }
         .watch-prompt-card {
@@ -269,45 +320,61 @@
           font-size: 0.88rem;
         }
       }
+      @media (prefers-reduced-motion: reduce) {
+        .watch-step-card,
+        .watch-step-arrow {
+          opacity: 1;
+          animation: none;
+        }
+      }
     </style>
   </head>
   <body>
     <main class="watch-shell">
-      <div class="watch-brand" aria-label="MintiStudio">
+      <a class="watch-brand" aria-label="MintiStudio" href="https://mintistudio.com" target="_blank" rel="noreferrer">
         <span class="watch-brand-mark">M</span>
         <span>mintistudio.com</span>
-      </div>
+      </a>
       <p class="watch-intro">
         {% if language == 'TR' %}
-          Bu Short'u videondan 3 adımda yaptık. Şimdi sırada seninki var.
+          Bu Short'u videondan 3 adımda yaptık. <span class="watch-intro-accent">Şimdi sırada seninki var.</span>
         {% else %}
-          We made this Short from your video in 3 steps — now make yours.
+          We made this from your video in 3 steps — <span class="watch-intro-accent">now make yours.</span>
         {% endif %}
       </p>
       <div class="watch-steps" aria-label="How it works">
-        <span class="watch-step-label">
-          {% if language == 'TR' %}
-            Videonu yükle
-          {% else %}
-            Upload your video
-          {% endif %}
-        </span>
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">⬆️</span>
+          <span class="watch-step-label">
+            {% if language == 'TR' %}
+              Videonu yükle
+            {% else %}
+              Upload your video
+            {% endif %}
+          </span>
+        </div>
         <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <span class="watch-step-label">
-          {% if language == 'TR' %}
-            AI en iyi anları bulur
-          {% else %}
-            AI finds the best moments
-          {% endif %}
-        </span>
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">✨</span>
+          <span class="watch-step-label">
+            {% if language == 'TR' %}
+              AI en iyi anları bulur
+            {% else %}
+              AI finds the best moments
+            {% endif %}
+          </span>
+        </div>
         <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <span class="watch-step-label">
-          {% if language == 'TR' %}
-            Short'larını oluştur ve yayınla
-          {% else %}
-            Create &amp; publish your Shorts
-          {% endif %}
-        </span>
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">🎬</span>
+          <span class="watch-step-label">
+            {% if language == 'TR' %}
+              Short'larını oluştur ve yayınla
+            {% else %}
+              Create &amp; publish your Shorts
+            {% endif %}
+          </span>
+        </div>
       </div>
       <div class="watch-video-wrap">
         <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
