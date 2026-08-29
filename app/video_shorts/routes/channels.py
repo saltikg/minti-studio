@@ -33,6 +33,7 @@ SOURCES_OWNER_IDENTIFIERS = {
 VIDEOS_DIR = Path("app/video_shorts/static/videos")
 SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
 SHORTS_DIR = Path("app/video_shorts/static/shorts")
+PREVIEW_FRAME_CACHE_VERSION = "v2"
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -206,7 +207,7 @@ def _cached_preview_frame_url(video_id: str) -> str:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
         return ""
-    preview_path = SHORTS_DIR / "preview_frames" / f"{clean_video_id}.jpg"
+    preview_path = SHORTS_DIR / "preview_frames" / f"{clean_video_id}_{PREVIEW_FRAME_CACHE_VERSION}.jpg"
     if not preview_path.exists():
         return ""
     try:

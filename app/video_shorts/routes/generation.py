@@ -2393,6 +2393,7 @@ def _sync_storage_assets(
 
 
 _TIME_INPUT_PATTERN = re.compile(r"^(?:(?P<minutes>\d+):)?(?P<seconds>\d{1,2})(?:\.(?P<millis>\d+))?$")
+_PREVIEW_FRAME_CACHE_VERSION = "v2"
 
 
 def _parse_time_input(value: Any) -> Optional[float]:
@@ -2416,42 +2417,113 @@ def _parse_time_input(value: Any) -> Optional[float]:
         return None
 
 
+def _preview_frame_cache_path(video_id: str) -> Path:
+    preview_dir = SHORTS_DIR / "preview_frames"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.jpg"
+
+
+def _preview_candidate_timestamps(duration_seconds: Optional[float]) -> list[float]:
+    dur_val = _to_float(duration_seconds)
+    if dur_val is None or dur_val <= 0:
+        return [0.5, 1.5, 3.0, 5.0, 8.0, 12.0]
+    safe_end = max(dur_val - 0.1, 0.0)
+    fractions = (0.15, 0.30, 0.45, 0.60, 0.75, 0.90)
+    candidates = [max(0.0, min(safe_end, dur_val * fraction)) for fraction in fractions]
+    deduped: list[float] = []
+    for value in candidates:
+        rounded = round(value, 3)
+        if not deduped or abs(deduped[-1] - rounded) > 1e-3:
+            deduped.append(rounded)
+    return deduped or [max(0.0, min(safe_end, dur_val / 2 if dur_val > 0 else 0.5))]
+
+
 def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_seconds: Optional[float]) -> Optional[Path]:
     if not source_path or not source_path.exists():
         return None
-    preview_dir = SHORTS_DIR / "preview_frames"
-    preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = preview_dir / f"{video_id}.jpg"
+    preview_path = _preview_frame_cache_path(video_id)
     if preview_path.exists():
         return preview_path
 
-    dur_val = _to_float(duration_seconds)
-    midpoint = 0.5
-    if dur_val is not None and dur_val > 0:
-        midpoint = max(0.0, min(dur_val / 2, max(dur_val - 0.1, 0.0)))
     ffmpeg_bin = _resolve_ffmpeg()
-    cmd = [
-        ffmpeg_bin,
-        "-y",
-        "-ss",
-        str(midpoint),
-        "-i",
-        str(source_path),
-        "-frames:v",
-        "1",
-        "-q:v",
-        "2",
-        str(preview_path),
-    ]
     try:
-        run_media_subprocess(
-            cmd,
-            operation="generate_preview_frame",
-            context=f"video_id={video_id} output={preview_path.name}",
-            output_paths=[preview_path],
-            check=True,
-            timeout=FFMPEG_SHORT_TIMEOUT,
-        )
+        import cv2
+
+        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+        detector = cv2.CascadeClassifier(str(cascade_path))
+        if detector.empty():
+            raise RuntimeError(f"Face cascade could not be loaded from {cascade_path}")
+
+        candidate_timestamps = _preview_candidate_timestamps(duration_seconds)
+        best_face: tuple[int, Path, float] | None = None
+        best_detail: tuple[float, Path, float] | None = None
+        with tempfile.TemporaryDirectory(prefix=f"preview_{video_id}_") as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            for index, timestamp in enumerate(candidate_timestamps):
+                candidate_path = temp_dir_path / f"{video_id}_{index}.jpg"
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(source_path),
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "2",
+                    str(candidate_path),
+                ]
+                run_media_subprocess(
+                    cmd,
+                    operation="generate_preview_frame",
+                    context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
+                    output_paths=[candidate_path],
+                    check=True,
+                    timeout=FFMPEG_SHORT_TIMEOUT,
+                )
+                image = cv2.imread(str(candidate_path))
+                if image is None:
+                    continue
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                faces = detector.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=4,
+                    minSize=(32, 32),
+                )
+                if len(faces):
+                    largest_face_area = max(int(w * h) for (_x, _y, w, h) in faces)
+                    if best_face is None or largest_face_area > best_face[0]:
+                        best_face = (largest_face_area, candidate_path, timestamp)
+                laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                if best_detail is None or laplacian_variance > best_detail[0]:
+                    best_detail = (laplacian_variance, candidate_path, timestamp)
+
+            selected_path = None
+            if best_face is not None:
+                selected_path = best_face[1]
+                current_app.logger.info(
+                    "Preview frame selected by face video_id=%s timestamp=%.3f face_area=%s output=%s",
+                    video_id,
+                    best_face[2],
+                    best_face[0],
+                    preview_path.name,
+                )
+            elif best_detail is not None:
+                selected_path = best_detail[1]
+                current_app.logger.info(
+                    "Preview frame selected by detail fallback video_id=%s timestamp=%.3f detail_score=%.3f output=%s",
+                    video_id,
+                    best_detail[2],
+                    best_detail[0],
+                    preview_path.name,
+                )
+
+            if not selected_path or not selected_path.exists():
+                raise RuntimeError(f"No preview frame candidate could be selected for {video_id}")
+
+            shutil.copyfile(selected_path, preview_path)
     except Exception:
         current_app.logger.exception("Preview capture failed for %s", video_id)
         try:
@@ -4620,7 +4692,7 @@ def generate_short(video_pk):
     short_exists = short_path.exists()
     source_path = None
     preview_url = None
-    preview_path = SHORTS_DIR / "preview_frames" / f"{video['video_id']}.jpg"
+    preview_path = _preview_frame_cache_path(video["video_id"])
     if not preview_path.exists():
         source_path, source_path_is_temp = _resolve_source_video(video["video_id"])
         try:
