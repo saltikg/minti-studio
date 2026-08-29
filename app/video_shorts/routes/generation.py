@@ -606,6 +606,45 @@ def _resolve_title_template_behavior(
     }
 
 
+def _match_style_template_key(
+    *,
+    subtitle_preset: Optional[str],
+    title_font_key: Optional[str],
+    title_text_color: Optional[str],
+    title_bg_color: Optional[str],
+    title_bg_alpha: Optional[int],
+    title_font_size: Optional[int],
+) -> Optional[str]:
+    resolved_preset = str(subtitle_preset or "").strip()
+    resolved_font_key = _resolve_title_font_key(title_font_key)
+    resolved_title_text = _normalize_hex_color(title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
+    resolved_title_bg = _normalize_hex_color(title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
+    resolved_title_bg_alpha = _normalize_alpha_percent(title_bg_alpha, DEFAULT_EDITOR_TITLE_BG_ALPHA)
+    try:
+        resolved_title_size = int(title_font_size or DEFAULT_EDITOR_TITLE_FONT_SIZE)
+    except Exception:
+        resolved_title_size = DEFAULT_EDITOR_TITLE_FONT_SIZE
+    for template in STYLE_TEMPLATES:
+        if str(template.get("subtitle_preset") or "").strip() != resolved_preset:
+            continue
+        if _resolve_title_font_key(template.get("title_font_key")) != resolved_font_key:
+            continue
+        if _normalize_hex_color(template.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR) != resolved_title_text:
+            continue
+        if _normalize_hex_color(template.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR) != resolved_title_bg:
+            continue
+        if _normalize_alpha_percent(template.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA) != resolved_title_bg_alpha:
+            continue
+        try:
+            template_title_size = int(template.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE)
+        except Exception:
+            template_title_size = DEFAULT_EDITOR_TITLE_FONT_SIZE
+        if template_title_size != resolved_title_size:
+            continue
+        return str(template.get("key") or "").strip() or None
+    return None
+
+
 def _format_publish_display(value, tz_name: Optional[str] = None):
     dt = _parse_to_utc(value)
     if not dt:
@@ -4974,6 +5013,18 @@ def generate_short(video_pk):
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
+    matched_style_template_key = _match_style_template_key(
+        subtitle_preset=video_subtitle_preset,
+        title_font_key=video_font_key,
+        title_text_color=video_title_text_color,
+        title_bg_color=video_title_bg_color,
+        title_bg_alpha=video_title_bg_alpha,
+        title_font_size=video_title_font_size,
+    )
+    clip_has_saved_style_template = bool(
+        matched_style_template_key
+        and matched_style_template_key != DEFAULT_STYLE_TEMPLATE_KEY
+    )
 
     static_visual_options = []
     user_background_visual_options = []
@@ -5996,6 +6047,8 @@ def generate_short(video_pk):
         selected_subtitle_bg_alpha=selected_subtitle_bg_alpha,
         selected_subtitle_text_alpha=selected_subtitle_text_alpha,
         style_templates=STYLE_TEMPLATES,
+        default_style_template_key=DEFAULT_STYLE_TEMPLATE_KEY,
+        clip_has_saved_style_template=clip_has_saved_style_template,
         selected_video_date=selected_video_date,
         selected_video_date_top=selected_video_date_top,
         selected_show_title=selected_show_title,

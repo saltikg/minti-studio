@@ -11410,6 +11410,8 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+  const defaultStyleTemplateKey = {{ default_style_template_key|tojson }};
+  const clipHasSavedStyleTemplate = {{ clip_has_saved_style_template|tojson }};
   const titleFont = document.getElementById("titleFont");
   const subtitleFont = document.getElementById("subtitleFont");
   const titlePreview = document.getElementById("titlePreview");
@@ -11882,6 +11884,26 @@ document.addEventListener("DOMContentLoaded", function () {
     applyTitleBgPreview();
     syncStyleTemplateCards();
   };
+  const applyInitialStyleTemplateSelection = () => {
+    if (clipHasSavedStyleTemplate) {
+      return;
+    }
+    const defaultKey = String(defaultStyleTemplateKey || "").trim();
+    if (!defaultKey) {
+      return;
+    }
+    const activeCard = styleTemplateCards.find((card) => card.classList.contains("is-active"));
+    if (activeCard && String(activeCard.dataset.styleTemplateKey || "").trim() === defaultKey) {
+      return;
+    }
+    const defaultCard = styleTemplateCards.find(
+      (card) => String(card.dataset.styleTemplateKey || "").trim() === defaultKey
+    );
+    if (!defaultCard) {
+      return;
+    }
+    applyStyleTemplate(defaultCard);
+  };
 
   bindColorPicker({
     triggerId: "titleBgTrigger",
@@ -11993,6 +12015,7 @@ document.addEventListener("DOMContentLoaded", function () {
   applyTitleBgPreview();
   applySubtitlePreview();
   syncStyleTemplateCards();
+  applyInitialStyleTemplateSelection();
   const initialActiveTab = cropModalTabs.find((tab) => tab.classList.contains("is-active")) || cropModalTabs[0];
   if (initialActiveTab) {
     setActiveCropModalTab(initialActiveTab);
