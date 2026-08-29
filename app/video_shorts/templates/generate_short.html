@@ -15,10 +15,10 @@
 {% set VIDEO_OVERLAY_HEIGHT_PORTRAIT = OVERLAY_HEIGHT %}
 {% set VIDEO_OVERLAY_X = 0 %}
 {% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 350) %}
-{% set TITLE_BAND_Y = 220 %}
+{% set TITLE_BAND_Y = 40 %}
 {% set TITLE_BAND_HEIGHT = 70 %}
 {% set SUBTITLE_BAND_HEIGHT = 90 %}
-{% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - (selected_sub_margin if selected_sub_margin is not none else 405) %}
+{% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - (selected_sub_margin if selected_sub_margin is not none else 320) %}
 {% set PREVIEW_CONFIG = {
   "frameWidth": PREVIEW_BG_WIDTH,
   "frameHeight": PREVIEW_BG_HEIGHT,
@@ -4630,7 +4630,7 @@
                             <span class="advanced-field-label-main">Position</span>
                             <span class="advanced-field-label-direction">from bottom</span>
                           </span>
-                          <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 405 }}" min="0" max="2000">
+                          <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 320 }}" min="0" max="2000">
                         </div>
                       </div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
@@ -4761,7 +4761,7 @@
                             <span class="advanced-field-label-main">Position</span>
                             <span class="advanced-field-label-direction">from top</span>
                           </span>
-                          <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 220 }}" min="0" max="500">
+                          <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="500">
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
@@ -11703,8 +11703,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const alpha = alphaToOpacity(titleTemplatePreset?.bgAlpha ?? titleBgAlphaInput?.value, 92);
     const hex = normalize(titleBgHidden?.value || "#111827");
     const rgba = hexToRgba(hex, alpha);
-    if (titlePreview) titlePreview.style.backgroundColor = rgba;
-    if (previewTitle) previewTitle.style.backgroundColor = rgba;
+    const hasVisibleBand = alpha > 0.001;
+    const effectiveTitleBackground = hasVisibleBand ? rgba : "transparent";
+    if (titlePreview) titlePreview.style.backgroundColor = effectiveTitleBackground;
+    if (previewTitle) previewTitle.style.backgroundColor = effectiveTitleBackground;
     const titleBgSwatch = document.getElementById("titleBgSwatch");
     if (titleBgSwatch) titleBgSwatch.style.backgroundColor = rgba;
     if (titlePreview) titlePreview.style.textShadow = titleTemplatePreset?.textShadow || "none";
@@ -11727,6 +11729,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const effectiveTextHex = wordHighlightPreset?.inactiveTextColor || textHex;
     const textRgba = hexToRgba(effectiveTextHex, textAlpha);
     const bgRgba = hexToRgba(bgHex, bgAlpha);
+    const pillColor = String(wordHighlightPreset?.pillColor || "").trim().toLowerCase();
+    const usesTransparentPill = pillColor === "transparent";
+    const effectiveSubtitleBackground = (isWordHighlight || usesTransparentPill) ? "transparent" : bgRgba;
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
@@ -11741,7 +11746,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (subtitlePreview) {
       subtitlePreview.style.color = textRgba;
-      subtitlePreview.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
+      subtitlePreview.style.backgroundColor = effectiveSubtitleBackground;
       subtitlePreview.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
       subtitlePreview.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
       subtitlePreview.style.setProperty("--word-highlight-text-shadow", wordHighlightPreset?.textShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
@@ -11756,7 +11761,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
-      previewSubtitle.style.backgroundColor = isWordHighlight ? "transparent" : bgRgba;
+      previewSubtitle.style.backgroundColor = effectiveSubtitleBackground;
       previewSubtitle.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
       previewSubtitle.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
       previewSubtitle.style.setProperty("--word-highlight-text-shadow", wordHighlightPreset?.textShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
