@@ -186,6 +186,7 @@ from app.video_shorts.services.media_utils import (
     _find_source_video,
     _format_time_label,
     _resolve_ffmpeg,
+    _probe_video_stream_info,
     _resolve_source_video,
     MediaSubprocessTimeoutError,
     normalize_source_video_for_streaming,
@@ -2393,7 +2394,7 @@ def _sync_storage_assets(
 
 
 _TIME_INPUT_PATTERN = re.compile(r"^(?:(?P<minutes>\d+):)?(?P<seconds>\d{1,2})(?:\.(?P<millis>\d+))?$")
-_PREVIEW_FRAME_CACHE_VERSION = "v2"
+_PREVIEW_FRAME_CACHE_VERSION = "v3"
 
 
 def _parse_time_input(value: Any) -> Optional[float]:
@@ -2423,6 +2424,23 @@ def _preview_frame_cache_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.jpg"
 
 
+def _preview_frame_metadata_path(video_id: str) -> Path:
+    preview_dir = SHORTS_DIR / "preview_frames"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.json"
+
+
+def _load_preview_frame_metadata(video_id: str) -> dict[str, Any] | None:
+    metadata_path = _preview_frame_metadata_path(video_id)
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _preview_candidate_timestamps(duration_seconds: Optional[float]) -> list[float]:
     dur_val = _to_float(duration_seconds)
     if dur_val is None or dur_val <= 0:
@@ -2442,6 +2460,7 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
     if not source_path or not source_path.exists():
         return None
     preview_path = _preview_frame_cache_path(video_id)
+    metadata_path = _preview_frame_metadata_path(video_id)
     if preview_path.exists():
         return preview_path
 
@@ -2449,6 +2468,9 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
     try:
         import cv2
 
+        probe = _probe_video_stream_info(Path(source_path))
+        frame_width = int(probe.get("width") or 0)
+        frame_height = int(probe.get("height") or 0)
         cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
         detector = cv2.CascadeClassifier(str(cascade_path))
         if detector.empty():
@@ -2456,6 +2478,7 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
 
         candidate_timestamps = _preview_candidate_timestamps(duration_seconds)
         best_face: tuple[int, Path, float] | None = None
+        best_face_bbox: tuple[int, int, int, int] | None = None
         best_detail: tuple[float, Path, float] | None = None
         with tempfile.TemporaryDirectory(prefix=f"preview_{video_id}_") as temp_dir:
             temp_dir_path = Path(temp_dir)
@@ -2493,16 +2516,44 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                     minSize=(32, 32),
                 )
                 if len(faces):
-                    largest_face_area = max(int(w * h) for (_x, _y, w, h) in faces)
+                    largest_face = max(faces, key=lambda item: int(item[2] * item[3]))
+                    largest_face_area = int(largest_face[2] * largest_face[3])
                     if best_face is None or largest_face_area > best_face[0]:
                         best_face = (largest_face_area, candidate_path, timestamp)
+                        best_face_bbox = tuple(int(value) for value in largest_face)
                 laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
                 if best_detail is None or laplacian_variance > best_detail[0]:
                     best_detail = (laplacian_variance, candidate_path, timestamp)
 
             selected_path = None
+            selected_metadata: dict[str, Any] = {
+                "cache_version": _PREVIEW_FRAME_CACHE_VERSION,
+                "frame_width": frame_width,
+                "frame_height": frame_height,
+                "selected_timestamp": None,
+                "selected_by": None,
+                "face_bbox": None,
+                "face_cx_ratio": None,
+                "face_cy_ratio": None,
+                "face_w_ratio": None,
+                "face_h_ratio": None,
+            }
             if best_face is not None:
                 selected_path = best_face[1]
+                selected_metadata["selected_timestamp"] = best_face[2]
+                selected_metadata["selected_by"] = "face"
+                if best_face_bbox and frame_width > 0 and frame_height > 0:
+                    x, y, w, h = best_face_bbox
+                    selected_metadata["face_bbox"] = {
+                        "x": x,
+                        "y": y,
+                        "w": w,
+                        "h": h,
+                    }
+                    selected_metadata["face_cx_ratio"] = (x + (w / 2.0)) / float(frame_width)
+                    selected_metadata["face_cy_ratio"] = (y + (h / 2.0)) / float(frame_height)
+                    selected_metadata["face_w_ratio"] = w / float(frame_width)
+                    selected_metadata["face_h_ratio"] = h / float(frame_height)
                 current_app.logger.info(
                     "Preview frame selected by face video_id=%s timestamp=%.3f face_area=%s output=%s",
                     video_id,
@@ -2512,6 +2563,8 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                 )
             elif best_detail is not None:
                 selected_path = best_detail[1]
+                selected_metadata["selected_timestamp"] = best_detail[2]
+                selected_metadata["selected_by"] = "detail"
                 current_app.logger.info(
                     "Preview frame selected by detail fallback video_id=%s timestamp=%.3f detail_score=%.3f output=%s",
                     video_id,
@@ -2524,14 +2577,109 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                 raise RuntimeError(f"No preview frame candidate could be selected for {video_id}")
 
             shutil.copyfile(selected_path, preview_path)
+            metadata_path.write_text(json.dumps(selected_metadata, ensure_ascii=True), encoding="utf-8")
     except Exception:
         current_app.logger.exception("Preview capture failed for %s", video_id)
         try:
             preview_path.unlink()
         except Exception:
             pass
+        try:
+            metadata_path.unlink()
+        except Exception:
+            pass
         return None
     return preview_path if preview_path.exists() else None
+
+
+def _maybe_apply_face_centered_default_crop(
+    *,
+    video_row_id: int,
+    video_id: str,
+    owner_user_id: Any,
+    brand_id: Any,
+    preview_metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not preview_metadata:
+        return None
+    if str(preview_metadata.get("selected_by") or "") != "face":
+        return None
+    try:
+        source_width = int(preview_metadata.get("frame_width") or 0)
+        source_height = int(preview_metadata.get("frame_height") or 0)
+        face_cx = float(preview_metadata.get("face_cx_ratio"))
+    except Exception:
+        return None
+    if source_width <= 0 or source_height <= 0:
+        return None
+    if face_cx < 0.0 or face_cx > 1.0:
+        return None
+
+    portrait_aspect = 9.0 / 16.0
+    source_aspect = float(source_width) / float(source_height)
+    crop_x = 0.0
+    crop_y = 0.0
+    crop_w = 1.0
+    crop_h = 1.0
+    if source_aspect > portrait_aspect:
+        crop_w = min(1.0, portrait_aspect / source_aspect)
+        crop_x = max(0.0, min(1.0 - crop_w, face_cx - (crop_w / 2.0)))
+
+    conn = get_db()
+    try:
+        _ensure_video_crop_schema(conn)
+        video_columns = table_columns(conn, "youtube_videos")
+        update_sql = """
+            UPDATE youtube_videos
+            SET crop_x_ratio = ?, crop_y_ratio = ?, crop_w_ratio = ?, crop_h_ratio = ?, crop_aspect = ?
+            WHERE id = ?
+              AND owner_user_id = ?
+              AND crop_x_ratio IS NULL
+              AND crop_y_ratio IS NULL
+              AND crop_w_ratio IS NULL
+              AND crop_h_ratio IS NULL
+        """
+        params: list[Any] = [
+            crop_x,
+            crop_y,
+            crop_w,
+            crop_h,
+            "portrait",
+            video_row_id,
+            owner_user_id,
+        ]
+        if "brand_id" in video_columns:
+            if brand_id is None:
+                update_sql += "\n AND brand_id IS NULL"
+            else:
+                update_sql += "\n AND brand_id = ?"
+                params.append(brand_id)
+        cursor = conn.execute(update_sql, params)
+        conn.commit()
+        if cursor.rowcount <= 0:
+            return None
+    finally:
+        conn.close()
+
+    current_app.logger.info(
+        "Applied face-centered default crop video_id=%s face_cx=%.4f crop_x=%.4f crop_w=%.4f source=%sx%s",
+        video_id,
+        face_cx,
+        crop_x,
+        crop_w,
+        source_width,
+        source_height,
+    )
+    return {
+        "crop_x_ratio": crop_x,
+        "crop_y_ratio": crop_y,
+        "crop_w_ratio": crop_w,
+        "crop_h_ratio": crop_h,
+        "crop_aspect": "portrait",
+        "face_cx_ratio": face_cx,
+        "source_width": source_width,
+        "source_height": source_height,
+    }
 
 
 def _probe_media_duration_seconds(path: Path) -> Optional[int]:
@@ -4710,6 +4858,28 @@ def generate_short(video_pk):
                     )
         finally:
             _cleanup_resolved_source_video(source_path, source_path_is_temp)
+    crop_is_unset = all(
+        video.get(key) is None
+        for key in ("crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio")
+    )
+    if crop_is_unset:
+        applied_crop = _maybe_apply_face_centered_default_crop(
+            video_row_id=int(video["id"]),
+            video_id=str(video["video_id"]),
+            owner_user_id=current_user.get("id") if current_user else None,
+            brand_id=brand_id,
+            preview_metadata=_load_preview_frame_metadata(str(video["video_id"])),
+        )
+        if applied_crop:
+            video.update(
+                {
+                    "crop_x_ratio": applied_crop["crop_x_ratio"],
+                    "crop_y_ratio": applied_crop["crop_y_ratio"],
+                    "crop_w_ratio": applied_crop["crop_w_ratio"],
+                    "crop_h_ratio": applied_crop["crop_h_ratio"],
+                    "crop_aspect": applied_crop["crop_aspect"],
+                }
+            )
     if preview_path.exists():
         try:
             rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())

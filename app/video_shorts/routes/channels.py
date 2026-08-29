@@ -33,7 +33,7 @@ SOURCES_OWNER_IDENTIFIERS = {
 VIDEOS_DIR = Path("app/video_shorts/static/videos")
 SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
 SHORTS_DIR = Path("app/video_shorts/static/shorts")
-PREVIEW_FRAME_CACHE_VERSION = "v2"
+PREVIEW_FRAME_CACHE_VERSION = "v3"
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
