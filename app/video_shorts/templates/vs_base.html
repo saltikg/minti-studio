@@ -181,27 +181,6 @@
       background: linear-gradient(180deg, rgba(18, 30, 43, 0.98), rgba(10, 18, 28, 0.98));
       box-shadow: 0 18px 46px -30px rgba(63, 224, 197, 0.55), 0 0 0 1px rgba(63, 224, 197, 0.24);
     }
-    .vs-service-mode-badge {
-      position: absolute;
-      top: 16px;
-      left: 20px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 28px;
-      padding: 6px 11px;
-      border-radius: 999px;
-      background: rgba(63, 224, 197, 0.16);
-      color: var(--mint);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-    .vs-service-mode-card:not(.is-featured) .vs-service-mode-badge {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text-2);
-    }
     .vs-service-mode-check {
       position: absolute;
       top: 18px;
@@ -225,7 +204,8 @@
       color: #052e26;
     }
     .vs-service-mode-card-head {
-      padding-top: 28px;
+      padding-top: 10px;
+      text-align: center;
     }
     .vs-service-mode-card-title {
       color: var(--text-1);
@@ -233,17 +213,21 @@
       font-weight: 800;
       letter-spacing: -0.02em;
       margin-bottom: 8px;
+      text-align: center;
     }
     .vs-service-mode-card-copy {
       color: rgba(241, 245, 249, 0.92);
       font-size: 0.96rem;
       line-height: 1.5;
       margin-bottom: 0;
+      text-align: center;
     }
     .vs-service-mode-highlights {
       display: flex;
       flex-direction: column;
       gap: 6px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
     .vs-service-mode-tagline {
       color: #38e08a;
@@ -255,6 +239,13 @@
     .vs-service-mode-priceline {
       color: var(--text-2);
       font-size: 0.92rem;
+    }
+    .vs-service-mode-card-action {
+      margin-top: auto;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: center;
     }
     .vs-service-mode-toggle {
       display: inline-flex;
@@ -316,33 +307,21 @@
       font-size: 0.86rem;
       font-weight: 600;
     }
-    .vs-service-mode-confirm {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-top: 18px;
-      padding-top: 2px;
-    }
-    .vs-service-mode-confirm-text {
-      color: rgba(248, 250, 252, 0.96);
-      font-size: 0.96rem;
-      font-weight: 600;
-      min-height: 1.4em;
-    }
     .vs-service-mode-subcopy {
       color: rgba(241, 245, 249, 0.88);
     }
-    .vs-service-mode-footer-note {
-      color: rgba(241, 245, 249, 0.84);
+    .vs-service-mode-submit {
+      width: 100%;
+      max-width: 360px;
+      min-height: 54px;
+      margin: 0 auto;
+      justify-content: center;
+      font-size: 1rem;
+      font-weight: 800;
     }
     @media (max-width: 767.98px) {
       .vs-service-mode-grid {
         grid-template-columns: 1fr;
-      }
-      .vs-service-mode-confirm {
-        flex-direction: column;
-        align-items: stretch;
       }
     }
   </style>
@@ -577,20 +556,21 @@
                       role="button"
                       aria-pressed="{{ 'true' if vs_service_mode.preselected_mode in ['', 'autopilot'] else 'false' }}"
                     >
-                      <span class="vs-service-mode-badge">Most Popular</span>
                       <span class="vs-service-mode-check" aria-hidden="true">✓</span>
                       <div class="vs-service-mode-card-head">
                         <div class="vs-service-mode-card-title">Do it for me</div>
-                        <div class="vs-service-mode-card-copy">We take your videos, create Shorts, publish them, and send you a monthly report.</div>
+                        <div class="vs-service-mode-card-copy">Connect your channel and we'll handle the Shorts — created, published, and reported every month.</div>
                       </div>
                       <div class="vs-service-mode-highlights">
                         <div class="vs-service-mode-tagline">First month free</div>
                         <div class="vs-service-mode-priceline">then $20/mo · 15 Shorts · cancel anytime</div>
                       </div>
-                      <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="autopilot" aria-expanded="false" aria-controls="vsServiceModePanelAutopilot">
-                        <span>How it works</span>
-                        <span class="vs-service-mode-toggle-caret">›</span>
-                      </button>
+                      <div class="vs-service-mode-card-action">
+                        <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="autopilot" aria-expanded="false" aria-controls="vsServiceModePanelAutopilot">
+                          <span>How it works</span>
+                          <span class="vs-service-mode-toggle-caret">›</span>
+                        </button>
+                      </div>
                       <div class="vs-service-mode-panel" id="vsServiceModePanelAutopilot">
                         <ol class="vs-service-mode-steps">
                           <li>Connect your channel once.</li>
@@ -616,7 +596,6 @@
                       role="button"
                       aria-pressed="{{ 'true' if vs_service_mode.preselected_mode == 'self' else 'false' }}"
                     >
-                      <span class="vs-service-mode-badge">Self-serve</span>
                       <span class="vs-service-mode-check" aria-hidden="true">✓</span>
                       <div class="vs-service-mode-card-head">
                         <div class="vs-service-mode-card-title">I'll do it myself</div>
@@ -626,10 +605,12 @@
                         <div class="vs-service-mode-tagline">Free — 10 Shorts / mo</div>
                         <div class="vs-service-mode-priceline">upgrade anytime for more</div>
                       </div>
-                      <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="self" aria-expanded="false" aria-controls="vsServiceModePanelSelf">
-                        <span>See plans</span>
-                        <span class="vs-service-mode-toggle-caret">›</span>
-                      </button>
+                      <div class="vs-service-mode-card-action">
+                        <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="self" aria-expanded="false" aria-controls="vsServiceModePanelSelf">
+                          <span>See plans</span>
+                          <span class="vs-service-mode-toggle-caret">›</span>
+                        </button>
+                      </div>
                       <div class="vs-service-mode-panel" id="vsServiceModePanelSelf">
                         <ol class="vs-service-mode-steps">
                           <li>Upload your long-form video.</li>
@@ -648,8 +629,8 @@
                   </div>
                   <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
                 </div>
-                <div class="modal-footer vs-modal-footer justify-content-between">
-                  <button type="button" class="btn btn-sm vs-btn vs-btn-primary" id="vsServiceModeSubmit">Continue</button>
+                <div class="modal-footer vs-modal-footer">
+                  <button type="button" class="btn vs-btn vs-btn-primary vs-service-mode-submit" id="vsServiceModeSubmit">Start my autopilot</button>
                 </div>
               </div>
             </div>
@@ -1072,6 +1053,9 @@
               button.classList.toggle("is-selected", button.getAttribute("data-service-mode-option") === selectedMode);
               button.setAttribute("aria-pressed", button.getAttribute("data-service-mode-option") === selectedMode ? "true" : "false");
             });
+            if (submitButton) {
+              submitButton.textContent = selectedMode === "self" ? "Start creating" : "Start my autopilot";
+            }
             if (errorEl) {
               errorEl.classList.add("d-none");
               errorEl.textContent = "";
