@@ -153,46 +153,190 @@
     .vs-service-mode-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
+      gap: 18px;
+      align-items: stretch;
     }
     .vs-service-mode-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 100%;
       border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.03);
-      padding: 18px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(14, 19, 31, 0.98), rgba(8, 13, 22, 0.98));
+      padding: 24px 22px 20px;
       cursor: pointer;
-      transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+      transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+    .vs-service-mode-card:hover,
+    .vs-service-mode-card:focus-visible {
+      border-color: rgba(63, 224, 197, 0.32);
+      transform: translateY(-1px);
+      outline: none;
     }
     .vs-service-mode-card.is-selected {
-      border-color: rgba(45, 212, 191, 0.55);
-      background: rgba(45, 212, 191, 0.12);
-      transform: translateY(-1px);
+      border-color: rgba(63, 224, 197, 0.78);
+      background: linear-gradient(180deg, rgba(18, 30, 43, 0.98), rgba(10, 18, 28, 0.98));
+      box-shadow: 0 18px 46px -30px rgba(63, 224, 197, 0.55), 0 0 0 1px rgba(63, 224, 197, 0.24);
+    }
+    .vs-service-mode-badge {
+      position: absolute;
+      top: 16px;
+      left: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: rgba(63, 224, 197, 0.16);
+      color: var(--mint);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .vs-service-mode-card:not(.is-featured) .vs-service-mode-badge {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-2);
+    }
+    .vs-service-mode-check {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.04);
+      color: transparent;
+      font-size: 0.92rem;
+      font-weight: 800;
+      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    }
+    .vs-service-mode-card.is-selected .vs-service-mode-check {
+      background: var(--mint);
+      border-color: transparent;
+      color: #052e26;
+    }
+    .vs-service-mode-card-head {
+      padding-top: 28px;
     }
     .vs-service-mode-card-title {
       color: var(--text-1);
-      font-weight: 700;
-      margin-bottom: 6px;
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
     }
     .vs-service-mode-card-copy {
+      color: rgba(241, 245, 249, 0.92);
+      font-size: 0.96rem;
+      line-height: 1.5;
+      margin-bottom: 0;
+    }
+    .vs-service-mode-highlights {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .vs-service-mode-tagline {
+      color: #38e08a;
+      font-size: 0.83rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .vs-service-mode-priceline {
       color: var(--text-2);
+      font-size: 0.92rem;
+    }
+    .vs-service-mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--mint);
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .vs-service-mode-toggle:hover,
+    .vs-service-mode-toggle:focus-visible {
+      color: #7df0dd;
+      outline: none;
+    }
+    .vs-service-mode-toggle-caret {
+      display: inline-block;
+      transition: transform 0.18s ease;
+    }
+    .vs-service-mode-toggle[aria-expanded="true"] .vs-service-mode-toggle-caret {
+      transform: rotate(90deg);
+    }
+    .vs-service-mode-panel {
+      display: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 14px;
+      margin-top: -2px;
+    }
+    .vs-service-mode-panel.is-open {
+      display: block;
+    }
+    .vs-service-mode-steps,
+    .vs-service-mode-package-list {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .vs-service-mode-steps {
+      display: grid;
+      gap: 8px;
+      color: rgba(241, 245, 249, 0.88);
       font-size: 0.9rem;
+      line-height: 1.45;
+      margin-bottom: 14px;
+    }
+    .vs-service-mode-package-list {
+      display: grid;
+      gap: 6px;
+      color: var(--text-2);
+      font-size: 0.88rem;
       line-height: 1.45;
       margin-bottom: 12px;
     }
-    .vs-service-mode-card-meta {
-      color: var(--mint);
-      font-size: 0.82rem;
+    .vs-service-mode-panel-note {
+      color: rgba(248, 250, 252, 0.94);
+      font-size: 0.86rem;
       font-weight: 600;
     }
     .vs-service-mode-confirm {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 18px;
+      padding-top: 2px;
+    }
+    .vs-service-mode-confirm-text {
       color: rgba(248, 250, 252, 0.96);
-      font-size: 0.94rem;
-      font-weight: 500;
-      margin-top: 16px;
+      font-size: 0.96rem;
+      font-weight: 600;
+      min-height: 1.4em;
     }
     @media (max-width: 767.98px) {
       .vs-service-mode-grid {
         grid-template-columns: 1fr;
+      }
+      .vs-service-mode-confirm {
+        flex-direction: column;
+        align-items: stretch;
       }
     }
   </style>
@@ -410,35 +554,107 @@
         {% if vs_service_mode and vs_service_mode.show_modal %}
           <div class="modal fade" id="vsServiceModeModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-              <div class="modal-content vs-modal">
+                <div class="modal-content vs-modal">
                 <div class="modal-header vs-modal-header">
                   <div>
                     <h5 class="modal-title vs-modal-title">How do you want to use Minti?</h5>
+                    <div class="small text-muted">Choose one — you can change it anytime.</div>
                   </div>
                 </div>
                 <div class="modal-body vs-modal-body">
                   <div class="vs-service-mode-grid" id="vsServiceModeGrid">
-                    <button type="button" class="vs-service-mode-card{% if vs_service_mode.preselected_mode == 'autopilot' %} is-selected{% endif %}" data-service-mode-option="autopilot">
-                      <div class="vs-service-mode-card-title">Do it for me</div>
-                      <div class="vs-service-mode-card-copy">We turn your long videos into Shorts with you, starting at the entry level.</div>
-                      <div class="vs-service-mode-card-meta">First month free · 15 Shorts on us</div>
-                    </button>
-                    <button type="button" class="vs-service-mode-card{% if vs_service_mode.preselected_mode == 'self' %} is-selected{% endif %}" data-service-mode-option="self">
-                      <div class="vs-service-mode-card-title">I'll do it myself</div>
-                      <div class="vs-service-mode-card-copy">Use the editor, captions, publishing, and analytics yourself inside Minti.</div>
-                      <div class="vs-service-mode-card-meta">Self-serve · no card required</div>
-                    </button>
+                    <div
+                      class="vs-service-mode-card is-featured{% if vs_service_mode.preselected_mode == 'autopilot' %} is-selected{% endif %}"
+                      data-service-mode-option="autopilot"
+                      data-service-mode-label="Do it for me"
+                      tabindex="0"
+                      role="button"
+                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode == 'autopilot' else 'false' }}"
+                    >
+                      <span class="vs-service-mode-badge">Most Popular</span>
+                      <span class="vs-service-mode-check" aria-hidden="true">✓</span>
+                      <div class="vs-service-mode-card-head">
+                        <div class="vs-service-mode-card-title">Do it for me</div>
+                        <div class="vs-service-mode-card-copy">We take your videos, create Shorts, publish them, and send you a monthly report.</div>
+                      </div>
+                      <div class="vs-service-mode-highlights">
+                        <div class="vs-service-mode-tagline">First month free</div>
+                        <div class="vs-service-mode-priceline">then $20/mo · 15 Shorts · cancel anytime</div>
+                      </div>
+                      <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="autopilot" aria-expanded="false" aria-controls="vsServiceModePanelAutopilot">
+                        <span>How it works</span>
+                        <span class="vs-service-mode-toggle-caret">›</span>
+                      </button>
+                      <div class="vs-service-mode-panel" id="vsServiceModePanelAutopilot">
+                        <ol class="vs-service-mode-steps">
+                          <li>Connect your channel once.</li>
+                          <li>We pull in your latest long videos.</li>
+                          <li>We turn them into captioned vertical Shorts.</li>
+                          <li>We publish them to your channels.</li>
+                          <li>You get a monthly performance report.</li>
+                        </ol>
+                        <ul class="vs-service-mode-package-list">
+                          <li>15 Shorts / month · $20</li>
+                          <li>30 Shorts / month · $40</li>
+                          <li>45 Shorts / month · $60</li>
+                          <li>60 Shorts / month · $80</li>
+                        </ul>
+                        <div class="vs-service-mode-panel-note">Start with 15 Shorts free your first month · scale up anytime</div>
+                      </div>
+                    </div>
+                    <div
+                      class="vs-service-mode-card{% if vs_service_mode.preselected_mode == 'self' %} is-selected{% endif %}"
+                      data-service-mode-option="self"
+                      data-service-mode-label="I'll do it myself"
+                      tabindex="0"
+                      role="button"
+                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode == 'self' else 'false' }}"
+                    >
+                      <span class="vs-service-mode-badge">Self-serve</span>
+                      <span class="vs-service-mode-check" aria-hidden="true">✓</span>
+                      <div class="vs-service-mode-card-head">
+                        <div class="vs-service-mode-card-title">I'll do it myself</div>
+                        <div class="vs-service-mode-card-copy">You upload your videos, create Shorts, publish, and track them — yourself in Minti.</div>
+                      </div>
+                      <div class="vs-service-mode-highlights">
+                        <div class="vs-service-mode-tagline">Free — 10 Shorts / mo</div>
+                        <div class="vs-service-mode-priceline">upgrade anytime for more</div>
+                      </div>
+                      <button type="button" class="vs-service-mode-toggle" data-service-mode-toggle="self" aria-expanded="false" aria-controls="vsServiceModePanelSelf">
+                        <span>See plans</span>
+                        <span class="vs-service-mode-toggle-caret">›</span>
+                      </button>
+                      <div class="vs-service-mode-panel" id="vsServiceModePanelSelf">
+                        <ol class="vs-service-mode-steps">
+                          <li>Upload your long-form video.</li>
+                          <li>Pick moments yourself or let AI choose.</li>
+                          <li>Create your Shorts with captions and editing tools.</li>
+                          <li>Publish and track performance in Minti.</li>
+                        </ol>
+                        <ul class="vs-service-mode-package-list">
+                          <li>10 Shorts · 1 hour source · Free</li>
+                          <li>30 Shorts · 3 hours source · $9</li>
+                          <li>90 Shorts · 9 hours source · $19</li>
+                        </ul>
+                        <div class="vs-service-mode-panel-note">Start free · upgrade anytime</div>
+                      </div>
+                    </div>
                   </div>
                   <div class="vs-service-mode-confirm">
-                    {% if vs_service_mode.show_autopilot_confirmation %}
-                      You chose Do it for me. Confirm to start with 15 Shorts free, then scale up later if needed.
-                    {% else %}
-                      Pick the path you want and continue.
-                    {% endif %}
+                    <div class="vs-service-mode-confirm-text" id="vsServiceModeConfirmText">
+                      {% if vs_service_mode.show_autopilot_confirmation %}
+                        You picked Do it for me.
+                      {% elif vs_service_mode.preselected_mode == 'self' %}
+                        You picked I'll do it myself.
+                      {% else %}
+                        Choose one to continue.
+                      {% endif %}
+                    </div>
                   </div>
                   <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
                 </div>
-                <div class="modal-footer vs-modal-footer justify-content-end">
+                <div class="modal-footer vs-modal-footer justify-content-between">
+                  <span class="text-muted small">You can switch later if you need to.</span>
                   <button type="button" class="btn btn-sm vs-btn vs-btn-primary" id="vsServiceModeSubmit">Continue</button>
                 </div>
               </div>
@@ -846,12 +1062,32 @@
           const grid = document.getElementById("vsServiceModeGrid");
           const submitButton = document.getElementById("vsServiceModeSubmit");
           const errorEl = document.getElementById("vsServiceModeError");
+          const confirmTextEl = document.getElementById("vsServiceModeConfirmText");
           let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or '')|tojson }};
+          const emitServiceModeModalState = (open, mode) => {
+            window.__vsServiceModeModalOpen = Boolean(open);
+            window.dispatchEvent(new CustomEvent("vs:service-mode-modal", {
+              detail: {
+                open: Boolean(open),
+                selectedMode: mode || "",
+              },
+            }));
+          };
 
           const renderServiceModeSelection = () => {
             serviceModeEl.querySelectorAll("[data-service-mode-option]").forEach((button) => {
               button.classList.toggle("is-selected", button.getAttribute("data-service-mode-option") === selectedMode);
+              button.setAttribute("aria-pressed", button.getAttribute("data-service-mode-option") === selectedMode ? "true" : "false");
             });
+            if (confirmTextEl) {
+              if (selectedMode === "autopilot") {
+                confirmTextEl.textContent = "You picked Do it for me.";
+              } else if (selectedMode === "self") {
+                confirmTextEl.textContent = "You picked I'll do it myself.";
+              } else {
+                confirmTextEl.textContent = "Choose one to continue.";
+              }
+            }
             if (errorEl) {
               errorEl.classList.add("d-none");
               errorEl.textContent = "";
@@ -860,8 +1096,27 @@
 
           if (grid) {
             grid.addEventListener("click", (event) => {
+              const toggle = event.target.closest("[data-service-mode-toggle]");
+              if (toggle) {
+                const panelId = toggle.getAttribute("aria-controls");
+                const panel = panelId ? document.getElementById(panelId) : null;
+                const isOpen = toggle.getAttribute("aria-expanded") === "true";
+                toggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+                panel?.classList.toggle("is-open", !isOpen);
+                event.stopPropagation();
+                return;
+              }
               const option = event.target.closest("[data-service-mode-option]");
               if (!option) return;
+              selectedMode = option.getAttribute("data-service-mode-option") || "";
+              renderServiceModeSelection();
+            });
+            grid.addEventListener("keydown", (event) => {
+              const option = event.target.closest("[data-service-mode-option]");
+              if (!option) return;
+              if (event.key !== "Enter" && event.key !== " ") return;
+              if (event.target.closest("[data-service-mode-toggle]")) return;
+              event.preventDefault();
               selectedMode = option.getAttribute("data-service-mode-option") || "";
               renderServiceModeSelection();
             });
@@ -891,6 +1146,7 @@
               if (!response.ok || !payload || !payload.ok) {
                 throw new Error((payload && payload.error) || "Could not save your choice.");
               }
+              emitServiceModeModalState(false, selectedMode);
               serviceModeModal.hide();
             } catch (error) {
               if (errorEl) {
@@ -900,6 +1156,12 @@
             } finally {
               submitButton.disabled = false;
             }
+          });
+          serviceModeEl.addEventListener("shown.bs.modal", () => {
+            emitServiceModeModalState(true, selectedMode);
+          });
+          serviceModeEl.addEventListener("hidden.bs.modal", () => {
+            emitServiceModeModalState(false, selectedMode);
           });
           renderServiceModeSelection();
           if ({{ "true" if vs_service_mode and vs_service_mode.auto_open else "false" }}) {

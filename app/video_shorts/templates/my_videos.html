@@ -538,12 +538,15 @@
   const coachmarkScope = String(coachmarkShell?.dataset.coachmarkScope || 'default');
   const coachmarkDismissedSessionKey = `mvCoachmarkDismissed:${coachmarkScope}`;
   const coachmarkStateKey = `mvCoachmarkStage:${coachmarkScope}`;
+  const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
   let selectedFile = null;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
   let ffmpegModulePromise = null;
   let ffmpegInstancePromise = null;
   let mp4MuxerModulePromise = null;
+  let serviceModeModalOpen = Boolean(window.__vsServiceModeModalOpen);
+  let effectiveServiceMode = String(initialServiceMode || '').trim().toLowerCase();
 
   const coachmarkSteps = {
     1: {
@@ -608,6 +611,8 @@
     }
   };
 
+  const shouldSuppressCoachmark = () => serviceModeModalOpen || effectiveServiceMode === 'autopilot';
+
   const saveCoachmarkPreference = async () => {
     try {
       await fetch('{{ url_for("video_shorts_bp.update_my_videos_coachmark_preference") }}', {
@@ -624,7 +629,7 @@
   };
 
   const renderCoachmark = (stepNumber) => {
-    if (!coachmarkShell || persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true') {
+    if (!coachmarkShell || persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true' || shouldSuppressCoachmark()) {
       destroyCoachmark();
       currentCoachmarkStep = null;
       return;
@@ -692,7 +697,7 @@
   };
 
   const syncCoachmark = () => {
-    if (persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true') {
+    if (persistentHide || sessionStorage.getItem(coachmarkDismissedSessionKey) === 'true' || shouldSuppressCoachmark()) {
       destroyCoachmark();
       currentCoachmarkStep = null;
       return;
@@ -1911,6 +1916,14 @@
     if (currentCoachmarkStep) {
       renderCoachmark(currentCoachmarkStep);
     }
+  });
+  window.addEventListener('vs:service-mode-modal', (event) => {
+    const detail = event?.detail || {};
+    serviceModeModalOpen = Boolean(detail.open);
+    if (!serviceModeModalOpen && (detail.selectedMode === 'autopilot' || detail.selectedMode === 'self')) {
+      effectiveServiceMode = detail.selectedMode;
+    }
+    syncCoachmark();
   });
   syncCoachmark();
 })();
