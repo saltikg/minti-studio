@@ -330,6 +330,12 @@
       font-weight: 600;
       min-height: 1.4em;
     }
+    .vs-service-mode-subcopy {
+      color: rgba(241, 245, 249, 0.88);
+    }
+    .vs-service-mode-footer-note {
+      color: rgba(241, 245, 249, 0.84);
+    }
     @media (max-width: 767.98px) {
       .vs-service-mode-grid {
         grid-template-columns: 1fr;
@@ -558,18 +564,18 @@
                 <div class="modal-header vs-modal-header">
                   <div>
                     <h5 class="modal-title vs-modal-title">How do you want to use Minti?</h5>
-                    <div class="small text-muted">Choose one — you can change it anytime.</div>
+                    <div class="small vs-service-mode-subcopy">Choose one — you can change it anytime.</div>
                   </div>
                 </div>
                 <div class="modal-body vs-modal-body">
                   <div class="vs-service-mode-grid" id="vsServiceModeGrid">
                     <div
-                      class="vs-service-mode-card is-featured{% if vs_service_mode.preselected_mode == 'autopilot' %} is-selected{% endif %}"
+                      class="vs-service-mode-card is-featured{% if vs_service_mode.preselected_mode in ['', 'autopilot'] %} is-selected{% endif %}"
                       data-service-mode-option="autopilot"
                       data-service-mode-label="Do it for me"
                       tabindex="0"
                       role="button"
-                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode == 'autopilot' else 'false' }}"
+                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode in ['', 'autopilot'] else 'false' }}"
                     >
                       <span class="vs-service-mode-badge">Most Popular</span>
                       <span class="vs-service-mode-check" aria-hidden="true">✓</span>
@@ -654,7 +660,7 @@
                   <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
                 </div>
                 <div class="modal-footer vs-modal-footer justify-content-between">
-                  <span class="text-muted small">You can switch later if you need to.</span>
+                  <span class="small vs-service-mode-footer-note">You can switch later if you need to.</span>
                   <button type="button" class="btn btn-sm vs-btn vs-btn-primary" id="vsServiceModeSubmit">Continue</button>
                 </div>
               </div>
@@ -1063,7 +1069,7 @@
           const submitButton = document.getElementById("vsServiceModeSubmit");
           const errorEl = document.getElementById("vsServiceModeError");
           const confirmTextEl = document.getElementById("vsServiceModeConfirmText");
-          let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or '')|tojson }};
+          let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or 'autopilot')|tojson }};
           const emitServiceModeModalState = (open, mode) => {
             window.__vsServiceModeModalOpen = Boolean(open);
             window.dispatchEvent(new CustomEvent("vs:service-mode-modal", {
