@@ -646,21 +646,9 @@
                       </div>
                     </div>
                   </div>
-                  <div class="vs-service-mode-confirm">
-                    <div class="vs-service-mode-confirm-text" id="vsServiceModeConfirmText">
-                      {% if vs_service_mode.show_autopilot_confirmation %}
-                        You picked Do it for me.
-                      {% elif vs_service_mode.preselected_mode == 'self' %}
-                        You picked I'll do it myself.
-                      {% else %}
-                        Choose one to continue.
-                      {% endif %}
-                    </div>
-                  </div>
                   <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
                 </div>
                 <div class="modal-footer vs-modal-footer justify-content-between">
-                  <span class="small vs-service-mode-footer-note">You can switch later if you need to.</span>
                   <button type="button" class="btn btn-sm vs-btn vs-btn-primary" id="vsServiceModeSubmit">Continue</button>
                 </div>
               </div>
@@ -1068,7 +1056,6 @@
           const grid = document.getElementById("vsServiceModeGrid");
           const submitButton = document.getElementById("vsServiceModeSubmit");
           const errorEl = document.getElementById("vsServiceModeError");
-          const confirmTextEl = document.getElementById("vsServiceModeConfirmText");
           let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or 'autopilot')|tojson }};
           const emitServiceModeModalState = (open, mode) => {
             window.__vsServiceModeModalOpen = Boolean(open);
@@ -1085,15 +1072,6 @@
               button.classList.toggle("is-selected", button.getAttribute("data-service-mode-option") === selectedMode);
               button.setAttribute("aria-pressed", button.getAttribute("data-service-mode-option") === selectedMode ? "true" : "false");
             });
-            if (confirmTextEl) {
-              if (selectedMode === "autopilot") {
-                confirmTextEl.textContent = "You picked Do it for me.";
-              } else if (selectedMode === "self") {
-                confirmTextEl.textContent = "You picked I'll do it myself.";
-              } else {
-                confirmTextEl.textContent = "Choose one to continue.";
-              }
-            }
             if (errorEl) {
               errorEl.classList.add("d-none");
               errorEl.textContent = "";
