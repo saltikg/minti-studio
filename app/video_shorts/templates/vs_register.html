@@ -15,6 +15,15 @@
       <h5 class="card-title text-center mb-3">Create your account</h5>
       {% if signups_enabled %}
         <form method="post">
+          {% if auth_intent %}
+            <input type="hidden" name="intent" value="{{ auth_intent }}">
+          {% endif %}
+          {% if auth_tier %}
+            <input type="hidden" name="tier" value="{{ auth_tier }}">
+          {% endif %}
+          {% if auth_plan %}
+            <input type="hidden" name="plan" value="{{ auth_plan }}">
+          {% endif %}
           <div class="mb-3">
             <label class="form-label">Email (username)</label>
             <input type="email" class="form-control" name="email" placeholder="you@example.com" value="{{ pending_email or '' }}" required autofocus>
@@ -32,7 +41,7 @@
         </form>
         {% if vs_google_oauth_available %}
           <div class="text-center my-3 text-muted">or</div>
-          <a href="{{ url_for('video_shorts_bp.google_login') }}"
+          <a href="{{ google_login_url }}"
              class="btn btn-outline-secondary w-100 d-flex justify-content-center align-items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 533.5 544.3">
               <path fill="#4285F4" d="M533.5 278.4c0-17.4-1.6-34.1-4.6-50.2H272.1v95.1h147.7c-6.4 34.5-25.8 63.8-55 83.4l88.9 69.1c51.8-47.7 80-118.1 80-197.4z"/>
@@ -47,7 +56,7 @@
         <p class="text-muted text-center mb-0">{{ signup_disabled_message }}</p>
       {% endif %}
       <p class="text-center mt-3 small">
-        Already have an account? <a href="{{ url_for('video_shorts_bp.login') }}">Sign in</a>
+        Already have an account? <a href="{{ login_url }}">Sign in</a>
       </p>
     </div>
   </div>

@@ -34,7 +34,7 @@ def home():
             "source_hours": 1,
             "price": int((plan_lookup.get("plan_free") or {}).get("monthly_price") or 0),
             "note": "Free forever",
-            "register_url": url_for("video_shorts_bp.register", plan="plan_free"),
+            "register_url": url_for("video_shorts_bp.register", intent="self", plan="plan_free"),
         },
         {
             "plan_id": "plan_2gb",
@@ -42,7 +42,7 @@ def home():
             "source_hours": 3,
             "price": int((plan_lookup.get("plan_2gb") or {}).get("monthly_price") or 9),
             "note": "",
-            "register_url": url_for("video_shorts_bp.register", plan="plan_2gb"),
+            "register_url": url_for("video_shorts_bp.register", intent="self", plan="plan_2gb"),
         },
         {
             "plan_id": "plan_10gb",
@@ -50,7 +50,7 @@ def home():
             "source_hours": 9,
             "price": int((plan_lookup.get("plan_10gb") or {}).get("monthly_price") or 19),
             "note": "",
-            "register_url": url_for("video_shorts_bp.register", plan="plan_10gb"),
+            "register_url": url_for("video_shorts_bp.register", intent="self", plan="plan_10gb"),
         },
     ]
     autopilot_tiers = [
@@ -63,7 +63,7 @@ def home():
         "vs_home.html",
         self_serve_tiers=self_serve_tiers,
         autopilot_tiers=autopilot_tiers,
-        autopilot_interest_url=url_for("video_shorts_bp.capture_autopilot_interest"),
+        register_base_url=url_for("video_shorts_bp.register"),
         latest_blog_articles=latest_articles,
     )
 

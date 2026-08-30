@@ -54,6 +54,7 @@ from app.video_shorts.services.email_verification import (
     can_send_password_reset,
     generate_email_verification_token,
     hash_email_verification_token,
+    send_autopilot_customer_admin_email,
     password_reset_token_expiry,
     send_membership_activated_emails,
     send_onboarding_magic_link_welcome_email,
@@ -123,6 +124,9 @@ COMMON_WEAK_PASSWORDS = {
     "asdfghjk",
     "abcdefgh",
 }
+AUTOPILOT_SERVICE_TIERS = {15, 30, 45, 60}
+SELF_SERVE_PLAN_IDS = {"plan_free", "plan_2gb", "plan_10gb"}
+SERVICE_MODE_VALUES = {"autopilot", "self"}
 
 LOGIN_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
 REGISTER_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
@@ -181,7 +185,11 @@ def _current_user():
                   role,
                   time_zone,
                   COALESCE(email_verified, FALSE),
-                  COALESCE(onboarding_dismissed, FALSE)
+                  COALESCE(onboarding_dismissed, FALSE),
+                  service_mode,
+                  service_tier,
+                  pending_service_intent,
+                  pending_service_tier
                 FROM shorts_users
                 WHERE id = ?
             """
@@ -221,6 +229,10 @@ def _current_user():
         "time_zone": row[7] or DEFAULT_TIME_ZONE,
         "email_verified": bool(row[8]) if len(row) > 8 else False,
         "onboarding_dismissed": bool(row[9]) if len(row) > 9 else False,
+        "service_mode": str(row[10] or "").strip().lower() if len(row) > 10 and row[10] else "",
+        "service_tier": int(row[11]) if len(row) > 11 and row[11] is not None else None,
+        "pending_service_intent": str(row[12] or "").strip().lower() if len(row) > 12 and row[12] else "",
+        "pending_service_tier": int(row[13]) if len(row) > 13 and row[13] is not None else None,
     }
     return g.vs_current_user
 
@@ -239,6 +251,131 @@ def _mask_email_address(email: str) -> str:
 
 def _normalize_auth_email(value: str) -> str:
     return (value or "").strip().lower()
+
+
+def _normalize_service_intent(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in SERVICE_MODE_VALUES else ""
+
+
+def _normalize_service_tier(value: object) -> Optional[int]:
+    try:
+        tier = int(value)
+    except (TypeError, ValueError):
+        return None
+    return tier if tier in AUTOPILOT_SERVICE_TIERS else None
+
+
+def _normalize_self_serve_plan(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in SELF_SERVE_PLAN_IDS else ""
+
+
+def _stash_auth_choice(*, intent: str = "", tier: Optional[int] = None, plan_id: str = "") -> None:
+    normalized_intent = _normalize_service_intent(intent)
+    normalized_tier = _normalize_service_tier(tier) if normalized_intent == "autopilot" else None
+    normalized_plan = _normalize_self_serve_plan(plan_id)
+    if normalized_intent:
+        session["vs_pending_service_intent"] = normalized_intent
+    else:
+        session.pop("vs_pending_service_intent", None)
+    if normalized_tier is not None:
+        session["vs_pending_service_tier"] = normalized_tier
+    else:
+        session.pop("vs_pending_service_tier", None)
+    if normalized_plan:
+        session["vs_pending_plan_id"] = normalized_plan
+    else:
+        session.pop("vs_pending_plan_id", None)
+
+
+def _current_auth_choice(*, include_request_values: bool = False) -> dict[str, object]:
+    request_values = request.values if include_request_values else request.args
+    intent = _normalize_service_intent(request_values.get("intent"))
+    if not intent:
+        intent = _normalize_service_intent(session.get("vs_pending_service_intent"))
+    tier = _normalize_service_tier(request_values.get("tier"))
+    if tier is None:
+        tier = _normalize_service_tier(session.get("vs_pending_service_tier"))
+    plan_id = _normalize_self_serve_plan(request_values.get("plan"))
+    if not plan_id:
+        plan_id = _normalize_self_serve_plan(session.get("vs_pending_plan_id"))
+    if intent != "autopilot":
+        tier = None
+    return {
+        "intent": intent,
+        "tier": tier,
+        "plan_id": plan_id,
+    }
+
+
+def _build_auth_route_kwargs(*, include_next: bool = False) -> dict[str, object]:
+    choice = _current_auth_choice()
+    route_kwargs: dict[str, object] = {}
+    if choice["intent"]:
+        route_kwargs["intent"] = choice["intent"]
+    if choice["tier"] is not None:
+        route_kwargs["tier"] = choice["tier"]
+    if choice["plan_id"]:
+        route_kwargs["plan"] = choice["plan_id"]
+    if include_next:
+        nxt = _normalize_next_url(request.args.get("next"))
+        if nxt:
+            route_kwargs["next"] = nxt
+    return route_kwargs
+
+
+def _persist_pending_service_choice(
+    conn,
+    *,
+    user_id: str,
+    intent: str = "",
+    tier: Optional[int] = None,
+) -> None:
+    normalized_intent = _normalize_service_intent(intent)
+    normalized_tier = _normalize_service_tier(tier) if normalized_intent == "autopilot" else None
+    if not normalized_intent:
+        return
+    conn.execute(
+        """
+        UPDATE shorts_users
+        SET pending_service_intent = ?,
+            pending_service_tier = ?,
+            updated_at = now()
+        WHERE CAST(id AS VARCHAR) = ?
+          AND COALESCE(service_mode, '') = ''
+        """,
+        [normalized_intent, normalized_tier, str(user_id)],
+    )
+
+
+def _clear_pending_service_choice() -> None:
+    session.pop("vs_pending_service_intent", None)
+    session.pop("vs_pending_service_tier", None)
+    session.pop("vs_pending_plan_id", None)
+
+
+def _build_service_mode_context() -> dict[str, object]:
+    user = _current_user()
+    if not user:
+        return {"show_modal": False}
+    service_mode = _normalize_service_intent(user.get("service_mode"))
+    if service_mode:
+        return {"show_modal": False}
+    pending_intent = _normalize_service_intent(user.get("pending_service_intent")) or _normalize_service_intent(
+        session.get("vs_pending_service_intent")
+    )
+    pending_tier = _normalize_service_tier(user.get("pending_service_tier"))
+    if pending_tier is None:
+        pending_tier = _normalize_service_tier(session.get("vs_pending_service_tier"))
+    selected_tier = pending_tier or 15
+    return {
+        "show_modal": True,
+        "auto_open": True,
+        "preselected_mode": pending_intent,
+        "preselected_tier": selected_tier,
+        "show_autopilot_confirmation": pending_intent == "autopilot",
+    }
 
 
 def _is_sequential_digits(value: str) -> bool:
@@ -548,19 +685,35 @@ def _create_password_reset_token_for_user(conn, *, user_id: str) -> tuple[str, d
 
 
 def _render_login_page(*, resend_email: str = "", prefill_email: str = "", status_code: int = 200):
+    route_kwargs = _build_auth_route_kwargs(include_next=True)
     return (
-        render_template("vs_login.html", resend_email=resend_email, prefill_email=prefill_email),
+        render_template(
+            "vs_login.html",
+            resend_email=resend_email,
+            prefill_email=prefill_email,
+            auth_intent=route_kwargs.get("intent", ""),
+            auth_tier=route_kwargs.get("tier"),
+            auth_plan=route_kwargs.get("plan", ""),
+            register_url=url_for("video_shorts_bp.register", **route_kwargs),
+            google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
+        ),
         status_code,
     )
 
 
 def _render_register_page(*, pending_email: str = "", status_code: int = 200):
+    route_kwargs = _build_auth_route_kwargs(include_next=True)
     return (
         render_template(
             "vs_register.html",
             pending_email=pending_email,
             signups_enabled=_signups_enabled(),
             signup_disabled_message=_signup_disabled_message(),
+            auth_intent=route_kwargs.get("intent", ""),
+            auth_tier=route_kwargs.get("tier"),
+            auth_plan=route_kwargs.get("plan", ""),
+            login_url=url_for("video_shorts_bp.login", **route_kwargs),
+            google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
         ),
         status_code,
     )
@@ -994,6 +1147,14 @@ def _guard_video_shorts():
 
 @video_shorts_bp.route("/login", methods=["GET", "POST"])
 def login():
+    if request.method == "GET":
+        choice = _current_auth_choice(include_request_values=True)
+        if choice["intent"] or choice["plan_id"]:
+            _stash_auth_choice(
+                intent=str(choice["intent"] or ""),
+                tier=choice["tier"],
+                plan_id=str(choice["plan_id"] or ""),
+            )
     if _is_authenticated():
         nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
         return redirect(nxt)
@@ -1001,6 +1162,16 @@ def login():
     prefill_email = (request.args.get("email") or "").strip().lower()
     resend_email = ""
     if request.method == "POST":
+        post_choice = {
+            "intent": _normalize_service_intent(request.form.get("intent")),
+            "tier": _normalize_service_tier(request.form.get("tier")),
+            "plan_id": _normalize_self_serve_plan(request.form.get("plan")),
+        }
+        _stash_auth_choice(
+            intent=post_choice["intent"],
+            tier=post_choice["tier"],
+            plan_id=post_choice["plan_id"],
+        )
         username = _normalize_auth_email(request.form.get("username") or "")
         password = request.form.get("password") or ""
         prefill_email = username
@@ -1052,6 +1223,20 @@ def login():
                     brand_conn.close()
                 if brand:
                     session["vs_brand_id"] = brand["id"]
+                if post_choice["intent"]:
+                    persist_conn = get_db()
+                    try:
+                        ensure_storage_user_schema(persist_conn)
+                        ensure_auth_user_schema(persist_conn)
+                        _persist_pending_service_choice(
+                            persist_conn,
+                            user_id=row[0],
+                            intent=str(post_choice["intent"]),
+                            tier=post_choice["tier"],
+                        )
+                        persist_conn.commit()
+                    finally:
+                        persist_conn.close()
                 flash(f"Welcome back, {row[3] or row[1]}!", "success")
                 nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
                 return redirect(nxt)
@@ -1062,12 +1247,30 @@ def login():
 
 @video_shorts_bp.route("/register", methods=["GET", "POST"])
 def register():
+    if request.method == "GET":
+        choice = _current_auth_choice(include_request_values=True)
+        if choice["intent"] or choice["plan_id"]:
+            _stash_auth_choice(
+                intent=str(choice["intent"] or ""),
+                tier=choice["tier"],
+                plan_id=str(choice["plan_id"] or ""),
+            )
     if _is_authenticated():
         return redirect(url_for("video_shorts_bp.my_videos_page"))
     error = None
     pending_email = ""
     signups_enabled = _signups_enabled()
     if request.method == "POST":
+        post_choice = {
+            "intent": _normalize_service_intent(request.form.get("intent")),
+            "tier": _normalize_service_tier(request.form.get("tier")),
+            "plan_id": _normalize_self_serve_plan(request.form.get("plan")),
+        }
+        _stash_auth_choice(
+            intent=post_choice["intent"],
+            tier=post_choice["tier"],
+            plan_id=post_choice["plan_id"],
+        )
         email = _normalize_auth_email(request.form.get("email") or "")
         password = request.form.get("password") or ""
         password_confirm = request.form.get("password_confirm") or ""
@@ -1115,9 +1318,10 @@ def register():
                     """
                     INSERT INTO shorts_users (
                         id, username, password_hash, name, email, role, plan_id,
-                        email_verified, email_verification_token_hash, email_verification_expires_at, email_verification_sent_at
+                        email_verified, email_verification_token_hash, email_verification_expires_at,
+                        email_verification_sent_at, pending_service_intent, pending_service_tier
                     )
-                    VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now())
+                    VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?)
                     """,
                     [
                         user_id,
@@ -1128,6 +1332,8 @@ def register():
                         DEFAULT_USER_PLAN_ID,
                         verify_token_hash,
                         verify_expires_at,
+                        post_choice["intent"] or None,
+                        post_choice["tier"],
                     ],
                 )
                 ensure_brand_schema(conn)
@@ -1655,6 +1861,7 @@ def inject_current_user():
         "vs_youtube_reauth_required": _youtube_reauth_required(),
         "vs_overview_quota": _load_overview_quota_context(),
         "vs_onboarding": _build_onboarding_context(),
+        "vs_service_mode": _build_service_mode_context(),
         **_build_admin_nav_context(),
     }
 
@@ -1738,6 +1945,13 @@ def google_login():
     if not _google_oauth_enabled():
         flash("Google sign-in is not configured.", "warning")
         return redirect(url_for("video_shorts_bp.login"))
+    choice = _current_auth_choice(include_request_values=True)
+    if choice["intent"] or choice["plan_id"]:
+        _stash_auth_choice(
+            intent=str(choice["intent"] or ""),
+            tier=choice["tier"],
+            plan_id=str(choice["plan_id"] or ""),
+        )
     flow = _build_google_flow()
     authorization_url, state = flow.authorization_url(prompt="consent")
     session["google_oauth_state"] = state
@@ -1860,6 +2074,14 @@ def google_oauth_callback():
             """,
             [google_sub, user_id],
         )
+        persisted_choice = _current_auth_choice()
+        if persisted_choice["intent"]:
+            _persist_pending_service_choice(
+                conn,
+                user_id=user_id,
+                intent=str(persisted_choice["intent"]),
+                tier=persisted_choice["tier"],
+            )
         conn.commit()
     else:
         if not _signups_enabled():
@@ -1872,9 +2094,10 @@ def google_oauth_callback():
         conn.execute(
             """
             INSERT INTO shorts_users (
-                id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at
+                id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at,
+                pending_service_intent, pending_service_tier
             )
-            VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now())
+            VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?)
             """,
             [
                 user_id,
@@ -1883,6 +2106,8 @@ def google_oauth_callback():
                 email,
                 google_sub,
                 DEFAULT_USER_PLAN_ID,
+                session.get("vs_pending_service_intent") or None,
+                _normalize_service_tier(session.get("vs_pending_service_tier")),
             ],
         )
         conn.commit()
@@ -1998,6 +2223,63 @@ def dismiss_onboarding():
         conn.close()
     current_user["onboarding_dismissed"] = True
     return {"ok": True}
+
+
+@video_shorts_bp.route("/onboarding/service-mode", methods=["POST"])
+def save_service_mode_choice():
+    current_user = _current_user()
+    if not current_user:
+        return {"ok": False, "error": "auth_required"}, 401
+    payload = request.get_json(silent=True) or request.form
+    service_mode = _normalize_service_intent((payload or {}).get("service_mode"))
+    if service_mode not in SERVICE_MODE_VALUES:
+        return {"ok": False, "error": "invalid_service_mode"}, 400
+    service_tier = _normalize_service_tier((payload or {}).get("service_tier")) if service_mode == "autopilot" else None
+    if service_mode == "autopilot" and service_tier is None:
+        service_tier = 15
+    conn = get_db()
+    chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET service_mode = ?,
+                service_tier = ?,
+                service_mode_chosen_at = now(),
+                pending_service_intent = NULL,
+                pending_service_tier = NULL,
+                updated_at = now()
+            WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [service_mode, service_tier, current_user["id"]],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    current_user["service_mode"] = service_mode
+    current_user["service_tier"] = service_tier
+    current_user["pending_service_intent"] = ""
+    current_user["pending_service_tier"] = None
+    _clear_pending_service_choice()
+    if service_mode == "autopilot":
+        try:
+            send_autopilot_customer_admin_email(
+                user_email=str(current_user.get("email") or current_user.get("username") or "").strip() or "(missing)",
+                monthly_shorts=service_tier or 15,
+                chosen_at=chosen_at_label,
+            )
+        except Exception:
+            logger.exception(
+                "Autopilot customer admin notification failed for user_id=%s",
+                current_user["id"],
+            )
+    return {
+        "ok": True,
+        "service_mode": service_mode,
+        "service_tier": service_tier,
+    }
 
 
 @video_shorts_bp.route("/brands")

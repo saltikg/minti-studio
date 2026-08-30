@@ -751,6 +751,11 @@ def ensure_auth_user_schema(conn) -> None:
         ("password_reset_sent_at", "TIMESTAMP"),
         ("onboarding_dismissed", "BOOLEAN DEFAULT FALSE"),
         ("admin_users_last_seen_at", "TIMESTAMP"),
+        ("service_mode", "VARCHAR"),
+        ("service_tier", "INTEGER"),
+        ("service_mode_chosen_at", "TIMESTAMP"),
+        ("pending_service_intent", "VARCHAR"),
+        ("pending_service_tier", "INTEGER"),
     ]
     changed = False
     for col_name, definition in column_defs:

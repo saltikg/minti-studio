@@ -8746,6 +8746,78 @@ def _load_admin_autopilot_leads(
     return items, total_count
 
 
+def _load_admin_autopilot_customers(
+    conn,
+    *,
+    email_query: str = "",
+    limit: int = 200,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    normalized_email = (email_query or "").strip().lower()
+    where_parts = ["lower(coalesce(u.service_mode, '')) = 'autopilot'"]
+    params: List[Any] = []
+    if normalized_email:
+        where_parts.append("lower(coalesce(u.email, u.username, '')) LIKE ?")
+        params.append(f"%{normalized_email}%")
+    where_sql = " AND ".join(where_parts)
+    total_row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM shorts_users u
+        WHERE {where_sql}
+        """,
+        params,
+    ).fetchone()
+    total_count = int((total_row[0] if total_row else 0) or 0)
+    rows = conn.execute(
+        f"""
+        SELECT
+            CAST(u.id AS VARCHAR),
+            COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS email,
+            COALESCE(u.service_tier, 15) AS service_tier,
+            u.service_mode_chosen_at,
+            (
+                SELECT COUNT(*)
+                FROM youtube_videos v
+                WHERE CAST(v.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+            ) AS source_video_count
+        FROM shorts_users u
+        WHERE {where_sql}
+        ORDER BY u.service_mode_chosen_at DESC NULLS LAST, u.updated_at DESC NULLS LAST, u.created_at DESC NULLS LAST
+        LIMIT ? OFFSET ?
+        """,
+        [*params, limit, offset],
+    ).fetchall()
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        user_id = str(row[0] or "").strip()
+        youtube_connected = _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id)
+        source_video_count = int(row[4] or 0)
+        if not youtube_connected:
+            next_action = "Connect channel"
+        elif source_video_count <= 0:
+            next_action = "Upload first long video"
+        else:
+            next_action = "Ready for manual autopilot setup"
+        items.append(
+            {
+                "user_id": user_id,
+                "email": str(row[1] or "").strip(),
+                "service_tier": int(row[2] or 15),
+                "chosen_at": row[3],
+                "chosen_at_pst": _format_datetime_pst(row[3]),
+                "youtube_connected": youtube_connected,
+                "youtube_connected_label": "Yes" if youtube_connected else "No",
+                "source_video_count": source_video_count,
+                "next_action": next_action,
+                "user_detail_url": url_for("video_shorts_bp.admin_user_detail", user_id=user_id),
+            }
+        )
+    return items, total_count
+
+
 def _directory_size_bytes(path: Path) -> int:
     total = 0
     try:
@@ -9839,14 +9911,27 @@ def admin_autopilot_leads():
     per_page = 200
     conn = get_db_readonly()
     try:
+        total_customers = _load_admin_autopilot_customers(
+            conn,
+            email_query=email_query,
+            limit=1,
+            offset=0,
+        )[1]
         total_leads = _load_admin_autopilot_leads(
             conn,
             email_query=email_query,
             limit=1,
             offset=0,
         )[1]
-        total_pages = max(1, (total_leads + per_page - 1) // per_page)
+        total_items = max(total_customers, total_leads)
+        total_pages = max(1, (total_items + per_page - 1) // per_page)
         page = min(page, total_pages)
+        customers, total_customers = _load_admin_autopilot_customers(
+            conn,
+            email_query=email_query,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
         leads, total_leads = _load_admin_autopilot_leads(
             conn,
             email_query=email_query,
@@ -9857,7 +9942,9 @@ def admin_autopilot_leads():
         conn.close()
     return render_template(
         "shorts_admin_autopilot_leads.html",
-        admin_title="Autopilot leads",
+        admin_title="Autopilot",
+        customers=customers,
+        total_customers=total_customers,
         leads=leads,
         email_query=email_query,
         page=page,

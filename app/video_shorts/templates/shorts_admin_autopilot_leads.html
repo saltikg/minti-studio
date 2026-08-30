@@ -1,9 +1,9 @@
 {% extends "vs_admin_base.html" %}
 
-{% block title %}Autopilot Leads{% endblock %}
-{% block admin_heading %}Autopilot Leads{% endblock %}
+{% block title %}Autopilot{% endblock %}
+{% block admin_heading %}Autopilot{% endblock %}
 {% block admin_subheading %}
-  <p>People who clicked the done-for-you pricing card and left an email for manual follow-up.</p>
+  <p>Confirmed autopilot customers first, plus any older pricing-only leads below.</p>
 {% endblock %}
 
 {% block extra_styles %}
@@ -101,9 +101,46 @@
       </div>
     </form>
 
-    <div class="admin-autopilot-meta">{{ total_leads }} matching leads · showing up to {{ per_page }} per page</div>
+    <div class="admin-autopilot-meta">{{ total_customers }} autopilot customers · {{ total_leads }} legacy pricing leads</div>
 
     <div class="admin-autopilot-table-wrap">
+      <h2 class="h6 text-uppercase text-white-50 mb-3">Autopilot Customers</h2>
+      <table class="admin-autopilot-table mb-4">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Tier</th>
+            <th>Chosen</th>
+            <th>Channel connected</th>
+            <th>Next action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for customer in customers %}
+            <tr>
+              <td class="admin-autopilot-email">
+                {% if customer.user_detail_url %}
+                  <a href="{{ customer.user_detail_url }}" class="text-decoration-none text-white">{{ customer.email }}</a>
+                {% else %}
+                  {{ customer.email }}
+                {% endif %}
+              </td>
+              <td>
+                <span class="admin-autopilot-tier">{{ customer.service_tier }} Shorts/mo</span>
+              </td>
+              <td>{{ customer.chosen_at_pst or '—' }}</td>
+              <td>{{ customer.youtube_connected_label }}</td>
+              <td>{{ customer.next_action }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted py-4">No autopilot customers yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h2 class="h6 text-uppercase text-white-50 mb-3">Legacy Pricing Leads</h2>
       <table class="admin-autopilot-table">
         <thead>
           <tr>

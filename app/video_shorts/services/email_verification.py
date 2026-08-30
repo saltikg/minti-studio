@@ -434,6 +434,48 @@ def send_new_member_admin_email(
     )
 
 
+def send_autopilot_customer_admin_email(
+    *,
+    user_email: str,
+    monthly_shorts: int,
+    chosen_at: str,
+    source: str = "first_login_modal",
+) -> dict[str, object]:
+    admin_email = "gokhansaltik@gmail.com"
+    subject = "New autopilot customer"
+    escaped_user_email = html.escape(user_email)
+    escaped_chosen_at = html.escape(chosen_at)
+    escaped_source = html.escape(source)
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+        <p style="margin:0 0 16px;">A user chose the autopilot onboarding path.</p>
+        <ul style="padding-left:18px;margin:0;">
+          <li>Email: {escaped_user_email}</li>
+          <li>Tier: {int(monthly_shorts or 0)} Shorts/mo</li>
+          <li>Chosen at (UTC): {escaped_chosen_at}</li>
+          <li>Source: {escaped_source}</li>
+        </ul>
+      </div>
+    </div>
+    """.strip()
+    text_body = (
+        "A user chose the autopilot onboarding path.\n\n"
+        f"Email: {user_email}\n"
+        f"Tier: {int(monthly_shorts or 0)} Shorts/mo\n"
+        f"Chosen at (UTC): {chosen_at}\n"
+        f"Source: {source}"
+    )
+    return send_resend_email(
+        to_email=admin_email,
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        error_message="Autopilot customer notification email could not be sent.",
+    )
+
+
 def send_membership_activated_emails(*, user_id: str, signup_method: str) -> None:
     from app.video_shorts.services.db import (
         ensure_auth_user_schema,

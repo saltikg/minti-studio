@@ -150,6 +150,101 @@
       font-size: 0.88rem;
       opacity: 0.9;
     }
+    .vs-service-mode-intro {
+      color: var(--text-2);
+      font-size: 0.95rem;
+      margin-bottom: 18px;
+    }
+    .vs-service-mode-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .vs-service-mode-card {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 18px;
+      cursor: pointer;
+      transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+    }
+    .vs-service-mode-card.is-selected {
+      border-color: rgba(45, 212, 191, 0.55);
+      background: rgba(45, 212, 191, 0.12);
+      transform: translateY(-1px);
+    }
+    .vs-service-mode-card-title {
+      color: var(--text-1);
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .vs-service-mode-card-copy {
+      color: var(--text-2);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+    .vs-service-mode-card-meta {
+      color: var(--mint);
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .vs-service-mode-tier-wrap {
+      margin-top: 18px;
+      display: none;
+    }
+    .vs-service-mode-tier-wrap.is-visible {
+      display: block;
+    }
+    .vs-service-mode-tier-label {
+      color: var(--text-2);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+    .vs-service-mode-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .vs-service-mode-tier {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px 8px;
+      color: var(--text-1);
+      text-align: center;
+      transition: border-color 0.18s ease, background 0.18s ease;
+    }
+    .vs-service-mode-tier.is-selected {
+      border-color: rgba(45, 212, 191, 0.55);
+      background: rgba(45, 212, 191, 0.12);
+      color: #e8fffa;
+    }
+    .vs-service-mode-tier-qty {
+      display: block;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .vs-service-mode-tier-price {
+      display: block;
+      font-size: 0.84rem;
+      color: var(--text-2);
+      margin-top: 3px;
+    }
+    .vs-service-mode-confirm {
+      color: var(--mint);
+      font-size: 0.88rem;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+    @media (max-width: 767.98px) {
+      .vs-service-mode-grid,
+      .vs-service-mode-tier-grid {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 
   <meta name="robots" content="noindex, nofollow">
@@ -362,6 +457,60 @@
 
       <!-- Main content -->
       <main class="col-md-9 col-lg-10 vs-content">
+        {% if vs_service_mode and vs_service_mode.show_modal %}
+          <div class="modal fade" id="vsServiceModeModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+              <div class="modal-content vs-modal">
+                <div class="modal-header vs-modal-header">
+                  <div>
+                    <h5 class="modal-title vs-modal-title">How do you want to use Minti?</h5>
+                    <div class="small text-muted">Pick one path. You can still change it later with us.</div>
+                  </div>
+                </div>
+                <div class="modal-body vs-modal-body">
+                  <p class="vs-service-mode-intro">
+                    {% if vs_service_mode.show_autopilot_confirmation %}
+                      You chose <strong>Do it for me</strong> from pricing. Confirm it here, or switch to self-serve.
+                    {% else %}
+                      Choose whether you want Minti to run the workflow for you, or whether you want to use the tool yourself.
+                    {% endif %}
+                  </p>
+                  <div class="vs-service-mode-grid" id="vsServiceModeGrid">
+                    <button type="button" class="vs-service-mode-card{% if vs_service_mode.preselected_mode == 'autopilot' %} is-selected{% endif %}" data-service-mode-option="autopilot">
+                      <div class="vs-service-mode-card-title">Do it for me</div>
+                      <div class="vs-service-mode-card-copy">We turn your long videos into Shorts and handle the workflow with you.</div>
+                      <div class="vs-service-mode-card-meta">Autopilot · first month free</div>
+                    </button>
+                    <button type="button" class="vs-service-mode-card{% if vs_service_mode.preselected_mode == 'self' %} is-selected{% endif %}" data-service-mode-option="self">
+                      <div class="vs-service-mode-card-title">I'll do it myself</div>
+                      <div class="vs-service-mode-card-copy">Use the editor, captions, publishing, and analytics yourself inside Minti.</div>
+                      <div class="vs-service-mode-card-meta">Self-serve · no card required</div>
+                    </button>
+                  </div>
+                  <div class="vs-service-mode-tier-wrap{% if vs_service_mode.preselected_mode == 'autopilot' %} is-visible{% endif %}" id="vsServiceModeTierWrap">
+                    <div class="vs-service-mode-tier-label">Autopilot tier</div>
+                    <div class="vs-service-mode-tier-grid">
+                      {% for tier, price in [(15, 20), (30, 40), (45, 60), (60, 80)] %}
+                        <button type="button" class="vs-service-mode-tier{% if vs_service_mode.preselected_tier == tier %} is-selected{% endif %}" data-service-tier="{{ tier }}">
+                          <span class="vs-service-mode-tier-qty">{{ tier }} Shorts</span>
+                          <span class="vs-service-mode-tier-price">${{ price }}/mo</span>
+                        </button>
+                      {% endfor %}
+                    </div>
+                    {% if vs_service_mode.show_autopilot_confirmation %}
+                      <div class="vs-service-mode-confirm">Selected from pricing: {{ vs_service_mode.preselected_tier }} Shorts/mo</div>
+                    {% endif %}
+                  </div>
+                  <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
+                </div>
+                <div class="modal-footer vs-modal-footer justify-content-between">
+                  <span class="vs-onboarding-later">This sets your onboarding path and the admin follow-up list.</span>
+                  <button type="button" class="btn btn-sm vs-btn vs-btn-primary" id="vsServiceModeSubmit">Continue</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endif %}
         {% if vs_onboarding and vs_onboarding.show_modal %}
           <div class="modal fade" id="vsOnboardingModal" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog modal-dialog-centered">
@@ -514,6 +663,7 @@
     (() => {
       const storageKey = "vsUiNotifications";
       const usageSummaryKey = "vsUsageSummaryCache";
+      const serviceModeEndpoint = "{{ url_for('video_shorts_bp.save_service_mode_choice') }}";
       const dismissOnboarding = async () => {
         try {
           await fetch("{{ url_for('video_shorts_bp.dismiss_onboarding') }}", {
@@ -755,6 +905,87 @@
               dismissOnboarding();
             });
           });
+        }
+        const serviceModeEl = document.getElementById("vsServiceModeModal");
+        if (serviceModeEl && window.bootstrap) {
+          const serviceModeModal = new bootstrap.Modal(serviceModeEl);
+          const grid = document.getElementById("vsServiceModeGrid");
+          const tierWrap = document.getElementById("vsServiceModeTierWrap");
+          const submitButton = document.getElementById("vsServiceModeSubmit");
+          const errorEl = document.getElementById("vsServiceModeError");
+          let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or '')|tojson }};
+          let selectedTier = {{ ((vs_service_mode.preselected_tier if vs_service_mode else 15) or 15)|tojson }};
+
+          const renderServiceModeSelection = () => {
+            serviceModeEl.querySelectorAll("[data-service-mode-option]").forEach((button) => {
+              button.classList.toggle("is-selected", button.getAttribute("data-service-mode-option") === selectedMode);
+            });
+            serviceModeEl.querySelectorAll("[data-service-tier]").forEach((button) => {
+              button.classList.toggle("is-selected", Number(button.getAttribute("data-service-tier") || "0") === Number(selectedTier || 15));
+            });
+            if (tierWrap) {
+              tierWrap.classList.toggle("is-visible", selectedMode === "autopilot");
+            }
+            if (errorEl) {
+              errorEl.classList.add("d-none");
+              errorEl.textContent = "";
+            }
+          };
+
+          if (grid) {
+            grid.addEventListener("click", (event) => {
+              const option = event.target.closest("[data-service-mode-option]");
+              if (!option) return;
+              selectedMode = option.getAttribute("data-service-mode-option") || "";
+              renderServiceModeSelection();
+            });
+          }
+          serviceModeEl.querySelectorAll("[data-service-tier]").forEach((button) => {
+            button.addEventListener("click", () => {
+              selectedTier = Number(button.getAttribute("data-service-tier") || "15") || 15;
+              renderServiceModeSelection();
+            });
+          });
+          submitButton?.addEventListener("click", async () => {
+            if (selectedMode !== "autopilot" && selectedMode !== "self") {
+              if (errorEl) {
+                errorEl.textContent = "Choose one path to continue.";
+                errorEl.classList.remove("d-none");
+              }
+              return;
+            }
+            submitButton.disabled = true;
+            try {
+              const response = await fetch(serviceModeEndpoint, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Requested-With": "XMLHttpRequest",
+                },
+                body: JSON.stringify({
+                  service_mode: selectedMode,
+                  service_tier: selectedMode === "autopilot" ? selectedTier : null,
+                }),
+              });
+              const payload = await response.json().catch(() => null);
+              if (!response.ok || !payload || !payload.ok) {
+                throw new Error((payload && payload.error) || "Could not save your choice.");
+              }
+              serviceModeModal.hide();
+            } catch (error) {
+              if (errorEl) {
+                errorEl.textContent = error?.message || "Could not save your choice.";
+                errorEl.classList.remove("d-none");
+              }
+            } finally {
+              submitButton.disabled = false;
+            }
+          });
+          renderServiceModeSelection();
+          if ({{ "true" if vs_service_mode and vs_service_mode.auto_open else "false" }}) {
+            serviceModeModal.show();
+          }
         }
         renderNotificationBadge();
         renderNotificationBanner();

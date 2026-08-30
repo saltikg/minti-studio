@@ -2035,7 +2035,7 @@
   <section class="pricing-section" id="pricing">
     <p class="pricing-eyebrow">PRICING</p>
     <h2 class="pricing-title">Two ways to get your Shorts — do it yourself, or let us run it for you.</h2>
-    <p class="pricing-subline">Monthly only for now. Start free with the tool, or tell us which done-for-you tier you want and we'll follow up manually.</p>
+    <p class="pricing-subline">Monthly only for now. Start free with the tool, or pick the done-for-you path and continue through the same signup flow.</p>
 
     <div class="pricing-grid">
       {% set autopilot_initial = autopilot_tiers[0] %}
@@ -2072,25 +2072,18 @@
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Connect your channel once — that's it</span></li>
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Monthly performance report</span></li>
         </ul>
-        <form class="pricing-inline-form" id="autopilotInterestForm">
-          <p class="pricing-inline-form-label">Want this done for you? Leave your email and selected tier.</p>
-          <input type="email" id="autopilotInterestEmail" name="email" placeholder="you@example.com" autocomplete="email" required>
-          <input type="hidden" id="autopilotInterestShorts" value="{{ autopilot_initial.shorts }}">
-          <input type="hidden" id="autopilotInterestPrice" value="{{ autopilot_initial.price }}">
-          <input type="hidden" id="autopilotInterestCompare" value="{{ autopilot_initial.compare_price }}">
-          <div class="pricing-actions">
-            <button
-              type="submit"
-              class="pricing-btn pricing-btn-solid"
-              data-minti-cta
-              data-cta-location="pricing_autopilot_interest"
-              data-cta-text="Put my Shorts on autopilot">
-              <span>Put my Shorts on autopilot</span>
-              <span class="pricing-btn-subcopy">First month free · no card</span>
-            </button>
-            <div class="pricing-inline-feedback" id="autopilotInterestFeedback" aria-live="polite"></div>
-          </div>
-        </form>
+        <div class="pricing-actions">
+          <a
+            class="pricing-btn pricing-btn-solid"
+            href="{{ register_base_url }}?intent=autopilot&tier={{ autopilot_initial.shorts }}"
+            id="autopilotPricingCta"
+            data-minti-cta
+            data-cta-location="pricing_autopilot_{{ autopilot_initial.shorts }}"
+            data-cta-text="Put my Shorts on autopilot">
+            <span>Put my Shorts on autopilot</span>
+            <span class="pricing-btn-subcopy">First month free · no card</span>
+          </a>
+        </div>
       </article>
 
       <article class="pricing-card">
@@ -2314,27 +2307,13 @@
     const autopilotSelector = document.getElementById("autopilotPricingSelector");
     const autopilotPrice = document.querySelector("[data-autopilot-price]");
     const autopilotOld = document.querySelector("[data-autopilot-old]");
-    const autopilotShortsInput = document.getElementById("autopilotInterestShorts");
-    const autopilotPriceInput = document.getElementById("autopilotInterestPrice");
-    const autopilotCompareInput = document.getElementById("autopilotInterestCompare");
-    const autopilotForm = document.getElementById("autopilotInterestForm");
-    const autopilotEmailInput = document.getElementById("autopilotInterestEmail");
-    const autopilotFeedback = document.getElementById("autopilotInterestFeedback");
-    const autopilotInterestUrl = {{ autopilot_interest_url|tojson }};
+    const autopilotCta = document.getElementById("autopilotPricingCta");
+    const registerBaseUrl = {{ register_base_url|tojson }};
     const selfServeSelector = document.getElementById("selfServePricingSelector");
     const selfServePrice = document.querySelector("[data-self-serve-price]");
     const selfServeSuffix = document.querySelector("[data-self-serve-suffix]");
     const selfServeNote = document.querySelector("[data-self-serve-note]");
     const selfServeCta = document.getElementById("selfServePricingCta");
-
-    function setAutopilotFeedback(message, state) {
-      if (!autopilotFeedback) return;
-      autopilotFeedback.textContent = message || "";
-      autopilotFeedback.classList.remove("is-success", "is-error");
-      if (state) {
-        autopilotFeedback.classList.add(state);
-      }
-    }
 
     function activateSegment(container, target) {
       Array.from(container.querySelectorAll(".pricing-segment")).forEach(function (segment) {
@@ -2353,10 +2332,10 @@
       const monthlyShorts = Number(segment.getAttribute("data-monthly-shorts") || "0");
       if (autopilotPrice) autopilotPrice.textContent = "$" + monthlyPrice;
       if (autopilotOld) autopilotOld.textContent = "$" + comparePrice;
-      if (autopilotShortsInput) autopilotShortsInput.value = String(monthlyShorts);
-      if (autopilotPriceInput) autopilotPriceInput.value = String(monthlyPrice);
-      if (autopilotCompareInput) autopilotCompareInput.value = String(comparePrice);
-      setAutopilotFeedback("");
+      if (autopilotCta) {
+        autopilotCta.setAttribute("href", registerBaseUrl + "?intent=autopilot&tier=" + monthlyShorts);
+        autopilotCta.setAttribute("data-cta-location", "pricing_autopilot_" + monthlyShorts);
+      }
     });
 
     selfServeSelector?.addEventListener("click", function (event) {
@@ -2373,51 +2352,6 @@
       if (selfServeCta) {
         selfServeCta.setAttribute("href", registerUrl);
         selfServeCta.setAttribute("data-cta-location", "pricing_plan_" + planId);
-      }
-    });
-
-    autopilotForm?.addEventListener("submit", async function (event) {
-      event.preventDefault();
-      const submitButton = autopilotForm.querySelector("button[type='submit']");
-      const email = String(autopilotEmailInput?.value || "").trim();
-      const monthlyShorts = Number(autopilotShortsInput?.value || "0");
-      const monthlyPrice = Number(autopilotPriceInput?.value || "0");
-      const comparePrice = Number(autopilotCompareInput?.value || "0");
-      if (!email) {
-        setAutopilotFeedback("Enter your email so we can follow up.", "is-error");
-        return;
-      }
-      setAutopilotFeedback("Saving your interest…");
-      if (submitButton) {
-        submitButton.disabled = true;
-      }
-      try {
-        const response = await fetch(autopilotInterestUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            email: email,
-            monthly_shorts: monthlyShorts,
-            monthly_price: monthlyPrice,
-            compare_price: comparePrice,
-            source: "vs_home_pricing"
-          })
-        });
-        const payload = await response.json().catch(function () { return null; });
-        if (!response.ok || !payload || !payload.ok) {
-          throw new Error((payload && payload.error) || "Could not save your interest right now.");
-        }
-        setAutopilotFeedback("Saved. We'll follow up on the selected tier.", "is-success");
-        if (autopilotEmailInput) {
-          autopilotEmailInput.value = "";
-        }
-      } catch (error) {
-        setAutopilotFeedback(error?.message || "Could not save your interest right now.", "is-error");
-      } finally {
-        if (submitButton) {
-          submitButton.disabled = false;
-        }
       }
     });
 
