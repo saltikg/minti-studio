@@ -161,21 +161,21 @@
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
       }
       .watch-prompt-banner {
-        margin-top: 12px;
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 14px;
         display: flex;
         justify-content: center;
         opacity: 0;
         pointer-events: none;
         transform: translateY(10px);
         transition: opacity 180ms ease, transform 180ms ease;
-        max-height: 0;
-        overflow: hidden;
       }
       .watch-prompt-banner.is-visible {
         opacity: 1;
         pointer-events: auto;
         transform: translateY(0);
-        max-height: 260px;
       }
       .watch-prompt-card {
         width: 100%;
@@ -221,25 +221,6 @@
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
         animation-delay: 2.18s;
       }
-      .watch-cta-subline {
-        max-width: 420px;
-        color: var(--muted);
-        font-size: 0.84rem;
-        line-height: 1.45;
-      }
-      .watch-cta-stack {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-        width: min(100%, 460px);
-      }
-      .watch-value-line {
-        max-width: 440px;
-        color: var(--text);
-        font-size: 0.94rem;
-        line-height: 1.45;
-      }
       .watch-cta-primary {
         display: inline-flex;
         align-items: center;
@@ -263,28 +244,6 @@
         box-shadow:
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
-      }
-      .watch-cta-secondary-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 46px;
-        padding: 0 20px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--text) !important;
-        font-weight: 600;
-        font-size: 0.94rem;
-        text-decoration: none !important;
-        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
-      }
-      .watch-cta-secondary-button:hover,
-      .watch-cta-secondary-button:focus-visible {
-        border-color: rgba(110, 231, 216, 0.34);
-        background: rgba(255, 255, 255, 0.08);
-        transform: translateY(-1px);
-        text-decoration: none;
       }
       .watch-cta-secondary {
         color: var(--accent);
@@ -399,6 +358,7 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
         {% if onboarding_url %}
+          {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
           <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="true">
             <div class="watch-prompt-card">
               <p class="watch-prompt-title">
@@ -409,13 +369,13 @@
                 {% endif %}
               </p>
               <a
-                href="{{ onboarding_url }}"
+                href="{{ autopilot_onboarding_url }}"
                 class="watch-cta-primary"
                 rel="noreferrer">
                 {% if language == 'TR' %}
-                  Kendi Short'unu oluştur — ücretsiz
+                  Bize bırak — ayda 15 Short, ilk ay ücretsiz
                 {% else %}
-                  Make my own Short — free
+                  Let us do it for you — 15 Shorts/mo, first month free
                 {% endif %}
               </a>
               <div class="watch-prompt-meta">
@@ -438,45 +398,7 @@
       </div>
       <div class="watch-footer">
         {% if onboarding_url %}
-          {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
-          <div class="watch-value-line">
-            {% if language == 'TR' %}
-              Minti bu Short'u senin videondan otomatik oluşturdu. Uzun videolarının tamamını bu şekilde Short'lara dönüştür
-              — ücretsiz, kayıt yok, kart yok.
-            {% else %}
-              Minti made this Short from your video automatically. Turn all your long videos into Shorts like this
-              — free, no signup, no card.
-            {% endif %}
-          </div>
-          <div class="watch-cta-stack">
-            <a
-              href="{{ autopilot_onboarding_url }}"
-              class="watch-cta-primary"
-              rel="noreferrer">
-              {% if language == 'TR' %}
-                Bize bırak — ayda 15 Short, ilk ay ücretsiz
-              {% else %}
-                Let us do it for you — 15 Shorts/mo, first month free
-              {% endif %}
-            </a>
-            <a
-              href="{{ onboarding_url }}"
-              class="watch-cta-secondary-button"
-              rel="noreferrer">
-              {% if language == 'TR' %}
-                Ya da kendin yap — ücretsiz
-              {% else %}
-                Or make them yourself — free
-              {% endif %}
-            </a>
-          </div>
-          <div class="watch-cta-subline">
-            {% if language == 'TR' %}
-              <strong class="watch-cta-secondary">{{ trial_duration_label }} ücretsiz</strong> · kayıt yok
-            {% else %}
-              <strong class="watch-cta-secondary">{{ trial_duration_label }} free</strong> · no signup
-            {% endif %}
-          </div>
+          
         {% else %}
           <a href="https://mintistudio.com" target="_blank" rel="noreferrer">MintiStudio ile uzun videolarını otomatik short'a çevir</a>
         {% endif %}
