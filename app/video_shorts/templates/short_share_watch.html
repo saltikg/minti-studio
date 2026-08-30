@@ -167,12 +167,6 @@
         bottom: 14px;
         display: flex;
         justify-content: center;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(10px);
-        transition: opacity 180ms ease, transform 180ms ease;
-      }
-      .watch-prompt-banner.is-visible {
         opacity: 1;
         pointer-events: auto;
         transform: translateY(0);
@@ -359,7 +353,7 @@
         </video>
         {% if onboarding_url %}
           {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
-          <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="true">
+          <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
             <div class="watch-prompt-card">
               <p class="watch-prompt-title">
                 {% if language == 'TR' %}
@@ -410,7 +404,6 @@
         const video = document.getElementById("shared-short-video");
         const promptBanner = document.getElementById("watch-prompt-banner");
         const replayButton = document.getElementById("watch-replay-btn");
-        const promptTriggerSeconds = 7;
         if (!eventUrl || !video) {
           return;
         }
@@ -431,22 +424,6 @@
         };
         fireEvent("view");
         let playTracked = false;
-        let promptShown = false;
-        const showPrompt = () => {
-          if (!promptBanner || promptShown) {
-            return;
-          }
-          promptShown = true;
-          promptBanner.classList.add("is-visible");
-          promptBanner.setAttribute("aria-hidden", "false");
-        };
-        const hidePrompt = () => {
-          if (!promptBanner) {
-            return;
-          }
-          promptBanner.classList.remove("is-visible");
-          promptBanner.setAttribute("aria-hidden", "true");
-        };
         video.addEventListener("play", () => {
           if (playTracked) {
             return;
@@ -454,19 +431,7 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
-        if (promptBanner) {
-          video.addEventListener("timeupdate", () => {
-            if (!promptShown && video.currentTime >= promptTriggerSeconds) {
-              showPrompt();
-            }
-          }, { passive: true });
-          video.addEventListener("ended", () => {
-            showPrompt();
-          }, { passive: true });
-        }
         replayButton?.addEventListener("click", () => {
-          hidePrompt();
-          promptShown = false;
           video.currentTime = 0;
           video.play().catch(() => {});
         });
