@@ -145,7 +145,6 @@
         }
       }
       .watch-video-wrap {
-        position: relative;
         width: min(100%, 360px);
         margin: 0 auto;
         opacity: 0;
@@ -161,45 +160,9 @@
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
       }
       .watch-prompt-banner {
-        position: absolute;
-        left: 14px;
-        right: 14px;
-        bottom: 14px;
         display: flex;
         justify-content: center;
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .watch-prompt-card {
-        width: 100%;
-        padding: 14px 16px;
-        border-radius: 18px;
-        background: rgba(8, 17, 27, 0.92);
-        border: 1px solid rgba(110, 231, 216, 0.18);
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
-        text-align: center;
-        backdrop-filter: blur(10px);
-      }
-      .watch-prompt-title {
-        margin: 0 0 10px;
-        font-size: 0.96rem;
-        line-height: 1.35;
-        font-weight: 700;
-      }
-      .watch-prompt-meta {
-        margin-top: 8px;
-        color: var(--muted);
-        font-size: 0.76rem;
-      }
-      .watch-prompt-replay {
-        margin-top: 8px;
-        border: 0;
-        padding: 0;
-        background: transparent;
-        color: var(--accent);
-        font: inherit;
-        cursor: pointer;
+        margin: 12px auto 14px;
       }
       .watch-footer {
         margin-top: 14px;
@@ -347,48 +310,25 @@
           </span>
         </div>
       </div>
+      {% if onboarding_url %}
+        {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
+        <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
+          <a
+            href="{{ autopilot_onboarding_url }}"
+            class="watch-cta-primary"
+            rel="noreferrer">
+            {% if language == 'TR' %}
+              Bize bırak — ayda 15 Short, ilk ay ücretsiz
+            {% else %}
+              Let us do it for you — 15 Shorts/mo, first month free
+            {% endif %}
+          </a>
+        </div>
+      {% endif %}
       <div class="watch-video-wrap">
         <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
-        {% if onboarding_url %}
-          {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
-          <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
-            <div class="watch-prompt-card">
-              <p class="watch-prompt-title">
-                {% if language == 'TR' %}
-                  Bu senin içeriğin. 3 tıkta kendininkini oluştur.
-                {% else %}
-                  This is your content. Make your own in 3 clicks.
-                {% endif %}
-              </p>
-              <a
-                href="{{ autopilot_onboarding_url }}"
-                class="watch-cta-primary"
-                rel="noreferrer">
-                {% if language == 'TR' %}
-                  Bize bırak — ayda 15 Short, ilk ay ücretsiz
-                {% else %}
-                  Let us do it for you — 15 Shorts/mo, first month free
-                {% endif %}
-              </a>
-              <div class="watch-prompt-meta">
-                {% if language == 'TR' %}
-                  Kayıt yok, kart yok.
-                {% else %}
-                  No signup, no card.
-                {% endif %}
-              </div>
-              <button type="button" class="watch-prompt-replay" id="watch-replay-btn">
-                {% if language == 'TR' %}
-                  Tekrar oynat
-                {% else %}
-                  Replay
-                {% endif %}
-              </button>
-            </div>
-          </div>
-        {% endif %}
       </div>
       <div class="watch-footer">
         {% if onboarding_url %}
@@ -402,8 +342,6 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
-        const promptBanner = document.getElementById("watch-prompt-banner");
-        const replayButton = document.getElementById("watch-replay-btn");
         if (!eventUrl || !video) {
           return;
         }
@@ -431,10 +369,6 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
-        replayButton?.addEventListener("click", () => {
-          video.currentTime = 0;
-          video.play().catch(() => {});
-        });
       })();
     </script>
   </body>
