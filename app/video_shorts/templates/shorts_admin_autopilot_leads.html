@@ -1,0 +1,150 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Autopilot Leads{% endblock %}
+{% block admin_heading %}Autopilot Leads{% endblock %}
+{% block admin_subheading %}
+  <p>People who clicked the done-for-you pricing card and left an email for manual follow-up.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-autopilot-toolbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .admin-autopilot-meta {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+    }
+    .admin-autopilot-table-wrap {
+      overflow-x: auto;
+    }
+    .admin-autopilot-table {
+      width: 100%;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .admin-autopilot-table th,
+    .admin-autopilot-table td {
+      padding: 14px 16px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+    .admin-autopilot-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .admin-autopilot-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .admin-autopilot-email {
+      font-weight: 600;
+      white-space: normal;
+      word-break: break-word;
+    }
+    .admin-autopilot-tier {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+    .admin-autopilot-compare {
+      color: rgba(255, 255, 255, 0.56);
+      text-decoration: line-through;
+      margin-left: 8px;
+    }
+    .admin-autopilot-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .admin-autopilot-pagination-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 767.98px) {
+      .admin-autopilot-toolbar {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="get" class="admin-autopilot-toolbar">
+      <div>
+        <label for="admin-autopilot-email" class="form-label mb-2">Email contains</label>
+        <input id="admin-autopilot-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="you@example.com">
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Apply</button>
+        <a href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}" class="btn btn-outline-light">Reset</a>
+      </div>
+    </form>
+
+    <div class="admin-autopilot-meta">{{ total_leads }} matching leads · showing up to {{ per_page }} per page</div>
+
+    <div class="admin-autopilot-table-wrap">
+      <table class="admin-autopilot-table">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Tier</th>
+            <th>Source</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lead in leads %}
+            <tr>
+              <td class="admin-autopilot-email">{{ lead.email }}</td>
+              <td>
+                <span class="admin-autopilot-tier">
+                  {{ lead.monthly_shorts }} Shorts/mo · ${{ lead.monthly_price }}/mo
+                </span>
+                <span class="admin-autopilot-compare">${{ lead.compare_price }}</span>
+              </td>
+              <td>{{ lead.source or 'pricing' }}</td>
+              <td>{{ lead.created_at_pst or '—' }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="text-center text-muted py-4">No autopilot leads yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="admin-autopilot-pagination">
+      <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
+      <div class="admin-autopilot-pagination-links">
+        {% if page > 1 %}
+          <a href="{{ url_for('video_shorts_bp.admin_autopilot_leads', email=email_query, page=page-1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="{{ url_for('video_shorts_bp.admin_autopilot_leads', email=email_query, page=page+1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endblock %}

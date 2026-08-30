@@ -261,6 +261,56 @@ def ensure_short_share_links_schema(conn) -> None:
         )
     except Exception:
         pass
+
+
+def ensure_pricing_interest_schema(conn) -> None:
+    if not _schema_management_enabled():
+        return
+    backend_name = getattr(conn, "backend_name", "")
+    if backend_name == "postgres":
+        id_column_sql = "BIGSERIAL PRIMARY KEY"
+    else:
+        id_column_sql = "INTEGER PRIMARY KEY AUTOINCREMENT"
+    try:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS pricing_autopilot_leads (
+                id {id_column_sql},
+                email VARCHAR NOT NULL,
+                monthly_shorts INTEGER NOT NULL,
+                monthly_price INTEGER NOT NULL,
+                compare_price INTEGER,
+                source VARCHAR,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    except Exception:
+        return
+    cols = table_columns(conn, "pricing_autopilot_leads")
+    for col_name, col_type in (
+        ("email", "VARCHAR"),
+        ("monthly_shorts", "INTEGER"),
+        ("monthly_price", "INTEGER"),
+        ("compare_price", "INTEGER"),
+        ("source", "VARCHAR"),
+        ("created_at", "TIMESTAMP"),
+    ):
+        if col_name in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE pricing_autopilot_leads ADD COLUMN {col_name} {col_type}")
+        except Exception:
+            pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pricing_autopilot_leads_created_at
+            ON pricing_autopilot_leads(created_at)
+            """
+        )
+    except Exception:
+        pass
     try:
         conn.commit()
     except Exception:

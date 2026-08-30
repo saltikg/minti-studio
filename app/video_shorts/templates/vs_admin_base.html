@@ -208,6 +208,14 @@
             <span>Share links</span>
           </span>
         </a>
+        <a
+          href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Autopilot leads</span>
+          </span>
+        </a>
       </nav>
     </aside>
 

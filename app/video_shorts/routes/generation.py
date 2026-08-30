@@ -111,6 +111,7 @@ from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
     ensure_auth_user_schema,
     ensure_categories_schema,
+    ensure_pricing_interest_schema,
     ensure_postgres_youtube_transcripts_id_default,
     ensure_short_share_links_schema,
     ensure_static_images_schema,
@@ -8688,6 +8689,63 @@ def _load_admin_share_links(
     return items, total_count, normalized_filter, normalized_sort_key, normalized_sort_dir
 
 
+def _load_admin_autopilot_leads(
+    conn,
+    *,
+    email_query: str = "",
+    limit: int = 200,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
+    ensure_pricing_interest_schema(conn)
+    normalized_email = (email_query or "").strip().lower()
+    where_sql = ""
+    params: List[Any] = []
+    if normalized_email:
+        where_sql = "WHERE lower(email) LIKE ?"
+        params.append(f"%{normalized_email}%")
+    total_row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM pricing_autopilot_leads
+        {where_sql}
+        """,
+        params,
+    ).fetchone()
+    total_count = int((total_row[0] if total_row else 0) or 0)
+    rows = conn.execute(
+        f"""
+        SELECT
+            id,
+            email,
+            monthly_shorts,
+            monthly_price,
+            compare_price,
+            source,
+            created_at
+        FROM pricing_autopilot_leads
+        {where_sql}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, limit, offset],
+    ).fetchall()
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        items.append(
+            {
+                "id": row[0],
+                "email": str(row[1] or "").strip(),
+                "monthly_shorts": int(row[2] or 0),
+                "monthly_price": int(row[3] or 0),
+                "compare_price": int(row[4] or 0),
+                "source": str(row[5] or "").strip(),
+                "created_at": row[6],
+                "created_at_pst": _format_datetime_pst(row[6]),
+            }
+        )
+    return items, total_count
+
+
 def _directory_size_bytes(path: Path) -> int:
     total = 0
     try:
@@ -9765,6 +9823,46 @@ def admin_share_links():
         page=page,
         per_page=per_page,
         total_links=total_links,
+        total_pages=total_pages,
+    )
+
+
+@video_shorts_bp.route("/admin/autopilot-leads", methods=["GET"])
+@require_admin
+def admin_autopilot_leads():
+    email_query = (request.args.get("email") or "").strip()
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 200
+    conn = get_db_readonly()
+    try:
+        total_leads = _load_admin_autopilot_leads(
+            conn,
+            email_query=email_query,
+            limit=1,
+            offset=0,
+        )[1]
+        total_pages = max(1, (total_leads + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        leads, total_leads = _load_admin_autopilot_leads(
+            conn,
+            email_query=email_query,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
+    finally:
+        conn.close()
+    return render_template(
+        "shorts_admin_autopilot_leads.html",
+        admin_title="Autopilot leads",
+        leads=leads,
+        email_query=email_query,
+        page=page,
+        per_page=per_page,
+        total_leads=total_leads,
         total_pages=total_pages,
     )
 

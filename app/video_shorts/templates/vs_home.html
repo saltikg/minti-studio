@@ -865,7 +865,7 @@
 
   .vs-home .pricing-section {
     width: 100%;
-    max-width: 1180px;
+    max-width: 1040px;
     margin: 0 auto;
     text-align: center;
   }
@@ -873,15 +873,15 @@
   .vs-home .pricing-eyebrow {
     margin: 0;
     font-size: 0.78rem;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: rgba(93, 202, 165, 0.9);
+    color: rgba(63, 224, 197, 0.92);
   }
 
   .vs-home .pricing-title {
     margin: 0.65rem 0 0;
-    font-size: clamp(1.9rem, 3vw, 2.7rem);
+    font-size: clamp(2rem, 3vw, 2.75rem);
     font-weight: 500;
     line-height: 1.14;
     letter-spacing: -0.03em;
@@ -889,45 +889,17 @@
 
   .vs-home .pricing-subline {
     margin: 0.75rem auto 0;
-    max-width: 38rem;
+    max-width: 44rem;
     color: var(--text-2);
     font-size: 1rem;
     line-height: 1.65;
   }
 
-  .vs-home .pricing-toggle {
-    margin: 1.5rem auto 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.35rem;
-    border-radius: 999px;
-    border: 0.5px solid rgba(255, 255, 255, 0.12);
-    background: rgba(13, 17, 23, 0.9);
-  }
-
-  .vs-home .pricing-toggle-btn {
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: rgba(148, 163, 184, 0.92);
-    padding: 0.6rem 1rem;
-    font-size: 0.92rem;
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .vs-home .pricing-toggle-btn.is-active {
-    background: rgba(93, 202, 165, 0.16);
-    color: rgba(248, 250, 252, 0.98);
-    box-shadow: inset 0 0 0 1px rgba(93, 202, 165, 0.32);
-  }
-
   .vs-home .pricing-grid {
-    margin-top: 1.6rem;
+    margin-top: 1.75rem;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.35rem;
     align-items: stretch;
   }
 
@@ -936,54 +908,84 @@
     display: flex;
     flex-direction: column;
     min-height: 100%;
-    padding: 1.25rem;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(13, 17, 23, 0.92);
+    padding: 1.9rem 1.75rem;
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(11, 15, 22, 0.96);
     text-align: left;
   }
 
   .vs-home .pricing-card-featured {
-    border: 2px solid #5dcaa5;
-    box-shadow: 0 18px 48px rgba(13, 17, 23, 0.4);
+    border-color: rgba(63, 224, 197, 0.7);
+    box-shadow: 0 0 0 1px rgba(63, 224, 197, 0.32), 0 30px 70px -40px rgba(63, 224, 197, 0.42);
   }
 
   .vs-home .pricing-badge {
     align-self: flex-start;
-    margin-bottom: 0.8rem;
-    padding: 0.32rem 0.62rem;
+    margin-bottom: 1rem;
+    padding: 0.34rem 0.78rem;
     border-radius: 999px;
-    background: rgba(93, 202, 165, 0.18);
-    color: #5dcaa5;
+    background: #3fe0c5;
+    color: #04241f;
     font-size: 0.72rem;
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .vs-home .pricing-badge-secondary {
+    align-self: flex-start;
+    margin-bottom: 1rem;
+    padding: 0.34rem 0.78rem;
+    border-radius: 999px;
+    background: rgba(27, 36, 50, 0.96);
+    color: rgba(148, 163, 184, 0.96);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .vs-home .pricing-plan-name {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
+    margin: 0.1rem 0 0;
+    font-size: 1.55rem;
+    font-weight: 700;
     color: rgba(248, 250, 252, 0.98);
   }
 
-  .vs-home .pricing-price-block {
-    margin-top: 0.9rem;
-    min-height: 5rem;
+  .vs-home .pricing-card-tagline {
+    margin: 0.45rem 0 1.35rem;
+    min-height: 2.6rem;
+    color: rgba(148, 163, 184, 0.96);
+    font-size: 0.95rem;
+    line-height: 1.5;
   }
 
   .vs-home .pricing-price {
     display: flex;
     align-items: baseline;
-    gap: 0.3rem;
+    gap: 0.55rem;
+    flex-wrap: wrap;
     color: rgba(248, 250, 252, 0.99);
+    margin-bottom: 0.2rem;
+  }
+
+  .vs-home .pricing-price-old {
+    color: rgba(148, 163, 184, 0.82);
+    text-decoration: line-through;
+    font-size: 1.45rem;
+    font-weight: 700;
   }
 
   .vs-home .pricing-price-amount {
-    font-size: clamp(2rem, 3vw, 2.45rem);
-    font-weight: 500;
+    font-size: clamp(2.45rem, 4vw, 3rem);
+    font-weight: 700;
     line-height: 1;
     letter-spacing: -0.04em;
+  }
+
+  .vs-home .pricing-card-featured .pricing-price-amount {
+    color: #3fe0c5;
   }
 
   .vs-home .pricing-price-suffix {
@@ -993,11 +995,66 @@
   }
 
   .vs-home .pricing-price-note {
-    margin: 0.45rem 0 0;
+    margin: 0;
     min-height: 1.2rem;
     color: rgba(148, 163, 184, 0.9);
     font-size: 0.84rem;
     line-height: 1.45;
+  }
+
+  .vs-home .pricing-price-free {
+    margin: 0 0 1rem;
+    min-height: 1.2rem;
+    color: #38e08a;
+    font-size: 0.84rem;
+    font-weight: 700;
+  }
+
+  .vs-home .pricing-selector {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0 0 1.25rem;
+  }
+
+  .vs-home .pricing-segment {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0.82rem 0.45rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(18, 24, 36, 0.9);
+    color: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .vs-home .pricing-segment:hover,
+  .vs-home .pricing-segment:focus {
+    border-color: rgba(63, 224, 197, 0.35);
+    transform: translateY(-1px);
+  }
+
+  .vs-home .pricing-segment.is-active {
+    border-color: rgba(63, 224, 197, 0.72);
+    background: rgba(63, 224, 197, 0.12);
+  }
+
+  .vs-home .pricing-segment-big {
+    display: block;
+    font-size: 0.96rem;
+    font-weight: 800;
+    color: rgba(248, 250, 252, 0.98);
+  }
+
+  .vs-home .pricing-segment.is-active .pricing-segment-big {
+    color: #3fe0c5;
+  }
+
+  .vs-home .pricing-segment-small {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    color: rgba(148, 163, 184, 0.9);
   }
 
   .vs-home .blog-strip-section {
@@ -1109,67 +1166,124 @@
   .vs-home .pricing-lines {
     list-style: none;
     padding: 0;
-    margin: 1rem 0 0;
+    margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.68rem;
   }
 
   .vs-home .pricing-line {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.65rem;
     color: rgba(226, 232, 240, 0.92);
-    font-size: 0.92rem;
+    font-size: 0.9rem;
     line-height: 1.45;
   }
 
   .vs-home .pricing-line .bi {
-    color: #5dcaa5;
+    color: #3fe0c5;
     font-size: 0.95rem;
+  }
+
+  .vs-home .pricing-inline-form {
+    margin-top: 1rem;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .vs-home .pricing-inline-form-label {
+    margin: 0;
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .vs-home .pricing-inline-form input {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(18, 24, 36, 0.94);
+    color: rgba(248, 250, 252, 0.96);
+    padding: 0.9rem 1rem;
+  }
+
+  .vs-home .pricing-inline-form input::placeholder {
+    color: rgba(148, 163, 184, 0.72);
   }
 
   .vs-home .pricing-actions {
     margin-top: auto;
-    padding-top: 1.25rem;
+    padding-top: 1.4rem;
   }
 
   .vs-home .pricing-btn {
     width: 100%;
     display: inline-flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 44px;
-    border-radius: 999px;
+    gap: 0.12rem;
+    min-height: 56px;
+    border-radius: 12px;
     font-size: 0.95rem;
-    font-weight: 600;
+    font-weight: 800;
     text-decoration: none;
   }
 
   .vs-home .pricing-btn-outline {
-    border: 1px solid rgba(93, 202, 165, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.09);
     color: rgba(248, 250, 252, 0.96);
-    background: rgba(255, 255, 255, 0.02);
+    background: transparent;
   }
 
   .vs-home .pricing-btn-outline:hover,
   .vs-home .pricing-btn-outline:focus {
-    border-color: rgba(93, 202, 165, 0.7);
-    background: rgba(93, 202, 165, 0.08);
+    border-color: rgba(63, 224, 197, 0.6);
+    background: rgba(63, 224, 197, 0.08);
     color: rgba(248, 250, 252, 0.96);
   }
 
   .vs-home .pricing-btn-solid {
     border: none;
     color: #07131a;
-    background: linear-gradient(135deg, #5dcaa5, #1d9e75);
-    box-shadow: 0 10px 24px rgba(29, 158, 117, 0.28);
+    background: #3fe0c5;
+    box-shadow: 0 10px 24px rgba(63, 224, 197, 0.22);
   }
 
   .vs-home .pricing-btn-solid:hover,
   .vs-home .pricing-btn-solid:focus {
-    background: linear-gradient(135deg, #69d4b0, #26aa81);
+    background: #58e6ce;
     color: #07131a;
+  }
+
+  .vs-home .pricing-btn-subcopy {
+    display: block;
+    margin-top: 0.1rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    opacity: 0.74;
+  }
+
+  .vs-home .pricing-inline-feedback {
+    min-height: 1.15rem;
+    margin-top: 0.55rem;
+    color: rgba(148, 163, 184, 0.92);
+    font-size: 0.8rem;
+  }
+
+  .vs-home .pricing-inline-feedback.is-success {
+    color: #8ff3d8;
+  }
+
+  .vs-home .pricing-inline-feedback.is-error {
+    color: #fca5a5;
+  }
+
+  .vs-home .pricing-bottom-note {
+    margin: 1rem 0 0;
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 0.88rem;
   }
 
   .vs-home .faq-section {
@@ -1570,13 +1684,19 @@
     }
 
     .vs-home .pricing-card {
-      padding: 1.15rem;
+      padding: 1.45rem 1.15rem;
     }
 
-    .vs-home .pricing-toggle {
-      width: 100%;
-      max-width: 340px;
-      justify-content: center;
+    .vs-home .pricing-selector {
+      gap: 0.4rem;
+    }
+
+    .vs-home .pricing-segment {
+      padding: 0.78rem 0.35rem;
+    }
+
+    .vs-home .pricing-segment-big {
+      font-size: 0.88rem;
     }
 
     .vs-home .footer-cta {
@@ -1914,82 +2034,112 @@
 
   <section class="pricing-section" id="pricing">
     <p class="pricing-eyebrow">PRICING</p>
-    <h2 class="pricing-title">Start free. Upgrade when you grow.</h2>
-    <p class="pricing-subline">No credit card required to start.</p>
-
-    <div class="pricing-toggle" role="group" aria-label="Billing interval">
-      <button type="button" class="pricing-toggle-btn" data-billing-toggle="monthly" aria-pressed="false">Monthly</button>
-      <button type="button" class="pricing-toggle-btn is-active" data-billing-toggle="yearly" aria-pressed="true">Yearly · save 20%</button>
-    </div>
+    <h2 class="pricing-title">Two ways to get your Shorts — do it yourself, or let us run it for you.</h2>
+    <p class="pricing-subline">Monthly only for now. Start free with the tool, or tell us which done-for-you tier you want and we'll follow up manually.</p>
 
     <div class="pricing-grid">
-      {% for plan in pricing_plans %}
-        {% set transcription_hours = (plan.monthly_transcription_minutes / 60)|round|int %}
-        <article class="pricing-card{% if plan.is_featured %} pricing-card-featured{% endif %}">
-          {% if plan.is_featured %}
-            <div class="pricing-badge">MOST POPULAR</div>
-          {% endif %}
-          <h3 class="pricing-plan-name">{{ plan.label }}</h3>
-          {% if plan.plan_id == "plan_free" %}
-            <p class="pricing-price-note"><em>Try the full workflow — no card needed.</em></p>
-          {% elif plan.plan_id == "plan_2gb" %}
-            <p class="pricing-price-note"><em>For your first steady stream of clips.</em></p>
-          {% elif plan.plan_id == "plan_10gb" %}
-            <p class="pricing-price-note"><em>For running a real short-form funnel.</em></p>
-          {% elif plan.plan_id == "plan_100gb" %}
-            <p class="pricing-price-note"><em>For publishing at volume.</em></p>
-          {% endif %}
-          <div
-            class="pricing-price-block"
-            data-monthly-price="{{ plan.monthly_price }}"
-            data-yearly-price="{{ plan.yearly_price }}"
-            data-monthly-note="{{ plan.monthly_note }}"
-            data-yearly-note="{{ plan.yearly_note }}">
-            <div class="pricing-price">
-              <span class="pricing-price-amount" data-price-amount>
-                {% if plan.yearly_price == 0 %}$0{% else %}${{ plan.yearly_price }}{% endif %}
-              </span>
-              <span class="pricing-price-suffix" data-price-suffix>
-                {% if plan.yearly_price == 0 %}{% else %}/yr{% endif %}
-              </span>
-            </div>
-            <p class="pricing-price-note" data-price-note>{{ plan.yearly_note }}</p>
-          </div>
-
-          <ul class="pricing-lines">
-            {% if plan.plan_id == "plan_free" %}
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Clip, caption &amp; edit</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Publish to YouTube &amp; Instagram</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Basic performance stats</span></li>
-            {% elif plan.plan_id == "plan_2gb" %}
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Free</span></li>
-            {% elif plan.plan_id == "plan_10gb" %}
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Full loop: publish, comment inbox &amp; analytics</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Starter</span></li>
-            {% elif plan.plan_id == "plan_100gb" %}
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>{{ plan.monthly_export_limit }} shorts a month · up to {{ transcription_hours }}h of source video</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Priority processing</span></li>
-              <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Everything in Creator</span></li>
-            {% endif %}
-          </ul>
-
+      {% set autopilot_initial = autopilot_tiers[0] %}
+      {% set self_serve_initial = self_serve_tiers[0] %}
+      <article class="pricing-card pricing-card-featured">
+        <div class="pricing-badge">Most Popular</div>
+        <h3 class="pricing-plan-name">Do it for me</h3>
+        <p class="pricing-card-tagline">You post long videos. We turn them into Shorts — automatically, every month.</p>
+        <div class="pricing-price">
+          <span class="pricing-price-old" data-autopilot-old>${{ autopilot_initial.compare_price }}</span>
+          <span class="pricing-price-amount" data-autopilot-price>${{ autopilot_initial.price }}</span>
+          <span class="pricing-price-suffix">/mo</span>
+        </div>
+        <p class="pricing-price-free">First month free</p>
+        <div class="pricing-selector" id="autopilotPricingSelector" role="group" aria-label="Autopilot short volume">
+          {% for tier in autopilot_tiers %}
+            <button
+              type="button"
+              class="pricing-segment{% if loop.first %} is-active{% endif %}"
+              data-autopilot-segment
+              data-monthly-shorts="{{ tier.shorts }}"
+              data-monthly-price="{{ tier.price }}"
+              data-compare-price="{{ tier.compare_price }}"
+              aria-pressed="{% if loop.first %}true{% else %}false{% endif %}">
+              <span class="pricing-segment-big">{{ tier.shorts }}</span>
+              <span class="pricing-segment-small">Shorts/mo</span>
+            </button>
+          {% endfor %}
+        </div>
+        <ul class="pricing-lines">
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>We take your latest long videos automatically</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Captioned, vertical, ready to post</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Scheduled &amp; published to your channels</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Connect your channel once — that's it</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Monthly performance report</span></li>
+        </ul>
+        <form class="pricing-inline-form" id="autopilotInterestForm">
+          <p class="pricing-inline-form-label">Want this done for you? Leave your email and selected tier.</p>
+          <input type="email" id="autopilotInterestEmail" name="email" placeholder="you@example.com" autocomplete="email" required>
+          <input type="hidden" id="autopilotInterestShorts" value="{{ autopilot_initial.shorts }}">
+          <input type="hidden" id="autopilotInterestPrice" value="{{ autopilot_initial.price }}">
+          <input type="hidden" id="autopilotInterestCompare" value="{{ autopilot_initial.compare_price }}">
           <div class="pricing-actions">
-            <a
-              class="pricing-btn {% if plan.is_featured %}pricing-btn-solid{% else %}pricing-btn-outline{% endif %}"
-              href="{{ url_for('video_shorts_bp.register') }}"
+            <button
+              type="submit"
+              class="pricing-btn pricing-btn-solid"
               data-minti-cta
-              data-cta-location="pricing_{{ plan.plan_id }}">
-              {{ plan.button_label }}
-            </a>
+              data-cta-location="pricing_autopilot_interest"
+              data-cta-text="Put my Shorts on autopilot">
+              <span>Put my Shorts on autopilot</span>
+              <span class="pricing-btn-subcopy">First month free · no card</span>
+            </button>
+            <div class="pricing-inline-feedback" id="autopilotInterestFeedback" aria-live="polite"></div>
           </div>
-        </article>
-      {% endfor %}
+        </form>
+      </article>
+
+      <article class="pricing-card">
+        <div class="pricing-badge-secondary">Do it yourself</div>
+        <h3 class="pricing-plan-name">I'll do it myself</h3>
+        <p class="pricing-card-tagline">Use Minti to turn your long videos into Shorts, your way.</p>
+        <div class="pricing-price">
+          <span class="pricing-price-amount" data-self-serve-price>${{ self_serve_initial.price }}</span>
+          <span class="pricing-price-suffix" data-self-serve-suffix>{% if self_serve_initial.price > 0 %}/mo{% endif %}</span>
+        </div>
+        <p class="pricing-price-free" data-self-serve-note>{{ self_serve_initial.note }}</p>
+        <div class="pricing-selector" id="selfServePricingSelector" role="group" aria-label="Self-serve short volume">
+          {% for tier in self_serve_tiers %}
+            <button
+              type="button"
+              class="pricing-segment{% if loop.first %} is-active{% endif %}"
+              data-self-serve-segment
+              data-plan-id="{{ tier.plan_id }}"
+              data-monthly-shorts="{{ tier.shorts }}"
+              data-source-hours="{{ tier.source_hours }}"
+              data-monthly-price="{{ tier.price }}"
+              data-note="{{ tier.note }}"
+              data-register-url="{{ tier.register_url }}"
+              aria-pressed="{% if loop.first %}true{% else %}false{% endif %}">
+              <span class="pricing-segment-big">{{ tier.shorts }}</span>
+              <span class="pricing-segment-small">Shorts · {{ tier.source_hours }}h</span>
+            </button>
+          {% endfor %}
+        </div>
+        <ul class="pricing-lines">
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Clip, caption &amp; edit yourself</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Publish to YouTube, IG &amp; Facebook</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Comment inbox &amp; analytics</span></li>
+        </ul>
+        <div class="pricing-actions">
+          <a
+            class="pricing-btn pricing-btn-outline"
+            href="{{ self_serve_initial.register_url }}"
+            id="selfServePricingCta"
+            data-minti-cta
+            data-cta-location="pricing_plan_{{ self_serve_initial.plan_id }}"
+            data-cta-text="Start free">
+            <span>Start free</span>
+            <span class="pricing-btn-subcopy">No card required</span>
+          </a>
+        </div>
+      </article>
     </div>
-    <p class="pricing-price-note"><small>Every plan includes plenty of storage for your library — fair-use limits apply.</small></p>
+    <p class="pricing-bottom-note">Cancel anytime.</p>
   </section>
 
   {% if latest_blog_articles %}
@@ -2161,44 +2311,115 @@
       }
     });
 
-    const pricingButtons = Array.from(document.querySelectorAll("[data-billing-toggle]"));
-    const pricingCards = Array.from(document.querySelectorAll("[data-monthly-price]"));
+    const autopilotSelector = document.getElementById("autopilotPricingSelector");
+    const autopilotPrice = document.querySelector("[data-autopilot-price]");
+    const autopilotOld = document.querySelector("[data-autopilot-old]");
+    const autopilotShortsInput = document.getElementById("autopilotInterestShorts");
+    const autopilotPriceInput = document.getElementById("autopilotInterestPrice");
+    const autopilotCompareInput = document.getElementById("autopilotInterestCompare");
+    const autopilotForm = document.getElementById("autopilotInterestForm");
+    const autopilotEmailInput = document.getElementById("autopilotInterestEmail");
+    const autopilotFeedback = document.getElementById("autopilotInterestFeedback");
+    const autopilotInterestUrl = {{ autopilot_interest_url|tojson }};
+    const selfServeSelector = document.getElementById("selfServePricingSelector");
+    const selfServePrice = document.querySelector("[data-self-serve-price]");
+    const selfServeSuffix = document.querySelector("[data-self-serve-suffix]");
+    const selfServeNote = document.querySelector("[data-self-serve-note]");
+    const selfServeCta = document.getElementById("selfServePricingCta");
 
-    function updatePricing(mode) {
-      pricingButtons.forEach(function (button) {
-        const isActive = button.getAttribute("data-billing-toggle") === mode;
-        button.classList.toggle("is-active", isActive);
-        button.setAttribute("aria-pressed", isActive ? "true" : "false");
-      });
+    function setAutopilotFeedback(message, state) {
+      if (!autopilotFeedback) return;
+      autopilotFeedback.textContent = message || "";
+      autopilotFeedback.classList.remove("is-success", "is-error");
+      if (state) {
+        autopilotFeedback.classList.add(state);
+      }
+    }
 
-      pricingCards.forEach(function (card) {
-        const monthlyPrice = Number(card.getAttribute("data-monthly-price") || "0");
-        const yearlyPrice = Number(card.getAttribute("data-yearly-price") || "0");
-        const monthlyNote = card.getAttribute("data-monthly-note") || "";
-        const yearlyNote = card.getAttribute("data-yearly-note") || "";
-        const amountEl = card.querySelector("[data-price-amount]");
-        const suffixEl = card.querySelector("[data-price-suffix]");
-        const noteEl = card.querySelector("[data-price-note]");
-        if (!amountEl || !suffixEl || !noteEl) return;
-
-        if (mode === "monthly") {
-          amountEl.textContent = "$" + monthlyPrice;
-          suffixEl.textContent = monthlyPrice === 0 ? "" : "/mo";
-          noteEl.textContent = monthlyNote;
-        } else {
-          amountEl.textContent = "$" + yearlyPrice;
-          suffixEl.textContent = yearlyPrice === 0 ? "" : "/yr";
-          noteEl.textContent = yearlyNote;
-        }
+    function activateSegment(container, target) {
+      Array.from(container.querySelectorAll(".pricing-segment")).forEach(function (segment) {
+        const isActive = segment === target;
+        segment.classList.toggle("is-active", isActive);
+        segment.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
     }
 
-    pricingButtons.forEach(function (button) {
-      button.addEventListener("click", function () {
-        updatePricing(button.getAttribute("data-billing-toggle") || "yearly");
-      });
+    autopilotSelector?.addEventListener("click", function (event) {
+      const segment = event.target.closest("[data-autopilot-segment]");
+      if (!segment) return;
+      activateSegment(autopilotSelector, segment);
+      const monthlyPrice = Number(segment.getAttribute("data-monthly-price") || "0");
+      const comparePrice = Number(segment.getAttribute("data-compare-price") || "0");
+      const monthlyShorts = Number(segment.getAttribute("data-monthly-shorts") || "0");
+      if (autopilotPrice) autopilotPrice.textContent = "$" + monthlyPrice;
+      if (autopilotOld) autopilotOld.textContent = "$" + comparePrice;
+      if (autopilotShortsInput) autopilotShortsInput.value = String(monthlyShorts);
+      if (autopilotPriceInput) autopilotPriceInput.value = String(monthlyPrice);
+      if (autopilotCompareInput) autopilotCompareInput.value = String(comparePrice);
+      setAutopilotFeedback("");
     });
-    updatePricing("yearly");
+
+    selfServeSelector?.addEventListener("click", function (event) {
+      const segment = event.target.closest("[data-self-serve-segment]");
+      if (!segment) return;
+      activateSegment(selfServeSelector, segment);
+      const monthlyPrice = Number(segment.getAttribute("data-monthly-price") || "0");
+      const note = segment.getAttribute("data-note") || "";
+      const registerUrl = segment.getAttribute("data-register-url") || {{ url_for('video_shorts_bp.register')|tojson }};
+      const planId = segment.getAttribute("data-plan-id") || "plan_free";
+      if (selfServePrice) selfServePrice.textContent = "$" + monthlyPrice;
+      if (selfServeSuffix) selfServeSuffix.textContent = monthlyPrice > 0 ? "/mo" : "";
+      if (selfServeNote) selfServeNote.textContent = note;
+      if (selfServeCta) {
+        selfServeCta.setAttribute("href", registerUrl);
+        selfServeCta.setAttribute("data-cta-location", "pricing_plan_" + planId);
+      }
+    });
+
+    autopilotForm?.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const submitButton = autopilotForm.querySelector("button[type='submit']");
+      const email = String(autopilotEmailInput?.value || "").trim();
+      const monthlyShorts = Number(autopilotShortsInput?.value || "0");
+      const monthlyPrice = Number(autopilotPriceInput?.value || "0");
+      const comparePrice = Number(autopilotCompareInput?.value || "0");
+      if (!email) {
+        setAutopilotFeedback("Enter your email so we can follow up.", "is-error");
+        return;
+      }
+      setAutopilotFeedback("Saving your interest…");
+      if (submitButton) {
+        submitButton.disabled = true;
+      }
+      try {
+        const response = await fetch(autopilotInterestUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            email: email,
+            monthly_shorts: monthlyShorts,
+            monthly_price: monthlyPrice,
+            compare_price: comparePrice,
+            source: "vs_home_pricing"
+          })
+        });
+        const payload = await response.json().catch(function () { return null; });
+        if (!response.ok || !payload || !payload.ok) {
+          throw new Error((payload && payload.error) || "Could not save your interest right now.");
+        }
+        setAutopilotFeedback("Saved. We'll follow up on the selected tier.", "is-success");
+        if (autopilotEmailInput) {
+          autopilotEmailInput.value = "";
+        }
+      } catch (error) {
+        setAutopilotFeedback(error?.message || "Could not save your interest right now.", "is-error");
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
+      }
+    });
 
     document.querySelectorAll(".faq-trigger").forEach(function (trigger) {
       trigger.addEventListener("click", function () {
