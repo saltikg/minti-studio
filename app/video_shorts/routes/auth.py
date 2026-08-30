@@ -1629,6 +1629,8 @@ def redeem_onboarding_magic_link(token: str):
     if not normalized_token:
         return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
 
+    requested_intent = _normalize_service_intent(request.args.get("intent"))
+    autopilot_requested = requested_intent == "autopilot"
     token_hash = hash_onboarding_magic_token(normalized_token)
     conn = get_db()
     is_new_user = False
@@ -1683,6 +1685,13 @@ def redeem_onboarding_magic_link(token: str):
             recipient_name=recipient_name,
             existing_user_id=str(existing_user[0] or "").strip() if existing_user else None,
         )
+        if autopilot_requested:
+            _persist_pending_service_choice(
+                conn,
+                user_id=user_id,
+                intent="autopilot",
+                tier=15,
+            )
         if is_new_user:
             reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=user_id)
             welcome_email_context = (
@@ -1718,6 +1727,8 @@ def redeem_onboarding_magic_link(token: str):
             pass
 
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
+    if autopilot_requested:
+        _stash_auth_choice(intent="autopilot", tier=15)
     if is_new_user and welcome_email_context:
         welcome_email, welcome_name, set_password_url = welcome_email_context
         try:
@@ -1743,6 +1754,8 @@ def redeem_onboarding_magic_link(token: str):
                 welcome_email,
                 outreach_language,
             )
+    if autopilot_requested:
+        return redirect(url_for("video_shorts_bp.social_connect"))
     return redirect(url_for("video_shorts_bp.my_videos_page"))
 
 

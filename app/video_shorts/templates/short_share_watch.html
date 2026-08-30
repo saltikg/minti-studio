@@ -227,6 +227,13 @@
         font-size: 0.84rem;
         line-height: 1.45;
       }
+      .watch-cta-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        width: min(100%, 460px);
+      }
       .watch-value-line {
         max-width: 440px;
         color: var(--text);
@@ -256,6 +263,28 @@
         box-shadow:
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
+      }
+      .watch-cta-secondary-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 20px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text) !important;
+        font-weight: 600;
+        font-size: 0.94rem;
+        text-decoration: none !important;
+        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+      }
+      .watch-cta-secondary-button:hover,
+      .watch-cta-secondary-button:focus-visible {
+        border-color: rgba(110, 231, 216, 0.34);
+        background: rgba(255, 255, 255, 0.08);
+        transform: translateY(-1px);
+        text-decoration: none;
       }
       .watch-cta-secondary {
         color: var(--accent);
@@ -409,6 +438,7 @@
       </div>
       <div class="watch-footer">
         {% if onboarding_url %}
+          {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
           <div class="watch-value-line">
             {% if language == 'TR' %}
               Minti bu Short'u senin videondan otomatik oluşturdu. Uzun videolarının tamamını bu şekilde Short'lara dönüştür
@@ -418,16 +448,28 @@
               — free, no signup, no card.
             {% endif %}
           </div>
-          <a
-            href="{{ onboarding_url }}"
-            class="watch-cta-primary"
-            rel="noreferrer">
-            {% if language == 'TR' %}
-              Kendi Short'unu oluştur — ücretsiz
-            {% else %}
-              Make my own Short — free
-            {% endif %}
-          </a>
+          <div class="watch-cta-stack">
+            <a
+              href="{{ autopilot_onboarding_url }}"
+              class="watch-cta-primary"
+              rel="noreferrer">
+              {% if language == 'TR' %}
+                Bize bırak — ayda 15 Short, ilk ay ücretsiz
+              {% else %}
+                Let us do it for you — 15 Shorts/mo, first month free
+              {% endif %}
+            </a>
+            <a
+              href="{{ onboarding_url }}"
+              class="watch-cta-secondary-button"
+              rel="noreferrer">
+              {% if language == 'TR' %}
+                Ya da kendin yap — ücretsiz
+              {% else %}
+                Or make them yourself — free
+              {% endif %}
+            </a>
+          </div>
           <div class="watch-cta-subline">
             {% if language == 'TR' %}
               <strong class="watch-cta-secondary">{{ trial_duration_label }} ücretsiz</strong> · kayıt yok
