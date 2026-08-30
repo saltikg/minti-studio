@@ -1369,7 +1369,6 @@ def register():
                     logger.exception("Failed to send verification email for user=%s", user_id)
                     flash("Your account was created, but we couldn't send the verification email. Please try again.", "danger")
                     return redirect(url_for("video_shorts_bp.register_check_email", email=email, delivery_failed=1))
-                flash("Check your inbox to verify your email.", "success")
                 return redirect(url_for("video_shorts_bp.register_check_email", email=email))
     if error:
         flash(error, "danger")
@@ -2234,9 +2233,7 @@ def save_service_mode_choice():
     service_mode = _normalize_service_intent((payload or {}).get("service_mode"))
     if service_mode not in SERVICE_MODE_VALUES:
         return {"ok": False, "error": "invalid_service_mode"}, 400
-    service_tier = _normalize_service_tier((payload or {}).get("service_tier")) if service_mode == "autopilot" else None
-    if service_mode == "autopilot" and service_tier is None:
-        service_tier = 15
+    service_tier = 15 if service_mode == "autopilot" else None
     conn = get_db()
     chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
