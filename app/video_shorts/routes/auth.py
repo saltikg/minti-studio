@@ -1242,7 +1242,7 @@ def login():
                 return redirect(nxt)
     if error:
         flash(error, "danger")
-    return render_template("vs_login.html", resend_email=resend_email, prefill_email=prefill_email)
+    return _render_login_page(resend_email=resend_email, prefill_email=prefill_email)
 
 
 @video_shorts_bp.route("/register", methods=["GET", "POST"])
