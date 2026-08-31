@@ -100,10 +100,6 @@ def video_analytics_page():
     brand_id = current_brand_id()
     start_date, end_date, discovery_label, sort_by, sort_dir, page = _normalize_filters()
     sort_col = SORT_COLUMN_MAP[sort_by]
-    dbt_last_run_label = _format_dbt_last_run_label(
-        _latest_dbt_update_utc(),
-        request.cookies.get("timezone") or DEFAULT_TIME_ZONE,
-    )
 
     conn = get_db_readonly()
     try:
@@ -158,7 +154,6 @@ def video_analytics_page():
         return render_template(
             "video_analytics.html",
             videos=rows,
-            brand_id=brand_id,
             start_date=start_date,
             end_date=end_date,
             discovery_label=discovery_label,
@@ -168,7 +163,6 @@ def video_analytics_page():
             total_count=total_count,
             total_pages=total_pages,
             page_size=PAGE_SIZE,
-            dbt_last_run_label=dbt_last_run_label,
         )
     finally:
         conn.close()

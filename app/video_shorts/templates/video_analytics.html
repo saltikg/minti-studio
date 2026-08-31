@@ -337,12 +337,6 @@
         <p class="page-subtitle mb-0">Performance summary for published videos.</p>
       </div>
       <div class="text-end">
-        {% if brand_id %}
-          <div class="mb-2 d-flex flex-wrap justify-content-end gap-2">
-            <span class="badge text-bg-dark">Brand ID: {{ brand_id }}</span>
-            <span class="badge text-bg-secondary">{{ dbt_last_run_label }}</span>
-          </div>
-        {% endif %}
         <div class="video-analytics-summary">
           Showing {{ videos|length }} of {{ total_count }} videos
         </div>
@@ -364,7 +358,7 @@
                   <th>{{ sort_link('search_pct', 'Search %') }}</th>
                   <th>{{ sort_link('subscriber_pct', 'Subscriber %') }}</th>
                   <th>Discovery Label</th>
-                  <th>{{ sort_link('avg_retention_pct', 'Retention %', 'YouTube averageViewPercentage: her izlemede videonun yüzde kaçının izlendiğinin ortalaması. Biz bu günlük değerlerin ortalamasını alıyoruz. 100%+ değerler videonun loop yaptığını gösterir.') }}</th>
+                  <th>{{ sort_link('avg_retention_pct', 'Retention %', 'YouTube averageViewPercentage: the average percentage of the video watched per view. We display the average of those daily values. Values above 100% indicate the video is looping.') }}</th>
                   <th>Retention Tier</th>
                   <th>Duration (sec)</th>
                   <th>Ever Looped</th>
