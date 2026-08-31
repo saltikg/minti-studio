@@ -216,6 +216,7 @@ def ensure_short_share_links_schema(conn) -> None:
                 language VARCHAR,
                 trial_days INTEGER,
                 emailed_at TIMESTAMP,
+                archived BOOLEAN DEFAULT FALSE,
                 followup_sent BOOLEAN DEFAULT FALSE,
                 followup_sent_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -233,6 +234,7 @@ def ensure_short_share_links_schema(conn) -> None:
         ("language", "VARCHAR"),
         ("trial_days", "INTEGER"),
         ("emailed_at", "TIMESTAMP"),
+        ("archived", "BOOLEAN DEFAULT FALSE"),
         ("followup_sent", "BOOLEAN DEFAULT FALSE"),
         ("followup_sent_at", "TIMESTAMP"),
         ("created_at", "TIMESTAMP"),

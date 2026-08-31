@@ -245,6 +245,14 @@
           <option value="played" {% if selected_engagement == 'played' %}selected{% endif %}>Played only</option>
         </select>
       </div>
+      <div>
+        <label for="admin-share-links-archive" class="form-label mb-2">Archive</label>
+        <select id="admin-share-links-archive" name="archive" class="form-select">
+          <option value="all" {% if selected_archive == 'all' %}selected{% endif %}>Show all</option>
+          <option value="not_archived" {% if selected_archive == 'not_archived' %}selected{% endif %}>Not in archive</option>
+          <option value="archived" {% if selected_archive == 'archived' %}selected{% endif %}>Archive</option>
+        </select>
+      </div>
       <input type="hidden" name="sort" value="{{ sort_key }}">
       <input type="hidden" name="dir" value="{{ sort_dir }}">
       <div class="d-flex gap-2">
@@ -260,9 +268,10 @@
         <thead>
           <tr>
             <th>Sent</th>
+            <th>Archive</th>
             <th>
               <a
-                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
                 class="admin-share-links-sort-link">
                 <span>First seen</span>
                 {% if sort_key == 'first_seen' %}
@@ -286,7 +295,7 @@
             <th>User</th>
             <th>
               <a
-                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
                 class="admin-share-links-sort-link">
                 <span>Last seen</span>
                 {% if sort_key == 'last_seen' %}
@@ -296,7 +305,7 @@
             </th>
             <th>
               <a
-                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort='created', dir=next_created_dir, page=1) }}"
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='created', dir=next_created_dir, page=1) }}"
                 class="admin-share-links-sort-link">
                 <span>Created</span>
                 {% if sort_key == 'created' %}
@@ -319,6 +328,17 @@
                       {% if link.emailed_at_pst %}
                         <span class="admin-share-links-sent-time">{{ link.emailed_at_pst }}</span>
                       {% endif %}
+                    </span>
+                  </label>
+                </form>
+              </td>
+              <td>
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_archived', share_link_id=link.id) }}">
+                  <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                  <label class="admin-share-links-sent">
+                    <input type="checkbox" name="archived" value="1" {% if link.archived %}checked{% endif %} onchange="this.form.submit()">
+                    <span class="admin-share-links-sent-label">
+                      <span>{{ 'Archived' if link.archived else 'Active' }}</span>
                     </span>
                   </label>
                 </form>
@@ -421,7 +441,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="18" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="19" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -432,10 +452,10 @@
       <div class="admin-share-links-meta">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-share-links-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>

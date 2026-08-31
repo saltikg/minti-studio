@@ -6584,6 +6584,57 @@ def admin_share_link_set_emailed(share_link_id: int):
     return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
 
 
+@video_shorts_bp.route("/admin/share-links/<int:share_link_id>/archived", methods=["POST"])
+@require_admin
+def admin_share_link_set_archived(share_link_id: int):
+    next_url = (request.form.get("next") or request.args.get("next") or "").strip()
+    checked_value = (request.form.get("archived") or "").strip().lower()
+    mark_archived = checked_value in {"1", "true", "yes", "on"}
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            flash("Share links are not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "archived" not in share_link_columns:
+            flash("Archive tracking is not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        exists = conn.execute(
+            "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
+            [share_link_id],
+        ).fetchone()
+        if not exists:
+            abort(404)
+        conn.execute(
+            """
+            UPDATE short_share_links
+               SET archived = TRUE
+             WHERE id = ?
+            """
+            if mark_archived
+            else """
+            UPDATE short_share_links
+               SET archived = FALSE
+             WHERE id = ?
+            """,
+            [share_link_id],
+        )
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        current_app.logger.exception("Failed to update archived for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        flash("Archive state could not be updated.", "danger")
+    finally:
+        conn.close()
+    return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+
+
 @video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/followup-sent", methods=["POST"])
 def admin_share_link_set_followup_sent(share_link_id: int):
     current_user = getattr(g, "vs_current_user", None) or {}
@@ -8524,6 +8575,7 @@ def _load_admin_share_links(
     *,
     email_query: str = "",
     engagement_filter: str = "all",
+    archive_filter: str = "all",
     sort_key: str = "created",
     sort_dir: str = "desc",
     limit: int = 200,
@@ -8532,6 +8584,7 @@ def _load_admin_share_links(
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
+    has_archived = "archived" in share_link_columns
     has_language = "language" in share_link_columns
     has_trial_days = "trial_days" in share_link_columns
     has_followup_sent = "followup_sent" in share_link_columns
@@ -8539,10 +8592,13 @@ def _load_admin_share_links(
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
+    normalized_archive_filter = (archive_filter or "all").strip().lower()
     normalized_sort_key = (sort_key or "created").strip().lower()
     normalized_sort_dir = (sort_dir or "desc").strip().lower()
     if normalized_filter not in {"all", "viewed", "played"}:
         normalized_filter = "all"
+    if normalized_archive_filter not in {"all", "not_archived", "archived"}:
+        normalized_archive_filter = "all"
     if normalized_sort_key not in {"first_seen", "last_seen", "created"}:
         normalized_sort_key = "created"
     if normalized_sort_dir not in {"asc", "desc"}:
@@ -8561,6 +8617,11 @@ def _load_admin_share_links(
     if normalized_email:
         where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
         params.append(f"%{normalized_email}%")
+    if has_archived:
+        if normalized_archive_filter == "not_archived":
+            where_clauses.append("coalesce(sl.archived, false) = false")
+        elif normalized_archive_filter == "archived":
+            where_clauses.append("coalesce(sl.archived, false) = true")
     where_sql = " AND ".join(where_clauses)
     percent_watched_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
     cta_expr = _user_event_metadata_text_sql(conn, "cta")
@@ -8722,6 +8783,7 @@ def _load_admin_share_links(
               COALESCE(NULLIF(sl.recipient_name, ''), '—') AS recipient_name,
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
               {("sl.emailed_at" if has_emailed_at else "NULL")} AS emailed_at,
+              {("coalesce(sl.archived, false)" if has_archived else "FALSE")} AS archived,
               {("sl.followup_sent" if has_followup_sent else "FALSE")} AS followup_sent,
               {("sl.followup_sent_at" if has_followup_sent_at else "NULL")} AS followup_sent_at,
               sl.created_at,
@@ -8746,6 +8808,7 @@ def _load_admin_share_links(
               sl.recipient_name,
               sl.recipient_email,
               {("sl.emailed_at," if has_emailed_at else "")}
+              {("sl.archived," if has_archived else "")}
               {("sl.followup_sent," if has_followup_sent else "")}
               {("sl.followup_sent_at," if has_followup_sent_at else "")}
               sl.created_at,
@@ -8787,6 +8850,7 @@ def _load_admin_share_links(
           sr.recipient_name,
           sr.recipient_email,
           sr.emailed_at,
+          sr.archived,
           sr.followup_sent,
           sr.followup_sent_at,
           sr.clip_title,
@@ -8821,8 +8885,9 @@ def _load_admin_share_links(
         views_count = int(row[11] or 0)
         plays_count = int(row[12] or 0)
         emailed_at = row[7]
-        followup_sent = bool(row[8])
-        followup_sent_at = row[9]
+        archived = bool(row[8])
+        followup_sent = bool(row[9])
+        followup_sent_at = row[10]
         trial_days = normalize_trial_days(row[4], default=LEGACY_SHARE_TRIAL_DAYS)
         language = normalize_outreach_language(row[3], default="EN")
         followup_eligible = False
@@ -8848,32 +8913,33 @@ def _load_admin_share_links(
                 "emailed_at": emailed_at,
                 "emailed_at_pst": _format_datetime_pst(emailed_at),
                 "emailed": bool(emailed_at),
+                "archived": archived,
                 "followup_sent": followup_sent,
                 "followup_sent_at": followup_sent_at,
                 "followup_sent_at_pst": _format_datetime_pst(followup_sent_at),
                 "followup_eligible": followup_eligible,
-                "clip_title": row[10],
+                "clip_title": row[11],
                 "views_count": views_count,
                 "plays_count": plays_count,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
-                "first_seen": row[13],
-                "first_seen_pst": _format_datetime_pst(row[13]),
-                "last_seen": row[14],
-                "last_seen_pst": _format_datetime_pst(row[14]),
-                "created_at": row[15],
-                "created_at_pst": _format_datetime_pst(row[15]),
-                "cta_clicked": str(row[16] or "").strip(),
-                "device_type": str(row[17] or "").strip(),
-                "max_percent_watched": round(float(row[18] or 0), 2) if row[18] is not None else 0.0,
-                "redeemed_at": row[19],
-                "redeemed_at_pst": _format_datetime_pst(row[19]),
-                "redeemed_user_id": str(row[20] or "").strip(),
-                "redeemed": bool(row[19]),
-                "connected_platforms": str(row[21] or "").strip(),
-                "channel_connected": bool(str(row[21] or "").strip()),
-                "connected_at": row[22],
-                "connected_at_pst": _format_datetime_pst(row[22]),
+                "first_seen": row[14],
+                "first_seen_pst": _format_datetime_pst(row[14]),
+                "last_seen": row[15],
+                "last_seen_pst": _format_datetime_pst(row[15]),
+                "created_at": row[16],
+                "created_at_pst": _format_datetime_pst(row[16]),
+                "cta_clicked": str(row[17] or "").strip(),
+                "device_type": str(row[18] or "").strip(),
+                "max_percent_watched": round(float(row[19] or 0), 2) if row[19] is not None else 0.0,
+                "redeemed_at": row[20],
+                "redeemed_at_pst": _format_datetime_pst(row[20]),
+                "redeemed_user_id": str(row[21] or "").strip(),
+                "redeemed": bool(row[20]),
+                "connected_platforms": str(row[22] or "").strip(),
+                "channel_connected": bool(str(row[22] or "").strip()),
+                "connected_at": row[23],
+                "connected_at_pst": _format_datetime_pst(row[23]),
                 "redeemed_user_detail_url": (
                     url_for("video_shorts_bp.admin_user_detail", user_id=str(row[20]).strip())
                     if str(row[20] or "").strip()
@@ -8881,7 +8947,14 @@ def _load_admin_share_links(
                 ),
             }
         )
-    return items, total_count, normalized_filter, normalized_sort_key, normalized_sort_dir
+    return (
+        items,
+        total_count,
+        normalized_filter,
+        normalized_archive_filter,
+        normalized_sort_key,
+        normalized_sort_dir,
+    )
 
 
 def _load_admin_autopilot_leads(
@@ -10045,6 +10118,7 @@ def admin_errors():
 def admin_share_links():
     email_query = (request.args.get("email") or "").strip()
     engagement_filter = (request.args.get("engagement") or "all").strip().lower()
+    archive_filter = (request.args.get("archive") or "all").strip().lower()
     sort_key = (request.args.get("sort") or "created").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     try:
@@ -10060,6 +10134,7 @@ def admin_share_links():
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            archive_filter=archive_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
             limit=1,
@@ -10067,10 +10142,18 @@ def admin_share_links():
         )[1]
         total_pages = max(1, (total_links + per_page - 1) // per_page)
         page = min(page, total_pages)
-        links, total_links, normalized_filter, normalized_sort_key, normalized_sort_dir = _load_admin_share_links(
+        (
+            links,
+            total_links,
+            normalized_filter,
+            normalized_archive_filter,
+            normalized_sort_key,
+            normalized_sort_dir,
+        ) = _load_admin_share_links(
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            archive_filter=archive_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
             limit=per_page,
@@ -10085,6 +10168,7 @@ def admin_share_links():
         links=links,
         email_query=email_query,
         selected_engagement=normalized_filter,
+        selected_archive=normalized_archive_filter,
         sort_key=normalized_sort_key,
         sort_dir=normalized_sort_dir,
         page=page,
