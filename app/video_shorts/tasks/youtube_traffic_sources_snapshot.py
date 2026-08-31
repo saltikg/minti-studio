@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from app import create_app
-from app.video_shorts.services.youtube_traffic_sources import ingest_traffic_sources
 
 
 def _parse_args():
@@ -30,6 +33,8 @@ def main() -> int:
     args = _parse_args()
     app = create_app()
     with app.app_context():
+        from app.video_shorts.services.youtube_traffic_sources import ingest_traffic_sources
+
         print("youtube_traffic_sources_snapshot starting", flush=True)
         try:
             result = ingest_traffic_sources(start_date=_parse_start_date(args.start_date))
