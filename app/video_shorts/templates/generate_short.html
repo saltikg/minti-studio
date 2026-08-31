@@ -11581,10 +11581,13 @@ document.addEventListener("DOMContentLoaded", function () {
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const subtitleStyleField = document.getElementById("subtitleStyleField");
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
-  const styleTemplateCards = Array.from(document.querySelectorAll("[data-style-template-card]"));
-  const styleTemplateCarouselTrack = document.querySelector("[data-style-template-carousel-track]");
-  const styleTemplateCarouselPrev = document.querySelector("[data-style-template-carousel-prev]");
-  const styleTemplateCarouselNext = document.querySelector("[data-style-template-carousel-next]");
+  const cropAreaModalEl = document.getElementById("crop-area-modal");
+  const styleTemplateCards = cropAreaModalEl
+    ? Array.from(cropAreaModalEl.querySelectorAll("[data-style-template-card]"))
+    : [];
+  const styleTemplateCarouselTrack = cropAreaModalEl?.querySelector("[data-style-template-carousel-track]") || null;
+  const styleTemplateCarouselPrev = cropAreaModalEl?.querySelector("[data-style-template-carousel-prev]") || null;
+  const styleTemplateCarouselNext = cropAreaModalEl?.querySelector("[data-style-template-carousel-next]") || null;
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
 
@@ -11974,6 +11977,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   styleTemplateCarouselTrack?.addEventListener("scroll", updateStyleTemplateCarouselNav, { passive: true });
   window.addEventListener("resize", updateStyleTemplateCarouselNav);
+  cropAreaModalEl?.addEventListener("shown.bs.modal", () => {
+    window.requestAnimationFrame(() => {
+      updateStyleTemplateCarouselNav();
+    });
+  });
   updateStyleTemplateCarouselNav();
   const setActiveCropModalTab = (nextTab) => {
     const target = String(nextTab?.dataset.cropModalTabTarget || "").trim().toLowerCase();
