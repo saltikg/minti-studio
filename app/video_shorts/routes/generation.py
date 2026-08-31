@@ -8882,8 +8882,8 @@ def _load_admin_share_links(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        views_count = int(row[11] or 0)
-        plays_count = int(row[12] or 0)
+        views_count = int(row[12] or 0)
+        plays_count = int(row[13] or 0)
         emailed_at = row[7]
         archived = bool(row[8])
         followup_sent = bool(row[9])
@@ -8941,8 +8941,8 @@ def _load_admin_share_links(
                 "connected_at": row[23],
                 "connected_at_pst": _format_datetime_pst(row[23]),
                 "redeemed_user_detail_url": (
-                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[20]).strip())
-                    if str(row[20] or "").strip()
+                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[21]).strip())
+                    if str(row[21] or "").strip()
                     else ""
                 ),
             }
