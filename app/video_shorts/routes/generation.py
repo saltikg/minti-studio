@@ -6483,7 +6483,7 @@ def _handle_public_short_watch_event(token: str):
         return ("", 204)
 
     event_type = str(payload.get("type") or "").strip().lower()
-    if event_type not in {"view", "play"}:
+    if event_type not in {"view", "play", "cta_click", "watch_progress"}:
         return ("", 204)
 
     conn = get_db_readonly()
@@ -6495,16 +6495,35 @@ def _handle_public_short_watch_event(token: str):
     if not row or not row.get("generated_video_id") or not row.get("owner_user_id"):
         return ("", 204)
 
+    metadata = {
+        "token": row["token"],
+        "generated_video_id": row["generated_video_id"],
+        "share_link_id": row["share_link_id"],
+        "token_source": row["token_source"],
+    }
+    device_type = _normalize_share_watch_device_type(payload.get("device_type"))
+    if device_type:
+        metadata["device_type"] = device_type
+    if event_type == "cta_click":
+        cta_value = _normalize_share_watch_cta(payload.get("cta"))
+        if not cta_value:
+            return ("", 204)
+        metadata["cta"] = cta_value
+    elif event_type == "watch_progress":
+        seconds_watched = _normalize_share_watch_seconds(payload.get("seconds_watched"))
+        percent_watched = _normalize_share_watch_percent(payload.get("percent_watched"))
+        if seconds_watched is None and percent_watched is None:
+            return ("", 204)
+        if seconds_watched is not None:
+            metadata["seconds_watched"] = seconds_watched
+        if percent_watched is not None:
+            metadata["percent_watched"] = percent_watched
+
     track_event(
         row["owner_user_id"],
         f"share_{event_type}",
         short_id=row["generated_video_id"],
-        metadata={
-            "token": row["token"],
-            "generated_video_id": row["generated_video_id"],
-            "share_link_id": row["share_link_id"],
-            "token_source": row["token_source"],
-        },
+        metadata=metadata,
     )
     return ("", 204)
 
@@ -8425,9 +8444,10 @@ def _load_admin_error_events(
 
 
 def _share_link_event_join_sql(conn) -> str:
+    event_names_sql = "('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')"
     if getattr(conn, "backend_name", "") == "postgres":
         return """
-        ue.event_name IN ('share_view', 'share_play')
+        ue.event_name IN {event_names_sql}
         AND (
           (
             COALESCE(NULLIF(ue.metadata->>'share_link_id', ''), '') <> ''
@@ -8438,9 +8458,9 @@ def _share_link_event_join_sql(conn) -> str:
             AND ue.metadata->>'token' = sl.token
           )
         )
-        """
+        """.format(event_names_sql=event_names_sql)
     return """
-    ue.event_name IN ('share_view', 'share_play')
+    ue.event_name IN {event_names_sql}
     AND (
       CAST(ue.metadata AS VARCHAR) LIKE ('%"share_link_id": "' || CAST(sl.id AS VARCHAR) || '"%')
       OR (
@@ -8448,7 +8468,55 @@ def _share_link_event_join_sql(conn) -> str:
         AND CAST(ue.metadata AS VARCHAR) LIKE ('%"token": "' || sl.token || '"%')
       )
     )
-    """
+    """.format(event_names_sql=event_names_sql)
+
+
+def _user_event_metadata_text_sql(conn, field_name: str) -> str:
+    safe_field = re.sub(r"[^a-zA-Z0-9_]", "", str(field_name or ""))
+    if getattr(conn, "backend_name", "") == "postgres":
+        return f"NULLIF(ue.metadata->>'{safe_field}', '')"
+    return f"NULLIF(json_extract_string(ue.metadata, '$.{safe_field}'), '')"
+
+
+def _user_event_metadata_numeric_sql(conn, field_name: str) -> str:
+    text_expr = _user_event_metadata_text_sql(conn, field_name)
+    if getattr(conn, "backend_name", "") == "postgres":
+        return f"CAST({text_expr} AS DOUBLE PRECISION)"
+    return f"CAST({text_expr} AS DOUBLE)"
+
+
+def _normalize_share_watch_device_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"mobile", "desktop", "tablet"}:
+        return normalized
+    return ""
+
+
+def _normalize_share_watch_cta(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"autopilot", "self_serve"}:
+        return normalized
+    return ""
+
+
+def _normalize_share_watch_seconds(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return round(max(0.0, numeric), 3)
+
+
+def _normalize_share_watch_percent(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return round(min(100.0, max(0.0, numeric)), 2)
 
 
 def _load_admin_share_links(
@@ -8494,6 +8562,13 @@ def _load_admin_share_links(
         where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
         params.append(f"%{normalized_email}%")
     where_sql = " AND ".join(where_clauses)
+    percent_watched_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
+    cta_expr = _user_event_metadata_text_sql(conn, "cta")
+    device_expr = _user_event_metadata_text_sql(conn, "device_type")
+    if getattr(conn, "backend_name", "") == "postgres":
+        channel_connected_agg_sql = "string_agg(DISTINCT ue.platform, ', ' ORDER BY ue.platform)"
+    else:
+        channel_connected_agg_sql = "group_concat(DISTINCT ue.platform)"
     redeemed_magic_cte_sql = ""
     if onboarding_magic_link_columns:
         redeemed_user_sql = "NULL"
@@ -8531,6 +8606,108 @@ def _load_admin_share_links(
               redeemed_user_id
             FROM redeemed_magic_links
             WHERE rn = 1
+        ),
+        latest_share_cta AS (
+            SELECT
+              share_link_id,
+              cta_clicked,
+              device_type
+            FROM (
+              SELECT
+                sl.id AS share_link_id,
+                {cta_expr} AS cta_clicked,
+                {device_expr} AS device_type,
+                ROW_NUMBER() OVER (
+                  PARTITION BY sl.id
+                  ORDER BY ue.created_at DESC, ue.id DESC
+                ) AS rn
+              FROM short_share_links sl
+              JOIN user_events ue
+                ON {_share_link_event_join_sql(conn)}
+              WHERE ue.event_name = 'share_cta_click'
+                AND {cta_expr} IS NOT NULL
+            ) ranked_share_cta
+            WHERE rn = 1
+        ),
+        latest_share_device AS (
+            SELECT
+              share_link_id,
+              device_type
+            FROM (
+              SELECT
+                sl.id AS share_link_id,
+                {device_expr} AS device_type,
+                ROW_NUMBER() OVER (
+                  PARTITION BY sl.id
+                  ORDER BY ue.created_at DESC, ue.id DESC
+                ) AS rn
+              FROM short_share_links sl
+              JOIN user_events ue
+                ON {_share_link_event_join_sql(conn)}
+              WHERE ue.event_name IN ('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')
+                AND {device_expr} IS NOT NULL
+            ) ranked_share_device
+            WHERE rn = 1
+        ),
+        redeemed_channel_connections AS (
+            SELECT
+              sl.id AS share_link_id,
+              {channel_connected_agg_sql} AS connected_platforms,
+              MAX(ue.created_at) AS connected_at
+            FROM short_share_links sl
+            JOIN latest_redeemed_magic_link lr
+              ON lr.share_link_id = sl.id
+            JOIN user_events ue
+              ON ue.user_id = lr.redeemed_user_id
+             AND ue.event_name = 'channel_connected'
+             AND (lr.redeemed_at IS NULL OR ue.created_at >= lr.redeemed_at)
+            GROUP BY sl.id
+        )
+        """
+    else:
+        redeemed_magic_cte_sql = f"""
+        ,
+        latest_share_cta AS (
+            SELECT
+              share_link_id,
+              cta_clicked,
+              device_type
+            FROM (
+              SELECT
+                sl.id AS share_link_id,
+                {cta_expr} AS cta_clicked,
+                {device_expr} AS device_type,
+                ROW_NUMBER() OVER (
+                  PARTITION BY sl.id
+                  ORDER BY ue.created_at DESC, ue.id DESC
+                ) AS rn
+              FROM short_share_links sl
+              JOIN user_events ue
+                ON {_share_link_event_join_sql(conn)}
+              WHERE ue.event_name = 'share_cta_click'
+                AND {cta_expr} IS NOT NULL
+            ) ranked_share_cta
+            WHERE rn = 1
+        ),
+        latest_share_device AS (
+            SELECT
+              share_link_id,
+              device_type
+            FROM (
+              SELECT
+                sl.id AS share_link_id,
+                {device_expr} AS device_type,
+                ROW_NUMBER() OVER (
+                  PARTITION BY sl.id
+                  ORDER BY ue.created_at DESC, ue.id DESC
+                ) AS rn
+              FROM short_share_links sl
+              JOIN user_events ue
+                ON {_share_link_event_join_sql(conn)}
+              WHERE ue.event_name IN ('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')
+                AND {device_expr} IS NOT NULL
+            ) ranked_share_device
+            WHERE rn = 1
         )
         """
 
@@ -8551,6 +8728,7 @@ def _load_admin_share_links(
               COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
               SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
               SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count,
+              MAX(CASE WHEN ue.event_name = 'share_watch_progress' THEN {percent_watched_expr} END) AS max_percent_watched,
               MIN(CASE WHEN ue.event_name = 'share_view' THEN ue.created_at END) AS first_seen,
               MAX(CASE WHEN ue.event_name IN ('share_view', 'share_play') THEN ue.created_at END) AS last_seen
             FROM short_share_links sl
@@ -8617,10 +8795,20 @@ def _load_admin_share_links(
           sr.first_seen,
           sr.last_seen,
           sr.created_at,
+          lsc.cta_clicked,
+          COALESCE(lsd.device_type, lsc.device_type) AS device_type,
+          sr.max_percent_watched,
           {("lr.redeemed_at," if onboarding_magic_link_columns else "NULL AS redeemed_at,")}
-          {("lr.redeemed_user_id" if onboarding_magic_link_columns else "NULL AS redeemed_user_id")}
+          {("lr.redeemed_user_id," if onboarding_magic_link_columns else "NULL AS redeemed_user_id,")}
+          {("rcc.connected_platforms," if onboarding_magic_link_columns else "NULL AS connected_platforms,")}
+          {("rcc.connected_at" if onboarding_magic_link_columns else "NULL AS connected_at")}
         FROM share_rows sr
+        LEFT JOIN latest_share_cta lsc
+          ON lsc.share_link_id = sr.id
+        LEFT JOIN latest_share_device lsd
+          ON lsd.share_link_id = sr.id
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
+        {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
         ORDER BY {order_column} {order_direction} NULLS LAST, sr.id DESC
         LIMIT ? OFFSET ?
@@ -8675,13 +8863,20 @@ def _load_admin_share_links(
                 "last_seen_pst": _format_datetime_pst(row[14]),
                 "created_at": row[15],
                 "created_at_pst": _format_datetime_pst(row[15]),
-                "redeemed_at": row[16],
-                "redeemed_at_pst": _format_datetime_pst(row[16]),
-                "redeemed_user_id": str(row[17] or "").strip(),
-                "redeemed": bool(row[16]),
+                "cta_clicked": str(row[16] or "").strip(),
+                "device_type": str(row[17] or "").strip(),
+                "max_percent_watched": round(float(row[18] or 0), 2) if row[18] is not None else 0.0,
+                "redeemed_at": row[19],
+                "redeemed_at_pst": _format_datetime_pst(row[19]),
+                "redeemed_user_id": str(row[20] or "").strip(),
+                "redeemed": bool(row[19]),
+                "connected_platforms": str(row[21] or "").strip(),
+                "channel_connected": bool(str(row[21] or "").strip()),
+                "connected_at": row[22],
+                "connected_at_pst": _format_datetime_pst(row[22]),
                 "redeemed_user_detail_url": (
-                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[17]).strip())
-                    if str(row[17] or "").strip()
+                    url_for("video_shorts_bp.admin_user_detail", user_id=str(row[20]).strip())
+                    if str(row[20] or "").strip()
                     else ""
                 ),
             }

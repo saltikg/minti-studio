@@ -277,7 +277,11 @@
             <th>Plays</th>
             <th>Viewed?</th>
             <th>Played?</th>
+            <th>CTA</th>
+            <th>Max watched</th>
+            <th>Device</th>
             <th>Redeemed?</th>
+            <th>Connected?</th>
             <th>Redeemed at</th>
             <th>User</th>
             <th>
@@ -393,7 +397,17 @@
               <td>{{ link.plays_count }}</td>
               <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
               <td><span class="admin-share-links-pill {% if link.played %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.played else 'No' }}</span></td>
+              <td class="admin-share-links-meta">{{ link.cta_clicked or '—' }}</td>
+              <td class="admin-share-links-meta">{{ ('%.0f%%'|format(link.max_percent_watched)) if link.max_percent_watched else '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.device_type or '—' }}</td>
               <td><span class="admin-share-links-pill {% if link.redeemed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.redeemed else 'No' }}</span></td>
+              <td class="admin-share-links-meta">
+                {% if link.channel_connected %}
+                  {{ link.connected_platforms }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
               <td class="admin-share-links-meta">{{ link.redeemed_at_pst or '—' }}</td>
               <td class="admin-share-links-meta">
                 {% if link.redeemed_user_detail_url %}
@@ -407,7 +421,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="14" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="18" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>

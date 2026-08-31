@@ -315,6 +315,7 @@
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
           <a
             href="{{ autopilot_onboarding_url }}"
+            data-share-cta="autopilot"
             class="watch-cta-primary"
             rel="noreferrer">
             {% if language == 'TR' %}
@@ -345,8 +346,18 @@
         if (!eventUrl || !video) {
           return;
         }
-        const fireEvent = (type) => {
-          const body = JSON.stringify({ type });
+        const classifyDeviceType = () => {
+          const ua = navigator.userAgent || "";
+          const width = Math.max(window.innerWidth || 0, screen.width || 0);
+          const isTablet = /iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua) || (width >= 768 && width <= 1024);
+          const isMobile = /Mobi|Android|iPhone|iPod/i.test(ua) || width < 768;
+          if (isTablet) return "tablet";
+          if (isMobile) return "mobile";
+          return "desktop";
+        };
+        const deviceType = classifyDeviceType();
+        const fireEvent = (type, extra = {}) => {
+          const body = JSON.stringify({ type, device_type: deviceType, ...extra });
           if (navigator.sendBeacon) {
             const blob = new Blob([body], { type: "application/json" });
             navigator.sendBeacon(eventUrl, blob);
@@ -362,6 +373,45 @@
         };
         fireEvent("view");
         let playTracked = false;
+        let maxPercentWatched = 0;
+        let maxSecondsWatched = 0;
+        let lastProgressSentPercent = 0;
+        let unloadProgressSent = false;
+        const progressMilestones = [25, 50, 75, 100];
+        const emitProgress = (force = false) => {
+          if (!Number.isFinite(video.duration) || video.duration <= 0) {
+            return;
+          }
+          const currentSeconds = Math.max(maxSecondsWatched, video.currentTime || 0);
+          const currentPercent = Math.max(
+            maxPercentWatched,
+            Math.min(100, (currentSeconds / video.duration) * 100)
+          );
+          maxSecondsWatched = currentSeconds;
+          maxPercentWatched = currentPercent;
+          let milestoneReached = 0;
+          progressMilestones.forEach((milestone) => {
+            if (currentPercent >= milestone && milestone > lastProgressSentPercent) {
+              milestoneReached = milestone;
+            }
+          });
+          if (!force && !milestoneReached) {
+            return;
+          }
+          if (force && unloadProgressSent) {
+            return;
+          }
+          if (milestoneReached) {
+            lastProgressSentPercent = milestoneReached;
+          }
+          if (force) {
+            unloadProgressSent = true;
+          }
+          fireEvent("watch_progress", {
+            seconds_watched: Number(currentSeconds.toFixed(3)),
+            percent_watched: Number(currentPercent.toFixed(2)),
+          });
+        };
         video.addEventListener("play", () => {
           if (playTracked) {
             return;
@@ -369,6 +419,26 @@
           playTracked = true;
           fireEvent("play");
         }, { passive: true });
+        video.addEventListener("timeupdate", () => {
+          emitProgress(false);
+        }, { passive: true });
+        video.addEventListener("ended", () => {
+          maxSecondsWatched = Math.max(maxSecondsWatched, video.duration || 0);
+          maxPercentWatched = 100;
+          emitProgress(true);
+        }, { passive: true });
+        window.addEventListener("pagehide", () => {
+          emitProgress(true);
+        }, { passive: true });
+        document.querySelectorAll("[data-share-cta]").forEach((ctaLink) => {
+          ctaLink.addEventListener("click", () => {
+            const ctaType = String(ctaLink.dataset.shareCta || "").trim().toLowerCase();
+            if (!ctaType) {
+              return;
+            }
+            fireEvent("cta_click", { cta: ctaType });
+          }, { passive: true });
+        });
       })();
     </script>
   </body>
