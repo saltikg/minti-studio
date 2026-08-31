@@ -333,10 +333,10 @@
                 </form>
               </td>
               <td>
-                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_archived', share_link_id=link.id) }}">
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_archived', share_link_id=link.id) }}" class="admin-share-links-archive-form">
                   <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
                   <label class="admin-share-links-sent">
-                    <input type="checkbox" name="archived" value="1" {% if link.archived %}checked{% endif %} onchange="this.form.submit()">
+                    <input type="checkbox" name="archived" value="1" {% if link.archived %}checked{% endif %} data-archive-toggle>
                     <span class="admin-share-links-sent-label">
                       <span>{{ 'Archived' if link.archived else 'Active' }}</span>
                     </span>
@@ -549,6 +549,58 @@ Gökhan`,
         feedback.classList.add(kind);
       }
     }
+
+    function setArchiveLabel(row, archived) {
+      const label = row?.querySelector(".admin-share-links-archive-form .admin-share-links-sent-label span");
+      if (label) {
+        label.textContent = archived ? "Archived" : "Active";
+      }
+    }
+
+    document.addEventListener("change", async (event) => {
+      const archiveToggle = event.target.closest("[data-archive-toggle]");
+      if (!archiveToggle) {
+        return;
+      }
+      const form = archiveToggle.closest(".admin-share-links-archive-form");
+      const row = archiveToggle.closest(".admin-share-links-row");
+      const endpoint = form?.getAttribute("action") || "";
+      if (!form || !row || !endpoint) {
+        return;
+      }
+      const previousChecked = !archiveToggle.checked;
+      archiveToggle.disabled = true;
+      setFollowupFeedback(row, "");
+      try {
+        const formData = new FormData();
+        if (archiveToggle.checked) {
+          formData.append("archived", "1");
+        }
+        const nextInput = form.querySelector('input[name="next"]');
+        if (nextInput?.value) {
+          formData.append("next", nextInput.value);
+        }
+        const response = await fetch(endpoint, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: formData,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        setArchiveLabel(row, !!payload.archived);
+      } catch (err) {
+        archiveToggle.checked = previousChecked;
+        setArchiveLabel(row, previousChecked);
+        setFollowupFeedback(row, "Archive state could not be updated.", "is-error");
+      } finally {
+        archiveToggle.disabled = false;
+      }
+    });
 
     document.addEventListener("click", async (event) => {
       const followupCopyButton = event.target.closest(".admin-share-links-followup-copy-btn");

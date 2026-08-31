@@ -6590,14 +6590,19 @@ def admin_share_link_set_archived(share_link_id: int):
     next_url = (request.form.get("next") or request.args.get("next") or "").strip()
     checked_value = (request.form.get("archived") or "").strip().lower()
     mark_archived = checked_value in {"1", "true", "yes", "on"}
+    wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest"
 
     conn = get_db()
     try:
         if not _short_share_links_ready(conn):
+            if wants_json:
+                return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
             flash("Share links are not available until the database migration is applied.", "warning")
             return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
         share_link_columns = table_columns(conn, "short_share_links")
         if "archived" not in share_link_columns:
+            if wants_json:
+                return jsonify({"ok": False, "error": "archive_tracking_unavailable"}), 503
             flash("Archive tracking is not available until the database migration is applied.", "warning")
             return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
         exists = conn.execute(
@@ -6605,6 +6610,8 @@ def admin_share_link_set_archived(share_link_id: int):
             [share_link_id],
         ).fetchone()
         if not exists:
+            if wants_json:
+                return jsonify({"ok": False, "error": "not_found"}), 404
             abort(404)
         conn.execute(
             """
@@ -6621,6 +6628,8 @@ def admin_share_link_set_archived(share_link_id: int):
             [share_link_id],
         )
         conn.commit()
+        if wants_json:
+            return jsonify({"ok": True, "archived": mark_archived})
     except HTTPException:
         raise
     except Exception:
@@ -6629,6 +6638,8 @@ def admin_share_link_set_archived(share_link_id: int):
             conn.rollback()
         except Exception:
             pass
+        if wants_json:
+            return jsonify({"ok": False, "error": "update_failed"}), 500
         flash("Archive state could not be updated.", "danger")
     finally:
         conn.close()
