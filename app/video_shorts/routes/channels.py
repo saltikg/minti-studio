@@ -339,7 +339,12 @@ def my_videos_page():
             v.transcript_status,
             COALESCE(v.downloaded_at, v.published_at) AS added_at,
             c.channel_name,
-            COALESCE(g.short_count, 0) AS short_count
+            COALESCE(g.short_count, 0) AS short_count,
+            EXISTS (
+                SELECT 1
+                FROM youtube_transcripts t
+                WHERE t.video_id = v.video_id
+            ) AS transcript_exists
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
@@ -369,6 +374,17 @@ def my_videos_page():
             "channel_name": row[8] or "",
             "short_count": int(row[9] or 0),
         }
+        # A local upload is editable only after the worker has normalized it and
+        # persisted a completed transcript. Keep the list action aligned with it.
+        item["is_ready_for_editing"] = (
+            str(item["download_status"]).strip().lower() == "downloaded"
+            and str(item["transcript_status"]).strip().lower() == "done"
+            and bool(row[10])
+        )
+        item["is_processing"] = not item["is_ready_for_editing"] and (
+            str(item["download_status"]).strip().lower() != "downloaded"
+            or str(item["transcript_status"]).strip().lower() in {"pending", "processing", "queued", "ingesting"}
+        )
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
         videos.append(item)
 

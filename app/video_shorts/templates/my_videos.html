@@ -113,6 +113,14 @@
     background: linear-gradient(90deg, #2dd4bf, #67e8f9);
     transition: width .18s ease;
   }
+  .mv-progress.is-server-processing .mv-progress-bar {
+    width: 42% !important;
+    animation: mv-server-processing 1.6s ease-in-out infinite;
+  }
+  @keyframes mv-server-processing {
+    0%, 100% { width: 28%; opacity: 0.7; }
+    50% { width: 76%; opacity: 1; }
+  }
   .mv-upload-feedback.is-error {
     color: #fca5a5;
   }
@@ -379,6 +387,18 @@
     font-size: 0.92rem;
     font-variant-numeric: tabular-nums;
   }
+  .mv-processing-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+    color: #99f6e4;
+    font-size: 0.82rem;
+  }
+  .mv-action-processing {
+    cursor: not-allowed;
+    opacity: 0.72;
+  }
   .mv-empty {
     padding: 44px 24px;
     text-align: center;
@@ -493,9 +513,20 @@
               <div class="mv-channel-name">{{ item.channel_name }}</div>
             {% endif %}
           </div>
-          <div class="mv-meta">{{ item.duration_label }} · {{ item.added_at_label }} · {{ item.short_count }} short{% if item.short_count != 1 %}s{% endif %}</div>
+          <div class="mv-meta">
+            {{ item.duration_label }} · {{ item.added_at_label }} · {{ item.short_count }} short{% if item.short_count != 1 %}s{% endif %}
+            {% if item.is_processing %}
+              <div class="mv-processing-note"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span>Processing on our servers</div>
+            {% endif %}
+          </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
-            <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
+            {% if item.is_ready_for_editing %}
+              <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
+            {% elif item.is_processing %}
+              <span class="btn btn-secondary btn-sm mv-action-processing" aria-disabled="true">Processing…</span>
+            {% else %}
+              <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
+            {% endif %}
           </div>
         </div>
       {% endfor %}
@@ -715,6 +746,19 @@
     setFeedback(`${label} ${formatProgressPercent(currentUploadProgressValue)}`);
   };
 
+  const setServerProcessingState = (message) => {
+    if (!uploadProgress || !uploadProgressBar) return;
+    currentUploadProgressValue = 0;
+    uploadProgress.classList.add('is-visible', 'is-server-processing');
+    uploadProgress.setAttribute('aria-hidden', 'false');
+    uploadProgressBar.style.width = '42%';
+    setFeedback(message);
+  };
+
+  const clearServerProcessingState = () => {
+    uploadProgress?.classList.remove('is-server-processing');
+  };
+
   const setSelectedFile = (file) => {
     selectedFile = file || null;
     if (!uploadMeta) return;
@@ -757,7 +801,7 @@
   const resetProgress = () => {
     if (!uploadProgress || !uploadProgressBar) return;
     currentUploadProgressValue = 0;
-    uploadProgress.classList.remove('is-visible');
+    uploadProgress.classList.remove('is-visible', 'is-server-processing');
     uploadProgressBar.style.width = '0%';
   };
 
@@ -919,19 +963,28 @@
 
   const syncUploadSessionProgress = (session) => {
     if (!session) {
-      setUploadPhaseFeedback('Analyzing your video…');
+      setServerProcessingState("Uploaded. Processing on our servers. You can leave this page; we'll keep working.");
       return false;
     }
     if (String(session.status || '').trim().toLowerCase() === 'failed') {
       const failureMessage = session?.result?.message || session?.job?.error || 'Your video could not be prepared right now. Please try again.';
       throw new Error(failureMessage);
     }
-    if (String(session.status || '').trim().toLowerCase() === 'review') {
+    const video = session.video || {};
+    const transcript = session.transcript || {};
+    const isReadyForEditing = (
+      String(session.status || '').trim().toLowerCase() === 'review'
+      && String(video.download_status || '').trim().toLowerCase() === 'downloaded'
+      && String(video.transcript_status || '').trim().toLowerCase() === 'done'
+      && (String(transcript.full_text || '').trim() || (transcript.segments || []).length > 0)
+    );
+    if (isReadyForEditing) {
+      clearServerProcessingState();
       setProgress(100);
-      setUploadPhaseFeedback('Your video is ready.');
+      setFeedback('Your video is ready.');
       return true;
     }
-    setUploadPhaseFeedback('Analyzing your video…');
+    setServerProcessingState("Uploaded. Processing on our servers. This can take a few minutes for longer videos. You can leave this page; we'll keep working.");
     return false;
   };
 
@@ -1026,16 +1079,16 @@
     try {
       setUploadPhaseProgress(0);
       const uploadPayload = await uploadViaMultipart(selectedFile);
-      setUploadPhaseProgress(100);
       const uploadedSessionId = String(uploadPayload?.session?.id || '').trim();
       if (!uploadedSessionId) {
         throw new Error('Upload finished, but we could not track server processing.');
       }
-      setUploadPhaseFeedback('Analyzing your video…');
+      setServerProcessingState("Uploaded. Processing on our servers. This can take a few minutes for longer videos. You can leave this page; we'll keep working.");
       await waitForUploadSessionReady(uploadedSessionId);
       setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {
+      clearServerProcessingState();
       setCoachmarkState('');
       syncCoachmark();
       const message = error?.message || 'Upload failed before processing started. Please retry.';

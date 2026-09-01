@@ -40,6 +40,10 @@
   "subtitleHeight": SUBTITLE_BAND_HEIGHT
 } %}
 {% set has_transcript = transcript_text or (segments_view|length > 0) %}
+{% set video_download_status = (video.download_status or '')|lower %}
+{% set video_transcript_status = (video.transcript_status or '')|lower %}
+{% set editor_ready = has_transcript and video_download_status == 'downloaded' and video_transcript_status == 'done' %}
+{% set editor_processing = not editor_ready and (video_download_status != 'downloaded' or video_transcript_status in ['pending', 'processing', 'queued', 'ingesting']) %}
 {% set total_clip_count = clip_rows|default([], true)|length %}
 {% set created_clip_count = (clip_rows|default([], true)|selectattr('status','equalto','created')|list|length) %}
 {% set has_clips = total_clip_count > 0 %}
@@ -3141,9 +3145,9 @@
   </div>
 </div>
 
-{% if (video.download_status or '')|lower == 'pending' and not ((video.video_id or '')|lower).startswith('local_') %}
+{% if editor_processing %}
   <div class="alert alert-info">
-    We are preparing the source video. This can take a little while.
+    This video is still processing on our servers. Its transcript will be ready shortly. You can leave this page; we'll keep working.
   </div>
 {% endif %}
 
@@ -3152,7 +3156,7 @@
 {% set step2_enabled = has_transcript %}
 {% set step3_enabled = plan_exists %}
 
-{% if has_transcript %}
+{% if editor_ready %}
 <div class="gs-card mb-3 editor-topbar-card">
   <div class="editor-topbar-map-wrap">
     {{ flow_step_map(5 if created_clip_count > 0 else 3, None, None, 'publish-jump-btn', created_clip_count > 0, 'editor-flow', 'step-edit-btn', 'choose-crop-btn', video.id) }}
@@ -3862,6 +3866,19 @@
             </div>
             <div class="modal-body">
               <div id="clip-detail-modal-mount" class="clip-detail-modal-mount"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% elif editor_processing %}
+        <div class="editor-empty-shell-wrap">
+        <div class="editor-empty-shell">
+          <h4>Your video is still processing</h4>
+          {{ flow_step_map(2, None, None, None, False, 'editor-flow') }}
+          <div class="editor-empty-shell-actions">
+            <div class="editor-empty-shell-helper">
+              <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+              Analysis will be ready shortly. You can leave this page; we'll keep working.
             </div>
           </div>
         </div>
