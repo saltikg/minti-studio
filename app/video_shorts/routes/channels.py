@@ -344,7 +344,21 @@ def my_videos_page():
                 SELECT 1
                 FROM youtube_transcripts t
                 WHERE t.video_id = v.video_id
-            ) AS transcript_exists
+            ) AS transcript_exists,
+            COALESCE((
+                SELECT qs.status
+                FROM shorts_quick_sessions qs
+                WHERE qs.video_pk = v.id
+                ORDER BY qs.created_at DESC
+                LIMIT 1
+            ), '') AS latest_session_status,
+            EXISTS (
+                SELECT 1
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload')
+                  AND j.status IN ('queued', 'processing', 'running')
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+            ) AS has_active_upload_job
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
@@ -374,16 +388,17 @@ def my_videos_page():
             "channel_name": row[8] or "",
             "short_count": int(row[9] or 0),
         }
-        # A local upload is editable only after the worker has normalized it and
-        # persisted a completed transcript. Keep the list action aligned with it.
+        # A completed transcript is the durable editing signal. Older rows can
+        # retain a failed download status after a successful transcript/clip run.
         item["is_ready_for_editing"] = (
-            str(item["download_status"]).strip().lower() == "downloaded"
-            and str(item["transcript_status"]).strip().lower() == "done"
-            and bool(row[10])
+            str(item["transcript_status"]).strip().lower() == "done" and bool(row[10])
         )
         item["is_processing"] = not item["is_ready_for_editing"] and (
-            str(item["download_status"]).strip().lower() != "downloaded"
-            or str(item["transcript_status"]).strip().lower() in {"pending", "processing", "queued", "ingesting"}
+            str(row[11]).strip().lower() == "ingesting" and bool(row[12])
+        )
+        item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
+            str(item["download_status"]).strip().lower() in {"download_failed", "failed"}
+            or str(row[11]).strip().lower() == "failed"
         )
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
         videos.append(item)

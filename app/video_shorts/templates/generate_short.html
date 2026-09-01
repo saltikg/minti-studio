@@ -42,8 +42,8 @@
 {% set has_transcript = transcript_text or (segments_view|length > 0) %}
 {% set video_download_status = (video.download_status or '')|lower %}
 {% set video_transcript_status = (video.transcript_status or '')|lower %}
-{% set editor_ready = has_transcript and video_download_status == 'downloaded' and video_transcript_status == 'done' %}
-{% set editor_processing = not editor_ready and (video_download_status != 'downloaded' or video_transcript_status in ['pending', 'processing', 'queued', 'ingesting']) %}
+{% set editor_ready = has_transcript and video_transcript_status == 'done' %}
+{% set editor_processing = not editor_ready and upload_processing %}
 {% set total_clip_count = clip_rows|default([], true)|length %}
 {% set created_clip_count = (clip_rows|default([], true)|selectattr('status','equalto','created')|list|length) %}
 {% set has_clips = total_clip_count > 0 %}
@@ -3147,7 +3147,7 @@
 
 {% if editor_processing %}
   <div class="alert alert-info">
-    This video is still processing on our servers. Its transcript will be ready shortly. You can leave this page; we'll keep working.
+    Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.
   </div>
 {% endif %}
 
@@ -3878,7 +3878,7 @@
           <div class="editor-empty-shell-actions">
             <div class="editor-empty-shell-helper">
               <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-              Analysis will be ready shortly. You can leave this page; we'll keep working.
+              Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.
             </div>
           </div>
         </div>

@@ -399,6 +399,14 @@
     cursor: not-allowed;
     opacity: 0.72;
   }
+  .mv-failed-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+    color: rgba(226, 232, 240, 0.58);
+    font-size: 0.82rem;
+  }
   .mv-empty {
     padding: 44px 24px;
     text-align: center;
@@ -517,6 +525,8 @@
             {{ item.duration_label }} · {{ item.added_at_label }} · {{ item.short_count }} short{% if item.short_count != 1 %}s{% endif %}
             {% if item.is_processing %}
               <div class="mv-processing-note"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span>Processing on our servers</div>
+            {% elif item.is_failed %}
+              <div class="mv-failed-note"><i class="bi bi-exclamation-circle" aria-hidden="true"></i>Upload failed</div>
             {% endif %}
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
@@ -524,6 +534,8 @@
               <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
             {% elif item.is_processing %}
               <span class="btn btn-secondary btn-sm mv-action-processing" aria-disabled="true">Processing…</span>
+            {% elif item.is_failed %}
+              <span class="btn btn-outline-secondary btn-sm mv-action-processing" aria-disabled="true">Unavailable</span>
             {% else %}
               <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
             {% endif %}
@@ -963,7 +975,7 @@
 
   const syncUploadSessionProgress = (session) => {
     if (!session) {
-      setServerProcessingState("Uploaded. Processing on our servers. You can leave this page; we'll keep working.");
+      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
       return false;
     }
     if (String(session.status || '').trim().toLowerCase() === 'failed') {
@@ -984,7 +996,7 @@
       setFeedback('Your video is ready.');
       return true;
     }
-    setServerProcessingState("Uploaded. Processing on our servers. This can take a few minutes for longer videos. You can leave this page; we'll keep working.");
+    setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
     return false;
   };
 
@@ -1083,7 +1095,7 @@
       if (!uploadedSessionId) {
         throw new Error('Upload finished, but we could not track server processing.');
       }
-      setServerProcessingState("Uploaded. Processing on our servers. This can take a few minutes for longer videos. You can leave this page; we'll keep working.");
+      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
       await waitForUploadSessionReady(uploadedSessionId);
       setCoachmarkState('uploaded');
       window.setTimeout(() => window.location.reload(), 700);

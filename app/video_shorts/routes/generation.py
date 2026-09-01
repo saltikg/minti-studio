@@ -4774,7 +4774,33 @@ def generate_short(video_pk):
         video_duration_label = video_duration_label[:-4]
 
     transcript_text, segments = _fetch_transcript(conn, video["video_id"])
+    latest_upload_session = conn.execute(
+        """
+        SELECT status
+        FROM shorts_quick_sessions
+        WHERE video_pk = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        [video_pk],
+    ).fetchone()
+    has_active_upload_job = conn.execute(
+        """
+        SELECT 1
+        FROM shorts_render_jobs
+        WHERE type IN ('normalize_upload', 'transcribe_upload')
+          AND status IN ('queued', 'processing', 'running')
+          AND payload_json ->> 'video_pk' = ?
+        LIMIT 1
+        """,
+        [str(video_pk)],
+    ).fetchone()
     conn.close()
+    upload_processing = bool(
+        latest_upload_session
+        and str(latest_upload_session[0] or "").strip().lower() == "ingesting"
+        and has_active_upload_job
+    )
     def _joined_transcript_ar(seg_list: List[Dict[str, Any]]) -> str:
         def looks_turkish(text: str) -> bool:
             if not text:
@@ -6017,6 +6043,7 @@ def generate_short(video_pk):
     return render_template(
         "generate_short.html",
         video=video,
+        upload_processing=upload_processing,
         transcript_text=transcript_text,
         transcript_text_tr=transcript_text_tr,
         transcript_text_ar=transcript_text_ar,
