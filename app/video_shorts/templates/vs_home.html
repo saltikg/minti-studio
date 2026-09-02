@@ -80,7 +80,7 @@
   .vs-home .vs-home-hero-inner {
     position: relative;
     z-index: 1;
-    padding: clamp(1.4rem, 2.4vw, 2.8rem) 0 0;
+    padding: clamp(4.5rem, 10vw, 8rem) 0;
     display: flex;
     flex-direction: column;
     gap: 1.35rem;
@@ -130,6 +130,15 @@
 
   .vs-home .hero-link {
     min-width: 14rem;
+  }
+
+  .vs-home .vs-home-flow-section {
+    width: 100%;
+  }
+
+  .vs-home .vs-home-flow-section-heading {
+    margin: 0 auto 1.8rem;
+    text-align: center;
   }
 
   .vs-home .flow-shell {
@@ -1537,7 +1546,7 @@
   @media (max-width: 991px) {
     .vs-home .vs-home-hero-inner {
       gap: 1.6rem;
-      padding-top: 1rem;
+      padding: 3.5rem 1.2rem;
     }
 
     .vs-home .hero-flow {
@@ -1749,7 +1758,25 @@
           </h1>
           <p class="flow-shell-subtitle">Keep filming your long videos. We turn them into Shorts, publish them to your channels, and track what's actually growing. No editing, no extra hours, no surprises.</p>
         </div>
-        <div class="hero-flow" id="how-it-works">
+        <div class="hero-actions">
+          <a
+            class="btn hero-primary hero-link"
+            href="{{ url_for('video_shorts_bp.register') }}"
+            data-minti-cta
+            data-cta-location="home_hero"
+          >
+            Try for free
+          </a>
+        </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs-home-flow-section" id="how-it-works">
+    <div class="flow-shell">
+      <h2 class="demo-title vs-home-flow-section-heading">How it works</h2>
+      <div class="hero-flow">
           <div class="flow-stage">
             <div class="flow-card">
               <div class="flow-wide flow-reveal" style="--flow-delay: 0.15s;">
@@ -1869,20 +1896,9 @@
               </div>
             </div>
           </div>
-          <div class="hero-actions">
-            <a
-              class="btn hero-primary hero-link"
-              href="{{ url_for('video_shorts_bp.register') }}"
-              data-minti-cta
-              data-cta-location="home_hero"
-            >
-              Try for free
-            </a>
-          </div>
-        </div>
       </div>
     </div>
-  </section>
+    </section>
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
