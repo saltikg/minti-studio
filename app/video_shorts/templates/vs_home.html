@@ -159,13 +159,20 @@
     margin: 0 0 0.75rem;
   }
 
-  .vs-home .flow-shell-eyebrow {
+  .vs-home .flow-shell-title-continuation {
+    color: var(--text-2);
+    display: block;
+    font-size: 0.72em;
+    margin-top: 0.14em;
+  }
+
+  .vs-home .flow-shell-subtitle {
     margin: 0;
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: rgba(93, 202, 165, 0.9);
+    color: var(--text-2);
+    font-size: clamp(0.98rem, 1.55vw, 1.08rem);
+    line-height: 1.6;
+    max-width: 44rem;
+    margin-inline: auto;
   }
 
   .vs-home .hero-primary {
@@ -1736,8 +1743,11 @@
       <div class="hero-copy">
         <div class="flow-shell">
         <div class="flow-shell-header">
-          <h1 class="flow-shell-title">Upload one video.<br>We'll handle the rest.</h1>
-          <p class="flow-shell-eyebrow">HOW IT WORKS</p>
+          <h1 class="flow-shell-title">
+            We grow your channel from the content you already have
+            <span class="flow-shell-title-continuation">— without taking your time.</span>
+          </h1>
+          <p class="flow-shell-subtitle">Keep filming your long videos. We turn them into Shorts, publish them to your channels, and track what's actually growing. No editing, no extra hours, no surprises.</p>
         </div>
         <div class="hero-flow" id="how-it-works">
           <div class="flow-stage">
