@@ -4245,13 +4245,18 @@
         </div>
         <div class="modal-footer d-flex justify-content-between py-3 px-4 border-0 align-items-center">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
-            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M23.498 6.186a2.88 2.88 0 0 0-2.03-2.03C19.408 3.5 12 3.5 12 3.5s-7.408 0-9.468.656a2.88 2.88 0 0 0-2.03 2.03C.5 8.23.5 12 .5 12s0 3.77.002 5.814a2.88 2.88 0 0 0 2.03 2.03C4.592 21.5 12 21.5 12 21.5s7.408 0 9.468-.656a2.88 2.88 0 0 0 2.03-2.03C23.5 15.77 23.5 12 23.5 12s0-3.77-.002-5.814zM9.75 16.5v-9l6.5 4.5-6.5 4.5z"/>
-            </svg>
-            <span class="btn-label">Schedule & publish</span>
-          </button>
+          <div class="d-flex flex-column align-items-end gap-2">
+            <button type="submit" class="btn btn-primary btn-lg d-flex align-items-center gap-2">
+              <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M23.498 6.186a2.88 2.88 0 0 0-2.03-2.03C19.408 3.5 12 3.5 12 3.5s-7.408 0-9.468.656a2.88 2.88 0 0 0-2.03 2.03C.5 8.23.5 12 .5 12s0 3.77.002 5.814a2.88 2.88 0 0 0 2.03 2.03C4.592 21.5 12 21.5 12 21.5s7.408 0 9.468-.656a2.88 2.88 0 0 0 2.03-2.03C23.5 15.77 23.5 12 23.5 12s0-3.77-.002-5.814zM9.75 16.5v-9l6.5 4.5-6.5 4.5z"/>
+              </svg>
+              <span class="btn-label">Schedule & publish</span>
+            </button>
+            <p id="youtube-upload-compliance-notice" class="small text-white-50 text-end mb-0" style="max-width: 34rem;">
+              By clicking 'Schedule &amp; publish,' you certify that the content you are uploading complies with the YouTube Terms of Service (including the YouTube Community Guidelines) at <a class="link-info" href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">https://www.youtube.com/t/terms</a>. Please be sure not to violate others' copyright or privacy rights.
+            </p>
+          </div>
         </div>
       </form>
     </div>
@@ -8100,6 +8105,7 @@ const youtubeModalContext = (() => {
   const youtubeStatusBadge = document.getElementById("youtubeStatusBadge");
   const youtubeEnableToggle = document.getElementById("youtubeEnableToggle");
   const youtubeDisabledHint = document.getElementById("youtubeDisabledHint");
+  const youtubeComplianceNotice = document.getElementById("youtube-upload-compliance-notice");
   const defaultSubmitLabel = "Schedule & publish";
   const queueOnlyLabel = "Queue only";
   const defaultUploadUrl = form.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
@@ -8430,10 +8436,10 @@ const youtubeModalContext = (() => {
     youtubeStatusBadge.className = `badge text-white ${scheduled ? "bg-primary" : "bg-success"}`;
   };
   const updateYoutubeHint = () => {
-    if (!youtubeDisabledHint) {
-      return;
+    if (youtubeDisabledHint) {
+      youtubeDisabledHint.classList.toggle("d-none", isYoutubeEnabled());
     }
-    youtubeDisabledHint.classList.toggle("d-none", isYoutubeEnabled());
+    youtubeComplianceNotice?.classList.toggle("d-none", !isYoutubeEnabled());
   };
   const resolveSubmitLabel = (labelOverride) => {
     const baseLabel = labelOverride || activeSendBtn?.dataset.buttonLabel || defaultSubmitLabel;
