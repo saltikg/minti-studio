@@ -279,6 +279,16 @@
                 {% endif %}
               </a>
             </th>
+            <th>
+              <a
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
+                class="admin-share-links-sort-link">
+                <span>Last seen</span>
+                {% if sort_key == 'last_seen' %}
+                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
+                {% endif %}
+              </a>
+            </th>
             <th>Recipient</th>
             <th>Clip</th>
             <th>Trial</th>
@@ -293,16 +303,6 @@
             <th>Connected?</th>
             <th>Redeemed at</th>
             <th>User</th>
-            <th>
-              <a
-                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
-                class="admin-share-links-sort-link">
-                <span>Last seen</span>
-                {% if sort_key == 'last_seen' %}
-                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
-                {% endif %}
-              </a>
-            </th>
             <th>
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='created', dir=next_created_dir, page=1) }}"
@@ -344,6 +344,7 @@
                 </form>
               </td>
               <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
+              <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
               <td>
                 <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">{{ link.recipient_email }}</div>
@@ -436,7 +437,6 @@
                   —
                 {% endif %}
               </td>
-              <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
               <td class="admin-share-links-meta">{{ link.created_at_pst or '—' }}</td>
             </tr>
           {% else %}
