@@ -80,7 +80,7 @@
   .vs-home .vs-home-hero-inner {
     position: relative;
     z-index: 1;
-    padding: clamp(4.5rem, 10vw, 8rem) 0;
+    padding: clamp(2.5rem, 5.5vw, 4.5rem) 0 clamp(3.5rem, 7vw, 5.5rem);
     display: flex;
     flex-direction: column;
     gap: 1.35rem;
@@ -168,11 +168,30 @@
     margin: 0 0 0.75rem;
   }
 
-  .vs-home .flow-shell-title-continuation {
-    color: var(--text-2);
-    display: block;
-    font-size: 0.72em;
-    margin-top: 0.14em;
+  .vs-home .hero-growth-word {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.14em;
+    white-space: nowrap;
+  }
+
+  .vs-home .hero-growth-icon {
+    width: 0.88em;
+    height: 0.88em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border-radius: 0.24em;
+    background: #5dcaa5;
+    color: #07131a;
+    vertical-align: middle;
+  }
+
+  .vs-home .hero-growth-icon svg {
+    width: 68%;
+    height: 68%;
+    stroke: currentColor;
   }
 
   .vs-home .flow-shell-subtitle {
@@ -182,6 +201,13 @@
     line-height: 1.6;
     max-width: 44rem;
     margin-inline: auto;
+  }
+
+  .vs-home .flow-shell-tagline {
+    margin: 0.38rem 0 0;
+    color: var(--text-2);
+    font-size: 0.88rem;
+    line-height: 1.45;
   }
 
   .vs-home .hero-primary {
@@ -1546,7 +1572,7 @@
   @media (max-width: 991px) {
     .vs-home .vs-home-hero-inner {
       gap: 1.6rem;
-      padding: 3.5rem 1.2rem;
+      padding: 2.25rem 1.2rem 3.5rem;
     }
 
     .vs-home .hero-flow {
@@ -1753,10 +1779,10 @@
         <div class="flow-shell">
         <div class="flow-shell-header">
           <h1 class="flow-shell-title">
-            We grow your channel from the content you already have
-            <span class="flow-shell-title-continuation">— without taking your time.</span>
+            Grow your <span class="hero-growth-word">channel<span class="hero-growth-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 16l6-6 4 4 6-6"></path><path d="M15 8h5v5"></path></svg></span></span> from content you already have
           </h1>
-          <p class="flow-shell-subtitle">Keep filming your long videos. We turn them into Shorts, publish them to your channels, and track what's actually growing. No editing, no extra hours, no surprises.</p>
+          <p class="flow-shell-subtitle">Keep filming. We turn your long videos into Shorts, publish them to your channels, and track what's growing.</p>
+          <p class="flow-shell-tagline">No editing · no extra hours · no surprises</p>
         </div>
         <div class="hero-actions">
           <a
