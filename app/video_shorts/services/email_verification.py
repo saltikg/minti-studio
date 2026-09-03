@@ -255,30 +255,47 @@ def build_password_reset_url(token: str) -> str:
     return url_for("video_shorts_bp.reset_password", token=token, _external=True, _scheme="https")
 
 
-def send_password_reset_email(*, to_email: str, reset_token: str, recipient_name: str = "") -> None:
+def send_password_reset_email(
+    *,
+    to_email: str,
+    reset_token: str,
+    recipient_name: str = "",
+    setup_password: bool = False,
+) -> None:
     reset_url = build_password_reset_url(reset_token)
     greeting = recipient_name.strip() or "there"
-    subject = "Reset your MintiStudio password"
+    subject = "Set your MintiStudio password" if setup_password else "Reset your MintiStudio password"
+    action_label = "Set password" if setup_password else "Reset password"
+    intro = (
+        "Your MintiStudio account is ready. Set a password so you can sign in anytime."
+        if setup_password
+        else "We received a request to reset your password."
+    )
+    ignore_copy = (
+        "If you did not expect this email, you can ignore it."
+        if setup_password
+        else "If you did not request a password reset, you can ignore this email."
+    )
     html = f"""
     <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
       <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
         <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
         <p style="margin:0 0 12px;">Hi {greeting},</p>
-        <p style="margin:0 0 16px;">We received a request to reset your password.</p>
+        <p style="margin:0 0 16px;">{intro}</p>
         <p style="margin:0 0 20px;">
-          <a href="{reset_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Reset password</a>
+          <a href="{reset_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">{action_label}</a>
         </p>
         <p style="margin:0 0 12px;">This link expires in 1 hour.</p>
-        <p style="margin:0;color:#475569;font-size:14px;">If you did not request a password reset, you can ignore this email.</p>
+        <p style="margin:0;color:#475569;font-size:14px;">{ignore_copy}</p>
       </div>
     </div>
     """.strip()
     text = (
         f"Hi {greeting},\n\n"
-        "We received a request to reset your MintiStudio password.\n\n"
-        f"Reset password: {reset_url}\n\n"
+        f"{intro}\n\n"
+        f"{action_label}: {reset_url}\n\n"
         "This link expires in 1 hour.\n\n"
-        "If you did not request a password reset, you can ignore this email."
+        f"{ignore_copy}"
     )
     send_resend_email(to_email=to_email, subject=subject, html=html, text=text)
 
@@ -441,7 +458,7 @@ def send_autopilot_customer_admin_email(
     chosen_at: str,
     source: str = "first_login_modal",
 ) -> dict[str, object]:
-    admin_email = "gokhansaltik@gmail.com"
+    admin_email = "info@mintistudio.com"
     subject = "New autopilot customer"
     escaped_user_email = html.escape(user_email)
     escaped_chosen_at = html.escape(chosen_at)
@@ -473,6 +490,43 @@ def send_autopilot_customer_admin_email(
         html=html_body,
         text=text_body,
         error_message="Autopilot customer notification email could not be sent.",
+    )
+
+
+def send_autopilot_customer_confirmation_email(
+    *,
+    to_email: str,
+    recipient_name: str = "",
+    onboarding_url: str,
+) -> dict[str, object]:
+    greeting = recipient_name.strip() or "there"
+    safe_url = html.escape(onboarding_url, quote=True)
+    subject = "Your Shorts are on the way"
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+        <p style="margin:0 0 12px;">Hi {html.escape(greeting)},</p>
+        <p style="margin:0 0 16px;">Your Shorts are on the way. We're preparing your first Shorts and will email you in 1–2 days when they're ready.</p>
+        <p style="margin:0 0 20px;">
+          <a href="{safe_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Open MintiStudio</a>
+        </p>
+        <p style="margin:0;color:#475569;font-size:14px;">Sit back and focus on your long videos — we'll take care of the rest.</p>
+      </div>
+    </div>
+    """.strip()
+    text_body = (
+        f"Hi {greeting},\n\n"
+        "Your Shorts are on the way. We're preparing your first Shorts and will email you in 1–2 days when they're ready.\n\n"
+        f"Open MintiStudio: {onboarding_url}\n\n"
+        "Sit back and focus on your long videos — we'll take care of the rest."
+    )
+    return send_resend_email(
+        to_email=to_email,
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        error_message="Autopilot customer confirmation email could not be sent.",
     )
 
 

@@ -110,6 +110,8 @@
           <tr>
             <th>Email</th>
             <th>Tier</th>
+            <th>Password set?</th>
+            <th>Google linked?</th>
             <th>Chosen</th>
             <th>Channel connected</th>
             <th>Next action</th>
@@ -128,13 +130,15 @@
               <td>
                 <span class="admin-autopilot-tier">{{ customer.service_tier }} Shorts/mo</span>
               </td>
+              <td>{{ customer.password_set_label }}</td>
+              <td>{{ customer.google_linked_label }}</td>
               <td>{{ customer.chosen_at_pst or '—' }}</td>
               <td>{{ customer.youtube_connected_label }}</td>
               <td>{{ customer.next_action }}</td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="5" class="text-center text-muted py-4">No autopilot customers yet.</td>
+              <td colspan="7" class="text-center text-muted py-4">No autopilot customers yet.</td>
             </tr>
           {% endfor %}
         </tbody>

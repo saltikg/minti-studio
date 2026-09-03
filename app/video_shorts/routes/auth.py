@@ -55,6 +55,7 @@ from app.video_shorts.services.email_verification import (
     generate_email_verification_token,
     hash_email_verification_token,
     send_autopilot_customer_admin_email,
+    send_autopilot_customer_confirmation_email,
     password_reset_token_expiry,
     send_membership_activated_emails,
     send_onboarding_magic_link_welcome_email,
@@ -77,6 +78,7 @@ from app.video_shorts.services.billing import (
 from app.video_shorts.services.onboarding_magic_links import (
     ONBOARDING_MAGIC_LINK_PLAN_ID,
     hash_onboarding_magic_token,
+    mint_onboarding_magic_link,
     normalize_outreach_language,
 )
 from app.video_shorts.services.trial_copy import (
@@ -661,7 +663,12 @@ def _issue_password_reset_for_user(user_row) -> tuple[bool, int]:
         conn.commit()
     finally:
         conn.close()
-    send_password_reset_email(to_email=email, reset_token=reset_token, recipient_name=display_name)
+    send_password_reset_email(
+        to_email=email,
+        reset_token=reset_token,
+        recipient_name=display_name,
+        setup_password=not bool(user_row[4]),
+    )
     return True, 0
 
 
@@ -1533,7 +1540,8 @@ def forgot_password():
         if email:
             user_row = _lookup_user_by_email(email)
             try:
-                if user_row and user_row[4] and not user_row[10]:
+                # Passwordless magic-link accounts must be able to establish a password here too.
+                if user_row and bool(user_row[5]):
                     _issued, _retry_after = _issue_password_reset_for_user(user_row)
             except Exception:
                 logger.exception("Failed to issue password reset email for %s", email)
@@ -2275,9 +2283,11 @@ def save_service_mode_choice():
     current_user["pending_service_tier"] = None
     _clear_pending_service_choice()
     if service_mode == "autopilot":
+        user_email = str(current_user.get("email") or current_user.get("username") or "").strip()
+        user_name = str(current_user.get("name") or current_user.get("username") or "").strip()
         try:
             send_autopilot_customer_admin_email(
-                user_email=str(current_user.get("email") or current_user.get("username") or "").strip() or "(missing)",
+                user_email=user_email or "(missing)",
                 monthly_shorts=service_tier or 15,
                 chosen_at=chosen_at_label,
             )
@@ -2286,6 +2296,23 @@ def save_service_mode_choice():
                 "Autopilot customer admin notification failed for user_id=%s",
                 current_user["id"],
             )
+        if user_email:
+            try:
+                # A fresh one-time onboarding link is the reliable re-entry path for passwordless users.
+                access_link = mint_onboarding_magic_link(
+                    recipient_email=user_email,
+                    recipient_name=user_name,
+                )
+                send_autopilot_customer_confirmation_email(
+                    to_email=user_email,
+                    recipient_name=user_name,
+                    onboarding_url=str(access_link.get("url") or ""),
+                )
+            except Exception:
+                logger.exception(
+                    "Autopilot customer confirmation email failed for user_id=%s",
+                    current_user["id"],
+                )
     return {
         "ok": True,
         "service_mode": service_mode,

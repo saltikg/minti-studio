@@ -9086,6 +9086,8 @@ def _load_admin_autopilot_customers(
             COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS email,
             COALESCE(u.service_tier, 15) AS service_tier,
             u.service_mode_chosen_at,
+            COALESCE(NULLIF(u.password_hash, ''), '') <> '' AS password_set,
+            COALESCE(NULLIF(u.google_sub, ''), '') <> '' AS google_linked,
             (
                 SELECT COUNT(*)
                 FROM youtube_videos v
@@ -9102,7 +9104,7 @@ def _load_admin_autopilot_customers(
     for row in rows:
         user_id = str(row[0] or "").strip()
         youtube_connected = _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id)
-        source_video_count = int(row[4] or 0)
+        source_video_count = int(row[6] or 0)
         if not youtube_connected:
             next_action = "Connect channel"
         elif source_video_count <= 0:
@@ -9116,6 +9118,10 @@ def _load_admin_autopilot_customers(
                 "service_tier": int(row[2] or 15),
                 "chosen_at": row[3],
                 "chosen_at_pst": _format_datetime_pst(row[3]),
+                "password_set": bool(row[4]),
+                "password_set_label": "Yes" if bool(row[4]) else "No",
+                "google_linked": bool(row[5]),
+                "google_linked_label": "Yes" if bool(row[5]) else "No",
                 "youtube_connected": youtube_connected,
                 "youtube_connected_label": "Yes" if youtube_connected else "No",
                 "source_video_count": source_video_count,
