@@ -78,7 +78,6 @@ from app.video_shorts.services.billing import (
 from app.video_shorts.services.onboarding_magic_links import (
     ONBOARDING_MAGIC_LINK_PLAN_ID,
     hash_onboarding_magic_token,
-    mint_onboarding_magic_link,
     normalize_outreach_language,
 )
 from app.video_shorts.services.trial_copy import (
@@ -2298,15 +2297,9 @@ def save_service_mode_choice():
             )
         if user_email:
             try:
-                # A fresh one-time onboarding link is the reliable re-entry path for passwordless users.
-                access_link = mint_onboarding_magic_link(
-                    recipient_email=user_email,
-                    recipient_name=user_name,
-                )
                 send_autopilot_customer_confirmation_email(
                     to_email=user_email,
                     recipient_name=user_name,
-                    onboarding_url=str(access_link.get("url") or ""),
                 )
             except Exception:
                 logger.exception(

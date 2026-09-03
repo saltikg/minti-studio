@@ -497,29 +497,25 @@ def send_autopilot_customer_confirmation_email(
     *,
     to_email: str,
     recipient_name: str = "",
-    onboarding_url: str,
 ) -> dict[str, object]:
     greeting = recipient_name.strip() or "there"
-    safe_url = html.escape(onboarding_url, quote=True)
-    subject = "Your Shorts are on the way"
+    subject = "Your Shorts are on the way 🎬"
     html_body = f"""
     <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
       <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
         <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
         <p style="margin:0 0 12px;">Hi {html.escape(greeting)},</p>
-        <p style="margin:0 0 16px;">Your Shorts are on the way. We're preparing your first Shorts and will email you in 1–2 days when they're ready.</p>
-        <p style="margin:0 0 20px;">
-          <a href="{safe_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Open MintiStudio</a>
-        </p>
-        <p style="margin:0;color:#475569;font-size:14px;">Sit back and focus on your long videos — we'll take care of the rest.</p>
+        <p style="margin:0 0 16px;">You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.</p>
+        <p style="margin:0 0 16px;">In the meantime, just keep making your long videos — we'll take care of the rest.</p>
+        <p style="margin:0;">Best,<br>Gokhan<br>Minti Studio</p>
       </div>
     </div>
     """.strip()
     text_body = (
         f"Hi {greeting},\n\n"
-        "Your Shorts are on the way. We're preparing your first Shorts and will email you in 1–2 days when they're ready.\n\n"
-        f"Open MintiStudio: {onboarding_url}\n\n"
-        "Sit back and focus on your long videos — we'll take care of the rest."
+        "You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.\n\n"
+        "In the meantime, just keep making your long videos — we'll take care of the rest.\n\n"
+        "Best,\nGokhan\nMinti Studio"
     )
     return send_resend_email(
         to_email=to_email,
