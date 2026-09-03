@@ -11272,6 +11272,10 @@ def youtube_connect():
 def social_connect():
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
+    show_autopilot_welcome = (
+        request.args.get("autopilot_welcome") == "1"
+        and str((current_user or {}).get("service_mode") or "").strip().lower() == "autopilot"
+    )
     youtube_configured = bool(YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET and YOUTUBE_REDIRECT_URI)
     channel_info = None
     youtube_connected = False
@@ -11450,6 +11454,7 @@ def social_connect():
         tiktok_info=tiktok_info,
         tiktok_warning=tiktok_warning,
         tiktok_connected_at=tiktok_connected_at,
+        show_autopilot_welcome=show_autopilot_welcome,
     )
 
 

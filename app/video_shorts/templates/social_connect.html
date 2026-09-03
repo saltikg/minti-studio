@@ -103,6 +103,16 @@
 {%- endmacro %}
 
 {% block content %}
+  {% if show_autopilot_welcome %}
+    <div class="card shadow-sm vs-card mx-auto" style="max-width: 680px;">
+      <div class="card-body text-center p-4 p-md-5">
+        <span class="vs-badge vs-badge-success mb-3">Autopilot started</span>
+        <h4 class="vs-card-title mb-3">You're all set!</h4>
+        <p class="vs-text-body mb-2">We're preparing your first Shorts — we'll email you in 1–2 days when they're ready.</p>
+        <p class="vs-text-muted mb-0">Sit back and focus on your long videos.</p>
+      </div>
+    </div>
+  {% else %}
   {% set all_connected = youtube_connected and instagram_connected and facebook_connected %}
   {% set youtube_account = None %}
   {% if channel %}
@@ -250,4 +260,5 @@
       </div>
     </div>
   </div>
+  {% endif %}
 {% endblock %}

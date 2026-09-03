@@ -319,9 +319,149 @@
       font-size: 1rem;
       font-weight: 800;
     }
+    .vs-autopilot-welcome {
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 22px;
+      background: #0b1017;
+      box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.85);
+    }
+    .vs-autopilot-welcome-top {
+      padding: 30px 30px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      background: linear-gradient(180deg, rgba(63, 224, 197, 0.1), transparent);
+      text-align: center;
+    }
+    .vs-autopilot-welcome-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 16px;
+      padding: 6px 13px;
+      border-radius: 999px;
+      background: rgba(63, 224, 197, 0.14);
+      color: #3fe0c5;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .vs-autopilot-welcome-title {
+      margin: 0;
+      color: #fff;
+      font-size: 1.65rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    .vs-autopilot-welcome-body {
+      padding: 24px 30px 8px;
+    }
+    .vs-autopilot-welcome-label {
+      margin: 0 0 14px;
+      color: #8794a5;
+      font-size: 0.69rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .vs-autopilot-welcome-row {
+      display: flex;
+      gap: 13px;
+      align-items: flex-start;
+      padding: 11px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: #dbe1e9;
+      font-size: 0.875rem;
+      line-height: 1.45;
+    }
+    .vs-autopilot-welcome-row:last-child {
+      border-bottom: 0;
+    }
+    .vs-autopilot-welcome-tick {
+      display: inline-flex;
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+      border-radius: 50%;
+      background: rgba(56, 224, 138, 0.15);
+      color: #38e08a;
+      font-size: 0.8rem;
+      font-weight: 900;
+    }
+    .vs-autopilot-welcome-row strong {
+      color: var(--text-1);
+      font-weight: 700;
+    }
+    .vs-autopilot-welcome-when {
+      display: block;
+      margin-top: 2px;
+      color: #3fe0c5;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .vs-autopilot-welcome-ask {
+      margin: 20px 30px 0;
+      padding: 16px 18px;
+      border: 1px solid rgba(63, 224, 197, 0.3);
+      border-radius: 14px;
+      background: #131b26;
+    }
+    .vs-autopilot-welcome-ask-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      color: var(--text-1);
+      font-size: 0.875rem;
+      font-weight: 800;
+    }
+    .vs-autopilot-welcome-ask-title span {
+      color: #3fe0c5;
+    }
+    .vs-autopilot-welcome-ask-copy,
+    .vs-autopilot-welcome-relax {
+      margin: 0;
+      color: #8794a5;
+      font-size: 0.8125rem;
+      line-height: 1.5;
+    }
+    .vs-autopilot-welcome-footer {
+      padding: 20px 30px 26px;
+    }
+    .vs-autopilot-welcome-submit {
+      display: block;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      border: 0;
+      border-radius: 13px;
+      background: #3fe0c5;
+      color: #04241f;
+      padding: 16px;
+    }
+    .vs-autopilot-welcome-relax {
+      margin-top: 14px;
+      text-align: center;
+    }
+    .vs-autopilot-welcome-relax strong {
+      color: var(--text-1);
+    }
     @media (max-width: 767.98px) {
       .vs-service-mode-grid {
         grid-template-columns: 1fr;
+      }
+      .vs-autopilot-welcome-top,
+      .vs-autopilot-welcome-body,
+      .vs-autopilot-welcome-footer {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
+      .vs-autopilot-welcome-ask {
+        margin-left: 20px;
+        margin-right: 20px;
       }
     }
   </style>
@@ -539,6 +679,42 @@
         {% if vs_service_mode and vs_service_mode.show_modal %}
           <div class="modal fade" id="vsServiceModeModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
             <div class="modal-dialog modal-dialog-centered modal-lg">
+              {% if vs_service_mode.variant == 'autopilot_welcome' %}
+                <div class="modal-content vs-autopilot-welcome">
+                  <div class="vs-autopilot-welcome-top">
+                    <div class="vs-autopilot-welcome-badge">✦ Autopilot</div>
+                    <h5 class="vs-autopilot-welcome-title">Welcome to Minti Autopilot</h5>
+                  </div>
+                  <div class="vs-autopilot-welcome-body">
+                    <p class="vs-autopilot-welcome-label">Here's what we'll do for you</p>
+                    <div class="vs-autopilot-welcome-row">
+                      <span class="vs-autopilot-welcome-tick" aria-hidden="true">✓</span>
+                      <div><strong>We pull your latest long videos</strong> from your YouTube.</div>
+                    </div>
+                    <div class="vs-autopilot-welcome-row">
+                      <span class="vs-autopilot-welcome-tick" aria-hidden="true">✓</span>
+                      <div><strong>We turn the best moments into Shorts</strong><span class="vs-autopilot-welcome-when">Your first Shorts go live in 2–3 days</span></div>
+                    </div>
+                    <div class="vs-autopilot-welcome-row">
+                      <span class="vs-autopilot-welcome-tick" aria-hidden="true">✓</span>
+                      <div><strong>We publish 15 Shorts this month</strong>.</div>
+                    </div>
+                    <div class="vs-autopilot-welcome-row">
+                      <span class="vs-autopilot-welcome-tick" aria-hidden="true">✓</span>
+                      <div><strong>You see your growth</strong> — performance reports and comments, right here in Minti.</div>
+                    </div>
+                  </div>
+                  <div class="vs-autopilot-welcome-ask">
+                    <div class="vs-autopilot-welcome-ask-title"><span>→</span> The only thing we need from you</div>
+                    <p class="vs-autopilot-welcome-ask-copy">Connect your channel once, so we can reach your videos. That's it — then it's all on us.</p>
+                  </div>
+                  <div class="vs-autopilot-welcome-footer">
+                    <button type="button" class="btn vs-service-mode-submit vs-autopilot-welcome-submit" id="vsServiceModeSubmit">Let's start</button>
+                    <p class="vs-autopilot-welcome-relax">Then <strong>sit back and focus on your long videos</strong> — we'll take care of the rest.</p>
+                    <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
+                  </div>
+                </div>
+              {% else %}
                 <div class="modal-content vs-modal">
                 <div class="modal-header vs-modal-header">
                   <div>
@@ -633,6 +809,7 @@
                   <button type="button" class="btn vs-btn vs-btn-primary vs-service-mode-submit" id="vsServiceModeSubmit">Start my autopilot</button>
                 </div>
               </div>
+              {% endif %}
             </div>
           </div>
         {% endif %}
@@ -1037,6 +1214,8 @@
           const grid = document.getElementById("vsServiceModeGrid");
           const submitButton = document.getElementById("vsServiceModeSubmit");
           const errorEl = document.getElementById("vsServiceModeError");
+          const isAutopilotWelcome = {{ "true" if vs_service_mode and vs_service_mode.variant == "autopilot_welcome" else "false" }};
+          const autopilotWelcomeCompleteUrl = "{{ url_for('video_shorts_bp.social_connect', autopilot_welcome=1) }}";
           let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or 'autopilot')|tojson }};
           const emitServiceModeModalState = (open, mode) => {
             window.__vsServiceModeModalOpen = Boolean(open);
@@ -1054,7 +1233,7 @@
               button.setAttribute("aria-pressed", button.getAttribute("data-service-mode-option") === selectedMode ? "true" : "false");
             });
             if (submitButton) {
-              submitButton.textContent = selectedMode === "self" ? "Start creating" : "Start my autopilot";
+              submitButton.textContent = isAutopilotWelcome ? "Let's start" : (selectedMode === "self" ? "Start creating" : "Start my autopilot");
             }
             if (errorEl) {
               errorEl.classList.add("d-none");
@@ -1115,6 +1294,10 @@
                 throw new Error((payload && payload.error) || "Could not save your choice.");
               }
               emitServiceModeModalState(false, selectedMode);
+              if (isAutopilotWelcome) {
+                window.location.assign(autopilotWelcomeCompleteUrl);
+                return;
+              }
               serviceModeModal.hide();
             } catch (error) {
               if (errorEl) {
