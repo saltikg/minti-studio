@@ -322,114 +322,85 @@
     .vs-autopilot-welcome {
       overflow: hidden;
       border: 1px solid rgba(255, 255, 255, 0.09);
-      border-radius: 22px;
-      background: #0b1017;
-      box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.85);
+      border-radius: 26px;
+      background: #0a0f16;
+      box-shadow: 0 50px 120px -30px rgba(0, 0, 0, 0.9);
+    }
+    .vs-autopilot-welcome-dialog {
+      max-width: 760px;
     }
     .vs-autopilot-welcome-top {
-      padding: 30px 30px 24px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-      background: linear-gradient(180deg, rgba(63, 224, 197, 0.1), transparent);
+      padding: 44px 56px 30px;
+      background: linear-gradient(180deg, rgba(63, 224, 197, 0.09), transparent);
       text-align: center;
-    }
-    .vs-autopilot-welcome-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      margin-bottom: 16px;
-      padding: 6px 13px;
-      border-radius: 999px;
-      background: rgba(63, 224, 197, 0.14);
-      color: #3fe0c5;
-      font-size: 0.75rem;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
     }
     .vs-autopilot-welcome-title {
       margin: 0;
       color: #fff;
-      font-size: 1.65rem;
-      font-weight: 800;
-      letter-spacing: -0.01em;
+      font-size: 2.75rem;
+      font-weight: 300;
+      letter-spacing: -0.02em;
+      line-height: 1.08;
     }
     .vs-autopilot-welcome-body {
-      padding: 24px 30px 8px;
+      padding: 14px 56px 10px;
     }
     .vs-autopilot-welcome-label {
-      margin: 0 0 14px;
-      color: #8794a5;
-      font-size: 0.69rem;
+      margin: 0 0 12px;
+      color: #8a97a8;
+      font-size: 0.9375rem;
       font-weight: 700;
-      letter-spacing: 0.14em;
+      letter-spacing: 0.1em;
+      text-align: center;
       text-transform: uppercase;
     }
     .vs-autopilot-welcome-row {
       display: flex;
-      gap: 13px;
+      gap: 20px;
       align-items: flex-start;
-      padding: 11px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      color: #dbe1e9;
-      font-size: 0.875rem;
-      line-height: 1.45;
+      padding: 20px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      color: #e2e8f0;
+      font-size: 1.3125rem;
+      font-weight: 300;
+      line-height: 1.4;
     }
     .vs-autopilot-welcome-row:last-child {
       border-bottom: 0;
     }
     .vs-autopilot-welcome-tick {
       display: inline-flex;
-      width: 24px;
-      height: 24px;
-      flex: 0 0 24px;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
       align-items: center;
       justify-content: center;
-      margin-top: 1px;
+      margin-top: 2px;
       border-radius: 50%;
       background: rgba(56, 224, 138, 0.15);
       color: #38e08a;
-      font-size: 0.8rem;
+      font-size: 1.0625rem;
       font-weight: 900;
     }
     .vs-autopilot-welcome-row strong {
-      color: var(--text-1);
-      font-weight: 700;
+      color: #fff;
+      font-weight: 300;
     }
     .vs-autopilot-welcome-when {
       display: block;
-      margin-top: 2px;
+      margin-top: 5px;
       color: #3fe0c5;
-      font-size: 0.78rem;
-      font-weight: 700;
+      font-size: 0.9375rem;
+      font-weight: 400;
     }
-    .vs-autopilot-welcome-ask {
-      margin: 20px 30px 0;
-      padding: 16px 18px;
-      border: 1px solid rgba(63, 224, 197, 0.3);
-      border-radius: 14px;
-      background: #131b26;
-    }
-    .vs-autopilot-welcome-ask-title {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 4px;
-      color: var(--text-1);
-      font-size: 0.875rem;
-      font-weight: 800;
-    }
-    .vs-autopilot-welcome-ask-title span {
-      color: #3fe0c5;
-    }
-    .vs-autopilot-welcome-ask-copy,
     .vs-autopilot-welcome-relax {
       margin: 0;
-      color: #8794a5;
-      font-size: 0.8125rem;
+      color: #8a97a8;
+      font-size: 0.9375rem;
       line-height: 1.5;
     }
     .vs-autopilot-welcome-footer {
-      padding: 20px 30px 26px;
+      padding: 26px 56px 44px;
     }
     .vs-autopilot-welcome-submit {
       display: block;
@@ -437,10 +408,14 @@
       max-width: none;
       margin: 0;
       border: 0;
-      border-radius: 13px;
+      border-radius: 16px;
       background: #3fe0c5;
       color: #04241f;
-      padding: 16px;
+      padding: 20px;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }
     .vs-autopilot-welcome-relax {
       margin-top: 14px;
@@ -456,12 +431,26 @@
       .vs-autopilot-welcome-top,
       .vs-autopilot-welcome-body,
       .vs-autopilot-welcome-footer {
-        padding-left: 20px;
-        padding-right: 20px;
+        padding-left: 26px;
+        padding-right: 26px;
       }
-      .vs-autopilot-welcome-ask {
-        margin-left: 20px;
-        margin-right: 20px;
+      .vs-autopilot-welcome-top {
+        padding-top: 34px;
+        padding-bottom: 22px;
+      }
+      .vs-autopilot-welcome-title {
+        font-size: 1.875rem;
+      }
+      .vs-autopilot-welcome-body {
+        padding-top: 10px;
+        padding-bottom: 10px;
+      }
+      .vs-autopilot-welcome-footer {
+        padding-top: 20px;
+        padding-bottom: 32px;
+      }
+      .vs-autopilot-welcome-row {
+        font-size: 1.0625rem;
       }
     }
   </style>
@@ -678,11 +667,10 @@
       <main class="col-md-9 col-lg-10 vs-content">
         {% if vs_service_mode and vs_service_mode.show_modal %}
           <div class="modal fade" id="vsServiceModeModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
-            <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-dialog modal-dialog-centered {% if vs_service_mode.variant == 'autopilot_welcome' %}vs-autopilot-welcome-dialog{% else %}modal-lg{% endif %}">
               {% if vs_service_mode.variant == 'autopilot_welcome' %}
                 <div class="modal-content vs-autopilot-welcome">
                   <div class="vs-autopilot-welcome-top">
-                    <div class="vs-autopilot-welcome-badge">✦ Autopilot</div>
                     <h5 class="vs-autopilot-welcome-title">Welcome to Minti Autopilot</h5>
                   </div>
                   <div class="vs-autopilot-welcome-body">
@@ -703,10 +691,6 @@
                       <span class="vs-autopilot-welcome-tick" aria-hidden="true">✓</span>
                       <div><strong>You see your growth</strong> — performance reports and comments, right here in Minti.</div>
                     </div>
-                  </div>
-                  <div class="vs-autopilot-welcome-ask">
-                    <div class="vs-autopilot-welcome-ask-title"><span>→</span> The only thing we need from you</div>
-                    <p class="vs-autopilot-welcome-ask-copy">Connect your channel once, so we can reach your videos. That's it — then it's all on us.</p>
                   </div>
                   <div class="vs-autopilot-welcome-footer">
                     <button type="button" class="btn vs-service-mode-submit vs-autopilot-welcome-submit" id="vsServiceModeSubmit">Let's start</button>
