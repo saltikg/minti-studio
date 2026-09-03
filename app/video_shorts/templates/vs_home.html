@@ -259,6 +259,44 @@
     text-align: center;
   }
 
+  .vs-home .sample-shorts-section {
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .sample-shorts-gallery {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: clamp(0.7rem, 1.5vw, 1.15rem);
+    margin-top: 1.6rem;
+  }
+
+  .vs-home .sample-short-card {
+    aspect-ratio: 9 / 16;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background: rgba(13, 17, 23, 0.96);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+    transition: transform 200ms ease, box-shadow 200ms ease;
+  }
+
+  .vs-home .sample-short-card img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  @media (hover: hover) {
+    .vs-home .sample-short-card:hover {
+      transform: translateY(-6px) scale(1.03);
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.32);
+    }
+  }
+
   .vs-home .demo-eyebrow {
     margin: 0;
     font-size: 0.78rem;
@@ -1616,6 +1654,20 @@
       min-height: 0;
     }
 
+    .vs-home .sample-shorts-gallery {
+      display: flex;
+      overflow-x: auto;
+      gap: 0.85rem;
+      padding: 0.1rem 0.25rem 0.7rem;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: thin;
+    }
+
+    .vs-home .sample-short-card {
+      flex: 0 0 clamp(155px, 29vw, 205px);
+      scroll-snap-align: center;
+    }
+
     .vs-home .fork-lines {
       width: 2px;
       height: 44px;
@@ -1780,6 +1832,12 @@
     .vs-home .faq-panel {
       transition: none;
     }
+
+    .vs-home .sample-short-card,
+    .vs-home .sample-short-card:hover {
+      transition: none;
+      transform: none;
+    }
   }
 </style>
 {% endblock %}
@@ -1938,6 +1996,28 @@
       </div>
     </div>
     </section>
+
+  <section class="sample-shorts-section" aria-labelledby="sample-shorts-heading">
+    <h2 class="demo-title" id="sample-shorts-heading">See what Minti creates</h2>
+    <p class="demo-subline">Real Shorts, generated from a single long video.</p>
+    <div class="sample-shorts-gallery" aria-label="Sample vertical Shorts">
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-1.png') }}" alt="Sample vertical Short one" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-2.png') }}" alt="Sample vertical Short two" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-3.png') }}" alt="Sample vertical Short three" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-4.png') }}" alt="Sample vertical Short four" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-5.png') }}" alt="Sample vertical Short five" loading="lazy">
+      </article>
+    </div>
+  </section>
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
