@@ -6203,6 +6203,18 @@ def generate_short(video_pk):
             url_for("video_shorts_bp.admin_operation_autoclip_video", video_pk=video_pk)
             if operation_scope else url_for("video_shorts_bp.autoclip_video", video_pk=video_pk)
         ),
+        admin_operation_transcribe_url=(
+            url_for("video_shorts_bp.admin_operation_transcribe_video", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.transcribe_video", video_pk=video_pk)
+        ),
+        admin_operation_transcribe_start_url=(
+            url_for("video_shorts_bp.admin_operation_transcribe_video_start", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.transcribe_video_start", video_pk=video_pk)
+        ),
+        admin_operation_transcribe_status_url=(
+            url_for("video_shorts_bp.admin_operation_transcribe_video_status", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.transcribe_video_status", video_pk=video_pk)
+        ),
     )
 
 
@@ -10673,6 +10685,51 @@ def admin_operation_create_clip_plan_status(video_pk: int):
     return create_clip_plan_status(video_pk)
 
 
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe/start", methods=["POST"])
+@require_admin
+def admin_operation_transcribe_video_start(video_pk: int):
+    """Start target-owned transcription without borrowing the admin's brand."""
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_transcription_started",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    return transcribe_video_start(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe/status", methods=["GET"])
+@require_admin
+def admin_operation_transcribe_video_status(video_pk: int):
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    return transcribe_video_status(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe", methods=["POST"])
+@require_admin
+def admin_operation_transcribe_video(video_pk: int):
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_transcription_requested",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    return transcribe_video(video_pk)
+
+
 @video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/autoclip", methods=["POST"])
 @require_admin
 def admin_operation_autoclip_video(video_pk: int):
@@ -13754,6 +13811,12 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
 @video_shorts_bp.route("/generate/<int:video_pk>/transcribe/start", methods=["POST"])
 def transcribe_video_start(video_pk):
     cleanup_video_shorts_temp_dir()
+    operation_scope = request_admin_operation_scope()
+    metered_user_id = (
+        operation_scope["owner_user_id"]
+        if operation_scope
+        else (getattr(g, "vs_current_user", None) or {}).get("id")
+    )
     try:
         conn = get_db_readonly()
         try:
@@ -13835,7 +13898,7 @@ def transcribe_video_start(video_pk):
                 }
             )
 
-        quota_error = _transcription_quota_error_for_user(getattr(g, "vs_current_user", {}).get("id"), duration_seconds)
+        quota_error = _transcription_quota_error_for_user(metered_user_id, duration_seconds)
         if quota_error:
             return jsonify({"ok": False, "message": quota_error}), 403
         if disk_guard_triggered(operation="transcribe_video_start", log=current_app.logger):
@@ -13890,6 +13953,19 @@ def transcribe_video_status(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/transcribe", methods=["POST"])
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()
+    operation_scope = request_admin_operation_scope()
+    target_owner_user_id = (
+        operation_scope["owner_user_id"]
+        if operation_scope
+        else (getattr(g, "vs_current_user", None) or {}).get("id")
+    )
+    target_brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+
+    def _generate_redirect():
+        if operation_scope:
+            return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
     conn = get_db_readonly()
     row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds, COALESCE(transcript_status, '')")
     transcript_exists = False
@@ -13912,25 +13988,25 @@ def transcribe_video(video_pk):
     if has_completed_transcript and not force_retranscribe:
         segment_suffix = f" ({transcript_segment_count} segments)" if transcript_segment_count else ""
         flash(f"Existing transcript found{segment_suffix}. OpenAI call skipped.", "info")
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
-    quota_error = _transcription_quota_error_for_user(getattr(g, "vs_current_user", {}).get("id"), duration_seconds)
+        return _generate_redirect()
+    quota_error = _transcription_quota_error_for_user(target_owner_user_id, duration_seconds)
     if quota_error:
         flash(quota_error, "warning")
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+        return _generate_redirect()
     if disk_guard_triggered(operation="transcribe_video_sync", log=current_app.logger):
         flash(USER_FACING_DISK_GUARD_MESSAGE, "warning")
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+        return _generate_redirect()
     source_path, source_path_is_temp = _resolve_source_video(vid)
     if not source_path or not source_path.exists():
         conn.close()
         flash("Source video file not found on server. Upload or download it first.", "danger")
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+        return _generate_redirect()
 
     try:
         full_text, segments = _transcribe_with_whisper(source_path)
         if not segments:
             flash("Whisper did not return any segments.", "warning")
-            return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+            return _generate_redirect()
 
         conn = get_db()
         _ensure_transcript_schema(conn)
@@ -13965,22 +14041,21 @@ def transcribe_video(video_pk):
               AND owner_user_id = ?
               AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
             """,
-            [video_pk, getattr(g, "vs_current_user", {}).get("id"), current_brand_id(), current_brand_id()],
+            [video_pk, target_owner_user_id, target_brand_id, target_brand_id],
         )
         conn.commit()
         audio_minutes = _duration_minutes(_probe_media_duration_seconds(source_path))
-        current_user = getattr(g, "vs_current_user", None) or {}
-        if should_emit_transcript_completed and current_user.get("id"):
+        if should_emit_transcript_completed and target_owner_user_id:
             track_event(
-                str(current_user["id"]),
+                str(target_owner_user_id),
                 "transcript_completed",
                 video_id=event_video_id or vid,
                 status="completed",
             )
-        if current_user.get("id") and audio_minutes > 0:
+        if target_owner_user_id and audio_minutes > 0:
             try:
                 add_transcription_minutes(
-                    str(current_user["id"]),
+                    str(target_owner_user_id),
                     audio_minutes,
                     video_id=vid,
                     video_title=video_title,
@@ -14001,7 +14076,7 @@ def transcribe_video(video_pk):
                 pass
         _cleanup_resolved_source_video(source_path, source_path_is_temp)
 
-    return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+    return _generate_redirect()
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/segment_edit", methods=["POST"])

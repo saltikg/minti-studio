@@ -3250,9 +3250,9 @@
 
 <form id="step1-form"
       method="post"
-      action="{{ url_for('video_shorts_bp.transcribe_video', video_pk=video.id) }}"
-      data-transcribe-start-url="{{ url_for('video_shorts_bp.transcribe_video_start', video_pk=video.id) }}"
-      data-transcribe-status-url="{{ url_for('video_shorts_bp.transcribe_video_status', video_pk=video.id) }}"></form>
+      action="{{ admin_operation_transcribe_url }}"
+      data-transcribe-start-url="{{ admin_operation_transcribe_start_url }}"
+      data-transcribe-status-url="{{ admin_operation_transcribe_status_url }}"></form>
 
 <div class="row g-3 mb-3">
   <div class="col-12">
