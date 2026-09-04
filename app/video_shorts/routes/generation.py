@@ -172,7 +172,7 @@ NOISE_404_PATTERNS = [
 # This is the only route family eligible to activate a target lead context.
 # It covers every current and future video-bound editor endpoint without making
 # a selected operation scope active on unrelated admin browsing requests.
-ADMIN_OPERATION_EDITOR_ROUTE_PREFIX = "/generate/<int:video_pk>"
+ADMIN_OPERATION_EDITOR_ROUTE_PREFIX = "/video_shorts/generate/<int:video_pk>"
 
 # SQL LIKE equivalents for the default admin-errors filter. Keep this list
 # aligned with NOISE_404_PATTERNS above; it is intentionally conservative.
