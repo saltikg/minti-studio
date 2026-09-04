@@ -557,7 +557,7 @@ def admin_add_youtube_video():
                 flash("Discovery lead added. Add an email before provisioning its customer account.", "info")
             else:
                 flash("Autopilot lead provisioned and its source video was added to that lead's brand.", "success")
-            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+            return redirect(url_for("video_shorts_bp.admin_leads"))
         return jsonify(response)
 
         # The legacy current-brand insertion path remains below temporarily for
@@ -758,14 +758,14 @@ def admin_add_youtube_video():
             conn.rollback()
         if is_browser_form:
             flash(str(exc), "warning")
-            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+            return redirect(url_for("video_shorts_bp.admin_leads"))
         return _json_error("autopilot_leads_unavailable", str(exc), 503)
     except ValueError as exc:
         if conn is not None:
             conn.rollback()
         if is_browser_form:
             flash(str(exc), "warning")
-            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+            return redirect(url_for("video_shorts_bp.admin_leads"))
         return _json_error("lead_not_created", str(exc), 400)
     except RuntimeError as exc:
         message = str(exc or "").strip()

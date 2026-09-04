@@ -141,6 +141,7 @@ from app.video_shorts.services.user_preferences import (
     save_user_preference,
     save_user_bool_preference,
 )
+from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
 
 # Read-time filter for common internet scanner probes that otherwise drown the
 # admin errors view. These rows remain stored in user_events; only the default
@@ -9056,6 +9057,72 @@ def _load_admin_autopilot_leads(
     return items, total_count
 
 
+def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
+    """Load pre-conversion outreach leads without mixing them into customer operations."""
+    if not autopilot_leads_table_ready(conn):
+        return []
+
+    rows = conn.execute(
+        """
+        SELECT
+            l.id,
+            l.creator_name,
+            l.creator_email,
+            l.youtube_channel_id,
+            l.user_id,
+            l.brand_id,
+            l.created_at,
+            l.converted_at,
+            c.channel_name,
+            v.title,
+            v.thumbnail_url,
+            v.download_status,
+            COALESCE(
+                (
+                    SELECT COUNT(*)
+                    FROM shorts_generated_videos gv
+                    WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
+                      AND CAST(gv.brand_id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
+                ),
+                0
+            ) AS generated_short_count,
+            COALESCE(u.service_mode, '') AS service_mode
+        FROM autopilot_leads l
+        LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+        LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+        LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+        ORDER BY l.created_at DESC, l.id DESC
+        LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        has_owner = bool(str(row[4] or "").strip() and str(row[5] or "").strip())
+        generated_count = int(row[12] or 0)
+        items.append(
+            {
+                "id": str(row[0] or ""),
+                "creator_name": str(row[1] or "").strip() or "Unknown creator",
+                "creator_email": str(row[2] or "").strip(),
+                "youtube_channel_id": str(row[3] or "").strip(),
+                "has_owner": has_owner,
+                "lead_type_label": "Real lead" if has_owner else "Discovery",
+                "created_at_pst": _format_datetime_pst(row[6]),
+                "converted_at_pst": _format_datetime_pst(row[7]),
+                "channel_name": str(row[8] or "").strip() or "YouTube channel",
+                "video_title": str(row[9] or "").strip() or "Source video unavailable",
+                "thumbnail_url": str(row[10] or "").strip(),
+                "download_status": str(row[11] or "").strip().lower() or "pending",
+                "generated_short_count": generated_count,
+                "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
+                "converted": bool(row[7]) or str(row[13] or "").strip().lower() == "autopilot",
+            }
+        )
+    return items
+
+
 def _provision_autopilot_placeholder(
     conn,
     *,
@@ -10335,6 +10402,21 @@ def admin_autopilot_leads():
         per_page=per_page,
         total_leads=total_leads,
         total_pages=total_pages,
+    )
+
+
+@video_shorts_bp.route("/admin/leads", methods=["GET"])
+@require_admin
+def admin_leads():
+    conn = get_db_readonly()
+    try:
+        leads = _load_admin_lead_records(conn)
+    finally:
+        conn.close()
+    return render_template(
+        "shorts_admin_leads.html",
+        admin_title="Leads",
+        leads=leads,
     )
 
 

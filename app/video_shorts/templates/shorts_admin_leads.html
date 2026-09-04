@@ -1,0 +1,63 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Leads{% endblock %}
+{% block admin_heading %}Leads{% endblock %}
+{% block admin_subheading %}
+  <p>Pre-conversion outreach leads created from the extension or the manual add form.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-leads-provision { display:grid; grid-template-columns:minmax(240px,1.4fr) minmax(180px,1fr) minmax(180px,1fr) auto; gap:12px; align-items:end; margin-bottom:24px; padding:16px; border:1px solid rgba(45,212,191,.2); border-radius:12px; background:rgba(45,212,191,.05); }
+    .admin-leads-provision-title { grid-column:1 / -1; margin:0; color:rgba(255,255,255,.92); font-size:.95rem; font-weight:700; }
+    .admin-leads-provision-help { grid-column:1 / -1; margin:-6px 0 0; color:rgba(255,255,255,.6); font-size:.84rem; }
+    .admin-leads-table-wrap { overflow-x:auto; }
+    .admin-leads-table { width:100%; color:rgba(255,255,255,.92); }
+    .admin-leads-table th, .admin-leads-table td { padding:14px 16px; vertical-align:top; border-bottom:1px solid rgba(255,255,255,.08); }
+    .admin-leads-table th { color:rgba(255,255,255,.58); font-size:.82rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; white-space:nowrap; }
+    .admin-leads-table tr:last-child td { border-bottom:0; }
+    .admin-leads-video { display:flex; min-width:260px; gap:10px; align-items:center; }
+    .admin-leads-video img, .admin-leads-thumb-placeholder { width:72px; height:42px; flex:0 0 auto; border-radius:7px; object-fit:cover; background:rgba(255,255,255,.08); }
+    .admin-leads-video-title { max-width:250px; font-weight:600; white-space:normal; }
+    .admin-leads-muted { color:rgba(255,255,255,.58); font-size:.84rem; margin-top:3px; }
+    .admin-leads-status { display:inline-flex; padding:5px 9px; border-radius:999px; border:1px solid rgba(45,212,191,.22); background:rgba(45,212,191,.12); color:#8ff3d8; font-size:.82rem; font-weight:600; white-space:nowrap; }
+    .admin-leads-status.discovery { border-color:rgba(245,158,11,.28); background:rgba(245,158,11,.12); color:#f8cc7a; }
+    @media (max-width:767.98px) { .admin-leads-provision { grid-template-columns:1fr; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="post" action="{{ url_for('video_shorts_bp.admin_add_youtube_video') }}" class="admin-leads-provision">
+      <p class="admin-leads-provision-title">Add outreach lead</p>
+      <p class="admin-leads-provision-help">With an email, this creates the inactive customer owner, their brand, lead record, and first source video together. Without one, it stays an uncontactable discovery lead.</p>
+      <div><label for="admin-lead-url" class="form-label mb-2">YouTube video URL</label><input id="admin-lead-url" type="url" name="url" class="form-control" placeholder="https://youtube.com/watch?v=..." required></div>
+      <div><label for="admin-lead-name" class="form-label mb-2">Creator name</label><input id="admin-lead-name" type="text" name="creator_name" class="form-control" placeholder="Optional override"></div>
+      <div><label for="admin-lead-email" class="form-label mb-2">Creator email</label><input id="admin-lead-email" type="email" name="creator_email" class="form-control" placeholder="Optional; required to provision"></div>
+      <button type="submit" class="btn btn-primary">Add lead</button>
+    </form>
+
+    <div class="admin-leads-table-wrap">
+      <div class="text-muted small mb-3">{{ leads|length }} lead{{ '' if leads|length == 1 else 's' }} · newest first</div>
+      <table class="admin-leads-table">
+        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th></tr></thead>
+        <tbody>
+          {% for lead in leads %}
+            <tr>
+              <td><strong>{{ lead.creator_name }}</strong><div class="admin-leads-muted">{{ lead.creator_email or 'No email — discovery' }}</div></td>
+              <td>{{ lead.channel_name }}<div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div></td>
+              <td><div class="admin-leads-video">{% if lead.thumbnail_url %}<img src="{{ lead.thumbnail_url }}" alt="">{% else %}<span class="admin-leads-thumb-placeholder"></span>{% endif %}<span class="admin-leads-video-title">{{ lead.video_title }}</span></div></td>
+              <td><span class="admin-leads-status {% if not lead.has_owner %}discovery{% endif %}">{{ lead.lead_type_label }}</span></td>
+              <td>{{ lead.download_status }}</td>
+              <td>{{ lead.generation_label }}</td>
+              <td>{{ lead.converted_at_pst if lead.converted else 'Not converted' }}</td>
+              <td>{{ lead.created_at_pst or '—' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
