@@ -3124,7 +3124,7 @@
         id="choose-crop-btn"
         data-bs-toggle="modal"
         data-bs-target="#crop-area-modal"
-        data-save-url="{{ url_for('video_shorts_bp.save_crop_area', video_pk=video.id) }}"
+        data-save-url="{{ editor_save_crop_url }}"
         data-preview-url="{{ preview_url or '' }}"
         data-split-enabled="{{ '1' if video.split_enabled else '0' }}"
         data-crop-x="{{ video.crop_x_ratio if video.crop_x_ratio is not none else '' }}"
@@ -4350,7 +4350,7 @@
           <div class="cropper-modal-main-panel">
             <div class="short-video-settings">
               <div class="short-video-body"
-               data-save-url="{{ url_for('video_shorts_bp.save_short_settings', video_pk=video.id) }}"
+               data-save-url="{{ editor_save_settings_url }}"
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"

@@ -4756,6 +4756,11 @@ def generate_short(video_pk):
     operation_scope = request_admin_operation_scope()
     # Only the explicit admin-operation route sets this request-local scope.
     brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    editor_owner_user_id = (
+        operation_scope["owner_user_id"]
+        if operation_scope
+        else current_user.get("id") if current_user else None
+    )
     conn = get_db_readonly()
     video_columns = table_columns(conn, "youtube_videos")
     video_sql = """
@@ -4976,7 +4981,7 @@ def generate_short(video_pk):
         applied_crop = _maybe_apply_face_centered_default_crop(
             video_row_id=int(video["id"]),
             video_id=str(video["video_id"]),
-            owner_user_id=current_user.get("id") if current_user else None,
+            owner_user_id=editor_owner_user_id,
             brand_id=brand_id,
             preview_metadata=_load_preview_frame_metadata(str(video["video_id"])),
         )
@@ -5101,7 +5106,7 @@ def generate_short(video_pk):
     user_background_visual_options = []
     user_subscribe_visual_options = []
     created_visual_options = []
-    if current_user:
+    if editor_owner_user_id:
         conn_images = get_db_readonly()
         job_rows = []
         try:
@@ -5113,7 +5118,7 @@ def generate_short(video_pk):
                   AND COALESCE(i.asset_kind, 'background') = 'background'
                 ORDER BY i.created_at
                 """,
-                [current_user.get("id"), brand_id],
+                [editor_owner_user_id, brand_id],
             ).fetchall()
             subscribe_rows = conn_images.execute(
                 """
@@ -5123,7 +5128,7 @@ def generate_short(video_pk):
                   AND COALESCE(i.asset_kind, 'background') = 'subscribe'
                 ORDER BY i.created_at
                 """,
-                [current_user.get("id"), brand_id],
+                [editor_owner_user_id, brand_id],
             ).fetchall()
             job_rows = conn_images.execute(
                 """
@@ -5137,12 +5142,12 @@ def generate_short(video_pk):
                 ORDER BY created_at DESC
                 LIMIT 50
                 """,
-                [current_user.get("id"), brand_id],
+                [editor_owner_user_id, brand_id],
             ).fetchall()
         finally:
             conn_images.close()
         for idx, row in enumerate(background_rows, start=1):
-            image_url = _user_image_public_url(current_user.get("id"), row[2])
+            image_url = _user_image_public_url(editor_owner_user_id, row[2])
             static_visual_options.append(
                 {
                     "key": f"user:{row[0]}",
@@ -5164,7 +5169,7 @@ def generate_short(video_pk):
                 {
                     "key": f"usersub:{row[0]}",
                     "label": _humanize_visual_asset_label(row[1], row[2], f"Subscribe {idx}"),
-                    "image_url": _user_image_public_url(current_user.get("id"), row[2]),
+                    "image_url": _user_image_public_url(editor_owner_user_id, row[2]),
                     "file_ext": str(row[3] or Path(row[2] or "").suffix.lstrip(".")).lower(),
                     "description": "Workspace subscribe animation",
                 }
@@ -5266,8 +5271,8 @@ def generate_short(video_pk):
     subscribe_visual_options = list(system_subscribe_visual_options) + list(user_subscribe_visual_options)
     subscribe_visual_map = {opt["key"]: opt for opt in subscribe_visual_options}
     preferred_bg_key = None
-    if current_user:
-        preferred_bg_key = load_background_preference(current_user.get("id"), brand_id)
+    if editor_owner_user_id:
+        preferred_bg_key = load_background_preference(editor_owner_user_id, brand_id)
         if preferred_bg_key not in bg_visual_map:
             preferred_bg_key = None
     video_background_visual_key = preferred_bg_key or video.get("background_visual_key")
@@ -5280,7 +5285,7 @@ def generate_short(video_pk):
     active_bg_visual = bg_visual_map.get(video_background_visual_key)
     background_visual_label = active_bg_visual["label"] if active_bg_visual else None
     video_subscribe_overlay_key = _load_subscribe_overlay_key(
-        current_user.get("id") if current_user else None,
+        editor_owner_user_id,
         brand_id,
         video_pk,
     )
@@ -6214,6 +6219,14 @@ def generate_short(video_pk):
         admin_operation_transcribe_status_url=(
             url_for("video_shorts_bp.admin_operation_transcribe_video_status", video_pk=video_pk)
             if operation_scope else url_for("video_shorts_bp.transcribe_video_status", video_pk=video_pk)
+        ),
+        editor_save_crop_url=(
+            url_for("video_shorts_bp.admin_operation_save_crop_area", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.save_crop_area", video_pk=video_pk)
+        ),
+        editor_save_settings_url=(
+            url_for("video_shorts_bp.admin_operation_save_short_settings", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.save_short_settings", video_pk=video_pk)
         ),
     )
 
@@ -7261,7 +7274,13 @@ def delete_long_video_from_generate(video_pk: int):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_crop", methods=["POST"])
 def save_crop_area(video_pk):
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
+    operation_scope = request_admin_operation_scope()
+    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    editor_owner_user_id = (
+        operation_scope["owner_user_id"]
+        if operation_scope
+        else current_user.get("id") if current_user else None
+    )
     def _parse_ratio(name: str):
         value = request.form.get(name)
         if value is None or value == "":
@@ -7279,7 +7298,7 @@ def save_crop_area(video_pk):
         background_visual_key = None
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
-        expected_owner_user_id=current_user.get("id") if current_user else None,
+        expected_owner_user_id=editor_owner_user_id,
         expected_brand_id=brand_id,
     )
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
@@ -7346,7 +7365,7 @@ def save_crop_area(video_pk):
                 WHERE id = ?
                   AND owner_user_id = ?
             """
-            existing_params: List[Any] = [video_pk, current_user.get("id") if current_user else None]
+            existing_params: List[Any] = [video_pk, editor_owner_user_id]
             if "brand_id" in video_columns:
                 if brand_id is None:
                     existing_sql += "\n AND brand_id IS NULL"
@@ -7419,7 +7438,7 @@ def save_crop_area(video_pk):
                 crop_aspect,
                 subscribe_overlay_enabled,
                 video_pk,
-                current_user.get("id") if current_user else None,
+                editor_owner_user_id,
             ]
         )
         if "brand_id" in video_columns:
@@ -7433,7 +7452,7 @@ def save_crop_area(video_pk):
         if cursor.rowcount == 0:
             return jsonify(success=False, message="Video not found."), 404
         _save_subscribe_overlay_key(
-            current_user.get("id") if current_user else None,
+            editor_owner_user_id,
             brand_id,
             video_pk,
             subscribe_overlay_key,
@@ -10728,6 +10747,44 @@ def admin_operation_transcribe_video(video_pk: int):
         },
     )
     return transcribe_video(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/save-crop", methods=["POST"])
+@require_admin
+def admin_operation_save_crop_area(video_pk: int):
+    """Save crop state only against the revalidated lead workspace target."""
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_editor_crop_saved",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    return save_crop_area(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/save-settings", methods=["POST"])
+@require_admin
+def admin_operation_save_short_settings(video_pk: int):
+    """Save editor settings only against the revalidated lead workspace target."""
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_editor_settings_saved",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    return save_short_settings(video_pk)
 
 
 @video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/autoclip", methods=["POST"])
@@ -15025,8 +15082,14 @@ def add_v2_non_speech_keyword(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/save_short_settings", methods=["POST"])
 def save_short_settings(video_pk):
-    brand_id = current_brand_id()
     current_user = getattr(g, "vs_current_user", None)
+    operation_scope = request_admin_operation_scope()
+    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    editor_owner_user_id = (
+        operation_scope["owner_user_id"]
+        if operation_scope
+        else current_user.get("id") if current_user else None
+    )
     font_key = request.form.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
@@ -15072,7 +15135,7 @@ def save_short_settings(video_pk):
         subtitle_preset = DEFAULT_SUBTITLE_PRESET
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
-        expected_owner_user_id=current_user.get("id") if current_user else None,
+        expected_owner_user_id=editor_owner_user_id,
         expected_brand_id=brand_id,
     )
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
@@ -15112,7 +15175,7 @@ def save_short_settings(video_pk):
         WHERE id = ?
           AND owner_user_id = ?
     """
-    select_params: List[Any] = [video_pk, current_user.get("id") if current_user else None]
+    select_params: List[Any] = [video_pk, editor_owner_user_id]
     if "brand_id" in video_columns:
         if brand_id is None:
             select_sql += "\n AND brand_id IS NULL"
@@ -15125,12 +15188,12 @@ def save_short_settings(video_pk):
         return jsonify(success=False, message="Video not found"), 404
     if subscribe_overlay_value is None:
         subscribe_overlay_enabled = bool(row[1]) if len(row) > 1 and row[1] is not None else True
-    if podcast_audio_filename and current_user:
-        if not _resolve_user_podcast_audio_path(current_user.get("id"), podcast_audio_filename):
+    if podcast_audio_filename and editor_owner_user_id:
+        if not _resolve_user_podcast_audio_path(editor_owner_user_id, podcast_audio_filename):
             podcast_audio_filename = ""
-    if current_user and podcast_overlay_short_ids:
+    if editor_owner_user_id and podcast_overlay_short_ids:
         try:
-            allowed_paths = _resolve_user_short_clip_source_paths(current_user.get("id"), podcast_overlay_short_ids, max_items=2)
+            allowed_paths = _resolve_user_short_clip_source_paths(editor_owner_user_id, podcast_overlay_short_ids, max_items=2)
             allowed_keys = {f"short:{path.name}" for path in allowed_paths}
             podcast_overlay_short_ids = [key for key in podcast_overlay_short_ids if key in allowed_keys][:2]
         except Exception as exc:
@@ -15175,7 +15238,7 @@ def save_short_settings(video_pk):
                 assignments.append(f"{column} = ?")
                 params.append(value)
         if assignments:
-            params.extend([video_pk, current_user.get("id") if current_user else None])
+            params.extend([video_pk, editor_owner_user_id])
             where_brand = ""
             if "brand_id" in video_columns:
                 if brand_id is None:
@@ -15195,7 +15258,7 @@ def save_short_settings(video_pk):
             )
         conn.commit()
         _save_subscribe_overlay_key(
-            current_user.get("id") if current_user else None,
+            editor_owner_user_id,
             brand_id,
             video_pk,
             subscribe_overlay_key,

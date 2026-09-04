@@ -8,8 +8,9 @@ SYSTEM_SUBSCRIBE_KEY_PREFIX = "systemsub:"
 _ALLOWED_SYSTEM_SUBSCRIBE_EXTS = {".gif", ".mp4"}
 _SYSTEM_SUBSCRIBE_DIR = STATIC_IMG_DIR / "system_subscribe"
 _LEGACY_SUBSCRIBE_CANDIDATES = (
-    STATIC_IMG_DIR / "subscribe.gif",
-    STATIC_IMG_DIR / "subscribe3.gif",
+    # The shipped legacy animations live at the static root, beside img/.
+    STATIC_IMG_DIR.parent / "subscribe.gif",
+    STATIC_IMG_DIR.parent / "subscribe3.gif",
 )
 _STATIC_ROOT = STATIC_IMG_DIR.parent
 
