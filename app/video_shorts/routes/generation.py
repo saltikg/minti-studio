@@ -142,6 +142,13 @@ from app.video_shorts.services.user_preferences import (
     save_user_bool_preference,
 )
 from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
+from app.video_shorts.services.admin_operation_scope import (
+    clear_admin_operation_scope,
+    request_admin_operation_scope,
+    resolve_admin_operation_scope,
+    select_admin_operation_scope,
+    set_request_admin_operation_scope,
+)
 
 # Read-time filter for common internet scanner probes that otherwise drown the
 # admin errors view. These rows remain stored in user_events; only the default
@@ -4135,15 +4142,21 @@ def _resolve_video_id_from_pk(video_pk: Any) -> Optional[str]:
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
+    operation_scope = request_admin_operation_scope()
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     conn = get_db_readonly()
     sql = "SELECT video_id FROM youtube_videos WHERE id = ?"
     params: List[Any] = [pk_int]
-    if current_user:
+    if operation_scope:
+        sql += " AND owner_user_id = ? AND brand_id = ?"
+        params.extend([operation_scope["owner_user_id"], operation_scope["brand_id"]])
+    elif current_user:
         sql += " AND owner_user_id = ?"
         params.append(current_user.get("id"))
-    if brand_id:
+    if operation_scope:
+        pass
+    elif brand_id:
         sql += " AND brand_id = ?"
         params.append(brand_id)
     else:
@@ -4166,6 +4179,16 @@ def _fetch_scoped_video_row(
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
+    operation_scope = request_admin_operation_scope()
+    if operation_scope:
+        return _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            select_clause,
+            owner_user_id=operation_scope["owner_user_id"],
+            brand_id=operation_scope["brand_id"],
+        )
+
     current_user = getattr(g, "vs_current_user", None)
     brand_id = current_brand_id()
     sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ?"
@@ -4206,6 +4229,20 @@ def _fetch_scoped_video_row_with_scope(
     else:
         sql += " AND brand_id IS NULL"
     return conn.execute(sql, params).fetchone()
+
+
+def _require_admin_operation_scope() -> Dict[str, str]:
+    """Resolve the separate admin target scope and fail closed on every request."""
+    current_user = getattr(g, "vs_current_user", None) or {}
+    conn = get_db_readonly()
+    try:
+        scope = resolve_admin_operation_scope(conn, current_user=current_user)
+    finally:
+        conn.close()
+    if not scope:
+        abort(404)
+    set_request_admin_operation_scope(scope)
+    return scope
 
 
 def _resolve_brand_subscribe_overlay_path(brand_id: Optional[str]) -> Optional[Path]:
@@ -4716,7 +4753,9 @@ def generate_short(video_pk):
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
         default=False,
     )
-    brand_id = current_brand_id()
+    operation_scope = request_admin_operation_scope()
+    # Only the explicit admin-operation route sets this request-local scope.
+    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
     conn = get_db_readonly()
     video_columns = table_columns(conn, "youtube_videos")
     video_sql = """
@@ -5448,7 +5487,7 @@ def generate_short(video_pk):
     user_tz_label = TIMEZONE_LABELS.get(user_tz, user_tz)
     is_admin = (current_user or {}).get("role") == "admin"
     generated_video_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    active_brand_id = current_brand_id()
+    active_brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
     source_video_id = str(video.get("video_id") or "").strip()
     if source_video_id and active_brand_id:
         conn_generated = get_db_readonly()
@@ -10418,6 +10457,101 @@ def admin_leads():
         admin_title="Leads",
         leads=leads,
     )
+
+
+@video_shorts_bp.route("/admin/operation/select", methods=["POST"])
+@require_admin
+def admin_operation_select():
+    """Set a separately-namespaced target context for later explicit admin operations."""
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
+    current_user = getattr(g, "vs_current_user", None) or {}
+    target_owner_id = str(payload.get("target_user_id") or payload.get("owner_user_id") or "").strip()
+    target_brand_id = str(payload.get("target_brand_id") or payload.get("brand_id") or "").strip()
+    conn = get_db_readonly()
+    try:
+        scope = select_admin_operation_scope(
+            conn,
+            current_user=current_user,
+            target_owner_id=target_owner_id,
+            target_brand_id=target_brand_id,
+        )
+    finally:
+        conn.close()
+    if not scope:
+        abort(404)
+
+    track_event(
+        str(current_user.get("id") or ""),
+        "admin_operation_scope_selected",
+        metadata={
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+        },
+    )
+    if request.is_json:
+        return jsonify({"ok": True, "target_owner_user_id": scope["owner_user_id"], "target_brand_id": scope["brand_id"]})
+    return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/operation/clear", methods=["POST"])
+@require_admin
+def admin_operation_clear():
+    clear_admin_operation_scope()
+    if request.is_json:
+        return jsonify({"ok": True})
+    return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>", methods=["GET"])
+@require_admin
+def admin_operation_generate_short(video_pk: int):
+    """Open a target-owned source using a request-local, revalidated admin scope.
+
+    This route deliberately does not alter ``vs_brand_id``. Follow-up operation
+    controls remain a later phase and must use their own explicit admin routes.
+    """
+    _require_admin_operation_scope()
+    return generate_short(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan", methods=["POST"])
+@require_admin
+def admin_operation_create_clip_plan(video_pk: int):
+    """Generate a target-owned clip plan without borrowing the admin's brand."""
+    scope = _require_admin_operation_scope()
+    try:
+        result = _generate_clip_plan_for_video(
+            video_pk,
+            dict(request.form.items()),
+            debug_flag=request.args.get("debug") == "1",
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    except FileNotFoundError:
+        abort(404)
+    except RuntimeError as exc:
+        if request.is_json:
+            return jsonify({"ok": False, "message": str(exc)}), 400
+        flash(str(exc), "danger")
+        return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
+
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_clip_plan_created",
+        video_id=str(result.get("video_id") or ""),
+        metadata={
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "acting_admin_id": scope["acting_admin_id"],
+            "video_pk": video_pk,
+            "clip_count": result.get("clip_count"),
+        },
+    )
+    if request.is_json:
+        return jsonify({"ok": True, **result})
+    flash(result.get("message") or "Clip plan created.", "success")
+    return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
 
 
 @video_shorts_bp.route("/admin/autopilot-leads/provision", methods=["POST"])
