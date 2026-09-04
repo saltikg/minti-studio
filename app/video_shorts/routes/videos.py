@@ -14,6 +14,7 @@ import requests
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
+from app.video_shorts.services.autopilot_leads import get_or_create_scoped_youtube_channel
 from app.video_shorts.config import (
     SHORTS_DIR,
     VIDEOS_DIR,
@@ -215,57 +216,13 @@ def _channel_video_scope_params(channel_id: Any, *, include_local_bucket_attachm
 
 
 def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
-    channel_key = str(meta.get("channel_id") or "").strip()
-    if not channel_key:
-        return None
-    row = conn.execute(
-        """
-        SELECT channel_id, owner_user_id, brand_id
-        FROM youtube_channels
-        WHERE youtube_channel_id = ?
-        ORDER BY channel_id ASC
-        LIMIT 1
-        """,
-        [channel_key],
-    ).fetchone()
-    if row:
-        existing_owner_id = str(row[1] or "").strip() or None
-        existing_brand_id = str(row[2] or "").strip() or None
-        requested_owner_id = str(owner_id or "").strip() or None
-        requested_brand_id = str(brand_id or "").strip() or None
-        if (
-            requested_owner_id
-            and requested_brand_id
-            and (existing_owner_id != requested_owner_id or existing_brand_id != requested_brand_id)
-        ):
-            current_app.logger.warning(
-                "Refusing to overwrite youtube_channels ownership for %s: existing owner=%s brand=%s requested owner=%s brand=%s",
-                channel_key,
-                existing_owner_id,
-                existing_brand_id,
-                requested_owner_id,
-                requested_brand_id,
-            )
-        return row[0]
-
-    channel_name = meta.get("channel_title") or "YouTube Channel"
-    channel_url = f"https://www.youtube.com/channel/{channel_key}"
-    notes = "Add by URL import"
-    next_channel_id = conn.execute(
-        "SELECT COALESCE(MAX(channel_id), 0) + 1 FROM youtube_channels"
-    ).fetchone()[0]
-    conn.execute(
-        """
-        INSERT INTO youtube_channels (channel_id, channel_name, channel_url, notes, owner_user_id, youtube_channel_id, is_active, brand_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [next_channel_id, channel_name, channel_url, notes, owner_id, channel_key, True, brand_id],
+    return get_or_create_scoped_youtube_channel(
+        conn,
+        meta=meta,
+        owner_user_id=str(owner_id or "").strip(),
+        brand_id=str(brand_id or "").strip(),
+        notes="Add by URL import",
     )
-    row = conn.execute(
-        "SELECT channel_id FROM youtube_channels WHERE youtube_channel_id = ? LIMIT 1",
-        [channel_key],
-    ).fetchone()
-    return row[0] if row else None
 
 
 def _share_link_event_join_sql(conn) -> str:

@@ -2,7 +2,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
-from flask import current_app, g, jsonify, request
+from flask import current_app, flash, g, jsonify, redirect, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import CAPTION_API_TOKEN
@@ -22,6 +22,10 @@ from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
+from app.video_shorts.services.autopilot_leads import (
+    AutopilotLeadSchemaUnavailable,
+    create_autopilot_lead_from_video,
+)
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
     extract_channel_id,
@@ -448,7 +452,9 @@ def admin_add_youtube_video():
     if (current_user.get("role") or "").strip().lower() != "admin":
         return _json_error("forbidden", "Admin access required.", 403)
 
-    payload = request.get_json(silent=True) or {}
+    is_browser_form = not request.is_json
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
     raw_url = str(payload.get("url") or "").strip()
     if not raw_url:
         return _json_error("invalid_url", "Request body must include a YouTube video url.", 400)
@@ -516,17 +522,48 @@ def admin_add_youtube_video():
     conn = None
     try:
         conn = get_db()
-        ensure_brand_schema(conn)
-        ensure_channel_owner_schema(conn)
-        ensure_youtube_video_local_bucket_schema(conn)
-        _ensure_video_crop_schema(conn)
-
-        local_channel = _resolve_brand_local_uploads_channel(conn, brand_id)
-        if not local_channel:
+        current_brand = _resolve_brand_local_uploads_channel(conn, brand_id)
+        if not current_brand:
             return _json_error("no_local_uploads_channel", "No active Local uploads channel exists for the active brand.", 400)
 
-        local_bucket_channel_id = local_channel["channel_id"]
-        owner_user_id = local_channel["owner_user_id"]
+        lead = create_autopilot_lead_from_video(
+            conn,
+            meta=meta,
+            video_id=video_id,
+            canonical_url=canonical_url,
+            creator_name=creator_name,
+            creator_email=creator_email,
+            discovery_owner_user_id=current_brand["owner_user_id"],
+            discovery_brand_id=brand_id,
+        )
+        conn.commit()
+        response = {
+            "ok": True,
+            "lead_id": lead["lead_id"],
+            "video_id": lead["video_pk"],
+            "youtube_video_id": lead["video_id"],
+            "channel_id": lead["channel_id"],
+            "brand_id": lead["brand_id"],
+            "owner_user_id": lead["owner_user_id"],
+            "creator_name": lead["creator_name"],
+            "creator_email": lead["creator_email"],
+            "discovery_only": lead["discovery_only"],
+            "title": meta.get("title") or canonical_url,
+            "already_exists": lead["already_exists"],
+            "updated": False,
+        }
+        if is_browser_form:
+            if lead["discovery_only"]:
+                flash("Discovery lead added. Add an email before provisioning its customer account.", "info")
+            else:
+                flash("Autopilot lead provisioned and its source video was added to that lead's brand.", "success")
+            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+        return jsonify(response)
+
+        # The legacy current-brand insertion path remains below temporarily for
+        # reference while this endpoint is migrated; it is unreachable.
+        local_bucket_channel_id = current_brand["channel_id"]
+        owner_user_id = current_brand["owner_user_id"]
 
         if _video_already_in_bucket(conn, video_id, local_bucket_channel_id):
             existing_local = conn.execute(
@@ -716,6 +753,20 @@ def admin_add_youtube_video():
                 "updated": False,
             }
         )
+    except AutopilotLeadSchemaUnavailable as exc:
+        if conn is not None:
+            conn.rollback()
+        if is_browser_form:
+            flash(str(exc), "warning")
+            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+        return _json_error("autopilot_leads_unavailable", str(exc), 503)
+    except ValueError as exc:
+        if conn is not None:
+            conn.rollback()
+        if is_browser_form:
+            flash(str(exc), "warning")
+            return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+        return _json_error("lead_not_created", str(exc), 400)
     except RuntimeError as exc:
         message = str(exc or "").strip()
         return _json_error("server_config", message or "Database is not configured.", 500)

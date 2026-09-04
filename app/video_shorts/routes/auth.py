@@ -85,6 +85,7 @@ from app.video_shorts.services.trial_copy import (
     normalize_trial_days,
 )
 from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -2275,6 +2276,15 @@ def save_service_mode_choice():
             """,
             [service_mode, service_tier, current_user["id"]],
         )
+        if service_mode == "autopilot" and autopilot_leads_table_ready(conn):
+            conn.execute(
+                """
+                UPDATE autopilot_leads
+                SET converted_at = COALESCE(converted_at, now())
+                WHERE CAST(user_id AS VARCHAR) = ?
+                """,
+                [current_user["id"]],
+            )
         conn.commit()
     finally:
         conn.close()
