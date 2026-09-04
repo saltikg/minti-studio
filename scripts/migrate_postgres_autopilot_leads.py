@@ -8,6 +8,13 @@ table at request time when using Postgres.
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# Allow direct execution from the repository like the production deploy command.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from app.video_shorts.services.db import get_db, table_columns
 
