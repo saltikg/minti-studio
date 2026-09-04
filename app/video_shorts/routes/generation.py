@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlencode, urlparse, parse_qsl, parse_qs
+from uuid import uuid4
 
 from google.auth.exceptions import RefreshError
 
@@ -23,7 +24,7 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
+from app.video_shorts.services.brands import create_brand as create_brand_record, current_brand_id, ensure_brand_schema
 from app.video_shorts.config import (
     BGCOVER_PATH,
     BACKGROUND_VISUAL_PRESETS,
@@ -51,6 +52,7 @@ from app.video_shorts.config import (
     DEFAULT_SUBTITLE_TEXT_COLOR,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
+    DEFAULT_USER_PLAN_ID,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
@@ -9054,6 +9056,63 @@ def _load_admin_autopilot_leads(
     return items, total_count
 
 
+def _provision_autopilot_placeholder(
+    conn,
+    *,
+    recipient_email: str,
+    channel_name: str,
+) -> Dict[str, str]:
+    """Create an inactive owner and its first brand for a future autopilot customer."""
+    email = str(recipient_email or "").strip().lower()
+    brand_name = str(channel_name or "").strip()
+    if not email or "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise ValueError("Enter a valid email address.")
+    if not brand_name:
+        raise ValueError("Enter the YouTube channel name.")
+
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    ensure_brand_schema(conn)
+    existing = conn.execute(
+        """
+        SELECT CAST(id AS VARCHAR)
+        FROM shorts_users
+        WHERE lower(email) = lower(?) OR lower(username) = lower(?)
+        LIMIT 1
+        """,
+        [email, email],
+    ).fetchone()
+    if existing:
+        # Never repurpose a real account or add a customer brand to it implicitly.
+        raise ValueError("An account already exists for this email. No changes were made.")
+
+    user_id = str(uuid4())
+    try:
+        conn.execute(
+            """
+            INSERT INTO shorts_users (
+                id, username, password_hash, name, email, role, plan_id,
+                email_verified, pending_service_intent, pending_service_tier,
+                created_at, updated_at
+            )
+            VALUES (?, ?, NULL, ?, ?, 'member', ?, FALSE, 'autopilot', 15, now(), now())
+            """,
+            [user_id, email, brand_name, email, DEFAULT_USER_PLAN_ID],
+        )
+        brand = create_brand_record(
+            conn,
+            user_id=user_id,
+            name=brand_name,
+            make_default=True,
+            commit=False,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"user_id": user_id, "brand_id": str(brand["id"]), "brand_name": brand_name, "email": email}
+
+
 def _load_admin_autopilot_customers(
     conn,
     *,
@@ -10277,6 +10336,46 @@ def admin_autopilot_leads():
         total_leads=total_leads,
         total_pages=total_pages,
     )
+
+
+@video_shorts_bp.route("/admin/autopilot-leads/provision", methods=["POST"])
+@require_admin
+def admin_provision_autopilot_lead():
+    recipient_email = (request.form.get("recipient_email") or "").strip()
+    channel_name = (request.form.get("channel_name") or "").strip()
+    conn = get_db()
+    try:
+        lead = _provision_autopilot_placeholder(
+            conn,
+            recipient_email=recipient_email,
+            channel_name=channel_name,
+        )
+    except ValueError as exc:
+        flash(str(exc), "warning")
+    except Exception:
+        current_app.logger.exception(
+            "Autopilot lead provisioning failed for email=%s",
+            recipient_email.lower(),
+        )
+        flash("The autopilot lead could not be provisioned. No changes were made.", "danger")
+    else:
+        acting_admin_id = str((getattr(g, "vs_current_user", None) or {}).get("id") or "").strip()
+        try:
+            track_event(
+                lead["user_id"],
+                "autopilot_lead_provisioned",
+                metadata={"brand_id": lead["brand_id"], "acting_admin_user_id": acting_admin_id},
+            )
+        except Exception:
+            current_app.logger.exception("Autopilot lead provision audit event failed for user_id=%s", lead["user_id"])
+        flash(
+            f"Provisioned inactive autopilot lead {lead['email']} with brand {lead['brand_name']}. "
+            "They can only access it after redeeming a valid onboarding link.",
+            "success",
+        )
+    finally:
+        conn.close()
+    return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
 
 
 @video_shorts_bp.route("/admin/users/<user_id>/refresh-youtube-status", methods=["POST"])

@@ -1641,7 +1641,7 @@ def redeem_onboarding_magic_link(token: str):
     autopilot_requested = requested_intent == "autopilot"
     token_hash = hash_onboarding_magic_token(normalized_token)
     conn = get_db()
-    is_new_user = False
+    needs_password_setup = False
     outreach_language = "EN"
     welcome_trial_days = DEFAULT_SHARE_TRIAL_DAYS
     welcome_email_context: tuple[str, str, str] | None = None
@@ -1685,7 +1685,9 @@ def redeem_onboarding_magic_link(token: str):
         if not recipient_email:
             return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
         existing_user = _lookup_user_by_email(recipient_email)
-        is_new_user = existing_user is None
+        # Pre-provisioned autopilot leads already have a user row but deliberately
+        # have no password. They need the same setup email as a newly created user.
+        needs_password_setup = not bool(existing_user[4] if existing_user else None)
 
         user_id, brand_id = _create_or_grant_magic_link_user(
             conn,
@@ -1700,7 +1702,7 @@ def redeem_onboarding_magic_link(token: str):
                 intent="autopilot",
                 tier=15,
             )
-        if is_new_user:
+        if needs_password_setup:
             reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=user_id)
             welcome_email_context = (
                 recipient_email,
@@ -1737,7 +1739,7 @@ def redeem_onboarding_magic_link(token: str):
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
     if autopilot_requested:
         _stash_auth_choice(intent="autopilot", tier=15)
-    if is_new_user and welcome_email_context:
+    if needs_password_setup and welcome_email_context:
         welcome_email, welcome_name, set_password_url = welcome_email_context
         try:
             result = send_onboarding_magic_link_welcome_email(

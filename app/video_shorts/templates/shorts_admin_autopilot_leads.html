@@ -15,6 +15,30 @@
       align-items: end;
       margin-bottom: 18px;
     }
+    .admin-autopilot-provision {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 24px;
+      padding: 16px;
+      border: 1px solid rgba(45, 212, 191, 0.2);
+      border-radius: 12px;
+      background: rgba(45, 212, 191, 0.05);
+    }
+    .admin-autopilot-provision-title {
+      grid-column: 1 / -1;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
+    .admin-autopilot-provision-help {
+      grid-column: 1 / -1;
+      margin: -6px 0 0;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 0.84rem;
+    }
     .admin-autopilot-meta {
       color: rgba(255, 255, 255, 0.62);
       font-size: 0.9rem;
@@ -84,12 +108,29 @@
       .admin-autopilot-toolbar {
         grid-template-columns: 1fr;
       }
+      .admin-autopilot-provision {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 {% endblock %}
 
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
+    <form method="post" action="{{ url_for('video_shorts_bp.admin_provision_autopilot_lead') }}" class="admin-autopilot-provision">
+      <p class="admin-autopilot-provision-title">Provision autopilot lead</p>
+      <p class="admin-autopilot-provision-help">Creates an inactive, passwordless owner and a brand for this channel. The lead can access it only after redeeming an onboarding link.</p>
+      <div>
+        <label for="admin-autopilot-provision-email" class="form-label mb-2">Recipient email</label>
+        <input id="admin-autopilot-provision-email" type="email" name="recipient_email" class="form-control" placeholder="creator@example.com" required>
+      </div>
+      <div>
+        <label for="admin-autopilot-provision-channel" class="form-label mb-2">YouTube channel name</label>
+        <input id="admin-autopilot-provision-channel" type="text" name="channel_name" class="form-control" placeholder="Creator channel" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Provision lead</button>
+    </form>
+
     <form method="get" class="admin-autopilot-toolbar">
       <div>
         <label for="admin-autopilot-email" class="form-label mb-2">Email contains</label>

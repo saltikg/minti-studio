@@ -144,6 +144,7 @@ def create_brand(
     user_id: str,
     name: str,
     make_default: bool = False,
+    commit: bool = True,
 ) -> Dict[str, object]:
     brand_id = str(uuid4())
     brand_name = (name or "").strip() or "Default Brand"
@@ -163,7 +164,8 @@ def create_brand(
         "UPDATE shorts_users SET last_brand_id = ?, updated_at = now() WHERE id = ?",
         [brand_id, user_id],
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_brand_for_user(conn, user_id, brand_id) or {
         "id": brand_id,
         "name": brand_name,
