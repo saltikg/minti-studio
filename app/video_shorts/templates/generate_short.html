@@ -7278,7 +7278,13 @@ const waitForCreatedClipRender = async (
 
 let latestUsageSnapshot = null;
 const storagePlansUrl = "{{ url_for('video_shorts_bp.shorts_storage_plans') }}";
-const clipJobStatusUrlBase = "/api/jobs";
+const clipJobStatusUrlTemplate = {{ (
+  editor_url(
+    'admin_operation_render_job_status',
+    video_pk=video.id,
+    job_id='__JOB_ID__'
+  ) if editor_is_admin_operation else '/api/jobs/__JOB_ID__'
+) | tojson }};
 const clipJobStorageKey = "vsActiveClipJobs";
 const clipJobPollMaxMs = 10 * 60 * 1000;
 const clipJobBasePollMs = 2000;
@@ -7707,7 +7713,8 @@ const pollClipJobUntilDone = async (
 
     if (attempt > 0) {
       try {
-        const response = await fetch(`${clipJobStatusUrlBase}/${encodeURIComponent(jobId)}`, {
+        const statusUrl = clipJobStatusUrlTemplate.replace("__JOB_ID__", encodeURIComponent(jobId));
+        const response = await fetch(statusUrl, {
           credentials: "same-origin",
           cache: "no-store",
         });

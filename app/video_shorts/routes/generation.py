@@ -300,6 +300,7 @@ from app.video_shorts.services.render_jobs import (
     cancel_job,
     clear_done_job_cache_for_plan,
     enqueue_render_job,
+    get_job,
     invalidate_done_job_cache,
     is_render_job_cache_valid,
 )
@@ -6275,6 +6276,7 @@ def generate_short(video_pk):
         v3_rules=v3_rules,
         v4_rules=v4_rules,
         is_admin=is_admin,
+        editor_is_admin_operation=editor_context["is_admin_operation"],
         latest_scheduled_display=latest_scheduled_display,
         channel_latest_scheduled_display=channel_latest_scheduled_display,
         static_visual_options=static_visual_options,
@@ -15357,6 +15359,44 @@ def save_short_settings(video_pk):
     session["vs_podcast_overlay_short_ids"] = podcast_overlay_short_ids
     session["vs_video_overlay_offset"] = video_overlay_offset
     return jsonify(success=True, message="Ayarlar kaydedildi")
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/render-jobs/<job_id>/status", methods=["GET"])
+@require_admin
+def admin_operation_render_job_status(video_pk: int, job_id: str):
+    """Return one target-owned render job for the marked admin editor request."""
+    scope = request_admin_operation_scope()
+    if not scope:
+        abort(404)
+
+    job = get_job(job_id, user_id=str(scope["owner_user_id"]))
+    payload = (job or {}).get("payload") or {}
+    if (
+        not job
+        or str(payload.get("brand_id") or "") != str(scope["brand_id"])
+        or str(payload.get("video_pk") or "") != str(video_pk)
+    ):
+        abort(404)
+
+    error_text = str(job.get("error") or "").strip()
+    error_code = None
+    lowered_error = error_text.lower()
+    if "export limit reached" in lowered_error or "monthly export limit reached" in lowered_error:
+        error_code = "export_limit_reached"
+    return jsonify(
+        {
+            "id": job["id"],
+            "status": job["status"],
+            "priority": job["priority"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "result": job.get("result"),
+            "error": job.get("error"),
+            "error_code": error_code,
+            "queue_position": job.get("queue_position"),
+        }
+    )
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/autoclip", methods=["POST"])
