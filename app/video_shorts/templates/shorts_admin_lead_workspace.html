@@ -1,0 +1,56 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Lead workspace{% endblock %}
+{% block admin_heading %}Lead workspace{% endblock %}
+{% block admin_subheading %}
+  <p>Working on: {{ lead.creator_name }} - {{ lead.brand_name }}</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .lead-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
+    .lead-workspace-video { display:grid; grid-template-columns:120px minmax(0,1fr) auto; gap:16px; align-items:center; padding:16px 0; border-bottom:1px solid rgba(255,255,255,.08); }
+    .lead-workspace-video:last-child { border-bottom:0; }
+    .lead-workspace-thumb, .lead-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
+    .lead-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
+    .lead-workspace-actions { display:flex; gap:8px; align-items:center; }
+    @media (max-width:767.98px) { .lead-workspace-header, .lead-workspace-video { align-items:flex-start; flex-direction:column; grid-template-columns:1fr; } .lead-workspace-actions { width:100%; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <div class="lead-workspace-header">
+      <div>
+        <div class="text-uppercase text-muted small fw-semibold">Target customer brand</div>
+        <div class="fs-5 fw-semibold">Working on: {{ lead.creator_name }} - {{ lead.brand_name }}</div>
+        {% if lead.creator_email %}<div class="text-muted small">{{ lead.creator_email }}</div>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_clear') }}">
+        <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
+      </form>
+    </div>
+
+    <h2 class="h5 mb-2">Source videos</h2>
+    {% for video in videos %}
+      <article class="lead-workspace-video">
+        {% if video.thumbnail_url %}<img class="lead-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="lead-workspace-thumb-placeholder"></span>{% endif %}
+        <div>
+          <div class="fw-semibold">{{ video.title }}</div>
+          <div class="lead-workspace-status">Download: {{ video.download_status }}{% if video.transcript_status %} · Transcript: {{ video.transcript_status }}{% endif %}</div>
+        </div>
+        <div class="lead-workspace-actions">
+          {% if video.download_status != 'downloaded' %}
+            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_lead_video', video_pk=video.id) }}">
+              <button type="submit" class="btn btn-outline-primary">Download</button>
+            </form>
+          {% else %}
+            <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_short', video_pk=video.id) }}">Generate</a>
+          {% endif %}
+        </div>
+      </article>
+    {% else %}
+      <p class="text-muted mb-0">No source videos are scoped to this lead brand.</p>
+    {% endfor %}
+  </section>
+{% endblock %}

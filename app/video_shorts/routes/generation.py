@@ -6187,6 +6187,22 @@ def generate_short(video_pk):
         long_compilation_videos=long_compilation_videos,
         brand_subscribe_overlay_available=brand_subscribe_overlay_available,
         llm_description_enabled=llm_description_enabled,
+        admin_operation_plan_url=(
+            url_for("video_shorts_bp.admin_operation_create_clip_plan", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.create_clip_plan", video_pk=video_pk)
+        ),
+        admin_operation_plan_start_url=(
+            url_for("video_shorts_bp.admin_operation_create_clip_plan_start", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.create_clip_plan_start", video_pk=video_pk)
+        ),
+        admin_operation_plan_status_url=(
+            url_for("video_shorts_bp.admin_operation_create_clip_plan_status", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.create_clip_plan_status", video_pk=video_pk)
+        ),
+        admin_operation_autoclip_url=(
+            url_for("video_shorts_bp.admin_operation_autoclip_video", video_pk=video_pk)
+            if operation_scope else url_for("video_shorts_bp.autoclip_video", video_pk=video_pk)
+        ),
     )
 
 
@@ -9110,6 +9126,7 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
             l.youtube_channel_id,
             l.user_id,
             l.brand_id,
+            l.first_video_id,
             l.created_at,
             l.converted_at,
             c.channel_name,
@@ -9139,24 +9156,27 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for row in rows:
         has_owner = bool(str(row[4] or "").strip() and str(row[5] or "").strip())
-        generated_count = int(row[12] or 0)
+        generated_count = int(row[13] or 0)
         items.append(
             {
                 "id": str(row[0] or ""),
                 "creator_name": str(row[1] or "").strip() or "Unknown creator",
                 "creator_email": str(row[2] or "").strip(),
                 "youtube_channel_id": str(row[3] or "").strip(),
+                "owner_user_id": str(row[4] or "").strip(),
+                "brand_id": str(row[5] or "").strip(),
+                "first_video_id": int(row[6]) if row[6] is not None else None,
                 "has_owner": has_owner,
                 "lead_type_label": "Real lead" if has_owner else "Discovery",
-                "created_at_pst": _format_datetime_pst(row[6]),
-                "converted_at_pst": _format_datetime_pst(row[7]),
-                "channel_name": str(row[8] or "").strip() or "YouTube channel",
-                "video_title": str(row[9] or "").strip() or "Source video unavailable",
-                "thumbnail_url": str(row[10] or "").strip(),
-                "download_status": str(row[11] or "").strip().lower() or "pending",
+                "created_at_pst": _format_datetime_pst(row[7]),
+                "converted_at_pst": _format_datetime_pst(row[8]),
+                "channel_name": str(row[9] or "").strip() or "YouTube channel",
+                "video_title": str(row[10] or "").strip() or "Source video unavailable",
+                "thumbnail_url": str(row[11] or "").strip(),
+                "download_status": str(row[12] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "converted": bool(row[7]) or str(row[13] or "").strip().lower() == "autopilot",
+                "converted": bool(row[8]) or str(row[14] or "").strip().lower() == "autopilot",
             }
         )
     return items
@@ -10491,7 +10511,7 @@ def admin_operation_select():
     )
     if request.is_json:
         return jsonify({"ok": True, "target_owner_user_id": scope["owner_user_id"], "target_brand_id": scope["brand_id"]})
-    return redirect(url_for("video_shorts_bp.admin_leads"))
+    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace"))
 
 
 @video_shorts_bp.route("/admin/operation/clear", methods=["POST"])
@@ -10513,6 +10533,163 @@ def admin_operation_generate_short(video_pk: int):
     """
     _require_admin_operation_scope()
     return generate_short(video_pk)
+
+
+def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
+    """Require a pre-conversion lead for this target scope; customer work is later."""
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT l.id, l.creator_name, l.creator_email, b.name
+            FROM autopilot_leads l
+            JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+            WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND l.converted_at IS NULL
+            ORDER BY l.created_at DESC, l.id DESC
+            LIMIT 1
+            """,
+            [scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    return {
+        "id": str(row[0]),
+        "creator_name": str(row[1] or "").strip() or "Unknown creator",
+        "creator_email": str(row[2] or "").strip(),
+        "brand_name": str(row[3] or "").strip() or "Unnamed brand",
+    }
+
+
+@video_shorts_bp.route("/admin/operation/workspace", methods=["GET"])
+@require_admin
+def admin_operation_lead_workspace():
+    """Admin-only workspace for a revalidated, pre-conversion lead target."""
+    scope = _require_admin_operation_scope()
+    lead = _require_active_lead_workspace(scope)
+    conn = get_db_readonly()
+    try:
+        first_row = conn.execute(
+            "SELECT first_video_id FROM autopilot_leads WHERE id = ?",
+            [lead["id"]],
+        ).fetchone()
+        rows = conn.execute(
+            """
+            SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+            FROM youtube_videos
+            WHERE owner_user_id = ? AND brand_id = ?
+            ORDER BY id DESC
+            """,
+            [scope["owner_user_id"], scope["brand_id"]],
+        ).fetchall()
+    finally:
+        conn.close()
+    first_video_id = int(first_row[0]) if first_row and first_row[0] is not None else None
+    videos = [
+        {
+            "id": int(row[0]),
+            "video_id": str(row[1] or ""),
+            "title": str(row[2] or "").strip() or "Untitled video",
+            "thumbnail_url": str(row[3] or "").strip(),
+            "download_status": str(row[4] or "").strip().lower() or "pending",
+            "transcript_status": str(row[5] or "").strip().lower(),
+        }
+        for row in rows
+    ]
+    videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
+    return render_template("shorts_admin_lead_workspace.html", admin_title="Lead workspace", lead=lead, videos=videos)
+
+
+@video_shorts_bp.route("/admin/operation/workspace/video/<int:video_pk>/download", methods=["POST"])
+@require_admin
+def admin_operation_download_lead_video(video_pk: int):
+    """Queue a scoped source for the existing downloader worker."""
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    conn = get_db()
+    try:
+        row = _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            "id, video_id, video_url, download_status",
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+        if not row or not str(row[2] or "").strip():
+            abort(404)
+        if str(row[3] or "").strip().lower() != "downloaded":
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET download_status = 'pending', downloaded_at = NULL
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                """,
+                [video_pk, scope["owner_user_id"], scope["brand_id"]],
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_lead_download_queued",
+        video_id=str(row[1]),
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    flash("Video queued for download.", "success")
+    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace"))
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan/start", methods=["POST"])
+@require_admin
+def admin_operation_create_clip_plan_start(video_pk: int):
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_clip_plan_started",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    return create_clip_plan_start(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan/status", methods=["GET"])
+@require_admin
+def admin_operation_create_clip_plan_status(video_pk: int):
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    return create_clip_plan_status(video_pk)
+
+
+@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/autoclip", methods=["POST"])
+@require_admin
+def admin_operation_autoclip_video(video_pk: int):
+    scope = _require_admin_operation_scope()
+    _require_active_lead_workspace(scope)
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_clip_render_requested",
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+            "plan_index": request.form.get("plan_index"),
+        },
+    )
+    return autoclip_video(video_pk)
 
 
 @video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan", methods=["POST"])
@@ -14257,9 +14434,12 @@ def create_clip_plan_start(video_pk):
             return jsonify({"ok": False, "message": "Video not found."}), 404
 
         current_user = getattr(g, "vs_current_user", None) or {}
+        operation_scope = request_admin_operation_scope()
         form_data = dict(request.form.items())
-        form_data["_owner_user_id"] = current_user.get("id")
-        form_data["_brand_id"] = current_brand_id()
+        form_data["_owner_user_id"] = (
+            operation_scope["owner_user_id"] if operation_scope else current_user.get("id")
+        )
+        form_data["_brand_id"] = operation_scope["brand_id"] if operation_scope else current_brand_id()
         with _PLAN_JOB_LOCK:
             existing = dict(_PLAN_JOB_STATE.get(video_pk) or _load_plan_job_state(video_pk) or {})
             blocked = _clip_plan_block_info(existing)
@@ -14999,7 +15179,11 @@ def autoclip_video(video_pk):
         return redirect(target)
 
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
+    operation_scope = request_admin_operation_scope()
+    target_owner_user_id = (
+        operation_scope["owner_user_id"] if operation_scope else current_user.get("id") if current_user else None
+    )
+    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
     export_reserved = False
     usage = None
     if not current_user:
@@ -15007,7 +15191,7 @@ def autoclip_video(video_pk):
     if current_user:
         conn_usage = get_db_readonly()
         try:
-            usage = _get_user_storage_usage(conn_usage, current_user["id"])
+            usage = _get_user_storage_usage(conn_usage, target_owner_user_id)
         finally:
             conn_usage.close()
         if usage["used_bytes"] >= usage["limit_bytes"]:
@@ -15089,7 +15273,11 @@ def autoclip_video(video_pk):
         if "subtitle_preset" in crop_columns:
             crop_sql += ", subtitle_preset"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
-        crop_row = conn.execute(crop_sql, [vid]).fetchone()
+        crop_params: List[Any] = [vid]
+        if operation_scope:
+            crop_sql += " AND owner_user_id = ? AND brand_id = ?"
+            crop_params.extend([target_owner_user_id, brand_id])
+        crop_row = conn.execute(crop_sql, crop_params).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
             if len(crop_row) >= 39:
@@ -15712,7 +15900,7 @@ def autoclip_video(video_pk):
                 "options": job_options,
             }
             enqueue_result = enqueue_render_job(
-                user_id=str(current_user["id"]),
+                user_id=str(target_owner_user_id),
                 payload=payload,
                 input_hash=input_hash,
             )
@@ -15725,7 +15913,7 @@ def autoclip_video(video_pk):
                     except Exception as exc:
                         current_app.logger.warning("Failed to invalidate stale cached render job %s: %s", job.get("id"), exc)
                     enqueue_result = enqueue_render_job(
-                        user_id=str(current_user["id"]),
+                        user_id=str(target_owner_user_id),
                         payload=payload,
                         input_hash=input_hash,
                     )
@@ -15782,7 +15970,7 @@ def autoclip_video(video_pk):
                 status="queued",
                 render_job_id=job.get("id"),
             )
-            reserve_result = reserve_export(current_user["id"])
+            reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
                 if job.get("id"):
                     try:
@@ -16404,8 +16592,8 @@ def autoclip_video(video_pk):
                         final_file.unlink()
                     except Exception:
                         current_app.logger.warning("Failed to remove oversized clip %s", final_file)
-                    if export_reserved and current_user:
-                        release_export(current_user["id"])
+                    if export_reserved and target_owner_user_id:
+                        release_export(target_owner_user_id)
                         export_reserved = False
                     return _respond(
                         _quota_block_message(
@@ -16427,8 +16615,8 @@ def autoclip_video(video_pk):
                     str(final_file),
                     "short",
                     size_bytes,
-                    current_user["id"],
-                    brand_id=current_brand_id(),
+                    target_owner_user_id,
+                    brand_id=brand_id,
                 )
                 current_app.logger.info(
                     "short db update success clip_filename=%s file_key=%s",
@@ -16456,8 +16644,8 @@ def autoclip_video(video_pk):
             plan_entry["output_filename"] = clip_filename
             try:
                 _maybe_autogenerate_description_for_plan_entry(
-                    current_user=current_user or {},
-                    brand_id=current_brand_id(),
+                    current_user={"id": target_owner_user_id},
+                    brand_id=brand_id,
                     video_id=vid,
                     video_title=video_title,
                     video_date_text=video_date_text,
@@ -16618,13 +16806,13 @@ def autoclip_video(video_pk):
             )
         error_message = "This video could not be processed right now. Please try again. If it keeps happening, contact support."
     finally:
-        if export_reserved and not made and current_user:
+        if export_reserved and not made and target_owner_user_id:
             try:
-                release_export(current_user["id"])
+                release_export(target_owner_user_id)
             except Exception:
                 current_app.logger.exception(
                     "Failed to release export reservation for user_id=%s plan_index=%s",
-                    current_user["id"],
+                    target_owner_user_id,
                     plan_index,
                 )
         for p in temp_subs:

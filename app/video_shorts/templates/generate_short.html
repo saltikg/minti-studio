@@ -3258,9 +3258,9 @@
   <div class="col-12">
     <form id="step2-form"
           method="post"
-          action="{{ url_for('video_shorts_bp.create_clip_plan', video_pk=video.id) }}"
-          data-plan-start-url="{{ url_for('video_shorts_bp.create_clip_plan_start', video_pk=video.id) }}"
-          data-plan-status-url="{{ url_for('video_shorts_bp.create_clip_plan_status', video_pk=video.id) }}"
+          action="{{ admin_operation_plan_url }}"
+          data-plan-start-url="{{ admin_operation_plan_start_url }}"
+          data-plan-status-url="{{ admin_operation_plan_status_url }}"
           data-plan-block-reason="{{ plan_generation_block_reason }}"
           data-plan-block-message="{{ plan_generation_block_message }}">
       <input type="hidden" name="focus_categories" id="ai-focus-categories-input" value="{{ selected_focus_categories|join(',') }}">
@@ -3648,7 +3648,7 @@
                     </div>
                   {% else %}
                     <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
-                      <form class="generate-clip-form" method="post" action="{{ url_for('video_shorts_bp.autoclip_video', video_pk=video.id) }}">
+                      <form class="generate-clip-form" method="post" action="{{ admin_operation_autoclip_url }}">
                         <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
                         <input type="hidden" name="title" class="generate-clip-hidden-title" value="{{ row.title or '' }}">
                         <button type="submit" class="btn btn-primary clip-generate-btn">

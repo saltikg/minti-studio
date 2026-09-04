@@ -40,7 +40,7 @@
     <div class="admin-leads-table-wrap">
       <div class="text-muted small mb-3">{{ leads|length }} lead{{ '' if leads|length == 1 else 's' }} · newest first</div>
       <table class="admin-leads-table">
-        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th></tr></thead>
+        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
           {% for lead in leads %}
             <tr>
@@ -52,9 +52,20 @@
               <td>{{ lead.generation_label }}</td>
               <td>{{ lead.converted_at_pst if lead.converted else 'Not converted' }}</td>
               <td>{{ lead.created_at_pst or '—' }}</td>
+              <td>
+                {% if lead.has_owner and not lead.converted %}
+                  <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_select') }}">
+                    <input type="hidden" name="target_user_id" value="{{ lead.owner_user_id }}">
+                    <input type="hidden" name="target_brand_id" value="{{ lead.brand_id }}">
+                    <button type="submit" class="btn btn-sm btn-primary">Open workspace</button>
+                  </form>
+                {% else %}
+                  <span class="admin-leads-muted">{{ 'Customer' if lead.converted else 'Discovery only' }}</span>
+                {% endif %}
+              </td>
             </tr>
           {% else %}
-            <tr><td colspan="8" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
+            <tr><td colspan="9" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>
