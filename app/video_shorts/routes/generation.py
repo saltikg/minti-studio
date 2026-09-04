@@ -4247,24 +4247,52 @@ def _activate_admin_operation_editor_context() -> None:
     """
     if request.args.get("admin_operation") != "1":
         return
+
+    # Temporary diagnostic logging for a fail-closed admin-operation request.
+    # Scope ids are internal UUIDs, not credentials; no session cookie or token is logged.
+    session_owner_id = str(session.get("admin_operation_owner_id") or "").strip()
+    session_brand_id = str(session.get("admin_operation_brand_id") or "").strip()
+
+    def _deny(branch: str, *, video_pk: Any = None, **extra: Any) -> None:
+        current_user = getattr(g, "vs_current_user", None) or {}
+        current_app.logger.warning(
+            "admin_operation_resolver_denied branch=%s video_pk=%s route=%s "
+            "current_user_id=%s role=%s session_owner_present=%s session_brand_present=%s "
+            "session_owner_id=%s session_brand_id=%s extra=%s",
+            branch,
+            video_pk,
+            request.endpoint,
+            current_user.get("id"),
+            current_user.get("role"),
+            bool(session_owner_id),
+            bool(session_brand_id),
+            session_owner_id or None,
+            session_brand_id or None,
+            extra or None,
+        )
+        abort(404)
+
     route_rule = str(getattr(request.url_rule, "rule", "") or "")
     if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX):
-        abort(404)
+        _deny("route_not_allowed")
     video_pk = (request.view_args or {}).get("video_pk")
     try:
         video_pk = int(video_pk)
     except (TypeError, ValueError):
-        abort(404)
+        _deny("invalid_video_pk", video_pk=video_pk)
 
     current_user = getattr(g, "vs_current_user", None) or {}
     if str(current_user.get("role") or "").strip().lower() != "admin":
-        abort(404)
+        _deny("role_not_admin", video_pk=video_pk)
 
     conn = get_db_readonly()
     try:
         scope = resolve_admin_operation_scope(conn, current_user=current_user)
         if not scope:
-            abort(404)
+            _deny(
+                "session_scope_missing" if not session_owner_id or not session_brand_id else "session_scope_revalidation_failed",
+                video_pk=video_pk,
+            )
         target_row = conn.execute(
             """
             SELECT 1
@@ -4277,7 +4305,12 @@ def _activate_admin_operation_editor_context() -> None:
     finally:
         conn.close()
     if not target_row:
-        abort(404)
+        _deny(
+            "target_video_owner_brand_mismatch",
+            video_pk=video_pk,
+            target_owner_id=scope["owner_user_id"],
+            target_brand_id=scope["brand_id"],
+        )
     set_request_admin_operation_scope(scope)
 
 
