@@ -169,6 +169,11 @@ NOISE_404_PATTERNS = [
     r"/vendor/",
 ]
 
+# This is the only route family eligible to activate a target lead context.
+# It covers every current and future video-bound editor endpoint without making
+# a selected operation scope active on unrelated admin browsing requests.
+ADMIN_OPERATION_EDITOR_ROUTE_PREFIX = "/generate/<int:video_pk>"
+
 # SQL LIKE equivalents for the default admin-errors filter. Keep this list
 # aligned with NOISE_404_PATTERNS above; it is intentionally conservative.
 NOISE_404_PATH_LIKE_PATTERNS = [
@@ -4142,21 +4147,16 @@ def _resolve_video_id_from_pk(video_pk: Any) -> Optional[str]:
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
-    operation_scope = request_admin_operation_scope()
-    current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     conn = get_db_readonly()
     sql = "SELECT video_id FROM youtube_videos WHERE id = ?"
     params: List[Any] = [pk_int]
-    if operation_scope:
-        sql += " AND owner_user_id = ? AND brand_id = ?"
-        params.extend([operation_scope["owner_user_id"], operation_scope["brand_id"]])
-    elif current_user:
+    if owner_user_id:
         sql += " AND owner_user_id = ?"
-        params.append(current_user.get("id"))
-    if operation_scope:
-        pass
-    elif brand_id:
+        params.append(owner_user_id)
+    if brand_id:
         sql += " AND brand_id = ?"
         params.append(brand_id)
     else:
@@ -4179,23 +4179,14 @@ def _fetch_scoped_video_row(
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
-    operation_scope = request_admin_operation_scope()
-    if operation_scope:
-        return _fetch_scoped_video_row_with_scope(
-            conn,
-            video_pk,
-            select_clause,
-            owner_user_id=operation_scope["owner_user_id"],
-            brand_id=operation_scope["brand_id"],
-        )
-
-    current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ?"
     params: List[Any] = [pk_int]
-    if current_user:
+    if owner_user_id:
         sql += " AND owner_user_id = ?"
-        params.append(current_user.get("id"))
+        params.append(owner_user_id)
     if brand_id:
         sql += " AND brand_id = ?"
         params.append(brand_id)
@@ -4245,6 +4236,100 @@ def _require_admin_operation_scope() -> Dict[str, str]:
     return scope
 
 
+@video_shorts_bp.before_request
+def _activate_admin_operation_editor_context() -> None:
+    """Activate a target scope only for explicitly marked editor requests.
+
+    A selected operation scope in the session is intentionally inert on every
+    other request. This prevents target-brand context from leaking into normal
+    admin browsing while allowing the existing editor endpoints to share their
+    normal source-resolution path.
+    """
+    if request.args.get("admin_operation") != "1":
+        return
+    route_rule = str(getattr(request.url_rule, "rule", "") or "")
+    if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX):
+        abort(404)
+    video_pk = (request.view_args or {}).get("video_pk")
+    try:
+        video_pk = int(video_pk)
+    except (TypeError, ValueError):
+        abort(404)
+
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if str(current_user.get("role") or "").strip().lower() != "admin":
+        abort(404)
+
+    conn = get_db_readonly()
+    try:
+        scope = resolve_admin_operation_scope(conn, current_user=current_user)
+        if not scope:
+            abort(404)
+        target_row = conn.execute(
+            """
+            SELECT 1
+            FROM youtube_videos
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+            LIMIT 1
+            """,
+            [video_pk, scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not target_row:
+        abort(404)
+    set_request_admin_operation_scope(scope)
+
+
+@video_shorts_bp.after_request
+def _preserve_admin_operation_on_editor_redirect(response):
+    """Keep a marked editor request in its target context after form redirects."""
+    if not request_admin_operation_scope() or request.args.get("admin_operation") != "1":
+        return response
+    if response.status_code not in {301, 302, 303, 307, 308}:
+        return response
+    video_pk = (request.view_args or {}).get("video_pk")
+    location = response.headers.get("Location")
+    if not video_pk or not location:
+        return response
+
+    parsed = urlparse(location)
+    expected_path = urlparse(
+        url_for("video_shorts_bp.generate_short", video_pk=video_pk)
+    ).path
+    if parsed.path != expected_path:
+        return response
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.setdefault("admin_operation", "1")
+    response.headers["Location"] = parsed._replace(query=urlencode(query)).geturl()
+    return response
+
+
+def _active_editor_context() -> Dict[str, Any]:
+    """Return the only owner/brand pair editor code may use for this request."""
+    operation_scope = request_admin_operation_scope()
+    if operation_scope:
+        return {
+            "owner_user_id": operation_scope["owner_user_id"],
+            "brand_id": operation_scope["brand_id"],
+            "is_admin_operation": True,
+        }
+    current_user = getattr(g, "vs_current_user", None) or {}
+    return {
+        "owner_user_id": current_user.get("id"),
+        "brand_id": current_brand_id(),
+        "is_admin_operation": False,
+    }
+
+
+def _editor_url(endpoint: str, *, video_pk: Any, **values: Any) -> str:
+    """Build a video-editor URL while preserving a request-local admin scope."""
+    endpoint_name = endpoint if "." in endpoint else f"video_shorts_bp.{endpoint}"
+    if _active_editor_context()["is_admin_operation"]:
+        values["admin_operation"] = "1"
+    return url_for(endpoint_name, video_pk=video_pk, **values)
+
+
 def _resolve_brand_subscribe_overlay_path(brand_id: Optional[str]) -> Optional[Path]:
     candidates: List[Path] = []
     if brand_id:
@@ -4269,7 +4354,7 @@ def _resolve_brand_subscribe_overlay_path(brand_id: Optional[str]) -> Optional[P
 def _load_category_options(owner_id: Optional[str]) -> List[str]:
     if not owner_id:
         return []
-    brand_id = current_brand_id()
+    brand_id = _active_editor_context()["brand_id"]
     conn = None
     try:
         # ensure_categories_schema may write/seed; use writable connection.
@@ -4753,14 +4838,10 @@ def generate_short(video_pk):
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
         default=False,
     )
-    operation_scope = request_admin_operation_scope()
-    # Only the explicit admin-operation route sets this request-local scope.
-    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
-    editor_owner_user_id = (
-        operation_scope["owner_user_id"]
-        if operation_scope
-        else current_user.get("id") if current_user else None
-    )
+    editor_context = _active_editor_context()
+    brand_id = editor_context["brand_id"]
+    editor_owner_user_id = editor_context["owner_user_id"]
+
     conn = get_db_readonly()
     video_columns = table_columns(conn, "youtube_videos")
     video_sql = """
@@ -5492,7 +5573,7 @@ def generate_short(video_pk):
     user_tz_label = TIMEZONE_LABELS.get(user_tz, user_tz)
     is_admin = (current_user or {}).get("role") == "admin"
     generated_video_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    active_brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    active_brand_id = brand_id
     source_video_id = str(video.get("video_id") or "").strip()
     if source_video_id and active_brand_id:
         conn_generated = get_db_readonly()
@@ -5851,11 +5932,11 @@ def generate_short(video_pk):
         _format_publish_display(latest_schedule_iso, user_tz) if latest_schedule_iso else None
     )
     allowed_source_ids: Optional[set[str]] = None
-    if current_user:
+    if editor_owner_user_id:
         conn_sources = get_db_readonly()
         try:
             source_sql = "SELECT video_id FROM youtube_videos WHERE owner_user_id = ?"
-            source_params: List[Any] = [current_user.get("id")]
+            source_params: List[Any] = [editor_owner_user_id]
             if brand_id:
                 source_sql += " AND brand_id = ?"
                 source_params.append(brand_id)
@@ -5901,24 +5982,24 @@ def generate_short(video_pk):
             if edit:
                 transcript_override = edit
                 break
-    category_owner_id = (current_user or {}).get("id")
+    category_owner_id = editor_owner_user_id
     category_options = _load_category_options(category_owner_id)
     transcript_player_source = _build_transcript_player_source(video)
 
-    youtube_connected = has_refresh_token((current_user or {}).get("id"), brand_id=brand_id)
+    youtube_connected = has_refresh_token(editor_owner_user_id, brand_id=brand_id)
     instagram_connected = False
     tiktok_connected = False
     facebook_connected = False
-    if current_user:
+    if editor_owner_user_id:
         try:
-            instagram_info = get_instagram_data(current_user["id"])
+            instagram_info = get_instagram_data(editor_owner_user_id)
         except InstagramTokenStoreError as exc:
             current_app.logger.warning("Instagram info unavailable on generate_short: %s", exc)
             instagram_info = None
         if instagram_info:
             instagram_connected = _validate_instagram_connection(instagram_info)
         try:
-            tiktok_info = get_tiktok_data(current_user["id"])
+            tiktok_info = get_tiktok_data(editor_owner_user_id)
         except TikTokTokenStoreError as exc:
             current_app.logger.warning("TikTok info unavailable on generate_short: %s", exc)
             tiktok_info = None
@@ -5926,7 +6007,7 @@ def generate_short(video_pk):
             if not _is_token_expired(tiktok_info.get("expires_at")):
                 tiktok_connected = True
         try:
-            facebook_info = get_facebook_page_data(current_user["id"])
+            facebook_info = get_facebook_page_data(editor_owner_user_id)
         except FacebookTokenStoreError as exc:
             current_app.logger.warning("Facebook info unavailable on generate_short: %s", exc)
             facebook_info = None
@@ -6192,42 +6273,7 @@ def generate_short(video_pk):
         long_compilation_videos=long_compilation_videos,
         brand_subscribe_overlay_available=brand_subscribe_overlay_available,
         llm_description_enabled=llm_description_enabled,
-        admin_operation_plan_url=(
-            url_for("video_shorts_bp.admin_operation_create_clip_plan", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.create_clip_plan", video_pk=video_pk)
-        ),
-        admin_operation_plan_start_url=(
-            url_for("video_shorts_bp.admin_operation_create_clip_plan_start", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.create_clip_plan_start", video_pk=video_pk)
-        ),
-        admin_operation_plan_status_url=(
-            url_for("video_shorts_bp.admin_operation_create_clip_plan_status", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.create_clip_plan_status", video_pk=video_pk)
-        ),
-        admin_operation_autoclip_url=(
-            url_for("video_shorts_bp.admin_operation_autoclip_video", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.autoclip_video", video_pk=video_pk)
-        ),
-        admin_operation_transcribe_url=(
-            url_for("video_shorts_bp.admin_operation_transcribe_video", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.transcribe_video", video_pk=video_pk)
-        ),
-        admin_operation_transcribe_start_url=(
-            url_for("video_shorts_bp.admin_operation_transcribe_video_start", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.transcribe_video_start", video_pk=video_pk)
-        ),
-        admin_operation_transcribe_status_url=(
-            url_for("video_shorts_bp.admin_operation_transcribe_video_status", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.transcribe_video_status", video_pk=video_pk)
-        ),
-        editor_save_crop_url=(
-            url_for("video_shorts_bp.admin_operation_save_crop_area", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.save_crop_area", video_pk=video_pk)
-        ),
-        editor_save_settings_url=(
-            url_for("video_shorts_bp.admin_operation_save_short_settings", video_pk=video_pk)
-            if operation_scope else url_for("video_shorts_bp.save_short_settings", video_pk=video_pk)
-        ),
+        editor_url=_editor_url,
     )
 
 
@@ -7016,9 +7062,10 @@ def create_long_from_shorts(video_pk: int):
 @video_shorts_bp.route("/generate/<int:video_pk>/publish_long_video", methods=["POST"])
 def publish_long_video_from_generate(video_pk: int):
     current_user = getattr(g, "vs_current_user", None) or {}
-    user_id = current_user.get("id")
+    editor_context = _active_editor_context()
+    user_id = editor_context["owner_user_id"]
     user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
-    brand_id = current_brand_id()
+    brand_id = editor_context["brand_id"]
 
     conn = get_db_readonly()
     row = conn.execute(
@@ -7222,8 +7269,9 @@ def publish_long_video_from_generate(video_pk: int):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/delete_long_video", methods=["POST"])
 def delete_long_video_from_generate(video_pk: int):
-    current_user = getattr(g, "vs_current_user", None) or {}
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     conn = get_db_readonly()
     row = conn.execute(
         """
@@ -7233,7 +7281,7 @@ def delete_long_video_from_generate(video_pk: int):
           AND owner_user_id = ?
           AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
         """,
-        [video_pk, current_user.get("id"), brand_id, brand_id],
+        [video_pk, owner_user_id, brand_id, brand_id],
     ).fetchone()
     conn.close()
     if not row:
@@ -7274,13 +7322,9 @@ def delete_long_video_from_generate(video_pk: int):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_crop", methods=["POST"])
 def save_crop_area(video_pk):
     current_user = getattr(g, "vs_current_user", None)
-    operation_scope = request_admin_operation_scope()
-    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
-    editor_owner_user_id = (
-        operation_scope["owner_user_id"]
-        if operation_scope
-        else current_user.get("id") if current_user else None
-    )
+    editor_context = _active_editor_context()
+    brand_id = editor_context["brand_id"]
+    editor_owner_user_id = editor_context["owner_user_id"]
     def _parse_ratio(name: str):
         value = request.form.get(name)
         if value is None or value == "":
@@ -11032,9 +11076,8 @@ def delete_clip(video_pk):
                     except Exception as exc:
                         current_app.logger.warning("Failed to update plan file after delete: %s", exc)
                     try:
-                        current_user = getattr(g, "vs_current_user", None) or {}
                         clear_done_job_cache_for_plan(
-                            user_id=str(current_user.get("id") or ""),
+                            user_id=str(_active_editor_context()["owner_user_id"] or ""),
                             source_video_id=str(row[0] or ""),
                             plan_index=int(match_entry.get("plan_index") or 0),
                         )
@@ -11136,10 +11179,9 @@ def remove_plan_entry(video_pk):
             except Exception as exc:
                 current_app.logger.warning("Failed to delete clip media %s for %s: %s", clip_name, video_id, exc)
     try:
-        current_user = getattr(g, "vs_current_user", None) or {}
         if target_plan_index is not None:
             clear_done_job_cache_for_plan(
-                user_id=str(current_user.get("id") or ""),
+                user_id=str(_active_editor_context()["owner_user_id"] or ""),
                 source_video_id=str(video_id or ""),
                 plan_index=target_plan_index,
             )
@@ -11201,7 +11243,7 @@ def delete_ai_suggestions(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/add_clip_section", methods=["POST"])
 def add_clip_section(video_pk):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-    current_user = getattr(g, "vs_current_user", None)
+    editor_context = _active_editor_context()
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -11327,7 +11369,7 @@ def add_clip_section(video_pk):
         plan_index=next_plan_index,
         excerpt=transcript_full,
         placeholder_title=clip_title,
-        user_id=current_user.get("id") if current_user else None,
+        user_id=editor_context["owner_user_id"],
         language_hint=_infer_clip_language_from_segments(
             segments,
             start_time,
@@ -11625,7 +11667,7 @@ def update_clip_category(video_pk):
             return jsonify(success=False, message="Authentication required"), 403
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     category = (request.form.get("category") or "").strip()
-    category_options = _load_category_options(current_user.get("id"))
+    category_options = _load_category_options(_active_editor_context()["owner_user_id"])
     plan_index_raw = request.form.get("plan_index")
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
@@ -11697,7 +11739,6 @@ def update_clip_category(video_pk):
 def suggest_clip_title(video_pk):
     if not _openai_client:
         return jsonify(success=False, message="OPENAI_API_KEY missing"), 403
-    current_user = getattr(g, "vs_current_user", None)
     plan_index = request.form.get("plan_index")
     if not plan_index:
         return jsonify(success=False, message="Plan index missing"), 400
@@ -11739,7 +11780,7 @@ def suggest_clip_title(video_pk):
     try:
         new_title = _request_short_title_suggestion(
             suggestion_excerpt or excerpt,
-            user_id=current_user.get("id") if current_user else None,
+            user_id=_active_editor_context()["owner_user_id"],
             current_video_id=video_id,
             language_hint=language_hint,
         )
@@ -13868,12 +13909,7 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
 @video_shorts_bp.route("/generate/<int:video_pk>/transcribe/start", methods=["POST"])
 def transcribe_video_start(video_pk):
     cleanup_video_shorts_temp_dir()
-    operation_scope = request_admin_operation_scope()
-    metered_user_id = (
-        operation_scope["owner_user_id"]
-        if operation_scope
-        else (getattr(g, "vs_current_user", None) or {}).get("id")
-    )
+    metered_user_id = _active_editor_context()["owner_user_id"]
     try:
         conn = get_db_readonly()
         try:
@@ -14010,18 +14046,18 @@ def transcribe_video_status(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/transcribe", methods=["POST"])
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()
-    operation_scope = request_admin_operation_scope()
-    target_owner_user_id = (
-        operation_scope["owner_user_id"]
-        if operation_scope
-        else (getattr(g, "vs_current_user", None) or {}).get("id")
-    )
-    target_brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    editor_context = _active_editor_context()
+    target_owner_user_id = editor_context["owner_user_id"]
+    target_brand_id = editor_context["brand_id"]
 
     def _generate_redirect():
-        if operation_scope:
-            return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+        return redirect(
+            url_for(
+                "video_shorts_bp.generate_short",
+                video_pk=video_pk,
+                admin_operation="1" if editor_context["is_admin_operation"] else None,
+            )
+        )
 
     conn = get_db_readonly()
     row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds, COALESCE(transcript_status, '')")
@@ -14206,8 +14242,7 @@ def edit_segment_text(video_pk):
 
     if segment_start is not None and segment_end is not None and segment_end > segment_start:
         try:
-            current_user = getattr(g, "vs_current_user", None) or {}
-            user_id = str(current_user.get("id") or "")
+            user_id = str(_active_editor_context()["owner_user_id"] or "")
             if user_id:
                 plan_entries = _load_plan_entries(video_id)
                 for entry in plan_entries:
@@ -14565,13 +14600,10 @@ def create_clip_plan_start(video_pk):
         if not video_info:
             return jsonify({"ok": False, "message": "Video not found."}), 404
 
-        current_user = getattr(g, "vs_current_user", None) or {}
-        operation_scope = request_admin_operation_scope()
+        editor_context = _active_editor_context()
         form_data = dict(request.form.items())
-        form_data["_owner_user_id"] = (
-            operation_scope["owner_user_id"] if operation_scope else current_user.get("id")
-        )
-        form_data["_brand_id"] = operation_scope["brand_id"] if operation_scope else current_brand_id()
+        form_data["_owner_user_id"] = editor_context["owner_user_id"]
+        form_data["_brand_id"] = editor_context["brand_id"]
         with _PLAN_JOB_LOCK:
             existing = dict(_PLAN_JOB_STATE.get(video_pk) or _load_plan_job_state(video_pk) or {})
             blocked = _clip_plan_block_info(existing)
@@ -15083,13 +15115,9 @@ def add_v2_non_speech_keyword(video_pk):
 @video_shorts_bp.route("/generate/<int:video_pk>/save_short_settings", methods=["POST"])
 def save_short_settings(video_pk):
     current_user = getattr(g, "vs_current_user", None)
-    operation_scope = request_admin_operation_scope()
-    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
-    editor_owner_user_id = (
-        operation_scope["owner_user_id"]
-        if operation_scope
-        else current_user.get("id") if current_user else None
-    )
+    editor_context = _active_editor_context()
+    brand_id = editor_context["brand_id"]
+    editor_owner_user_id = editor_context["owner_user_id"]
     font_key = request.form.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
@@ -15317,11 +15345,9 @@ def autoclip_video(video_pk):
         return redirect(target)
 
     current_user = getattr(g, "vs_current_user", None)
-    operation_scope = request_admin_operation_scope()
-    target_owner_user_id = (
-        operation_scope["owner_user_id"] if operation_scope else current_user.get("id") if current_user else None
-    )
-    brand_id = operation_scope["brand_id"] if operation_scope else current_brand_id()
+    editor_context = _active_editor_context()
+    target_owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     export_reserved = False
     usage = None
     if not current_user:
@@ -15412,9 +15438,8 @@ def autoclip_video(video_pk):
             crop_sql += ", subtitle_preset"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
-        if operation_scope:
-            crop_sql += " AND owner_user_id = ? AND brand_id = ?"
-            crop_params.extend([target_owner_user_id, brand_id])
+        crop_sql += " AND owner_user_id = ? AND brand_id = ?"
+        crop_params.extend([target_owner_user_id, brand_id])
         crop_row = conn.execute(crop_sql, crop_params).fetchone()
         if crop_row:
             # Backward/forward compatible fetch across schema versions.
@@ -16391,7 +16416,7 @@ def autoclip_video(video_pk):
                 "crop2_h_ratio",
             }
         }
-        preferred_bg_key = load_background_preference(video_owner_user_id, current_brand_id()) if video_owner_user_id else None
+        preferred_bg_key = load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None
         bg_visual_key = preferred_bg_key or video_background_visual_key
         if selected_subscribe_overlay_key:
             subscribe_overlay_path, subscribe_overlay_path_is_temp = _resolve_subscribe_overlay_path(
@@ -16417,7 +16442,7 @@ def autoclip_video(video_pk):
                 user_bg_path, bg_path_is_temp = _resolve_user_static_image_path(
                     bg_image_id,
                     expected_owner_user_id=video_owner_user_id,
-                    expected_brand_id=current_brand_id(),
+                    expected_brand_id=brand_id,
                 )
                 if user_bg_path:
                     bg_path = user_bg_path
@@ -17277,8 +17302,23 @@ def prepare_description(video_pk):
         return redirect(target)
 
     current_user = getattr(g, "vs_current_user", None) or {}
-    brand_id = current_brand_id()
-    gate_error = _description_generation_gate_error(current_user, brand_id)
+    editor_context = _active_editor_context()
+    brand_id = editor_context["brand_id"]
+    description_user = current_user
+    if editor_context["is_admin_operation"]:
+        conn = get_db_readonly()
+        try:
+            target_user = conn.execute(
+                "SELECT id, plan_id FROM shorts_users WHERE id = ?",
+                [editor_context["owner_user_id"]],
+            ).fetchone()
+        finally:
+            conn.close()
+        if not target_user:
+            return _respond(False, "Video not found.", status=404)
+        description_user = {"id": target_user[0], "plan_id": target_user[1]}
+
+    gate_error = _description_generation_gate_error(description_user, brand_id)
     if gate_error:
         redirect_to = url_for("video_shorts_bp.youtube_connect") if gate_error == "Connect YouTube first." else None
         return _respond(
@@ -17356,7 +17396,7 @@ def prepare_description(video_pk):
 
     try:
         description_text = _generate_description_for_plan_entry(
-            current_user=current_user,
+            current_user=description_user,
             brand_id=brand_id,
             video_id=vid,
             video_title=video_title,
