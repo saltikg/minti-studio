@@ -10966,9 +10966,13 @@ def _rehome_customer_sources_to_local_uploads(scope: Dict[str, str]) -> int:
                 SELECT ?, full_text, segments_json, whisper_segments_json
                 FROM youtube_transcripts
                 WHERE video_id = ?
-                ON CONFLICT (video_id) DO NOTHING
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM youtube_transcripts
+                      WHERE video_id = ?
+                  )
                 """,
-                [local_video_id, source_video_id],
+                [local_video_id, source_video_id, local_video_id],
             )
             conn.execute(
                 """
