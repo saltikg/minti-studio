@@ -320,7 +320,7 @@
     <h3 class="mb-1 vs-card-title">Plan &amp; storage</h3>
     <div class="vs-text-muted">Your plan usage this month.</div>
   </div>
-  {% if billing_has_managed_subscription %}
+  {% if billing_has_managed_subscription and not is_autopilot %}
     <a href="{{ billing_portal_url }}" class="btn btn-sm vs-btn vs-btn-secondary plan-manage-link">
       <i class="bi bi-credit-card-2-front" aria-hidden="true"></i>
       <span>Manage subscription</span>
@@ -347,9 +347,11 @@
         {% endif %}
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
-      <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
-        Upgrade / Compare plans
-      </button>
+      {% if not is_autopilot %}
+        <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+          Upgrade / Compare plans
+        </button>
+      {% endif %}
     </div>
     <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
     <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
@@ -535,10 +537,20 @@
       </div>
       <div class="modal-body vs-modal-body">
         <p class="mb-2">You're at 95%+ of your storage limit.</p>
-        <p class="vs-text-muted mb-0">Your latest shorts are saved. Upgrade to keep generating or delete files to free up space.</p>
+        <p class="vs-text-muted mb-0">
+          {% if is_autopilot %}
+            Your Minti team will handle capacity for you.
+          {% else %}
+            Your latest shorts are saved. Upgrade to keep generating or delete files to free up space.
+          {% endif %}
+        </p>
       </div>
       <div class="modal-footer vs-modal-footer">
-        <button type="button" class="btn vs-btn vs-btn-primary" data-bs-dismiss="modal" data-bs-toggle="modal" data-bs-target="#planCompareModal">Upgrade / Compare plans</button>
+        {% if is_autopilot %}
+          <button type="button" class="btn vs-btn vs-btn-secondary" data-bs-dismiss="modal">Got it</button>
+        {% else %}
+          <button type="button" class="btn vs-btn vs-btn-primary" data-bs-dismiss="modal" data-bs-toggle="modal" data-bs-target="#planCompareModal">Upgrade / Compare plans</button>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -671,6 +683,8 @@
     const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
     const usageMonthDetails = new Map();
+    const isAutopilot = {{ is_autopilot|tojson }};
+    const autopilotPlanLabel = {{ autopilot_plan_label|tojson }};
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
     const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
     const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
@@ -883,7 +897,9 @@
         usageResetCopy.textContent = planId === "plan_free" ? "" : formatResetCopy(payload?.period?.reset_at);
       }
       if (usagePlanName) {
-        const planName = payload?.plan?.name || "{{ current_plan_label }}";
+        const planName = isAutopilot
+          ? autopilotPlanLabel
+          : (payload?.plan?.name || "{{ current_plan_label }}");
         usagePlanName.textContent = planName;
       }
 

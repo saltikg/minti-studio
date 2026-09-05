@@ -477,24 +477,26 @@
       <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
     {% endif %}
     <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
-    <div class="mv-upload-grid">
-      <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
-        <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
-        <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
-          <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-          <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
-        </label>
-        <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
-        <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
-        <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
-          <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
+    {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
+      <div class="mv-upload-grid">
+        <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
+          <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
+          <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
+            <span class="mv-dropzone-copy">Choose a file or drag it here</span>
+            <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
+          </label>
+          <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
+          <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
+          <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
+            <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
+          </div>
+        </div>
+        <div class="mv-upload-actions">
+          <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
         </div>
       </div>
-      <div class="mv-upload-actions">
-        <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
-      </div>
-    </div>
-    <div id="mv-upload-feedback" class="mv-upload-feedback mt-3" aria-live="polite"></div>
+      <div id="mv-upload-feedback" class="mv-upload-feedback mt-3" aria-live="polite"></div>
+    {% endif %}
   </section>
 
   <form method="get" class="mv-toolbar">
