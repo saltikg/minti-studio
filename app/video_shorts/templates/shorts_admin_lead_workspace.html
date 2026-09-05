@@ -26,7 +26,7 @@
         <div class="fs-5 fw-semibold">Working on: {{ lead.creator_name }} - {{ lead.brand_name }}</div>
         {% if lead.creator_email %}<div class="text-muted small">{{ lead.creator_email }}</div>{% endif %}
       </div>
-      <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_clear') }}">
+      <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='lead', brand_id=lead.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
       </form>
     </div>
@@ -41,11 +41,11 @@
         </div>
         <div class="lead-workspace-actions">
           {% if video.download_status != 'downloaded' %}
-            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_lead_video', video_pk=video.id) }}">
+            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_lead_video', brand_id=lead.brand_id, video_pk=video.id) }}">
               <button type="submit" class="btn btn-outline-primary">Download</button>
             </form>
           {% else %}
-            <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_short', video_pk=video.id) }}">Generate</a>
+            <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_lead_short', brand_id=lead.brand_id, video_pk=video.id) }}">Generate</a>
           {% endif %}
         </div>
       </article>

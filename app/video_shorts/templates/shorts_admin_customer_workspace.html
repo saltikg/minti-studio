@@ -27,13 +27,13 @@
         <div class="fs-5 fw-semibold">Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</div>
         {% if customer.creator_email %}<div class="text-muted small">{{ customer.creator_email }}</div>{% endif %}
       </div>
-      <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_clear') }}">
+      <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
       </form>
     </div>
 
     <h2 class="h5 mb-2">Add customer video</h2>
-    <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_ingest_customer_video') }}" class="customer-workspace-ingest">
+    <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_ingest_customer_video', brand_id=customer.brand_id) }}" class="customer-workspace-ingest">
       <input type="url" name="url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required>
       <button type="submit" class="btn btn-primary">Add to My Videos</button>
     </form>
@@ -48,11 +48,11 @@
         </div>
         <div class="customer-workspace-actions">
           {% if video.download_status != 'downloaded' %}
-            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_customer_video', video_pk=video.id) }}">
+            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_customer_video', brand_id=customer.brand_id, video_pk=video.id) }}">
               <button type="submit" class="btn btn-outline-primary">Download</button>
             </form>
           {% else %}
-            <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_customer_short', video_pk=video.id) }}">Generate</a>
+            <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_customer_short', brand_id=customer.brand_id, video_pk=video.id) }}">Generate</a>
           {% endif %}
         </div>
       </article>

@@ -138,12 +138,7 @@
               <td>{{ customer.next_action }}</td>
               <td>
                 {% if customer.has_customer_workspace %}
-                  <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_select') }}">
-                    <input type="hidden" name="target_user_id" value="{{ customer.user_id }}">
-                    <input type="hidden" name="target_brand_id" value="{{ customer.customer_brand_id }}">
-                    <input type="hidden" name="workspace" value="customer">
-                    <button type="submit" class="btn btn-sm btn-primary">Open workspace</button>
-                  </form>
+                  <a class="btn btn-sm btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_customer_workspace', brand_id=customer.customer_brand_id) }}">Open workspace</a>
                 {% else %}
                   <span class="text-muted small">No converted lead brand</span>
                 {% endif %}

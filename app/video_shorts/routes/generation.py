@@ -147,10 +147,8 @@ from app.video_shorts.services.autopilot_leads import (
     provision_discovery_lead_email,
 )
 from app.video_shorts.services.admin_operation_scope import (
-    clear_admin_operation_scope,
     request_admin_operation_scope,
-    resolve_admin_operation_scope,
-    select_admin_operation_scope,
+    resolve_admin_operation_request_scope,
     set_request_admin_operation_scope,
 )
 
@@ -4227,15 +4225,37 @@ def _fetch_scoped_video_row_with_scope(
     return conn.execute(sql, params).fetchone()
 
 
-def _require_admin_operation_scope() -> Dict[str, str]:
-    """Resolve the separate admin target scope and fail closed on every request."""
+def _require_admin_operation_scope(
+    *,
+    brand_id: Optional[str] = None,
+    workspace_kind: Optional[str] = None,
+    video_pk: Optional[int] = None,
+) -> Dict[str, str]:
+    """Resolve an explicit request target and fail closed on every request."""
+    brand_id = str(brand_id or request.args.get("admin_operation_brand") or "").strip()
+    workspace_kind = str(workspace_kind or request.args.get("admin_operation_kind") or "").strip().lower()
     current_user = getattr(g, "vs_current_user", None) or {}
     conn = get_db_readonly()
     try:
-        scope = resolve_admin_operation_scope(conn, current_user=current_user)
+        scope = resolve_admin_operation_request_scope(
+            conn,
+            current_user=current_user,
+            brand_id=brand_id,
+            workspace_kind=workspace_kind,
+        )
+        target_row = None
+        if scope and video_pk is not None:
+            target_row = conn.execute(
+                """
+                SELECT 1 FROM youtube_videos
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                LIMIT 1
+                """,
+                [video_pk, scope["owner_user_id"], scope["brand_id"]],
+            ).fetchone()
     finally:
         conn.close()
-    if not scope:
+    if not scope or (video_pk is not None and not target_row):
         abort(404)
     set_request_admin_operation_scope(scope)
     return scope
@@ -4245,38 +4265,32 @@ def _require_admin_operation_scope() -> Dict[str, str]:
 def _activate_admin_operation_editor_context() -> None:
     """Activate a target scope only for explicitly marked editor requests.
 
-    A selected operation scope in the session is intentionally inert on every
-    other request. This prevents target-brand context from leaking into normal
-    admin browsing while allowing the existing editor endpoints to share their
-    normal source-resolution path.
+    The target travels in the URL, not the browser session, so separate tabs
+    can safely operate on different brands without changing each other.
     """
-    if request.args.get("admin_operation") != "1":
+    requested_brand_id = str(request.args.get("admin_operation_brand") or "").strip()
+    requested_workspace_kind = str(request.args.get("admin_operation_kind") or "").strip().lower()
+    if not requested_brand_id and not requested_workspace_kind:
         return
-
-    # Temporary diagnostic logging for a fail-closed admin-operation request.
-    # Scope ids are internal UUIDs, not credentials; no session cookie or token is logged.
-    session_owner_id = str(session.get("admin_operation_owner_id") or "").strip()
-    session_brand_id = str(session.get("admin_operation_brand_id") or "").strip()
 
     def _deny(branch: str, *, video_pk: Any = None, **extra: Any) -> None:
         current_user = getattr(g, "vs_current_user", None) or {}
         current_app.logger.warning(
             "admin_operation_resolver_denied branch=%s video_pk=%s route=%s "
-            "current_user_id=%s role=%s session_owner_present=%s session_brand_present=%s "
-            "session_owner_id=%s session_brand_id=%s extra=%s",
+            "current_user_id=%s role=%s requested_brand_id=%s workspace_kind=%s extra=%s",
             branch,
             video_pk,
             request.endpoint,
             current_user.get("id"),
             current_user.get("role"),
-            bool(session_owner_id),
-            bool(session_brand_id),
-            session_owner_id or None,
-            session_brand_id or None,
+            requested_brand_id or None,
+            requested_workspace_kind or None,
             extra or None,
         )
         abort(404)
 
+    if not requested_brand_id or not requested_workspace_kind:
+        _deny("incomplete_request_context")
     route_rule = str(getattr(request.url_rule, "rule", "") or "")
     if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX):
         _deny("route_not_allowed")
@@ -4292,12 +4306,14 @@ def _activate_admin_operation_editor_context() -> None:
 
     conn = get_db_readonly()
     try:
-        scope = resolve_admin_operation_scope(conn, current_user=current_user)
+        scope = resolve_admin_operation_request_scope(
+            conn,
+            current_user=current_user,
+            brand_id=requested_brand_id,
+            workspace_kind=requested_workspace_kind,
+        )
         if not scope:
-            _deny(
-                "session_scope_missing" if not session_owner_id or not session_brand_id else "session_scope_revalidation_failed",
-                video_pk=video_pk,
-            )
+            _deny("request_scope_revalidation_failed", video_pk=video_pk)
         target_row = conn.execute(
             """
             SELECT 1
@@ -4322,7 +4338,8 @@ def _activate_admin_operation_editor_context() -> None:
 @video_shorts_bp.after_request
 def _preserve_admin_operation_on_editor_redirect(response):
     """Keep a marked editor request in its target context after form redirects."""
-    if not request_admin_operation_scope() or request.args.get("admin_operation") != "1":
+    scope = request_admin_operation_scope()
+    if not scope:
         return response
     if response.status_code not in {301, 302, 303, 307, 308}:
         return response
@@ -4338,7 +4355,8 @@ def _preserve_admin_operation_on_editor_redirect(response):
     if parsed.path != expected_path:
         return response
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query.setdefault("admin_operation", "1")
+    query.setdefault("admin_operation_brand", scope["brand_id"])
+    query.setdefault("admin_operation_kind", scope["workspace_kind"])
     response.headers["Location"] = parsed._replace(query=urlencode(query)).geturl()
     return response
 
@@ -4350,12 +4368,14 @@ def _active_editor_context() -> Dict[str, Any]:
         return {
             "owner_user_id": operation_scope["owner_user_id"],
             "brand_id": operation_scope["brand_id"],
+            "workspace_kind": operation_scope["workspace_kind"],
             "is_admin_operation": True,
         }
     current_user = getattr(g, "vs_current_user", None) or {}
     return {
         "owner_user_id": current_user.get("id"),
         "brand_id": current_brand_id(),
+        "workspace_kind": "",
         "is_admin_operation": False,
     }
 
@@ -4363,8 +4383,10 @@ def _active_editor_context() -> Dict[str, Any]:
 def _editor_url(endpoint: str, *, video_pk: Any, **values: Any) -> str:
     """Build a video-editor URL while preserving a request-local admin scope."""
     endpoint_name = endpoint if "." in endpoint else f"video_shorts_bp.{endpoint}"
-    if _active_editor_context()["is_admin_operation"]:
-        values["admin_operation"] = "1"
+    context = _active_editor_context()
+    if context["is_admin_operation"]:
+        values.setdefault("admin_operation_brand", context["brand_id"])
+        values.setdefault("admin_operation_kind", context["workspace_kind"])
     return url_for(endpoint_name, video_pk=video_pk, **values)
 
 
@@ -10833,64 +10855,58 @@ def admin_provision_discovery_lead_email(lead_id: str):
 @video_shorts_bp.route("/admin/operation/select", methods=["POST"])
 @require_admin
 def admin_operation_select():
-    """Set a separately-namespaced target context for later explicit admin operations."""
+    """Validate an explicit target then redirect without mutating browser session state."""
     payload = request.get_json(silent=True) if request.is_json else request.form
     payload = payload or {}
-    current_user = getattr(g, "vs_current_user", None) or {}
-    target_owner_id = str(payload.get("target_user_id") or payload.get("owner_user_id") or "").strip()
     target_brand_id = str(payload.get("target_brand_id") or payload.get("brand_id") or "").strip()
-    conn = get_db_readonly()
-    try:
-        scope = select_admin_operation_scope(
-            conn,
-            current_user=current_user,
-            target_owner_id=target_owner_id,
-            target_brand_id=target_brand_id,
-        )
-    finally:
-        conn.close()
-    if not scope:
-        abort(404)
-
+    workspace_kind = str(payload.get("workspace") or "lead").strip().lower()
+    scope = _require_admin_operation_scope(
+        brand_id=target_brand_id,
+        workspace_kind=workspace_kind,
+    )
     track_event(
-        str(current_user.get("id") or ""),
+        scope["acting_admin_id"],
         "admin_operation_scope_selected",
         metadata={
             "target_owner_user_id": scope["owner_user_id"],
             "target_brand_id": scope["brand_id"],
+            "workspace_kind": scope["workspace_kind"],
         },
     )
-    workspace_kind = str(payload.get("workspace") or "lead").strip().lower()
     if workspace_kind == "customer":
-        _require_active_customer_workspace(scope)
         _rehome_customer_sources_to_local_uploads(scope)
-        redirect_target = url_for("video_shorts_bp.admin_operation_customer_workspace")
+        redirect_target = url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=target_brand_id)
     else:
-        redirect_target = url_for("video_shorts_bp.admin_operation_lead_workspace")
+        redirect_target = url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=target_brand_id)
     if request.is_json:
         return jsonify({"ok": True, "target_owner_user_id": scope["owner_user_id"], "target_brand_id": scope["brand_id"]})
     return redirect(redirect_target)
 
 
-@video_shorts_bp.route("/admin/operation/clear", methods=["POST"])
+@video_shorts_bp.route("/admin/operation/<workspace_kind>/<brand_id>/exit", methods=["POST"])
 @require_admin
-def admin_operation_clear():
-    clear_admin_operation_scope()
+def admin_operation_exit_workspace(workspace_kind: str, brand_id: str):
+    _require_admin_operation_scope(brand_id=brand_id, workspace_kind=workspace_kind)
     if request.is_json:
         return jsonify({"ok": True})
-    return redirect(url_for("video_shorts_bp.admin_leads"))
+    return redirect(url_for(
+        "video_shorts_bp.admin_autopilot_leads"
+        if workspace_kind == "customer"
+        else "video_shorts_bp.admin_leads"
+    ))
 
 
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>", methods=["GET"])
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/generate", methods=["GET"])
 @require_admin
-def admin_operation_generate_short(video_pk: int):
-    """Open a target-owned source using a request-local, revalidated admin scope.
-
-    This route deliberately does not alter ``vs_brand_id``. Follow-up operation
-    controls remain a later phase and must use their own explicit admin routes.
-    """
-    _require_admin_operation_scope()
-    return generate_short(video_pk)
+def admin_operation_generate_lead_short(brand_id: str, video_pk: int):
+    """Enter the shared editor with an explicit pre-conversion lead context."""
+    _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
+    return redirect(url_for(
+        "video_shorts_bp.generate_short",
+        video_pk=video_pk,
+        admin_operation_brand=brand_id,
+        admin_operation_kind="lead",
+    ))
 
 
 def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
@@ -11068,11 +11084,11 @@ def _rehome_customer_sources_to_local_uploads(scope: Dict[str, str]) -> int:
     return len(rehomed)
 
 
-@video_shorts_bp.route("/admin/operation/workspace", methods=["GET"])
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/workspace", methods=["GET"])
 @require_admin
-def admin_operation_lead_workspace():
+def admin_operation_lead_workspace(brand_id: str):
     """Admin-only workspace for a revalidated, pre-conversion lead target."""
-    scope = _require_admin_operation_scope()
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead")
     lead = _require_active_lead_workspace(scope)
     conn = get_db_readonly()
     try:
@@ -11104,14 +11120,15 @@ def admin_operation_lead_workspace():
         for row in rows
     ]
     videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
+    lead["brand_id"] = scope["brand_id"]
     return render_template("shorts_admin_lead_workspace.html", admin_title="Lead workspace", lead=lead, videos=videos)
 
 
-@video_shorts_bp.route("/admin/operation/customer-workspace", methods=["GET"])
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/workspace", methods=["GET"])
 @require_admin
-def admin_operation_customer_workspace():
+def admin_operation_customer_workspace(brand_id: str):
     """Admin-only workspace for a revalidated converted autopilot customer."""
-    scope = _require_admin_operation_scope()
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     customer = _require_active_customer_workspace(scope)
     conn = get_db_readonly()
     try:
@@ -11140,33 +11157,33 @@ def admin_operation_customer_workspace():
     return render_template(
         "shorts_admin_customer_workspace.html",
         admin_title="Customer workspace",
-        customer=customer,
+        customer={**customer, "brand_id": scope["brand_id"]},
         videos=videos,
     )
 
 
-@video_shorts_bp.route("/admin/operation/customer-workspace/ingest", methods=["POST"])
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/ingest", methods=["POST"])
 @require_admin
-def admin_operation_ingest_customer_video():
+def admin_operation_ingest_customer_video(brand_id: str):
     """Create a target-owned local source row for a customer YouTube URL."""
-    scope = _require_admin_operation_scope()
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     _require_active_customer_workspace(scope)
     raw_url = str(request.form.get("url") or "").strip()
     youtube_video_id = extract_video_id(raw_url)
     if not youtube_video_id:
         flash("Enter a valid YouTube video URL.", "warning")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
     canonical_url = f"https://www.youtube.com/watch?v={youtube_video_id}"
     try:
         meta = fetch_video_metadata(youtube_video_id)
     except YoutubeApiError as exc:
         current_app.logger.warning("Customer workspace video metadata failed: %s", exc)
         flash("Could not read that YouTube video right now.", "danger")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
     except Exception:
         current_app.logger.exception("Customer workspace video metadata failed")
         flash("Could not prepare that YouTube video right now.", "danger")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
     conn = get_db()
     try:
@@ -11190,7 +11207,7 @@ def admin_operation_ingest_customer_video():
         if existing:
             conn.commit()
             flash("That video is already in this customer's My Videos.", "info")
-            return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+            return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
         local_video_id = f"local_{uuid4().hex}"
         conn.execute(
             """
@@ -11243,14 +11260,14 @@ def admin_operation_ingest_customer_video():
         },
     )
     flash("Video added to this customer's My Videos. Download it when ready.", "success")
-    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
 
-@video_shorts_bp.route("/admin/operation/customer-workspace/video/<int:video_pk>/download", methods=["POST"])
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/download", methods=["POST"])
 @require_admin
-def admin_operation_download_customer_video(video_pk: int):
+def admin_operation_download_customer_video(brand_id: str, video_pk: int):
     """Queue a target-owned customer source for the existing downloader worker."""
-    scope = _require_admin_operation_scope()
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer", video_pk=video_pk)
     _require_active_customer_workspace(scope)
     conn = get_db()
     try:
@@ -11287,23 +11304,27 @@ def admin_operation_download_customer_video(video_pk: int):
         },
     )
     flash("Video queued for download.", "success")
-    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
 
-@video_shorts_bp.route("/admin/operation/customer-workspace/video/<int:video_pk>/generate", methods=["GET"])
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/generate", methods=["GET"])
 @require_admin
-def admin_operation_generate_customer_short(video_pk: int):
+def admin_operation_generate_customer_short(brand_id: str, video_pk: int):
     """Open the shared editor only after proving this is a converted customer scope."""
-    _require_active_customer_workspace(_require_admin_operation_scope())
-    g.vs_admin_operation_workspace_kind = "customer"
-    return generate_short(video_pk)
+    _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer", video_pk=video_pk)
+    return redirect(url_for(
+        "video_shorts_bp.generate_short",
+        video_pk=video_pk,
+        admin_operation_brand=brand_id,
+        admin_operation_kind="customer",
+    ))
 
 
-@video_shorts_bp.route("/admin/operation/workspace/video/<int:video_pk>/download", methods=["POST"])
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/download", methods=["POST"])
 @require_admin
-def admin_operation_download_lead_video(video_pk: int):
+def admin_operation_download_lead_video(brand_id: str, video_pk: int):
     """Queue a scoped source for the existing downloader worker."""
-    scope = _require_admin_operation_scope()
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
     _require_active_lead_workspace(scope)
     conn = get_db()
     try:
@@ -11340,174 +11361,7 @@ def admin_operation_download_lead_video(video_pk: int):
         },
     )
     flash("Video queued for download.", "success")
-    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace"))
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan/start", methods=["POST"])
-@require_admin
-def admin_operation_create_clip_plan_start(video_pk: int):
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_clip_plan_started",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-        },
-    )
-    return create_clip_plan_start(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan/status", methods=["GET"])
-@require_admin
-def admin_operation_create_clip_plan_status(video_pk: int):
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    return create_clip_plan_status(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe/start", methods=["POST"])
-@require_admin
-def admin_operation_transcribe_video_start(video_pk: int):
-    """Start target-owned transcription without borrowing the admin's brand."""
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_transcription_started",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-        },
-    )
-    return transcribe_video_start(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe/status", methods=["GET"])
-@require_admin
-def admin_operation_transcribe_video_status(video_pk: int):
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    return transcribe_video_status(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/transcribe", methods=["POST"])
-@require_admin
-def admin_operation_transcribe_video(video_pk: int):
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_transcription_requested",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-        },
-    )
-    return transcribe_video(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/save-crop", methods=["POST"])
-@require_admin
-def admin_operation_save_crop_area(video_pk: int):
-    """Save crop state only against the revalidated lead workspace target."""
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_editor_crop_saved",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-        },
-    )
-    return save_crop_area(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/save-settings", methods=["POST"])
-@require_admin
-def admin_operation_save_short_settings(video_pk: int):
-    """Save editor settings only against the revalidated lead workspace target."""
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_editor_settings_saved",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-        },
-    )
-    return save_short_settings(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/autoclip", methods=["POST"])
-@require_admin
-def admin_operation_autoclip_video(video_pk: int):
-    scope = _require_admin_operation_scope()
-    _require_active_lead_workspace(scope)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_clip_render_requested",
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-            "plan_index": request.form.get("plan_index"),
-        },
-    )
-    return autoclip_video(video_pk)
-
-
-@video_shorts_bp.route("/admin/operation/generate/<int:video_pk>/create-plan", methods=["POST"])
-@require_admin
-def admin_operation_create_clip_plan(video_pk: int):
-    """Generate a target-owned clip plan without borrowing the admin's brand."""
-    scope = _require_admin_operation_scope()
-    try:
-        result = _generate_clip_plan_for_video(
-            video_pk,
-            dict(request.form.items()),
-            debug_flag=request.args.get("debug") == "1",
-            owner_user_id=scope["owner_user_id"],
-            brand_id=scope["brand_id"],
-        )
-    except FileNotFoundError:
-        abort(404)
-    except RuntimeError as exc:
-        if request.is_json:
-            return jsonify({"ok": False, "message": str(exc)}), 400
-        flash(str(exc), "danger")
-        return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
-
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_clip_plan_created",
-        video_id=str(result.get("video_id") or ""),
-        metadata={
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "acting_admin_id": scope["acting_admin_id"],
-            "video_pk": video_pk,
-            "clip_count": result.get("clip_count"),
-        },
-    )
-    if request.is_json:
-        return jsonify({"ok": True, **result})
-    flash(result.get("message") or "Clip plan created.", "success")
-    return redirect(url_for("video_shorts_bp.admin_operation_generate_short", video_pk=video_pk))
+    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
 
 
 @video_shorts_bp.route("/admin/autopilot-leads/provision", methods=["POST"])
@@ -14681,13 +14535,7 @@ def transcribe_video(video_pk):
     target_brand_id = editor_context["brand_id"]
 
     def _generate_redirect():
-        return redirect(
-            url_for(
-                "video_shorts_bp.generate_short",
-                video_pk=video_pk,
-                admin_operation="1" if editor_context["is_admin_operation"] else None,
-            )
-        )
+        return redirect(_editor_url("generate_short", video_pk=video_pk))
 
     conn = get_db_readonly()
     row = _fetch_scoped_video_row(conn, video_pk, "video_id, title, duration_seconds, COALESCE(transcript_status, '')")
