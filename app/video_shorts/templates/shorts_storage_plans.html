@@ -414,7 +414,7 @@
                 <div class="card-body text-center d-flex flex-column gap-3">
                   <div>
                     <div class="plan-name mb-1">{{ tier }} Shorts/mo</div>
-                    <div class="plan-price"><div class="price-amount">${{ price }}</div><div class="price-period">per month</div></div>
+                    <div class="plan-price"><div class="price-amount" data-monthly="{{ price }}" data-yearly="{{ price }}" data-yearly-monthly="{{ price }}">${{ price }}</div><div class="price-period">per month</div></div>
                   </div>
                   {% if tier == autopilot_service_tier %}
                     <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
