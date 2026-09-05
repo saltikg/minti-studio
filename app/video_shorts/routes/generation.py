@@ -144,6 +144,7 @@ from app.video_shorts.services.user_preferences import (
 from app.video_shorts.services.autopilot_leads import (
     _get_or_create_local_uploads_channel,
     autopilot_leads_table_ready,
+    provision_discovery_lead_email,
 )
 from app.video_shorts.services.admin_operation_scope import (
     clear_admin_operation_scope,
@@ -10797,6 +10798,36 @@ def admin_leads():
         admin_title="Leads",
         leads=leads,
     )
+
+
+@video_shorts_bp.route("/admin/leads/<lead_id>/email", methods=["POST"])
+@require_admin
+def admin_provision_discovery_lead_email(lead_id: str):
+    """Attach contact email to one discovery lead and provision its owner scope."""
+    email = str(request.form.get("creator_email") or "").strip()
+    conn = get_db()
+    try:
+        result = provision_discovery_lead_email(
+            conn,
+            lead_id=lead_id,
+            creator_email=email,
+        )
+        conn.commit()
+    except ValueError as exc:
+        conn.rollback()
+        flash(str(exc), "error")
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to provision discovery lead %s", lead_id)
+        flash("Could not provision this discovery lead. No changes were made.", "error")
+    else:
+        flash(
+            f"Lead provisioned for {result['creator_email']}. Its source video now belongs to that lead's brand.",
+            "success",
+        )
+    finally:
+        conn.close()
+    return redirect(url_for("video_shorts_bp.admin_leads"))
 
 
 @video_shorts_bp.route("/admin/operation/select", methods=["POST"])

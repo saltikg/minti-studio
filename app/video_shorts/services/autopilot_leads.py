@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
@@ -92,6 +93,9 @@ def autopilot_leads_table_ready(conn) -> bool:
 
 def _normalize_email(value: str | None) -> str:
     return str(value or "").strip().lower()
+
+
+_LEAD_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _get_or_create_local_uploads_channel(conn, *, owner_user_id: str, brand_id: str) -> int:
@@ -231,6 +235,141 @@ def _provision_or_reuse_lead_owner(conn, *, email: str, channel_name: str) -> Di
     )
     brand = create_brand(conn, user_id=user_id, name=channel_name, make_default=True, commit=False)
     return {"user_id": user_id, "brand_id": str(brand["id"])}
+
+
+def provision_discovery_lead_email(
+    conn,
+    *,
+    lead_id: str,
+    creator_email: str,
+) -> Dict[str, str]:
+    """Convert one discovery lead into its own placeholder owner and brand.
+
+    The lead ID is the only client-supplied identity. All channel and source-video
+    records are resolved from that row before the existing source is re-homed.
+    """
+    _require_autopilot_leads_table(conn)
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    ensure_brand_schema(conn)
+    ensure_channel_owner_schema(conn)
+
+    lead_id = str(lead_id or "").strip()
+    email = _normalize_email(creator_email)
+    if not lead_id:
+        raise ValueError("Lead not found.")
+    if not _LEAD_EMAIL_RE.fullmatch(email):
+        raise ValueError("Enter a valid email address.")
+
+    lead = conn.execute(
+        f"""
+        SELECT
+            l.creator_name,
+            l.creator_email,
+            l.youtube_channel_id,
+            l.channel_id,
+            l.first_video_id,
+            l.user_id,
+            l.brand_id,
+            l.converted_at,
+            c.channel_name,
+            v.id
+        FROM {AUTOPILOT_LEADS_TABLE} l
+        LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+        LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+        WHERE l.id = ?
+        LIMIT 1
+        """,
+        [lead_id],
+    ).fetchone()
+    if not lead:
+        raise ValueError("Lead not found.")
+
+    existing_email = _normalize_email(lead[1])
+    existing_owner_id = str(lead[5] or "").strip()
+    existing_brand_id = str(lead[6] or "").strip()
+    if lead[7]:
+        raise ValueError("Converted customers cannot be changed from the Leads page.")
+    if existing_owner_id or existing_brand_id:
+        if existing_email == email and existing_owner_id and existing_brand_id:
+            return {
+                "lead_id": lead_id,
+                "owner_user_id": existing_owner_id,
+                "brand_id": existing_brand_id,
+                "creator_email": email,
+            }
+        raise ValueError("This lead is already provisioned with a different email.")
+
+    youtube_channel_id = str(lead[2] or "").strip()
+    source_video_id = lead[9]
+    channel_name = str(lead[8] or lead[0] or "YouTube Channel").strip() or "YouTube Channel"
+    creator_name = str(lead[0] or channel_name).strip() or channel_name
+    if not youtube_channel_id or source_video_id is None:
+        raise ValueError("This discovery lead is missing its source video or YouTube channel.")
+
+    # Do not attach a discovery lead to a real or separately provisioned account.
+    existing_account = conn.execute(
+        """
+        SELECT 1
+        FROM shorts_users
+        WHERE lower(coalesce(email, '')) = ? OR lower(coalesce(username, '')) = ?
+        LIMIT 1
+        """,
+        [email, email],
+    ).fetchone()
+    if existing_account:
+        raise ValueError("An account already exists for this email. No changes were made.")
+
+    owner = _provision_or_reuse_lead_owner(conn, email=email, channel_name=channel_name)
+    owner_user_id = owner["user_id"]
+    brand_id = owner["brand_id"]
+    local_bucket_channel_id = _get_or_create_local_uploads_channel(
+        conn,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    channel_id = get_or_create_scoped_youtube_channel(
+        conn,
+        meta={"channel_id": youtube_channel_id, "channel_title": channel_name},
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    if channel_id is None:
+        raise ValueError("The creator channel could not be prepared.")
+
+    # Move the existing source row so transcript, plan, and generated-short links
+    # remain attached to the same video primary key.
+    conn.execute(
+        """
+        UPDATE youtube_videos
+        SET channel_id = ?, local_bucket_channel_id = ?, owner_user_id = ?, brand_id = ?,
+            creator_name = COALESCE(NULLIF(creator_name, ''), ?), creator_email = ?
+        WHERE id = ?
+        """,
+        [
+            channel_id,
+            local_bucket_channel_id,
+            owner_user_id,
+            brand_id,
+            creator_name,
+            email,
+            source_video_id,
+        ],
+    )
+    conn.execute(
+        f"""
+        UPDATE {AUTOPILOT_LEADS_TABLE}
+        SET creator_email = ?, user_id = ?, brand_id = ?, channel_id = ?
+        WHERE id = ?
+        """,
+        [email, owner_user_id, brand_id, channel_id, lead_id],
+    )
+    return {
+        "lead_id": lead_id,
+        "owner_user_id": owner_user_id,
+        "brand_id": brand_id,
+        "creator_email": email,
+    }
 
 
 def create_autopilot_lead_from_video(

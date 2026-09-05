@@ -22,6 +22,8 @@
     .admin-leads-muted { color:rgba(255,255,255,.58); font-size:.84rem; margin-top:3px; }
     .admin-leads-status { display:inline-flex; padding:5px 9px; border-radius:999px; border:1px solid rgba(45,212,191,.22); background:rgba(45,212,191,.12); color:#8ff3d8; font-size:.82rem; font-weight:600; white-space:nowrap; }
     .admin-leads-status.discovery { border-color:rgba(245,158,11,.28); background:rgba(245,158,11,.12); color:#f8cc7a; }
+    .admin-leads-email-form { display:flex; gap:8px; min-width:245px; }
+    .admin-leads-email-form .form-control { min-width:0; }
     @media (max-width:767.98px) { .admin-leads-provision { grid-template-columns:1fr; } }
   </style>
 {% endblock %}
@@ -58,6 +60,11 @@
                     <input type="hidden" name="target_user_id" value="{{ lead.owner_user_id }}">
                     <input type="hidden" name="target_brand_id" value="{{ lead.brand_id }}">
                     <button type="submit" class="btn btn-sm btn-primary">Open workspace</button>
+                  </form>
+                {% elif not lead.has_owner and not lead.converted %}
+                  <form method="post" action="{{ url_for('video_shorts_bp.admin_provision_discovery_lead_email', lead_id=lead.id) }}" class="admin-leads-email-form">
+                    <input type="email" name="creator_email" class="form-control form-control-sm" placeholder="creator@example.com" aria-label="Creator email" required>
+                    <button type="submit" class="btn btn-sm btn-primary">Add email</button>
                   </form>
                 {% else %}
                   <span class="admin-leads-muted">{{ 'Customer' if lead.converted else 'Discovery only' }}</span>
