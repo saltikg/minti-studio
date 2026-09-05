@@ -115,6 +115,7 @@
             <th>Chosen</th>
             <th>Channel connected</th>
             <th>Next action</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -135,10 +136,22 @@
               <td>{{ customer.chosen_at_pst or '—' }}</td>
               <td>{{ customer.youtube_connected_label }}</td>
               <td>{{ customer.next_action }}</td>
+              <td>
+                {% if customer.has_customer_workspace %}
+                  <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_select') }}">
+                    <input type="hidden" name="target_user_id" value="{{ customer.user_id }}">
+                    <input type="hidden" name="target_brand_id" value="{{ customer.customer_brand_id }}">
+                    <input type="hidden" name="workspace" value="customer">
+                    <button type="submit" class="btn btn-sm btn-primary">Open workspace</button>
+                  </form>
+                {% else %}
+                  <span class="text-muted small">No converted lead brand</span>
+                {% endif %}
+              </td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="7" class="text-center text-muted py-4">No autopilot customers yet.</td>
+              <td colspan="8" class="text-center text-muted py-4">No autopilot customers yet.</td>
             </tr>
           {% endfor %}
         </tbody>

@@ -3791,7 +3791,7 @@
                                   to enable scheduling.
                                 </div>
                               {% endif %}
-                              {% if is_admin and row.generated_video_id %}
+                              {% if is_admin and row.generated_video_id and not editor_is_customer_operation %}
                                 <div class="mt-2">
                                   <div class="d-grid gap-2 admin-share-link-panel">
                                     <input

@@ -141,7 +141,10 @@ from app.video_shorts.services.user_preferences import (
     save_user_preference,
     save_user_bool_preference,
 )
-from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
+from app.video_shorts.services.autopilot_leads import (
+    _get_or_create_local_uploads_channel,
+    autopilot_leads_table_ready,
+)
 from app.video_shorts.services.admin_operation_scope import (
     clear_admin_operation_scope,
     request_admin_operation_scope,
@@ -331,7 +334,7 @@ from src.trends.facebook_page_tokens import (
     get_facebook_page_data,
     store_facebook_page_token,
 )
-from app.video_shorts.youtube_api import fetch_video_stats
+from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata, fetch_video_stats
 
 PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
@@ -6277,6 +6280,7 @@ def generate_short(video_pk):
         v4_rules=v4_rules,
         is_admin=is_admin,
         editor_is_admin_operation=editor_context["is_admin_operation"],
+        editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
         latest_scheduled_display=latest_scheduled_display,
         channel_latest_scheduled_display=channel_latest_scheduled_display,
         static_visual_options=static_visual_options,
@@ -9516,6 +9520,7 @@ def _load_admin_autopilot_customers(
 ) -> Tuple[List[Dict[str, Any]], int]:
     ensure_storage_user_schema(conn)
     ensure_auth_user_schema(conn)
+    has_lead_records = autopilot_leads_table_ready(conn)
     normalized_email = (email_query or "").strip().lower()
     where_parts = ["lower(coalesce(u.service_mode, '')) = 'autopilot'"]
     params: List[Any] = []
@@ -9532,6 +9537,29 @@ def _load_admin_autopilot_customers(
         params,
     ).fetchone()
     total_count = int((total_row[0] if total_row else 0) or 0)
+    customer_scope_join = ""
+    customer_scope_fields = "NULL AS customer_brand_id, NULL AS customer_brand_name, NULL AS converted_lead_id, NULL AS creator_name"
+    if has_lead_records:
+        customer_scope_join = """
+        LEFT JOIN autopilot_leads l
+          ON l.id = (
+              SELECT l2.id
+              FROM autopilot_leads l2
+              WHERE CAST(l2.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                AND l2.converted_at IS NOT NULL
+              ORDER BY l2.converted_at DESC NULLS LAST, l2.id DESC
+              LIMIT 1
+          )
+        LEFT JOIN shorts_brands b
+          ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+         AND CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+        """
+        customer_scope_fields = """
+            CAST(b.id AS VARCHAR) AS customer_brand_id,
+            b.name AS customer_brand_name,
+            CAST(l.id AS VARCHAR) AS converted_lead_id,
+            l.creator_name
+        """
     rows = conn.execute(
         f"""
         SELECT
@@ -9545,8 +9573,10 @@ def _load_admin_autopilot_customers(
                 SELECT COUNT(*)
                 FROM youtube_videos v
                 WHERE CAST(v.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
-            ) AS source_video_count
+            ) AS source_video_count,
+            {customer_scope_fields}
         FROM shorts_users u
+        {customer_scope_join}
         WHERE {where_sql}
         ORDER BY u.service_mode_chosen_at DESC NULLS LAST, u.updated_at DESC NULLS LAST, u.created_at DESC NULLS LAST
         LIMIT ? OFFSET ?
@@ -9558,6 +9588,10 @@ def _load_admin_autopilot_customers(
         user_id = str(row[0] or "").strip()
         youtube_connected = _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id)
         source_video_count = int(row[6] or 0)
+        customer_brand_id = str(row[7] or "").strip()
+        customer_brand_name = str(row[8] or "").strip()
+        converted_lead_id = str(row[9] or "").strip()
+        creator_name = str(row[10] or "").strip()
         if not youtube_connected:
             next_action = "Connect channel"
         elif source_video_count <= 0:
@@ -9580,6 +9614,11 @@ def _load_admin_autopilot_customers(
                 "source_video_count": source_video_count,
                 "next_action": next_action,
                 "user_detail_url": url_for("video_shorts_bp.admin_user_detail", user_id=user_id),
+                "customer_brand_id": customer_brand_id,
+                "customer_brand_name": customer_brand_name,
+                "converted_lead_id": converted_lead_id,
+                "creator_name": creator_name,
+                "has_customer_workspace": bool(customer_brand_id and converted_lead_id),
             }
         )
     return items, total_count
@@ -10777,9 +10816,16 @@ def admin_operation_select():
             "target_brand_id": scope["brand_id"],
         },
     )
+    workspace_kind = str(payload.get("workspace") or "lead").strip().lower()
+    if workspace_kind == "customer":
+        _require_active_customer_workspace(scope)
+        _rehome_customer_sources_to_local_uploads(scope)
+        redirect_target = url_for("video_shorts_bp.admin_operation_customer_workspace")
+    else:
+        redirect_target = url_for("video_shorts_bp.admin_operation_lead_workspace")
     if request.is_json:
         return jsonify({"ok": True, "target_owner_user_id": scope["owner_user_id"], "target_brand_id": scope["brand_id"]})
-    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace"))
+    return redirect(redirect_target)
 
 
 @video_shorts_bp.route("/admin/operation/clear", methods=["POST"])
@@ -10832,6 +10878,148 @@ def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
+    """Require a converted autopilot customer for this target scope."""
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT l.id, l.creator_name, l.creator_email, b.name
+            FROM autopilot_leads l
+            JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+            JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+            WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(b.owner_user_id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+              AND l.converted_at IS NOT NULL
+              AND lower(coalesce(u.service_mode, '')) = 'autopilot'
+            ORDER BY l.converted_at DESC, l.id DESC
+            LIMIT 1
+            """,
+            [scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    return {
+        "id": str(row[0]),
+        "creator_name": str(row[1] or "").strip() or "Autopilot customer",
+        "creator_email": str(row[2] or "").strip(),
+        "brand_name": str(row[3] or "").strip() or "Unnamed brand",
+    }
+
+
+def _rehome_plan_files_to_local_video_id(source_video_id: str, local_video_id: str) -> None:
+    """Copy durable-on-disk plan files so existing generated clips stay editable after re-home."""
+    for plan_path_builder in (_plan_path, _plan_path_v2, _plan_path_v3, _plan_path_v4):
+        source_path = plan_path_builder(source_video_id)
+        target_path = plan_path_builder(local_video_id)
+        if not source_path.exists() or target_path.exists():
+            continue
+        try:
+            shutil.copyfile(source_path, target_path)
+        except Exception:
+            current_app.logger.exception(
+                "Failed to copy customer plan file source_video_id=%s local_video_id=%s path=%s",
+                source_video_id,
+                local_video_id,
+                source_path,
+            )
+
+
+def _rehome_customer_sources_to_local_uploads(scope: Dict[str, str]) -> int:
+    """Convert target-owned outreach sources to local IDs without changing ownership.
+
+    The downloader will fetch the original ``video_url`` into the new local S3 key.
+    Transcript and generated-short references are copied/relinked in the same tenant so
+    the customer's My Videos list can show existing work immediately.
+    """
+    conn = get_db()
+    rehomed: List[Tuple[str, str]] = []
+    try:
+        local_channel_id = _get_or_create_local_uploads_channel(
+            conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+        rows = conn.execute(
+            """
+            SELECT id, video_id
+            FROM youtube_videos
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+              AND lower(coalesce(video_id, '')) NOT LIKE 'local_%'
+            ORDER BY id
+            """,
+            [scope["owner_user_id"], scope["brand_id"]],
+        ).fetchall()
+        for row in rows:
+            video_pk = int(row[0])
+            source_video_id = str(row[1] or "").strip()
+            if not source_video_id:
+                continue
+            local_video_id = f"local_{uuid4().hex}"
+            conn.execute(
+                """
+                INSERT INTO youtube_transcripts (video_id, full_text, segments_json, whisper_segments_json)
+                SELECT ?, full_text, segments_json, whisper_segments_json
+                FROM youtube_transcripts
+                WHERE video_id = ?
+                ON CONFLICT (video_id) DO NOTHING
+                """,
+                [local_video_id, source_video_id],
+            )
+            conn.execute(
+                """
+                UPDATE shorts_generated_videos
+                SET source_video_id = ?
+                WHERE source_video_id = ?
+                  AND brand_id = ?
+                """,
+                [local_video_id, source_video_id, scope["brand_id"]],
+            )
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET video_id = ?,
+                    channel_id = ?,
+                    local_bucket_channel_id = ?,
+                    download_status = 'pending',
+                    downloaded_at = NULL
+                WHERE id = ?
+                  AND owner_user_id = ?
+                  AND brand_id = ?
+                """,
+                [
+                    local_video_id,
+                    local_channel_id,
+                    local_channel_id,
+                    video_pk,
+                    scope["owner_user_id"],
+                    scope["brand_id"],
+                ],
+            )
+            rehomed.append((source_video_id, local_video_id))
+        conn.commit()
+    finally:
+        conn.close()
+    for source_video_id, local_video_id in rehomed:
+        _rehome_plan_files_to_local_video_id(source_video_id, local_video_id)
+    if rehomed:
+        track_event(
+            scope["acting_admin_id"],
+            "admin_operation_customer_sources_rehomed",
+            metadata={
+                "acting_admin_id": scope["acting_admin_id"],
+                "target_owner_user_id": scope["owner_user_id"],
+                "target_brand_id": scope["brand_id"],
+                "count": len(rehomed),
+            },
+        )
+    return len(rehomed)
+
+
 @video_shorts_bp.route("/admin/operation/workspace", methods=["GET"])
 @require_admin
 def admin_operation_lead_workspace():
@@ -10869,6 +11057,198 @@ def admin_operation_lead_workspace():
     ]
     videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
     return render_template("shorts_admin_lead_workspace.html", admin_title="Lead workspace", lead=lead, videos=videos)
+
+
+@video_shorts_bp.route("/admin/operation/customer-workspace", methods=["GET"])
+@require_admin
+def admin_operation_customer_workspace():
+    """Admin-only workspace for a revalidated converted autopilot customer."""
+    scope = _require_admin_operation_scope()
+    customer = _require_active_customer_workspace(scope)
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+            FROM youtube_videos
+            WHERE owner_user_id = ? AND brand_id = ?
+            ORDER BY id DESC
+            """,
+            [scope["owner_user_id"], scope["brand_id"]],
+        ).fetchall()
+    finally:
+        conn.close()
+    videos = [
+        {
+            "id": int(row[0]),
+            "video_id": str(row[1] or ""),
+            "title": str(row[2] or "").strip() or "Untitled video",
+            "thumbnail_url": str(row[3] or "").strip(),
+            "download_status": str(row[4] or "").strip().lower() or "pending",
+            "transcript_status": str(row[5] or "").strip().lower(),
+        }
+        for row in rows
+    ]
+    return render_template(
+        "shorts_admin_customer_workspace.html",
+        admin_title="Customer workspace",
+        customer=customer,
+        videos=videos,
+    )
+
+
+@video_shorts_bp.route("/admin/operation/customer-workspace/ingest", methods=["POST"])
+@require_admin
+def admin_operation_ingest_customer_video():
+    """Create a target-owned local source row for a customer YouTube URL."""
+    scope = _require_admin_operation_scope()
+    _require_active_customer_workspace(scope)
+    raw_url = str(request.form.get("url") or "").strip()
+    youtube_video_id = extract_video_id(raw_url)
+    if not youtube_video_id:
+        flash("Enter a valid YouTube video URL.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+    canonical_url = f"https://www.youtube.com/watch?v={youtube_video_id}"
+    try:
+        meta = fetch_video_metadata(youtube_video_id)
+    except YoutubeApiError as exc:
+        current_app.logger.warning("Customer workspace video metadata failed: %s", exc)
+        flash("Could not read that YouTube video right now.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+    except Exception:
+        current_app.logger.exception("Customer workspace video metadata failed")
+        flash("Could not prepare that YouTube video right now.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+
+    conn = get_db()
+    try:
+        local_channel_id = _get_or_create_local_uploads_channel(
+            conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM youtube_videos
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+              AND video_url = ?
+              AND lower(coalesce(video_id, '')) LIKE 'local_%'
+            LIMIT 1
+            """,
+            [scope["owner_user_id"], scope["brand_id"], canonical_url],
+        ).fetchone()
+        if existing:
+            conn.commit()
+            flash("That video is already in this customer's My Videos.", "info")
+            return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+        local_video_id = f"local_{uuid4().hex}"
+        conn.execute(
+            """
+            INSERT INTO youtube_videos (
+                channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
+                duration_seconds, view_count, like_count, comment_count, video_url,
+                local_bucket_channel_id, owner_user_id, brand_id, download_status,
+                transcript_status, subtitle_style
+            )
+            VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', 'karaoke')
+            """,
+            [
+                local_channel_id,
+                local_video_id,
+                meta.get("title") or canonical_url,
+                meta.get("published_at"),
+                meta.get("thumbnail_url"),
+                meta.get("duration_seconds"),
+                meta.get("view_count"),
+                meta.get("like_count"),
+                meta.get("comment_count"),
+                canonical_url,
+                local_channel_id,
+                scope["owner_user_id"],
+                scope["brand_id"],
+            ],
+        )
+        video_pk_row = conn.execute(
+            """
+            SELECT id FROM youtube_videos
+            WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [local_video_id, scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_customer_video_ingested",
+        video_id=local_video_id,
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": int(video_pk_row[0]) if video_pk_row else None,
+            "source_youtube_video_id": youtube_video_id,
+        },
+    )
+    flash("Video added to this customer's My Videos. Download it when ready.", "success")
+    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+
+
+@video_shorts_bp.route("/admin/operation/customer-workspace/video/<int:video_pk>/download", methods=["POST"])
+@require_admin
+def admin_operation_download_customer_video(video_pk: int):
+    """Queue a target-owned customer source for the existing downloader worker."""
+    scope = _require_admin_operation_scope()
+    _require_active_customer_workspace(scope)
+    conn = get_db()
+    try:
+        row = _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            "id, video_id, video_url, download_status",
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+        if not row or not str(row[2] or "").strip():
+            abort(404)
+        if str(row[3] or "").strip().lower() != "downloaded":
+            conn.execute(
+                """
+                UPDATE youtube_videos
+                SET download_status = 'pending', downloaded_at = NULL
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                """,
+                [video_pk, scope["owner_user_id"], scope["brand_id"]],
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_customer_download_queued",
+        video_id=str(row[1]),
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+        },
+    )
+    flash("Video queued for download.", "success")
+    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace"))
+
+
+@video_shorts_bp.route("/admin/operation/customer-workspace/video/<int:video_pk>/generate", methods=["GET"])
+@require_admin
+def admin_operation_generate_customer_short(video_pk: int):
+    """Open the shared editor only after proving this is a converted customer scope."""
+    _require_active_customer_workspace(_require_admin_operation_scope())
+    g.vs_admin_operation_workspace_kind = "customer"
+    return generate_short(video_pk)
 
 
 @video_shorts_bp.route("/admin/operation/workspace/video/<int:video_pk>/download", methods=["POST"])
