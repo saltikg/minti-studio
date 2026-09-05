@@ -1646,6 +1646,7 @@ def redeem_onboarding_magic_link(token: str):
     outreach_language = "EN"
     welcome_trial_days = DEFAULT_SHARE_TRIAL_DAYS
     welcome_email_context: tuple[str, str, str] | None = None
+    onboarding_autopilot_lead_id = ""
     try:
         ensure_storage_user_schema(conn)
         ensure_auth_user_schema(conn)
@@ -1660,7 +1661,8 @@ def redeem_onboarding_magic_link(token: str):
                 language,
                 trial_days,
                 expires_at,
-                used_at
+                used_at,
+                share_link_id
             FROM onboarding_magic_links
             WHERE token_hash = ?
             LIMIT 1
@@ -1703,6 +1705,28 @@ def redeem_onboarding_magic_link(token: str):
                 intent="autopilot",
                 tier=15,
             )
+            share_link_id = row[7]
+            if (
+                share_link_id
+                and autopilot_leads_table_ready(conn)
+                and "autopilot_lead_id" in table_columns(conn, "short_share_links")
+            ):
+                lead_row = conn.execute(
+                    """
+                    SELECT l.id, l.brand_id
+                    FROM onboarding_magic_links oml
+                    JOIN short_share_links sl ON CAST(sl.id AS BIGINT) = CAST(oml.share_link_id AS BIGINT)
+                    JOIN autopilot_leads l ON CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
+                    WHERE oml.id = ?
+                      AND CAST(l.user_id AS VARCHAR) = ?
+                      AND lower(coalesce(l.creator_email, '')) = lower(?)
+                    LIMIT 1
+                    """,
+                    [row[0], str(user_id), recipient_email],
+                ).fetchone()
+                if lead_row:
+                    onboarding_autopilot_lead_id = str(lead_row[0] or "").strip()
+                    brand_id = str(lead_row[1] or "").strip() or brand_id
         if needs_password_setup:
             reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=user_id)
             welcome_email_context = (
@@ -1740,6 +1764,10 @@ def redeem_onboarding_magic_link(token: str):
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
     if autopilot_requested:
         _stash_auth_choice(intent="autopilot", tier=15)
+        if onboarding_autopilot_lead_id:
+            session["vs_onboarding_autopilot_lead_id"] = onboarding_autopilot_lead_id
+        else:
+            session.pop("vs_onboarding_autopilot_lead_id", None)
     if needs_password_setup and welcome_email_context:
         welcome_email, welcome_name, set_password_url = welcome_email_context
         try:
@@ -2258,6 +2286,7 @@ def save_service_mode_choice():
     if service_mode not in SERVICE_MODE_VALUES:
         return {"ok": False, "error": "invalid_service_mode"}, 400
     service_tier = 15 if service_mode == "autopilot" else None
+    onboarding_autopilot_lead_id = str(session.get("vs_onboarding_autopilot_lead_id") or "").strip()
     conn = get_db()
     chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
@@ -2277,14 +2306,26 @@ def save_service_mode_choice():
             [service_mode, service_tier, current_user["id"]],
         )
         if service_mode == "autopilot" and autopilot_leads_table_ready(conn):
-            conn.execute(
-                """
-                UPDATE autopilot_leads
-                SET converted_at = COALESCE(converted_at, now())
-                WHERE CAST(user_id AS VARCHAR) = ?
-                """,
-                [current_user["id"]],
-            )
+            if onboarding_autopilot_lead_id:
+                conn.execute(
+                    """
+                    UPDATE autopilot_leads
+                    SET converted_at = COALESCE(converted_at, now())
+                    WHERE CAST(id AS VARCHAR) = ?
+                      AND CAST(user_id AS VARCHAR) = ?
+                    """,
+                    [onboarding_autopilot_lead_id, current_user["id"]],
+                )
+            else:
+                # Direct autopilot arrivals predate lead-bound share links.
+                conn.execute(
+                    """
+                    UPDATE autopilot_leads
+                    SET converted_at = COALESCE(converted_at, now())
+                    WHERE CAST(user_id AS VARCHAR) = ?
+                    """,
+                    [current_user["id"]],
+                )
         conn.commit()
     finally:
         conn.close()
@@ -2293,6 +2334,7 @@ def save_service_mode_choice():
     current_user["pending_service_intent"] = ""
     current_user["pending_service_tier"] = None
     _clear_pending_service_choice()
+    session.pop("vs_onboarding_autopilot_lead_id", None)
     if service_mode == "autopilot":
         user_email = str(current_user.get("email") or current_user.get("username") or "").strip()
         user_name = str(current_user.get("name") or current_user.get("username") or "").strip()

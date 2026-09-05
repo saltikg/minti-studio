@@ -213,6 +213,7 @@ def ensure_short_share_links_schema(conn) -> None:
                 token VARCHAR NOT NULL,
                 recipient_name VARCHAR,
                 recipient_email VARCHAR,
+                autopilot_lead_id VARCHAR,
                 language VARCHAR,
                 trial_days INTEGER,
                 emailed_at TIMESTAMP,
@@ -231,6 +232,7 @@ def ensure_short_share_links_schema(conn) -> None:
         ("token", "VARCHAR"),
         ("recipient_name", "VARCHAR"),
         ("recipient_email", "VARCHAR"),
+        ("autopilot_lead_id", "VARCHAR"),
         ("language", "VARCHAR"),
         ("trial_days", "INTEGER"),
         ("emailed_at", "TIMESTAMP"),
@@ -259,6 +261,15 @@ def ensure_short_share_links_schema(conn) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_short_share_links_generated_video_id
             ON short_share_links(generated_video_id)
+            """
+        )
+    except Exception:
+        pass
+    try:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_short_share_links_autopilot_lead_generated
+            ON short_share_links(autopilot_lead_id, generated_video_id)
             """
         )
     except Exception:

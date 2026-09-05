@@ -3799,13 +3799,15 @@
                                       class="form-control form-control-sm admin-share-link-recipient-name"
                                       value="{{ row.recipient_name or video.creator_name or '' }}"
                                       placeholder="Recipient name"
-                                      aria-label="Recipient name">
+                                      aria-label="Recipient name"
+                                      {% if editor_is_admin_operation %}readonly{% endif %}>
                                     <input
                                       type="email"
                                       class="form-control form-control-sm admin-share-link-recipient-email"
                                       value="{{ row.recipient_email or video.creator_email or '' }}"
                                       placeholder="Recipient email (optional)"
-                                      aria-label="Recipient email">
+                                      aria-label="Recipient email"
+                                      {% if editor_is_admin_operation %}readonly{% endif %}>
                                     <input
                                       type="number"
                                       min="1"
@@ -3818,7 +3820,7 @@
                                       type="button"
                                       class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center justify-content-center gap-1 admin-share-link-btn"
                                       data-generated-video-id="{{ row.generated_video_id }}"
-                                      data-share-url="{{ url_for('video_shorts_bp.create_generated_short_share_link') }}"
+                                      data-share-url="{{ editor_url('admin_operation_create_lead_share_link', video_pk=video.id) if editor_is_admin_operation else url_for('video_shorts_bp.create_generated_short_share_link') }}"
                                       data-parent-video-title="{{ video.title or '' }}"
                                       data-clip-title="{{ row.title or '' }}">
                                       <i class="bi bi-link-45deg" aria-hidden="true"></i>

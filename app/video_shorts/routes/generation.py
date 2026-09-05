@@ -6595,6 +6595,164 @@ def create_generated_short_share_link():
         conn.close()
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/lead-share-link", methods=["POST"])
+@require_admin
+def admin_operation_create_lead_share_link(video_pk: int):
+    """Create one share link bound to the active pre-conversion lead."""
+    scope = request_admin_operation_scope()
+    if not scope:
+        abort(404)
+    lead = _require_active_lead_workspace(scope)
+    payload = request.get_json(silent=True) or request.form or {}
+    generated_video_id = str(payload.get("generated_video_id") or "").strip()
+    trial_days = normalize_trial_days(payload.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS)
+    if not generated_video_id:
+        return jsonify({"success": False, "message": "Generated short id is required."}), 400
+    if not lead["creator_email"]:
+        return jsonify({"success": False, "message": "This lead needs an email before a share link can be created."}), 400
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn) or "autopilot_lead_id" not in table_columns(conn, "short_share_links"):
+            return jsonify({"success": False, "message": "Lead share links are not available until the database migration is applied."}), 503
+
+        generated_row = conn.execute(
+            """
+            SELECT gv.id, gv.clip_filename
+            FROM shorts_generated_videos gv
+            JOIN youtube_videos yv
+              ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+            JOIN autopilot_leads l
+              ON CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+            WHERE CAST(gv.id AS VARCHAR) = ?
+              AND CAST(gv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND yv.id = ?
+              AND CAST(yv.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(yv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND l.first_video_id = yv.id
+              AND (l.channel_id IS NULL OR l.channel_id = yv.channel_id)
+              AND l.converted_at IS NULL
+            LIMIT 1
+            """,
+            [
+                lead["id"],
+                generated_video_id,
+                scope["brand_id"],
+                video_pk,
+                scope["owner_user_id"],
+                scope["brand_id"],
+                scope["owner_user_id"],
+                scope["brand_id"],
+            ],
+        ).fetchone()
+        if not generated_row:
+            abort(404)
+        clip_filename = str(generated_row[1] or "").strip()
+        if not clip_filename:
+            return jsonify({"success": False, "message": "Rendered short is not available for sharing yet."}), 404
+
+        existing_row = conn.execute(
+            """
+            SELECT id, token
+            FROM short_share_links
+            WHERE CAST(generated_video_id AS VARCHAR) = ?
+              AND CAST(autopilot_lead_id AS VARCHAR) = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [str(generated_row[0]), lead["id"]],
+        ).fetchone()
+        if not existing_row:
+            # Bind a legacy unaddressed link for this exact recipient instead of creating a duplicate.
+            existing_row = conn.execute(
+                """
+                SELECT id, token
+                FROM short_share_links
+                WHERE CAST(generated_video_id AS VARCHAR) = ?
+                  AND lower(coalesce(recipient_email, '')) = ?
+                  AND autopilot_lead_id IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                [str(generated_row[0]), lead["creator_email"].lower()],
+            ).fetchone()
+
+        if existing_row:
+            conn.execute(
+                """
+                UPDATE short_share_links
+                SET recipient_name = ?,
+                    recipient_email = ?,
+                    autopilot_lead_id = ?,
+                    trial_days = ?
+                WHERE id = ?
+                """,
+                [lead["creator_name"], lead["creator_email"], lead["id"], trial_days, existing_row[0]],
+            )
+            share_link_id = int(existing_row[0])
+            share_token = str(existing_row[1] or "").strip()
+            reused = True
+        else:
+            share_token = ""
+            for _ in range(5):
+                candidate = secrets.token_urlsafe(16)
+                if conn.execute("SELECT 1 FROM short_share_links WHERE token = ? LIMIT 1", [candidate]).fetchone():
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO short_share_links (
+                        generated_video_id, token, recipient_name, recipient_email,
+                        autopilot_lead_id, trial_days, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, now())
+                    """,
+                    [str(generated_row[0]), candidate, lead["creator_name"], lead["creator_email"], lead["id"], trial_days],
+                )
+                share_token = candidate
+                break
+            if not share_token:
+                return jsonify({"success": False, "message": "Share link could not be created."}), 500
+            share_link_row = conn.execute("SELECT id FROM short_share_links WHERE token = ? LIMIT 1", [share_token]).fetchone()
+            share_link_id = int(share_link_row[0])
+            reused = False
+
+        conn.commit()
+        _ensure_shared_short_poster(clip_filename)
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to create lead share link for generated short %s", generated_video_id)
+        raise
+    finally:
+        conn.close()
+
+    track_event(
+        scope["acting_admin_id"],
+        "admin_operation_lead_share_link_created",
+        video_id=str(video_pk),
+        short_id=str(generated_row[0]),
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "autopilot_lead_id": lead["id"],
+            "share_link_id": share_link_id,
+        },
+    )
+    return jsonify(
+        {
+            "success": True,
+            "share_link_id": share_link_id,
+            "generated_video_id": str(generated_row[0]),
+            "share_token": share_token,
+            "share_url": _share_public_url(share_token),
+            "trial_days": trial_days,
+            "reused": reused,
+        }
+    )
+
+
 def _render_public_short_watch_page(token: str):
     normalized_token = str(token or "").strip()
     if not normalized_token:
