@@ -3252,7 +3252,7 @@
       method="post"
       action="{{ editor_url('transcribe_video', video_pk=video.id) }}"
       data-transcribe-start-url="{{ editor_url('transcribe_video_start', video_pk=video.id) }}"
-      data-transcribe-status-url="{{ editor_url('transcribe_video_status', video_pk=video.id) }}"></form>
+      data-transcribe-status-url="{{ editor_url('admin_operation_editor_transcribe_status', video_pk=video.id) if editor_is_admin_operation else editor_url('transcribe_video_status', video_pk=video.id) }}"></form>
 
 <div class="row g-3 mb-3">
   <div class="col-12">

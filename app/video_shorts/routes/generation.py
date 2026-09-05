@@ -14664,6 +14664,15 @@ def transcribe_video_status(video_pk):
         return jsonify({"ok": False, "status": "failed", "message": str(exc)}), 500
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/admin-operation/transcribe/status", methods=["GET"])
+@require_admin
+def admin_operation_editor_transcribe_status(video_pk: int):
+    """Return target-owned analysis state for a marked admin workspace editor."""
+    if not request_admin_operation_scope():
+        abort(404)
+    return transcribe_video_status(video_pk)
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/transcribe", methods=["POST"])
 def transcribe_video(video_pk):
     cleanup_video_shorts_temp_dir()

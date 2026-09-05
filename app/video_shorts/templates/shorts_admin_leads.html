@@ -22,7 +22,11 @@
     .admin-leads-muted { color:rgba(255,255,255,.58); font-size:.84rem; margin-top:3px; }
     .admin-leads-status { display:inline-flex; padding:5px 9px; border-radius:999px; border:1px solid rgba(45,212,191,.22); background:rgba(45,212,191,.12); color:#8ff3d8; font-size:.82rem; font-weight:600; white-space:nowrap; }
     .admin-leads-status.discovery { border-color:rgba(245,158,11,.28); background:rgba(245,158,11,.12); color:#f8cc7a; }
-    .admin-leads-email-form { display:flex; gap:8px; min-width:245px; }
+    .admin-leads-email-row { display:flex; align-items:center; gap:6px; }
+    .admin-leads-email-edit { width:26px; height:26px; padding:0; display:inline-flex; align-items:center; justify-content:center; color:rgba(255,255,255,.6); border-color:rgba(255,255,255,.18); }
+    .admin-leads-email-edit:hover, .admin-leads-email-edit:focus { color:#8ff3d8; border-color:rgba(45,212,191,.5); }
+    .admin-leads-email-form { display:none; gap:8px; min-width:245px; margin-top:8px; }
+    .admin-leads-email-form.is-open { display:flex; }
     .admin-leads-email-form .form-control { min-width:0; }
     @media (max-width:767.98px) { .admin-leads-provision { grid-template-columns:1fr; } }
   </style>
@@ -46,7 +50,21 @@
         <tbody>
           {% for lead in leads %}
             <tr>
-              <td><strong>{{ lead.creator_name }}</strong><div class="admin-leads-muted">{{ lead.creator_email or 'No email — discovery' }}</div></td>
+              <td>
+                <strong>{{ lead.creator_name }}</strong>
+                {% if not lead.has_owner and not lead.converted %}
+                  <div class="admin-leads-muted admin-leads-email-row">
+                    <span>No email — discovery</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-discovery-email-edit="{{ lead.id }}" aria-label="Add email" title="Add email"><i class="bi bi-pencil" aria-hidden="true"></i></button>
+                  </div>
+                  <form method="post" action="{{ url_for('video_shorts_bp.admin_provision_discovery_lead_email', lead_id=lead.id) }}" class="admin-leads-email-form" data-discovery-email-form="{{ lead.id }}">
+                    <input type="email" name="creator_email" class="form-control form-control-sm" placeholder="creator@example.com" aria-label="Creator email" required>
+                    <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                  </form>
+                {% else %}
+                  <div class="admin-leads-muted">{{ lead.creator_email }}</div>
+                {% endif %}
+              </td>
               <td>{{ lead.channel_name }}<div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div></td>
               <td><div class="admin-leads-video">{% if lead.thumbnail_url %}<img src="{{ lead.thumbnail_url }}" alt="">{% else %}<span class="admin-leads-thumb-placeholder"></span>{% endif %}<span class="admin-leads-video-title">{{ lead.video_title }}</span></div></td>
               <td><span class="admin-leads-status {% if not lead.has_owner %}discovery{% endif %}">{{ lead.lead_type_label }}</span></td>
@@ -62,10 +80,7 @@
                     <button type="submit" class="btn btn-sm btn-primary">Open workspace</button>
                   </form>
                 {% elif not lead.has_owner and not lead.converted %}
-                  <form method="post" action="{{ url_for('video_shorts_bp.admin_provision_discovery_lead_email', lead_id=lead.id) }}" class="admin-leads-email-form">
-                    <input type="email" name="creator_email" class="form-control form-control-sm" placeholder="creator@example.com" aria-label="Creator email" required>
-                    <button type="submit" class="btn btn-sm btn-primary">Add email</button>
-                  </form>
+                  <span class="admin-leads-muted">Discovery only</span>
                 {% else %}
                   <span class="admin-leads-muted">{{ 'Customer' if lead.converted else 'Discovery only' }}</span>
                 {% endif %}
@@ -78,4 +93,19 @@
       </table>
     </div>
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      document.querySelectorAll("[data-discovery-email-edit]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const form = document.querySelector(`[data-discovery-email-form="${button.dataset.discoveryEmailEdit}"]`);
+          if (!form) return;
+          form.classList.add("is-open");
+          form.querySelector("input[name='creator_email']")?.focus();
+        });
+      });
+    });
+  </script>
 {% endblock %}
