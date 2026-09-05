@@ -9426,6 +9426,7 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
             l.converted_at,
             c.channel_name,
             v.title,
+            v.video_id,
             v.thumbnail_url,
             v.download_status,
             COALESCE(
@@ -9451,7 +9452,7 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for row in rows:
         has_owner = bool(str(row[4] or "").strip() and str(row[5] or "").strip())
-        generated_count = int(row[13] or 0)
+        generated_count = int(row[14] or 0)
         items.append(
             {
                 "id": str(row[0] or ""),
@@ -9467,11 +9468,12 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
                 "converted_at_pst": _format_datetime_pst(row[8]),
                 "channel_name": str(row[9] or "").strip() or "YouTube channel",
                 "video_title": str(row[10] or "").strip() or "Source video unavailable",
-                "thumbnail_url": str(row[11] or "").strip(),
-                "download_status": str(row[12] or "").strip().lower() or "pending",
+                "youtube_video_id": str(row[11] or "").strip(),
+                "thumbnail_url": str(row[12] or "").strip(),
+                "download_status": str(row[13] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "converted": bool(row[8]) or str(row[14] or "").strip().lower() == "autopilot",
+                "converted": bool(row[8]) or str(row[15] or "").strip().lower() == "autopilot",
             }
         )
     return items

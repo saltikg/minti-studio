@@ -49,6 +49,7 @@
         <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
           {% for lead in leads %}
+            {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
             <tr>
               <td>
                 <strong>{{ lead.creator_name }}</strong>
@@ -65,8 +66,27 @@
                   <div class="admin-leads-muted">{{ lead.creator_email }}</div>
                 {% endif %}
               </td>
-              <td>{{ lead.channel_name }}<div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div></td>
-              <td><div class="admin-leads-video">{% if lead.thumbnail_url %}<img src="{{ lead.thumbnail_url }}" alt="">{% else %}<span class="admin-leads-thumb-placeholder"></span>{% endif %}<span class="admin-leads-video-title">{{ lead.video_title }}</span></div></td>
+              <td>
+                {% if lead.youtube_channel_id %}
+                  <a href="https://youtube.com/channel/{{ lead.youtube_channel_id }}" target="_blank" rel="noopener" class="text-decoration-none text-white">{{ lead.channel_name }}</a>
+                {% else %}
+                  {{ lead.channel_name }}
+                {% endif %}
+                <div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div>
+              </td>
+              <td>
+                <div class="admin-leads-video">
+                  {% if source_video_is_youtube %}
+                    <a href="https://youtube.com/watch?v={{ lead.youtube_video_id }}" target="_blank" rel="noopener" aria-label="Open source video on YouTube">
+                      {% if lead.thumbnail_url %}<img src="{{ lead.thumbnail_url }}" alt="">{% else %}<span class="admin-leads-thumb-placeholder"></span>{% endif %}
+                    </a>
+                    <a href="https://youtube.com/watch?v={{ lead.youtube_video_id }}" target="_blank" rel="noopener" class="admin-leads-video-title text-decoration-none text-white">{{ lead.video_title }}</a>
+                  {% else %}
+                    {% if lead.thumbnail_url %}<img src="{{ lead.thumbnail_url }}" alt="">{% else %}<span class="admin-leads-thumb-placeholder"></span>{% endif %}
+                    <span class="admin-leads-video-title">{{ lead.video_title }}</span>
+                  {% endif %}
+                </div>
+              </td>
               <td><span class="admin-leads-status {% if not lead.has_owner %}discovery{% endif %}">{{ lead.lead_type_label }}</span></td>
               <td>{{ lead.download_status }}</td>
               <td>{{ lead.generation_label }}</td>
