@@ -347,7 +347,11 @@
         {% endif %}
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
-      {% if not is_autopilot %}
+      {% if is_autopilot %}
+        <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#autopilotUpgradeModal">
+          Grow your plan
+        </button>
+      {% else %}
         <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
           Upgrade / Compare plans
         </button>
@@ -362,6 +366,7 @@
   </div>
 </div>
 
+{% if not is_autopilot %}
 <div class="card shadow-sm usage-panel mb-4">
   <div class="card-body p-4">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
@@ -388,7 +393,47 @@
     </div>
   </div>
 </div>
+{% endif %}
 
+{% if is_autopilot %}
+<div class="modal fade plan-compare-modal" id="autopilotUpgradeModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content vs-modal">
+      <div class="modal-header vs-modal-header">
+        <div>
+          <h5 class="modal-title vs-modal-title">Grow your Autopilot plan</h5>
+          <div class="plan-compare-copy">Choose a tier and we'll contact you to arrange the change.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body vs-modal-body">
+        <div class="row g-3">
+          {% for tier, price in [(15, 20), (30, 40), (45, 60), (60, 80)] %}
+            <div class="col-sm-6">
+              <div class="card shadow-sm h-100 plan-card {% if tier == autopilot_service_tier %}plan-card-selected{% endif %}">
+                <div class="card-body text-center d-flex flex-column gap-3">
+                  <div>
+                    <div class="plan-name mb-1">{{ tier }} Shorts/mo</div>
+                    <div class="plan-price"><div class="price-amount">${{ price }}</div><div class="price-period">per month</div></div>
+                  </div>
+                  {% if tier == autopilot_service_tier %}
+                    <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
+                  {% else %}
+                    <button type="button" class="btn btn-sm vs-btn vs-btn-primary plan-cta" data-autopilot-tier="{{ tier }}">Request this plan</button>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+        <div id="autopilot-upgrade-result" class="vs-text-muted vs-text-small mt-3" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if not is_autopilot %}
 <div class="modal fade plan-compare-modal" id="planCompareModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content vs-modal">
@@ -527,6 +572,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <div class="modal fade" id="storageLimitModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -585,6 +631,7 @@
   </div>
 </div>
 
+{% if not is_autopilot %}
 <div class="modal fade plan-confirm-modal" id="planConfirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
@@ -633,6 +680,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {% include "_billing_embedded_checkout_script.html" %}
 
@@ -685,6 +733,7 @@
     const usageMonthDetails = new Map();
     const isAutopilot = {{ is_autopilot|tojson }};
     const autopilotPlanLabel = {{ autopilot_plan_label|tojson }};
+    const autopilotUpgradeResult = document.getElementById("autopilot-upgrade-result");
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
     const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
     const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
@@ -829,6 +878,24 @@
     const renderUsagePanel = (payload) => {
       if (!usageMeters) return;
       usageMeters.innerHTML = "";
+
+      if (isAutopilot) {
+        const autopilot = payload?.autopilot || {};
+        const tier = Number(autopilot.tier || 15);
+        const count = Number(autopilot.display_count || 0);
+        const kind = String(autopilot.display_kind || "prepared");
+        usageMeters.innerHTML = `
+          <div class="usage-meter usage-state-ok">
+            <div class="usage-meter-label mb-2">This month</div>
+            <div class="usage-meter-value">${count} <span class="vs-text-muted">/ ${tier} Shorts</span></div>
+            <div class="usage-meter-foot"><span class="usage-meter-meta">${kind === "published" ? "Published" : "Prepared"} by Minti</span></div>
+          </div>
+        `;
+        usageBanner?.classList.add("d-none");
+        if (usageResetCopy) usageResetCopy.textContent = formatResetCopy(payload?.period?.reset_at);
+        if (usagePlanName) usagePlanName.textContent = autopilotPlanLabel;
+        return;
+      }
 
       const exportsUsed = Number(payload?.exports?.used || 0);
       const exportsLimit = Number(payload?.exports?.limit || 0);
@@ -1135,6 +1202,29 @@
           getModal(planCompareModalEl)?.hide();
         } else {
           getModal(planModalEl)?.show();
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-autopilot-tier]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const tier = Number(button.dataset.autopilotTier || 0);
+        button.disabled = true;
+        if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = "Sending your request…";
+        try {
+          const response = await fetch("{{ url_for('video_shorts_bp.autopilot_upgrade_request_api') }}", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+            body: JSON.stringify({ tier }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not send your request.");
+          if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = payload.message;
+          button.textContent = "Requested";
+        } catch (error) {
+          button.disabled = false;
+          if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = error.message || "Could not send your request.";
         }
       });
     });

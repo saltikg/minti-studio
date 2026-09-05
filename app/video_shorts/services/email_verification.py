@@ -526,6 +526,43 @@ def send_autopilot_customer_confirmation_email(
     )
 
 
+def send_autopilot_upgrade_request_email(
+    *,
+    user_email: str,
+    current_tier: int,
+    requested_tier: int,
+) -> dict[str, object]:
+    """Notify operations of a manual autopilot tier-change request."""
+    subject = "Autopilot tier upgrade requested"
+    escaped_email = html.escape(user_email)
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+        <p style="margin:0 0 16px;">An autopilot customer requested a tier change.</p>
+        <ul style="padding-left:18px;margin:0;">
+          <li>Email: {escaped_email}</li>
+          <li>Current tier: {int(current_tier)} Shorts/mo</li>
+          <li>Requested tier: {int(requested_tier)} Shorts/mo</li>
+        </ul>
+      </div>
+    </div>
+    """.strip()
+    text_body = (
+        "An autopilot customer requested a tier change.\n\n"
+        f"Email: {user_email}\n"
+        f"Current tier: {int(current_tier)} Shorts/mo\n"
+        f"Requested tier: {int(requested_tier)} Shorts/mo"
+    )
+    return send_resend_email(
+        to_email="info@mintistudio.com",
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        error_message="Autopilot upgrade request email could not be sent.",
+    )
+
+
 def send_membership_activated_emails(*, user_id: str, signup_method: str) -> None:
     from app.video_shorts.services.db import (
         ensure_auth_user_schema,

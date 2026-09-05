@@ -1034,6 +1034,20 @@
         if (!summary || !payload) {
           return;
         }
+        const autopilot = payload?.autopilot;
+        if (autopilot) {
+          const tier = Number(autopilot.tier || 15);
+          const count = Number(autopilot.display_count || 0);
+          const kind = String(autopilot.display_kind || "prepared");
+          summary.textContent = `Autopilot · ${count}/${tier} Shorts ${kind}`;
+          summary.classList.remove("d-none");
+          try {
+            window.sessionStorage.setItem(usageSummaryKey, JSON.stringify(payload));
+          } catch (error) {
+            // Ignore storage failures.
+          }
+          return;
+        }
         const exportsUsed = Number(payload?.exports?.used || 0);
         const exportsLimit = Number(payload?.exports?.limit || 0);
         const storageUsed = Number(payload?.storage?.used_bytes || 0);

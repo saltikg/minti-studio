@@ -10359,6 +10359,10 @@ def shorts_storage_plans():
     conn = get_db()
     ensure_storage_user_schema(conn)
     if request.method == "POST":
+        if is_autopilot:
+            conn.close()
+            flash("Autopilot plan changes are handled by Minti. Send a tier request from this page and we'll contact you.", "info")
+            return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
         plan_id = (request.form.get("plan_id") or "").strip() or None
         normalized_plan_id = (plan_id or "").strip()
         if not is_admin:
@@ -10393,6 +10397,7 @@ def shorts_storage_plans():
         plans=plans,
         is_admin=is_admin,
         is_autopilot=is_autopilot,
+        autopilot_service_tier=autopilot_service_tier,
         autopilot_plan_label=autopilot_plan_label,
         current_plan_label=autopilot_plan_label if is_autopilot else ((current_plan or {}).get("label") or "Free"),
         stripe_ready=stripe_is_configured(),

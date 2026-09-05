@@ -18,6 +18,7 @@ from app.video_shorts.services.db import (
     get_db_readonly,
 )
 from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
+from app.video_shorts.services.email_verification import send_autopilot_upgrade_request_email
 from app.video_shorts.services.render_jobs import get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
@@ -817,9 +818,90 @@ def usage_api():
     if not current_user:
         return jsonify({"error": "unauthorized"}), 401
     try:
-        return jsonify(get_usage_snapshot(current_user["id"]))
+        payload = get_usage_snapshot(current_user["id"])
+        if str(current_user.get("service_mode") or "").strip().lower() == "autopilot":
+            payload["autopilot"] = _autopilot_usage_summary(current_user)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+def _autopilot_usage_summary(current_user: dict) -> dict:
+    """Return customer-facing short progress without exposing self-serve metering."""
+    try:
+        tier = int(current_user.get("service_tier") or 15)
+    except (TypeError, ValueError):
+        tier = 15
+    period_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    generated_count = 0
+    published_count = 0
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'published' THEN 1 ELSE 0 END), 0)
+            FROM shorts_generated_videos
+            WHERE CAST(user_id AS VARCHAR) = ?
+              AND created_at >= ?
+            """,
+            [str(current_user["id"]), period_start],
+        ).fetchone()
+        generated_count = int((row or [0, 0])[0] or 0)
+        published_count = int((row or [0, 0])[1] or 0)
+    finally:
+        conn.close()
+    return {
+        "tier": tier,
+        "prepared_count": generated_count,
+        "published_count": published_count,
+        "display_count": published_count if published_count else generated_count,
+        "display_kind": "published" if published_count else "prepared",
+    }
+
+
+@video_shorts_bp.route("/api/autopilot/upgrade-request", methods=["POST"])
+def autopilot_upgrade_request_api():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"error": "unauthorized"}), 401
+    if str(current_user.get("service_mode") or "").strip().lower() != "autopilot":
+        return jsonify({"error": "not_found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        requested_tier = int(payload.get("tier"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Choose a valid autopilot tier."}), 400
+    if requested_tier not in {15, 30, 45, 60}:
+        return jsonify({"error": "Choose a valid autopilot tier."}), 400
+
+    try:
+        current_tier = int(current_user.get("service_tier") or 15)
+    except (TypeError, ValueError):
+        current_tier = 15
+    user_email = str(current_user.get("email") or current_user.get("username") or "").strip()
+    track_event(
+        current_user["id"],
+        "autopilot_tier_upgrade_requested",
+        metadata={
+            "current_tier": current_tier,
+            "requested_tier": requested_tier,
+            "email": user_email,
+        },
+    )
+    try:
+        send_autopilot_upgrade_request_email(
+            user_email=user_email or "(missing)",
+            current_tier=current_tier,
+            requested_tier=requested_tier,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Could not send autopilot upgrade request notification user_id=%s", current_user["id"]
+        )
+    return jsonify({"ok": True, "message": "Your upgrade request has been sent to Minti."})
 
 
 @video_shorts_bp.route("/api/jobs/<job_id>", methods=["GET"])
