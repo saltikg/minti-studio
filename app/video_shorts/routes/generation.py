@@ -10949,7 +10949,7 @@ def _rehome_customer_sources_to_local_uploads(scope: Dict[str, str]) -> int:
             FROM youtube_videos
             WHERE owner_user_id = ?
               AND brand_id = ?
-              AND lower(coalesce(video_id, '')) NOT LIKE 'local_%'
+              AND lower(coalesce(video_id, '')) NOT LIKE 'local_%%'
             ORDER BY id
             """,
             [scope["owner_user_id"], scope["brand_id"]],
@@ -11134,7 +11134,7 @@ def admin_operation_ingest_customer_video():
             WHERE owner_user_id = ?
               AND brand_id = ?
               AND video_url = ?
-              AND lower(coalesce(video_id, '')) LIKE 'local_%'
+              AND lower(coalesce(video_id, '')) LIKE 'local_%%'
             LIMIT 1
             """,
             [scope["owner_user_id"], scope["brand_id"], canonical_url],
