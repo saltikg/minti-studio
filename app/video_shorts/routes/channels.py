@@ -429,12 +429,18 @@ def my_videos_page():
                 COALESCE(gv.youtube_published_at, gv.published_at),
                 published_video.view_count,
                 published_video.like_count,
-                published_video.comment_count
+                published_video.comment_count,
+                source_video.id,
+                source_video.thumbnail_url
             FROM shorts_generated_videos gv
             LEFT JOIN youtube_videos published_video
               ON published_video.video_id = gv.youtube_video_id
              AND published_video.owner_user_id = gv.user_id
              AND published_video.brand_id = gv.brand_id
+            LEFT JOIN youtube_videos source_video
+              ON source_video.video_id = gv.source_video_id
+             AND source_video.owner_user_id = gv.user_id
+             AND source_video.brand_id = gv.brand_id
             WHERE gv.user_id = ?
               AND gv.brand_id = ?
             ORDER BY gv.created_at DESC
@@ -515,6 +521,8 @@ def my_videos_page():
                 "view_count": int(row[7] or 0),
                 "like_count": int(row[8] or 0),
                 "comment_count": int(row[9] or 0),
+                "source_video_pk": int(row[10]) if row[10] is not None else None,
+                "thumbnail_url": str(row[11] or "").strip(),
             }
         )
 

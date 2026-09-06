@@ -87,6 +87,8 @@
   }
   .mv-short-frame video,
   .mv-short-frame img {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
@@ -94,6 +96,11 @@
   }
   .mv-short-frame video {
     background: #0f172a;
+    opacity: 0;
+    transition: opacity .16s ease;
+  }
+  .mv-short-card.is-previewing .mv-short-frame video {
+    opacity: 1;
   }
   .mv-short-empty {
     display: grid;
@@ -145,6 +152,20 @@
     color: rgba(226, 232, 240, 0.64);
     font-size: 0.72rem;
     line-height: 1.35;
+  }
+  .mv-short-editor-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    color: #5eead4;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .mv-short-editor-link:hover {
+    color: #99f6e4;
+    text-decoration: underline;
   }
   .mv-short-metrics {
     display: flex;
@@ -639,10 +660,13 @@
               <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
               {% if short.poster_url %}
                 <img src="{{ short.poster_url }}" alt="{{ short.title }}">
-              {% elif short.video_url %}
-                <video src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="{{ short.title }}"></video>
+              {% elif short.thumbnail_url %}
+                <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
               {% else %}
                 <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
+              {% endif %}
+              {% if short.video_url %}
+                <video data-preview-src="{{ short.video_url }}" muted playsinline preload="none" aria-label="Preview: {{ short.title }}"></video>
               {% endif %}
               <div class="mv-short-title">{{ short.title }}</div>
             </div>
@@ -651,6 +675,9 @@
                 <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
               {% endif %}
               <div>{{ short.meta_label }}</div>
+              {% if short.source_video_pk %}
+                <a class="mv-short-editor-link" href="{{ url_for('video_shorts_bp.generate_short', video_pk=short.source_video_pk) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor</a>
+              {% endif %}
             </div>
           </article>
         {% endfor %}
@@ -754,11 +781,33 @@
   const coachmarkDismissedSessionKey = `mvCoachmarkDismissed:${coachmarkScope}`;
   const coachmarkStateKey = `mvCoachmarkStage:${coachmarkScope}`;
   const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
+  const canHoverShortPreviews = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   let selectedFile = null;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
   let serviceModeModalOpen = Boolean(window.__vsServiceModeModalOpen);
   let effectiveServiceMode = String(initialServiceMode || '').trim().toLowerCase();
+
+  if (canHoverShortPreviews) {
+    document.querySelectorAll('.mv-short-card').forEach((card) => {
+      const preview = card.querySelector('video[data-preview-src]');
+      if (!preview) return;
+      const resetPreview = () => {
+        preview.pause();
+        try { preview.currentTime = 0; } catch (_) {}
+        preview.removeAttribute('src');
+        preview.load();
+        card.classList.remove('is-previewing');
+      };
+      card.addEventListener('mouseenter', () => {
+        preview.src = preview.dataset.previewSrc || '';
+        if (!preview.src) return;
+        preview.load();
+        preview.play().then(() => card.classList.add('is-previewing')).catch(() => {});
+      });
+      card.addEventListener('mouseleave', resetPreview);
+    });
+  }
 
   const coachmarkSteps = {
     1: {
