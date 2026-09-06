@@ -5,6 +5,7 @@ import os
 import socket
 import time
 import tempfile
+import shutil
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
@@ -39,6 +40,7 @@ from app.video_shorts.services.quick_short_flow import (
     update_session,
 )
 from app.video_shorts.services.render_jobs import (
+    JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
     JOB_TYPE_NORMALIZE_UPLOAD,
@@ -378,6 +380,35 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
     return target
 
 
+def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[Path, bool, bool]:
+    """Download only the source audio into a disposable worker directory."""
+    if yt_dlp is None:
+        raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
+    work_dir = Path(tempfile.mkdtemp(prefix=f"vs_proxy_audio_{video_id}_"))
+    proxy_url = str(os.getenv("INGEST_PROXY_URL") or "").strip()
+    cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
+    opts = {
+        "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
+        "format": "bestaudio/best",
+        "quiet": True,
+        "noprogress": True,
+    }
+    if proxy_url:
+        opts["proxy"] = proxy_url
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([video_url])
+        candidates = sorted(path for path in work_dir.glob(f"{video_id}.*") if path.is_file())
+        if not candidates:
+            raise FileNotFoundError(f"audio download output missing for {video_id}")
+        return candidates[0], bool(proxy_url), bool(cookies_path)
+    except Exception:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+
+
 def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], owner_user_id: Optional[str], duration_seconds: Any) -> None:
     segments_json = generation.json.dumps(segments, ensure_ascii=False)
     conn = get_db()
@@ -443,6 +474,88 @@ def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], own
                 video_id=video_id,
                 video_title=video_title,
             )
+
+
+def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    """Transcribe a lead source through yt-dlp audio only; never write source video to S3."""
+    payload = job.get("payload") or {}
+    video_pk = int(payload.get("video_pk") or 0)
+    video_id = str(payload.get("video_id") or "").strip()
+    video_url = str(payload.get("video_url") or "").strip()
+    owner_user_id = str(job.get("user_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    previous_status = str(payload.get("previous_download_status") or "pending").strip().lower() or "pending"
+    if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
+        raise PermanentRenderJobError("Proxy transcript job is missing its scoped source.")
+
+    audio_path: Optional[Path] = None
+    result: Dict[str, Any] = {
+        "proxy_used": bool(str(os.getenv("INGEST_PROXY_URL") or "").strip()),
+        "cookies_configured": bool(str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()),
+        "audio_size_mb": None,
+        "transcript_status": "processing",
+        "segment_count": 0,
+        "error": None,
+    }
+    try:
+        _set_job_progress(job["id"], stage="downloading_audio", message="Downloading source audio.", status="processing", extra=result)
+        audio_path, proxy_used, cookies_configured = _download_youtube_audio_with_proxy(video_url, video_id)
+        result["proxy_used"] = proxy_used
+        result["cookies_configured"] = cookies_configured
+        result["audio_size_mb"] = round(audio_path.stat().st_size / (1024 * 1024), 2)
+        _set_job_progress(job["id"], stage="transcribing", message="Transcribing source audio.", status="processing", extra=result)
+        transcript_text, segments = _transcribe_with_whisper(audio_path)
+        _save_transcript(
+            video_id,
+            full_text=transcript_text,
+            segments=segments,
+            owner_user_id=owner_user_id,
+            duration_seconds=payload.get("duration_seconds"),
+        )
+        conn = get_db()
+        try:
+            updated = conn.execute(
+                """
+                UPDATE youtube_videos
+                SET download_status = 'audio_only', transcript_status = 'done', last_checked_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                  AND download_status = 'audio_transcribing'
+                """,
+                [video_pk, owner_user_id, brand_id],
+            )
+            if getattr(updated, "rowcount", 1) == 0:
+                raise PermanentRenderJobError("Proxy transcript source scope changed before completion.")
+            conn.commit()
+        finally:
+            conn.close()
+        result.update({"transcript_status": "done", "segment_count": len(segments or [])})
+        return result
+    except Exception as exc:
+        result.update({"transcript_status": "failed", "error": str(exc)})
+        try:
+            conn = get_db()
+            try:
+                conn.execute(
+                    """
+                    UPDATE youtube_videos
+                    SET download_status = ?, last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                      AND download_status = 'audio_transcribing'
+                    """,
+                    [previous_status, video_pk, owner_user_id, brand_id],
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            app.logger.exception("Failed to restore proxy transcript source status video_pk=%s", video_pk)
+        update_job_result(job["id"], result)
+        if isinstance(exc, PermanentRenderJobError):
+            raise
+        raise PermanentRenderJobError(f"Proxy audio transcription failed: {exc}") from exc
+    finally:
+        if audio_path:
+            shutil.rmtree(audio_path.parent, ignore_errors=True)
 
 
 def _suggest_clip(segments: list[dict], duration_seconds: Any) -> Tuple[float, float, str, str]:
@@ -853,6 +966,8 @@ def process_next_job(app, worker_id: str) -> bool:
     try:
         if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
             result = _execute_ingest_youtube_job(app, job)
+        elif job.get("type") == JOB_TYPE_ADMIN_PROXY_TRANSCRIPT:
+            result = _execute_admin_proxy_transcript_job(app, job)
         elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:
             result = _execute_normalize_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_TRANSCRIBE_UPLOAD:

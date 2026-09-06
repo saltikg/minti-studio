@@ -14,6 +14,7 @@
     .lead-workspace-thumb, .lead-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
     .lead-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .lead-workspace-actions { display:flex; gap:8px; align-items:center; }
+    .proxy-transcript-status { color:rgba(255,255,255,.62); font-size:.82rem; max-width:240px; }
     @media (max-width:767.98px) { .lead-workspace-header, .lead-workspace-video { align-items:flex-start; flex-direction:column; grid-template-columns:1fr; } .lead-workspace-actions { width:100%; } }
   </style>
 {% endblock %}
@@ -44,6 +45,16 @@
             <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_lead_video', brand_id=lead.brand_id, video_pk=video.id) }}">
               <button type="submit" class="btn btn-outline-primary">Download</button>
             </form>
+            {% if video.download_status != 'audio_transcribing' %}
+              <form method="post" class="proxy-transcript-form"
+                    action="{{ url_for('video_shorts_bp.admin_operation_proxy_transcribe_lead_video', brand_id=lead.brand_id, video_pk=video.id) }}"
+                    data-status-url-template="{{ url_for('video_shorts_bp.admin_operation_proxy_transcribe_lead_status', brand_id=lead.brand_id, video_pk=video.id, job_id='__JOB_ID__') }}">
+                <button type="submit" class="btn btn-outline-info">Transcribe audio via proxy</button>
+              </form>
+            {% endif %}
+            <div class="proxy-transcript-status" data-proxy-transcript-status>
+              {% if video.download_status == 'audio_only' %}Audio transcript ready. Full video is still required to render.{% elif video.download_status == 'audio_transcribing' %}Audio transcription is in progress.{% endif %}
+            </div>
           {% else %}
             <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_lead_short', brand_id=lead.brand_id, video_pk=video.id) }}">Generate</a>
           {% endif %}
@@ -53,4 +64,61 @@
       <p class="text-muted mb-0">No source videos are scoped to this lead brand.</p>
     {% endfor %}
   </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    document.querySelectorAll('.proxy-transcript-form').forEach((form) => {
+      const article = form.closest('.lead-workspace-video');
+      const statusNode = article.querySelector('[data-proxy-transcript-status]');
+      const button = form.querySelector('button');
+      let timer = null;
+      const poll = (url) => {
+        window.clearTimeout(timer);
+        fetch(url, {headers: {'Accept': 'application/json'}})
+          .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+          .then((data) => {
+            const result = data.result || {};
+            if (data.status === 'done') {
+              statusNode.textContent = `Transcript ready (${result.segment_count || 0} segments). Full video is still required to render.`;
+              button.disabled = false;
+              return;
+            }
+            if (data.status === 'failed' || data.status === 'cancelled') {
+              statusNode.textContent = data.error || result.error || 'Audio transcription failed.';
+              button.disabled = false;
+              return;
+            }
+            statusNode.textContent = result.message || 'Transcribing source audio...';
+            timer = window.setTimeout(() => poll(url), 2000);
+          })
+          .catch(() => {
+            statusNode.textContent = 'Could not read audio transcription status.';
+            button.disabled = false;
+          });
+      };
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        button.disabled = true;
+        statusNode.textContent = 'Queueing audio transcription...';
+        fetch(form.action, {method: 'POST', headers: {'Accept': 'application/json'}})
+          .then((response) => response.json().then((data) => ({response, data})))
+          .then(({response, data}) => {
+            if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
+            if (data.cached) {
+              statusNode.textContent = 'Transcript is already ready. Full video is still required to render.';
+              button.disabled = false;
+              return;
+            }
+            const url = form.dataset.statusUrlTemplate.replace('__JOB_ID__', encodeURIComponent(data.job_id));
+            statusNode.textContent = 'Audio transcription queued...';
+            poll(url);
+          })
+          .catch((error) => {
+            statusNode.textContent = error.message || 'Could not queue audio transcription.';
+            button.disabled = false;
+          });
+      });
+    });
+  </script>
 {% endblock %}

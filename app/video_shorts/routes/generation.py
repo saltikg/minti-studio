@@ -301,6 +301,7 @@ from app.video_shorts.services.render_jobs import (
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
+    enqueue_admin_proxy_transcript_job,
     enqueue_render_job,
     get_job,
     invalidate_done_job_cache,
@@ -11511,6 +11512,76 @@ def admin_operation_download_lead_video(brand_id: str, video_pk: int):
     return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
 
 
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/proxy-transcribe", methods=["POST"])
+@require_admin
+def admin_operation_proxy_transcribe_lead_video(brand_id: str, video_pk: int):
+    """Queue proxy audio transcription without altering the full-video downloader."""
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
+    _require_active_lead_workspace(scope)
+    enqueue_result = enqueue_admin_proxy_transcript_job(
+        owner_user_id=str(scope["owner_user_id"]),
+        brand_id=str(scope["brand_id"]),
+        video_pk=video_pk,
+        acting_admin_id=str(scope["acting_admin_id"]),
+    )
+    kind = str(enqueue_result.get("kind") or "")
+    if kind == "not_found":
+        abort(404)
+    if kind == "not_eligible":
+        return jsonify(success=False, message="A full video is already downloaded for this source."), 409
+    job = enqueue_result.get("job") or {}
+    track_event(
+        str(scope["acting_admin_id"]),
+        "admin_operation_proxy_audio_transcript_queued",
+        video_id=str((job.get("payload") or {}).get("video_id") or ""),
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "video_pk": video_pk,
+            "job_id": job.get("id"),
+            "enqueue_kind": kind,
+        },
+    )
+    if kind == "cached":
+        return jsonify(
+            success=True,
+            cached=True,
+            job_id=job.get("id"),
+            status=job.get("status"),
+            result=job.get("result"),
+        )
+    return jsonify(
+        success=True,
+        job_id=job.get("id"),
+        status=job.get("status"),
+        queue_position=job.get("queue_position"),
+    ), 202
+
+
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/proxy-transcribe/<job_id>/status", methods=["GET"])
+@require_admin
+def admin_operation_proxy_transcribe_lead_status(brand_id: str, video_pk: int, job_id: str):
+    """Expose only the matching target-owned proxy transcript job."""
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
+    _require_active_lead_workspace(scope)
+    job = get_job(job_id, user_id=str(scope["owner_user_id"]))
+    payload = (job or {}).get("payload") or {}
+    if (
+        not job
+        or str(job.get("type") or "") != "admin_proxy_transcript"
+        or str(payload.get("brand_id") or "") != str(scope["brand_id"])
+        or str(payload.get("video_pk") or "") != str(video_pk)
+    ):
+        abort(404)
+    return jsonify({
+        "id": job["id"],
+        "status": job.get("status"),
+        "result": job.get("result") or {},
+        "error": job.get("error"),
+    })
+
+
 @video_shorts_bp.route("/admin/autopilot-leads/provision", methods=["POST"])
 @require_admin
 def admin_provision_autopilot_lead():
@@ -16051,6 +16122,17 @@ def autoclip_video(video_pk):
             redirect_to=url_for("video_shorts_bp.channels_page"),
         )
     vid, video_title, duration_seconds, _, segments = video_info
+    conn_download_guard = get_db_readonly()
+    try:
+        download_row = _fetch_scoped_video_row(conn_download_guard, video_pk, "download_status")
+    finally:
+        conn_download_guard.close()
+    if download_row and str(download_row[0] or "").strip().lower() in {"audio_only", "audio_transcribing"}:
+        return _respond(
+            "This source has an audio-only transcript. Download the full video before rendering a Short.",
+            status=409,
+            category="warning",
+        )
     plan_entries = _load_plan_entries(vid)
     video_crop_ratios = {}
     video_static_visual_key = None

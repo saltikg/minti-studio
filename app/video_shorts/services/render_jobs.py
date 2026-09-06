@@ -20,6 +20,7 @@ JOB_TYPE_RENDER_SHORT = "render_short"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
 JOB_TYPE_NORMALIZE_UPLOAD = "normalize_upload"
 JOB_TYPE_TRANSCRIBE_UPLOAD = "transcribe_upload"
+JOB_TYPE_ADMIN_PROXY_TRANSCRIPT = "admin_proxy_transcript"
 JOB_TYPE_PUBLISH_SHORT = "publish_short"
 JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK = "instagram_comment_webhook"
 JOB_STATUS_QUEUED = "queued"
@@ -578,6 +579,126 @@ def enqueue_worker_job(
         job["queue_position"] = _queue_position(conn, job_id)
         conn.commit()
         return {"kind": "queued", "job": job}
+    finally:
+        conn.close()
+
+
+def enqueue_admin_proxy_transcript_job(
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    acting_admin_id: str,
+) -> Dict[str, Any]:
+    """Atomically reserve a source for proxy audio transcription and enqueue it.
+
+    Reserving the row in the same transaction keeps the local downloader, which
+    only claims ``pending`` rows, from starting a full-video download concurrently.
+    """
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        source_row = conn.execute(
+            """
+            SELECT video_id, video_url, duration_seconds, download_status
+            FROM youtube_videos
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+            """,
+            [video_pk, owner_user_id, brand_id],
+        ).fetchone()
+        if not source_row:
+            conn.commit()
+            return {"kind": "not_found"}
+
+        video_id = str(source_row[0] or "").strip()
+        video_url = str(source_row[1] or "").strip()
+        previous_status = str(source_row[3] or "pending").strip().lower() or "pending"
+        if not video_id or not video_url or previous_status == "downloaded":
+            conn.commit()
+            return {"kind": "not_eligible", "previous_status": previous_status}
+
+        input_hash = build_input_hash(
+            source_id=video_id,
+            start=0,
+            end=0,
+            options={"job_type": JOB_TYPE_ADMIN_PROXY_TRANSCRIPT, "brand_id": str(brand_id)},
+        )
+        existing_done = _find_job_by_hash(
+            conn,
+            user_id=owner_user_id,
+            input_hash=input_hash,
+            statuses=(JOB_STATUS_DONE,),
+        )
+        if existing_done:
+            existing_done["cached"] = True
+            existing_done["queue_position"] = None
+            conn.commit()
+            return {"kind": "cached", "job": existing_done}
+        existing_active = _find_job_by_hash(
+            conn,
+            user_id=owner_user_id,
+            input_hash=input_hash,
+            statuses=ACTIVE_JOB_STATUSES,
+        )
+        if existing_active:
+            existing_active["queue_position"] = _queue_position(conn, existing_active["id"])
+            conn.commit()
+            return {"kind": "existing", "job": existing_active}
+
+        reserved = conn.execute(
+            """
+            UPDATE youtube_videos
+            SET download_status = 'audio_transcribing', last_checked_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND owner_user_id = ?
+              AND brand_id = ?
+              AND lower(coalesce(download_status, 'pending')) != 'downloaded'
+            """,
+            [video_pk, owner_user_id, brand_id],
+        )
+        if getattr(reserved, "rowcount", 1) == 0:
+            conn.commit()
+            return {"kind": "not_eligible", "previous_status": previous_status}
+
+        job_id = str(uuid4())
+        payload = {
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "video_url": video_url,
+            "brand_id": str(brand_id),
+            "owner_user_id": str(owner_user_id),
+            "acting_admin_id": str(acting_admin_id),
+            "duration_seconds": source_row[2],
+            "previous_download_status": previous_status,
+        }
+        conn.execute(
+            f"""
+            INSERT INTO {JOBS_TABLE} (
+                id, user_id, type, status, priority, payload_json, input_hash,
+                attempts, max_attempts, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 0, {_json_value_sql(conn)}, ?, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            [
+                job_id,
+                owner_user_id,
+                JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
+                JOB_STATUS_QUEUED,
+                _serialize_json(payload) or "{}",
+                input_hash,
+            ],
+        )
+        row = conn.execute(f"{_job_select_sql()} WHERE id = ?", [job_id]).fetchone()
+        job = _row_to_job(row) if row else {"id": job_id}
+        job["queue_position"] = _queue_position(conn, job_id)
+        conn.commit()
+        return {"kind": "queued", "job": job}
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
