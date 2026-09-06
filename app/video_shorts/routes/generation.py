@@ -9495,6 +9495,7 @@ def _load_admin_lead_records(
             l.creator_name,
             l.creator_email,
             l.youtube_channel_id,
+            l.subscriber_count,
             l.user_id,
             l.brand_id,
             l.first_video_id,
@@ -9525,29 +9526,30 @@ def _load_admin_lead_records(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        has_owner = bool(str(row[4] or "").strip() and str(row[5] or "").strip())
-        generated_count = int(row[14] or 0)
+        has_owner = bool(str(row[5] or "").strip() and str(row[6] or "").strip())
+        generated_count = int(row[15] or 0)
         items.append(
             {
                 "id": str(row[0] or ""),
                 "creator_name": str(row[1] or "").strip() or "Unknown creator",
                 "creator_email": str(row[2] or "").strip(),
                 "youtube_channel_id": str(row[3] or "").strip(),
-                "owner_user_id": str(row[4] or "").strip(),
-                "brand_id": str(row[5] or "").strip(),
-                "first_video_id": int(row[6]) if row[6] is not None else None,
+                "subscriber_count": int(row[4]) if row[4] is not None else None,
+                "owner_user_id": str(row[5] or "").strip(),
+                "brand_id": str(row[6] or "").strip(),
+                "first_video_id": int(row[7]) if row[7] is not None else None,
                 "has_owner": has_owner,
                 "lead_type_label": "Real lead" if has_owner else "Discovery",
-                "created_at_pst": _format_datetime_pst(row[7]),
-                "converted_at_pst": _format_datetime_pst(row[8]),
-                "channel_name": str(row[9] or "").strip() or "YouTube channel",
-                "video_title": str(row[10] or "").strip() or "Source video unavailable",
-                "youtube_video_id": str(row[11] or "").strip(),
-                "thumbnail_url": str(row[12] or "").strip(),
-                "download_status": str(row[13] or "").strip().lower() or "pending",
+                "created_at_pst": _format_datetime_pst(row[8]),
+                "converted_at_pst": _format_datetime_pst(row[9]),
+                "channel_name": str(row[10] or "").strip() or "YouTube channel",
+                "video_title": str(row[11] or "").strip() or "Source video unavailable",
+                "youtube_video_id": str(row[12] or "").strip(),
+                "thumbnail_url": str(row[13] or "").strip(),
+                "download_status": str(row[14] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "converted": bool(row[8]) or str(row[15] or "").strip().lower() == "autopilot",
+                "converted": bool(row[9]) or str(row[16] or "").strip().lower() == "autopilot",
             }
         )
     return items, total_count

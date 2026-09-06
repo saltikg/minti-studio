@@ -494,6 +494,10 @@ def admin_add_youtube_video():
         message = str(exc or "").strip() or "YouTube API request failed."
         return _json_error("youtube_api_error", message, 502)
     subscriber_info = subscriber_map.get(resolved_channel_key) or {}
+    try:
+        subscriber_count = int(subscriber_info.get("subscriber_count"))
+    except (TypeError, ValueError):
+        subscriber_count = None
     channel_title = (
         subscriber_info.get("channel_title")
         or meta.get("channel_title")
@@ -534,6 +538,7 @@ def admin_add_youtube_video():
             canonical_url=canonical_url,
             creator_name=creator_name,
             creator_email=creator_email,
+            subscriber_count=subscriber_count,
             discovery_owner_user_id=current_brand["owner_user_id"],
             discovery_brand_id=brand_id,
         )
@@ -548,6 +553,7 @@ def admin_add_youtube_video():
             "owner_user_id": lead["owner_user_id"],
             "creator_name": lead["creator_name"],
             "creator_email": lead["creator_email"],
+            "subscriber_count": lead["subscriber_count"],
             "discovery_only": lead["discovery_only"],
             "title": meta.get("title") or canonical_url,
             "already_exists": lead["already_exists"],

@@ -27,6 +27,7 @@ REQUIRED_COLUMNS = {
     "id",
     "creator_email",
     "creator_name",
+    "subscriber_count",
     "youtube_channel_id",
     "channel_id",
     "first_video_id",
@@ -56,6 +57,7 @@ def main() -> int:
                 id VARCHAR PRIMARY KEY,
                 creator_email VARCHAR,
                 creator_name VARCHAR,
+                subscriber_count BIGINT,
                 youtube_channel_id VARCHAR NOT NULL,
                 channel_id BIGINT,
                 first_video_id BIGINT,
@@ -66,6 +68,7 @@ def main() -> int:
             )
             """
         )
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS subscriber_count BIGINT")
         conn.execute(
             f"""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_{TABLE}_youtube_channel

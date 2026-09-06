@@ -37,6 +37,7 @@ def ensure_autopilot_leads_schema(conn) -> None:
             id VARCHAR PRIMARY KEY,
             creator_email VARCHAR,
             creator_name VARCHAR,
+            subscriber_count BIGINT,
             youtube_channel_id VARCHAR NOT NULL,
             channel_id BIGINT,
             first_video_id BIGINT,
@@ -68,6 +69,7 @@ def _require_autopilot_leads_table(conn) -> None:
         "id",
         "creator_email",
         "creator_name",
+        "subscriber_count",
         "youtube_channel_id",
         "channel_id",
         "first_video_id",
@@ -380,6 +382,7 @@ def create_autopilot_lead_from_video(
     canonical_url: str,
     creator_name: str | None,
     creator_email: str | None,
+    subscriber_count: int | None,
     discovery_owner_user_id: str,
     discovery_brand_id: str,
 ) -> Dict[str, Any]:
@@ -394,6 +397,12 @@ def create_autopilot_lead_from_video(
     channel_name = str(meta.get("channel_title") or creator_name or "YouTube Channel").strip() or "YouTube Channel"
     email = _normalize_email(creator_email)
     creator_name = str(creator_name or channel_name).strip() or channel_name
+    try:
+        subscriber_count = int(subscriber_count) if subscriber_count is not None else None
+    except (TypeError, ValueError):
+        subscriber_count = None
+    if subscriber_count is not None and subscriber_count < 0:
+        subscriber_count = None
     if not youtube_channel_id:
         raise ValueError("The creator channel could not be resolved.")
 
@@ -529,24 +538,25 @@ def create_autopilot_lead_from_video(
             UPDATE {AUTOPILOT_LEADS_TABLE}
             SET creator_email = COALESCE(NULLIF(creator_email, ''), ?),
                 creator_name = COALESCE(NULLIF(creator_name, ''), ?),
+                subscriber_count = COALESCE(?, subscriber_count),
                 channel_id = ?, first_video_id = COALESCE(first_video_id, ?),
                 user_id = CASE WHEN ? THEN user_id ELSE ? END,
                 brand_id = CASE WHEN ? THEN brand_id ELSE ? END
             WHERE id = ?
             """,
-            [email or None, creator_name, channel_id, video_pk, is_discovery, owner_user_id, is_discovery, brand_id, lead_id],
+            [email or None, creator_name, subscriber_count, channel_id, video_pk, is_discovery, owner_user_id, is_discovery, brand_id, lead_id],
         )
     else:
         lead_id = str(uuid4())
         conn.execute(
             f"""
             INSERT INTO {AUTOPILOT_LEADS_TABLE} (
-                id, creator_email, creator_name, youtube_channel_id, channel_id,
+                id, creator_email, creator_name, subscriber_count, youtube_channel_id, channel_id,
                 first_video_id, user_id, brand_id, created_at, converted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, now(), NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), NULL)
             """,
-            [lead_id, email or None, creator_name, youtube_channel_id, channel_id, video_pk, None if is_discovery else owner_user_id, None if is_discovery else brand_id],
+            [lead_id, email or None, creator_name, subscriber_count, youtube_channel_id, channel_id, video_pk, None if is_discovery else owner_user_id, None if is_discovery else brand_id],
         )
 
     return {
@@ -558,6 +568,7 @@ def create_autopilot_lead_from_video(
         "owner_user_id": owner_user_id,
         "creator_name": creator_name,
         "creator_email": email or None,
+        "subscriber_count": subscriber_count,
         "discovery_only": is_discovery,
         "already_exists": already_exists,
     }

@@ -72,7 +72,7 @@
     <div class="admin-leads-table-wrap">
       <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
       <table class="admin-leads-table">
-        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>Creator</th><th>Channel</th><th>Subscribers</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
           {% for lead in leads %}
             {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
@@ -100,6 +100,7 @@
                 {% endif %}
                 <div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div>
               </td>
+              <td>{{ "{:,}".format(lead.subscriber_count) if lead.subscriber_count is not none else '—' }}</td>
               <td>
                 <div class="admin-leads-video">
                   {% if source_video_is_youtube %}
@@ -129,7 +130,7 @@
               </td>
             </tr>
           {% else %}
-            <tr><td colspan="9" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
+            <tr><td colspan="10" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>
