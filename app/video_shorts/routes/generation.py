@@ -12432,6 +12432,8 @@ def social_connect():
         request.args.get("autopilot_welcome") == "1"
         and str((current_user or {}).get("service_mode") or "").strip().lower() == "autopilot"
     )
+    if show_autopilot_welcome:
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
     youtube_configured = bool(YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET and YOUTUBE_REDIRECT_URI)
     channel_info = None
     youtube_connected = False

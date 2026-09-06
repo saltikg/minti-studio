@@ -65,6 +65,11 @@
   .mv-hero--autopilot + .mv-recent-shorts {
     padding-top: 14px;
   }
+  .mv-autopilot-start-copy {
+    margin: 8px 0 0;
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.92rem;
+  }
   .mv-recent-shorts {
     padding: 22px 0 0;
   }
@@ -98,6 +103,22 @@
     flex: 0 0 150px;
     min-width: 150px;
     scroll-snap-align: start;
+  }
+  .mv-shorts-empty-state {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: min(440px, 100%);
+    padding: 18px;
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    border-radius: 16px;
+    background: rgba(15, 118, 110, 0.08);
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 0.9rem;
+  }
+  .mv-shorts-empty-state i {
+    color: #5eead4;
+    font-size: 1.2rem;
   }
   .mv-short-frame {
     position: relative;
@@ -650,6 +671,15 @@
         <div class="mv-title">My videos</div>
         <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
       </div>
+      {% if is_new_autopilot_customer %}
+        <div class="mv-autopilot-start-copy">
+          {% if recent_shorts %}
+            We're preparing your Shorts — your first ones are ready below, and more are coming within a day or two.
+          {% else %}
+            Your first Shorts are being prepared — check back soon.
+          {% endif %}
+        </div>
+      {% endif %}
     {% else %}
       <div class="mv-title">My videos</div>
     {% endif %}
@@ -676,14 +706,15 @@
     {% endif %}
   </section>
 
-  {% if is_autopilot and recent_shorts %}
+  {% if is_autopilot %}
     <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
       <div class="mv-recent-shorts-head">
         <h2 id="mv-recent-shorts-heading" class="mv-section-title">Recently created Shorts</h2>
         <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
       </div>
       <div class="mv-shorts-strip">
-        {% for short in recent_shorts %}
+        {% if recent_shorts %}
+          {% for short in recent_shorts %}
           <article class="mv-short-card">
             <div class="mv-short-frame">
               <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
@@ -709,7 +740,10 @@
               {% endif %}
             </div>
           </article>
-        {% endfor %}
+          {% endfor %}
+        {% else %}
+          <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
+        {% endif %}
       </div>
     </section>
   {% endif %}

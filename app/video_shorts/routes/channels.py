@@ -403,9 +403,20 @@ def my_videos_page():
     ).fetchall()
 
     is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    is_new_autopilot_customer = False
     recent_short_rows = []
     prepared_short_count = 0
     if is_autopilot and brand_id:
+        new_autopilot_row = conn.execute(
+            """
+            SELECT 1
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = ?
+              AND service_mode_chosen_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+            """,
+            [current_user["id"]],
+        ).fetchone()
+        is_new_autopilot_customer = bool(new_autopilot_row)
         prepared_short_count_row = conn.execute(
             """
             SELECT COUNT(*)
@@ -531,6 +542,7 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         is_autopilot=is_autopilot,
+        is_new_autopilot_customer=is_new_autopilot_customer,
         recent_shorts=recent_shorts,
         prepared_short_count=prepared_short_count,
         autopilot_service_tier=int(current_user.get("service_tier") or 15),

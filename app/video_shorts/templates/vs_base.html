@@ -1213,7 +1213,7 @@
           const submitButton = document.getElementById("vsServiceModeSubmit");
           const errorEl = document.getElementById("vsServiceModeError");
           const isAutopilotWelcome = {{ "true" if vs_service_mode and vs_service_mode.variant == "autopilot_welcome" else "false" }};
-          const autopilotWelcomeCompleteUrl = "{{ url_for('video_shorts_bp.social_connect', autopilot_welcome=1) }}";
+          const autopilotWelcomeCompleteUrl = "{{ url_for('video_shorts_bp.my_videos_page') }}";
           let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or 'autopilot')|tojson }};
           const emitServiceModeModalState = (open, mode) => {
             window.__vsServiceModeModalOpen = Boolean(open);
