@@ -124,10 +124,10 @@ def _assert_no_existing_lead(conn, *, youtube_channel_id: str, email: str | None
         SELECT id
         FROM autopilot_leads
         WHERE youtube_channel_id = ?
-           OR (? IS NOT NULL AND lower(coalesce(creator_email, '')) = lower(?))
+           OR lower(coalesce(creator_email, '')) = lower(coalesce(?, ''))
         LIMIT 1
         """,
-        [youtube_channel_id, email, email],
+        [youtube_channel_id, email],
     ).fetchone()
     if row:
         raise RuntimeError(f"An autopilot lead already exists for this creator ({row[0]}).")
