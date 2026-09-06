@@ -44,7 +44,13 @@
     padding-bottom: 20px;
   }
   .mv-hero--autopilot .mv-title {
-    margin-bottom: 2px;
+    margin-bottom: 0;
+  }
+  .mv-autopilot-title-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px 14px;
   }
   .mv-hero--autopilot .mv-autopilot-notice {
     margin: 0;
@@ -52,7 +58,9 @@
     border: 0;
     border-radius: 0;
     background: transparent;
-    color: rgba(226, 232, 240, 0.66);
+    color: #5eead4;
+    font-size: 1rem;
+    font-weight: 600;
   }
   .mv-hero--autopilot + .mv-recent-shorts {
     padding-top: 14px;
@@ -637,9 +645,13 @@
   data-coachmark-scope="{{ coachmark_user_scope }}"
 >
   <section class="mv-hero{% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %} mv-hero--autopilot{% endif %}">
-    <div class="mv-title">My videos</div>
     {% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %}
-      <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
+      <div class="mv-autopilot-title-row">
+        <div class="mv-title">My videos</div>
+        <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
+      </div>
+    {% else %}
+      <div class="mv-title">My videos</div>
     {% endif %}
     <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
     {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
