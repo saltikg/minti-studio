@@ -119,16 +119,22 @@ def _was_emailed(conn, video_id: str) -> bool:
 
 
 def _existing_lead_id(conn, *, youtube_channel_id: str, email: str | None) -> str | None:
-    row = conn.execute(
-        """
-        SELECT id
-        FROM autopilot_leads
-        WHERE youtube_channel_id = ?
-           OR lower(coalesce(creator_email, '')) = lower(coalesce(?, ''))
-        LIMIT 1
-        """,
-        [youtube_channel_id, email],
-    ).fetchone()
+    if email:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM autopilot_leads
+            WHERE youtube_channel_id = ?
+               OR lower(coalesce(creator_email, '')) = lower(?)
+            LIMIT 1
+            """,
+            [youtube_channel_id, email],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM autopilot_leads WHERE youtube_channel_id = ? LIMIT 1",
+            [youtube_channel_id],
+        ).fetchone()
     return str(row[0]) if row else None
 
 
