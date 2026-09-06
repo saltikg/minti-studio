@@ -174,6 +174,22 @@
       <div class="vs-admin-sidebar-title">Admin</div>
       <nav class="vs-admin-nav" aria-label="Admin navigation">
         <a
+          href="{{ url_for('video_shorts_bp.admin_leads') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/leads') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Leads</span>
+          </span>
+        </a>
+        <a
+          href="{{ url_for('video_shorts_bp.admin_share_links') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/share-links') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Share links</span>
+          </span>
+        </a>
+        <a
           href="{{ url_for('video_shorts_bp.admin_users') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>
@@ -182,6 +198,14 @@
             {% if vs_admin_new_users_badge_count|int > 0 %}
               <span class="vs-admin-nav-badge">{{ vs_admin_new_users_badge_count }}</span>
             {% endif %}
+          </span>
+        </a>
+        <a
+          href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Autopilot customers</span>
           </span>
         </a>
         <a
@@ -198,30 +222,6 @@
           <span aria-hidden="true">●</span>
           <span class="vs-admin-nav-label">
             <span>Errors</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_share_links') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/share-links') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Share links</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_leads') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/leads') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Leads</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Autopilot customers</span>
           </span>
         </a>
       </nav>
