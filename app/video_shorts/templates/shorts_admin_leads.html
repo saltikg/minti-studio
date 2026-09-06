@@ -8,9 +8,12 @@
 
 {% block extra_styles %}
   <style>
-    .admin-leads-provision { display:grid; grid-template-columns:minmax(240px,1.4fr) minmax(180px,1fr) minmax(180px,1fr) auto; gap:12px; align-items:end; margin-bottom:24px; padding:16px; border:1px solid rgba(45,212,191,.2); border-radius:12px; background:rgba(45,212,191,.05); }
-    .admin-leads-provision-title { grid-column:1 / -1; margin:0; color:rgba(255,255,255,.92); font-size:.95rem; font-weight:700; }
-    .admin-leads-provision-help { grid-column:1 / -1; margin:-6px 0 0; color:rgba(255,255,255,.6); font-size:.84rem; }
+    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(240px,1fr) minmax(150px,.45fr) minmax(170px,.5fr) auto; gap:12px; align-items:end; margin-bottom:20px; }
+    .admin-leads-toolbar-actions { display:flex; gap:8px; align-items:end; }
+    .admin-leads-modal .modal-content { border:1px solid rgba(45,212,191,.24); border-radius:18px; background:#0b131c; color:rgba(255,255,255,.92); }
+    .admin-leads-modal .modal-header, .admin-leads-modal .modal-footer { border-color:rgba(255,255,255,.09); }
+    .admin-leads-modal-form { display:grid; grid-template-columns:minmax(240px,1.4fr) minmax(180px,1fr) minmax(180px,1fr); gap:14px; }
+    .admin-leads-modal-help { grid-column:1 / -1; margin:0 0 4px; color:rgba(255,255,255,.62); font-size:.88rem; }
     .admin-leads-table-wrap { overflow-x:auto; }
     .admin-leads-table { width:100%; color:rgba(255,255,255,.92); }
     .admin-leads-table th, .admin-leads-table td { padding:14px 16px; vertical-align:top; border-bottom:1px solid rgba(255,255,255,.08); }
@@ -28,23 +31,45 @@
     .admin-leads-email-form { display:none; gap:8px; min-width:245px; margin-top:8px; }
     .admin-leads-email-form.is-open { display:flex; }
     .admin-leads-email-form .form-control { min-width:0; }
-    @media (max-width:767.98px) { .admin-leads-provision { grid-template-columns:1fr; } }
+    .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
+    .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
+    @media (max-width:991.98px) { .admin-leads-toolbar { grid-template-columns:1fr 1fr; } }
+    @media (max-width:767.98px) { .admin-leads-toolbar, .admin-leads-modal-form { grid-template-columns:1fr; } }
   </style>
 {% endblock %}
 
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
-    <form method="post" action="{{ url_for('video_shorts_bp.admin_add_youtube_video') }}" class="admin-leads-provision">
-      <p class="admin-leads-provision-title">Add outreach lead</p>
-      <p class="admin-leads-provision-help">With an email, this creates the inactive customer owner, their brand, lead record, and first source video together. Without one, it stays an uncontactable discovery lead.</p>
-      <div><label for="admin-lead-url" class="form-label mb-2">YouTube video URL</label><input id="admin-lead-url" type="url" name="url" class="form-control" placeholder="https://youtube.com/watch?v=..." required></div>
-      <div><label for="admin-lead-name" class="form-label mb-2">Creator name</label><input id="admin-lead-name" type="text" name="creator_name" class="form-control" placeholder="Optional override"></div>
-      <div><label for="admin-lead-email" class="form-label mb-2">Creator email</label><input id="admin-lead-email" type="email" name="creator_email" class="form-control" placeholder="Optional; required to provision"></div>
-      <button type="submit" class="btn btn-primary">Add lead</button>
+    <form method="get" class="admin-leads-toolbar">
+      <div>
+        <label for="admin-leads-search" class="form-label mb-2">Search</label>
+        <input id="admin-leads-search" type="search" name="q" value="{{ search_query }}" class="form-control" placeholder="Channel or creator">
+      </div>
+      <div>
+        <label for="admin-leads-type" class="form-label mb-2">Lead type</label>
+        <select id="admin-leads-type" name="lead_type" class="form-select">
+          <option value="" {% if not lead_type %}selected{% endif %}>All types</option>
+          <option value="real" {% if lead_type == 'real' %}selected{% endif %}>Real lead</option>
+          <option value="discovery" {% if lead_type == 'discovery' %}selected{% endif %}>Discovery</option>
+        </select>
+      </div>
+      <div>
+        <label for="admin-leads-download" class="form-label mb-2">Download</label>
+        <select id="admin-leads-download" name="download" class="form-select">
+          <option value="" {% if not download_filter %}selected{% endif %}>All statuses</option>
+          <option value="downloaded" {% if download_filter == 'downloaded' %}selected{% endif %}>Downloaded</option>
+          <option value="not_downloaded" {% if download_filter == 'not_downloaded' %}selected{% endif %}>Not downloaded</option>
+        </select>
+      </div>
+      <div class="admin-leads-toolbar-actions">
+        <button type="submit" class="btn btn-primary">Apply</button>
+        <a href="{{ url_for('video_shorts_bp.admin_leads') }}" class="btn btn-outline-light">Reset</a>
+        <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#addLeadModal">Add lead</button>
+      </div>
     </form>
 
     <div class="admin-leads-table-wrap">
-      <div class="text-muted small mb-3">{{ leads|length }} lead{{ '' if leads|length == 1 else 's' }} · newest first</div>
+      <div class="text-muted small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
       <table class="admin-leads-table">
         <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
@@ -108,7 +133,44 @@
         </tbody>
       </table>
     </div>
+
+    <div class="admin-leads-pagination">
+      <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
+      <div class="admin-leads-pagination-links">
+        {% if page > 1 %}
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
+    </div>
   </section>
+
+  <div class="modal fade admin-leads-modal" id="addLeadModal" tabindex="-1" aria-labelledby="addLeadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <form method="post" action="{{ url_for('video_shorts_bp.admin_add_youtube_video') }}">
+          <div class="modal-header">
+            <h2 class="modal-title fs-5" id="addLeadModalLabel">Add outreach lead</h2>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="admin-leads-modal-form">
+              <p class="admin-leads-modal-help">With an email, this creates the inactive customer owner, their brand, lead record, and first source video together. Without one, it stays an uncontactable discovery lead.</p>
+              <div><label for="admin-lead-url" class="form-label mb-2">YouTube video URL</label><input id="admin-lead-url" type="url" name="url" class="form-control" placeholder="https://youtube.com/watch?v=..." required></div>
+              <div><label for="admin-lead-name" class="form-label mb-2">Creator name</label><input id="admin-lead-name" type="text" name="creator_name" class="form-control" placeholder="Optional override"></div>
+              <div><label for="admin-lead-email" class="form-label mb-2">Creator email</label><input id="admin-lead-email" type="email" name="creator_email" class="form-control" placeholder="Optional; required to provision"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add lead</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}

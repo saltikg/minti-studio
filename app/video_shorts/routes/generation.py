@@ -9433,13 +9433,63 @@ def _load_admin_autopilot_leads(
     return items, total_count
 
 
-def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
+def _load_admin_lead_records(
+    conn,
+    *,
+    lead_type: str = "",
+    download_filter: str = "",
+    search_query: str = "",
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], int]:
     """Load pre-conversion outreach leads without mixing them into customer operations."""
     if not autopilot_leads_table_ready(conn):
-        return []
+        return [], 0
+
+    normalized_lead_type = (lead_type or "").strip().lower()
+    if normalized_lead_type not in {"real", "discovery"}:
+        normalized_lead_type = ""
+    normalized_download_filter = (download_filter or "").strip().lower()
+    if normalized_download_filter not in {"downloaded", "not_downloaded"}:
+        normalized_download_filter = ""
+    normalized_search = (search_query or "").strip().lower()
+
+    where_parts: List[str] = []
+    params: List[Any] = []
+    owner_scope = "(l.user_id IS NOT NULL AND l.brand_id IS NOT NULL)"
+    if normalized_lead_type == "real":
+        where_parts.append(owner_scope)
+    elif normalized_lead_type == "discovery":
+        where_parts.append(f"NOT {owner_scope}")
+    if normalized_download_filter == "downloaded":
+        where_parts.append("lower(coalesce(v.download_status, '')) IN ('downloaded', 'downloaded_deleted')")
+    elif normalized_download_filter == "not_downloaded":
+        where_parts.append("lower(coalesce(v.download_status, '')) NOT IN ('downloaded', 'downloaded_deleted')")
+    if normalized_search:
+        where_parts.append(
+            "("
+            "lower(coalesce(l.creator_name, '')) LIKE ? "
+            "OR lower(coalesce(l.creator_email, '')) LIKE ? "
+            "OR lower(coalesce(c.channel_name, '')) LIKE ? "
+            "OR lower(coalesce(l.youtube_channel_id, '')) LIKE ?"
+            ")"
+        )
+        search_value = f"%{normalized_search}%"
+        params.extend([search_value, search_value, search_value, search_value])
+    where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
+
+    from_sql = """
+        FROM autopilot_leads l
+        LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+        LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+        LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+    """
+    total_count = int(
+        conn.execute(f"SELECT COUNT(*) {from_sql} WHERE {where_sql}", params).fetchone()[0] or 0
+    )
 
     rows = conn.execute(
-        """
+        f"""
         SELECT
             l.id,
             l.creator_name,
@@ -9465,14 +9515,12 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
                 0
             ) AS generated_short_count,
             COALESCE(u.service_mode, '') AS service_mode
-        FROM autopilot_leads l
-        LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
-        LEFT JOIN youtube_videos v ON v.id = l.first_video_id
-        LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+        {from_sql}
+        WHERE {where_sql}
         ORDER BY l.created_at DESC, l.id DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        [limit],
+        [*params, limit, offset],
     ).fetchall()
 
     items: List[Dict[str, Any]] = []
@@ -9502,7 +9550,7 @@ def _load_admin_lead_records(conn, *, limit: int = 200) -> List[Dict[str, Any]]:
                 "converted": bool(row[8]) or str(row[15] or "").strip().lower() == "autopilot",
             }
         )
-    return items
+    return items, total_count
 
 
 def _provision_autopilot_placeholder(
@@ -10838,15 +10886,48 @@ def admin_autopilot_leads():
 @video_shorts_bp.route("/admin/leads", methods=["GET"])
 @require_admin
 def admin_leads():
+    lead_type = (request.args.get("lead_type") or "").strip().lower()
+    download_filter = (request.args.get("download") or "").strip().lower()
+    search_query = (request.args.get("q") or "").strip()
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 50
     conn = get_db_readonly()
     try:
-        leads = _load_admin_lead_records(conn)
+        _items, total_leads = _load_admin_lead_records(
+            conn,
+            lead_type=lead_type,
+            download_filter=download_filter,
+            search_query=search_query,
+            limit=1,
+            offset=0,
+        )
+        total_pages = max(1, (total_leads + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        leads, total_leads = _load_admin_lead_records(
+            conn,
+            lead_type=lead_type,
+            download_filter=download_filter,
+            search_query=search_query,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
     finally:
         conn.close()
     return render_template(
         "shorts_admin_leads.html",
         admin_title="Leads",
         leads=leads,
+        lead_type=lead_type if lead_type in {"real", "discovery"} else "",
+        download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
+        search_query=search_query,
+        page=page,
+        per_page=per_page,
+        total_leads=total_leads,
+        total_pages=total_pages,
     )
 
 
