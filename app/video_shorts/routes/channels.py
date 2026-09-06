@@ -217,6 +217,36 @@ def _cached_preview_frame_url(video_id: str) -> str:
     return url_for("video_shorts_bp.static", filename=str(rel_preview))
 
 
+def _short_card_media_urls(filename: str) -> tuple[str, str]:
+    """Resolve the generated short and its optional poster for My Videos cards."""
+    safe_name = Path(str(filename or "")).name
+    if not safe_name:
+        return "", ""
+    storage = get_media_storage()
+    local_storage = get_media_storage("local")
+    short_key = f"shorts/{safe_name}"
+    local_short_path = SHORTS_DIR / safe_name
+    video_url = ""
+    try:
+        resolved = storage.resolve_local_or_s3(short_key, fallback_local_paths=[local_short_path])
+        if resolved.exists and resolved.public_url:
+            video_url = resolved.public_url
+    except Exception:
+        current_app.logger.warning("Could not resolve generated short card media filename=%s", safe_name)
+    if not video_url and local_short_path.exists():
+        video_url = local_storage.public_url(short_key)
+
+    poster_key = f"shorts/posters/{safe_name}.jpg"
+    poster_url = ""
+    try:
+        poster = storage.resolve_local_or_s3(poster_key)
+        if poster.exists and poster.public_url:
+            poster_url = poster.public_url
+    except Exception:
+        current_app.logger.warning("Could not resolve generated short poster filename=%s", safe_name)
+    return video_url, poster_url
+
+
 def _delete_source_video_media(video_id: str) -> None:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
@@ -371,6 +401,47 @@ def my_videos_page():
         """,
         params,
     ).fetchall()
+
+    is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    recent_short_rows = []
+    prepared_short_count = 0
+    if is_autopilot and brand_id:
+        prepared_short_count_row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM shorts_generated_videos gv
+            WHERE gv.user_id = ?
+              AND gv.brand_id = ?
+              AND gv.created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+            """,
+            [current_user["id"], brand_id],
+        ).fetchone()
+        prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
+        recent_short_rows = conn.execute(
+            """
+            SELECT
+                gv.clip_filename,
+                gv.generated_title,
+                gv.generation_status,
+                gv.publish_status,
+                gv.youtube_video_id,
+                gv.created_at,
+                COALESCE(gv.youtube_published_at, gv.published_at),
+                published_video.view_count,
+                published_video.like_count,
+                published_video.comment_count
+            FROM shorts_generated_videos gv
+            LEFT JOIN youtube_videos published_video
+              ON published_video.video_id = gv.youtube_video_id
+             AND published_video.owner_user_id = gv.user_id
+             AND published_video.brand_id = gv.brand_id
+            WHERE gv.user_id = ?
+              AND gv.brand_id = ?
+            ORDER BY gv.created_at DESC
+            LIMIT 20
+            """,
+            [current_user["id"], brand_id],
+        ).fetchall()
     conn.close()
 
     videos = []
@@ -403,10 +474,58 @@ def my_videos_page():
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
         videos.append(item)
 
+    recent_shorts = []
+    for row in recent_short_rows:
+        clip_filename = str(row[0] or "").strip()
+        generation_status = str(row[2] or "").strip().lower()
+        publish_status = str(row[3] or "").strip().lower()
+        youtube_video_id = str(row[4] or "").strip()
+        published_at = row[6]
+        is_published = publish_status == "published" or bool(published_at)
+        is_preparing = not is_published and (
+            not clip_filename or generation_status in {"queued", "pending", "processing", "rendering"}
+        )
+        if is_published:
+            status_label, status_class = "Published", "published"
+        elif is_preparing:
+            status_label, status_class = "Preparing", "preparing"
+        else:
+            status_label, status_class = "Ready", "ready"
+
+        metric_values = [row[7], row[8], row[9]]
+        has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
+        video_url, poster_url = _short_card_media_urls(clip_filename)
+        if has_real_metrics:
+            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
+        elif is_preparing:
+            meta_label = "Being prepared..."
+        elif is_published:
+            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
+        else:
+            meta_label = "Prepared " + _format_video_timestamp(row[5], user_tz)
+        recent_shorts.append(
+            {
+                "title": str(row[1] or "").strip() or "Untitled short",
+                "status_label": status_label,
+                "status_class": status_class,
+                "video_url": video_url,
+                "poster_url": poster_url,
+                "meta_label": meta_label,
+                "has_real_metrics": has_real_metrics,
+                "view_count": int(row[7] or 0),
+                "like_count": int(row[8] or 0),
+                "comment_count": int(row[9] or 0),
+            }
+        )
+
     return render_template(
         "my_videos.html",
         videos=videos,
         video_count=len(videos),
+        is_autopilot=is_autopilot,
+        recent_shorts=recent_shorts,
+        prepared_short_count=prepared_short_count,
+        autopilot_service_tier=int(current_user.get("service_tier") or 15),
         search_query=search_query,
         coachmark_user_scope=f"user-{current_user['id']}",
         hide_my_videos_coachmark=load_user_bool_preference(

@@ -39,6 +39,128 @@
     color: rgba(226, 232, 240, 0.88);
     font-size: 0.92rem;
   }
+  .mv-recent-shorts {
+    padding: 22px 0 0;
+  }
+  .mv-recent-shorts-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+  .mv-section-title {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+  .mv-section-note {
+    color: rgba(226, 232, 240, 0.62);
+    font-size: 0.84rem;
+    white-space: nowrap;
+  }
+  .mv-shorts-strip {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+    padding: 2px 2px 10px;
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+  }
+  .mv-short-card {
+    flex: 0 0 150px;
+    min-width: 150px;
+    scroll-snap-align: start;
+  }
+  .mv-short-frame {
+    position: relative;
+    width: 150px;
+    height: 266px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 25% 16%, rgba(45, 212, 191, 0.26), transparent 42%),
+      linear-gradient(160deg, #1e293b, #0b1220 68%);
+    box-shadow: 0 12px 28px rgba(2, 6, 23, 0.26);
+  }
+  .mv-short-frame video,
+  .mv-short-frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mv-short-frame video {
+    background: #0f172a;
+  }
+  .mv-short-empty {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+    color: rgba(226, 232, 240, 0.65);
+    font-size: 1.4rem;
+  }
+  .mv-short-badge {
+    position: absolute;
+    z-index: 1;
+    top: 9px;
+    left: 9px;
+    padding: 4px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .mv-short-badge.ready,
+  .mv-short-badge.published {
+    border-color: rgba(74, 222, 128, 0.36);
+    background: rgba(20, 83, 45, 0.88);
+    color: #bbf7d0;
+  }
+  .mv-short-badge.preparing {
+    border-color: rgba(45, 212, 191, 0.38);
+    background: rgba(15, 118, 110, 0.88);
+    color: #ccfbf1;
+  }
+  .mv-short-title {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    padding: 28px 10px 10px;
+    background: linear-gradient(transparent, rgba(2, 6, 23, 0.95));
+    color: #f8fafc;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .mv-short-meta {
+    min-height: 34px;
+    padding: 8px 2px 0;
+    color: rgba(226, 232, 240, 0.64);
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .mv-short-metrics {
+    display: flex;
+    gap: 7px;
+    color: rgba(226, 232, 240, 0.8);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .mv-source-heading {
+    margin: 0 0 -8px;
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
   .mv-upload-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -459,6 +581,11 @@
     .mv-coachmark {
       width: min(320px, calc(100vw - 28px));
     }
+    .mv-recent-shorts-head {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 3px;
+    }
   }
 </style>
 {% endblock %}
@@ -499,6 +626,38 @@
     {% endif %}
   </section>
 
+  {% if is_autopilot and recent_shorts %}
+    <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
+      <div class="mv-recent-shorts-head">
+        <h2 id="mv-recent-shorts-heading" class="mv-section-title">Recently created Shorts</h2>
+        <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
+      </div>
+      <div class="mv-shorts-strip">
+        {% for short in recent_shorts %}
+          <article class="mv-short-card">
+            <div class="mv-short-frame">
+              <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
+              {% if short.poster_url %}
+                <img src="{{ short.poster_url }}" alt="{{ short.title }}">
+              {% elif short.video_url %}
+                <video src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="{{ short.title }}"></video>
+              {% else %}
+                <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
+              {% endif %}
+              <div class="mv-short-title">{{ short.title }}</div>
+            </div>
+            <div class="mv-short-meta">
+              {% if short.has_real_metrics %}
+                <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
+              {% endif %}
+              <div>{{ short.meta_label }}</div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
   <form method="get" class="mv-toolbar">
     <div class="mv-toolbar-grid">
       <div class="mv-field">
@@ -509,6 +668,9 @@
     </div>
   </form>
 
+  {% if is_autopilot %}
+    <h2 class="mv-source-heading">Source videos</h2>
+  {% endif %}
   <section class="mv-list">
     <div class="mv-list-head">
       <div>Video</div>
