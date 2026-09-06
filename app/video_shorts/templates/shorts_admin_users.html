@@ -1,9 +1,9 @@
 {% extends "vs_admin_base.html" %}
 
-{% block title %}Users{% endblock %}
-{% block admin_heading %}Users{% endblock %}
+{% block title %}Customers{% endblock %}
+{% block admin_heading %}Customers{% endblock %}
 {% block admin_subheading %}
-  <p>Search by email and open a user's internal account detail.</p>
+  <p>Real self-serve and autopilot customer accounts. Pre-conversion leads are listed separately.</p>
 {% endblock %}
 
 {% block extra_styles %}
@@ -68,6 +68,11 @@
       background: rgba(248, 113, 113, 0.14);
       color: #fca5a5;
       border: 1px solid rgba(248, 113, 113, 0.22);
+    }
+    .admin-users-pill.is-autopilot {
+      background: rgba(45, 212, 191, 0.14);
+      color: #99f6e4;
+      border: 1px solid rgba(45, 212, 191, 0.22);
     }
     .admin-users-meta {
       color: rgba(255, 255, 255, 0.62);
@@ -151,7 +156,7 @@
       </div>
     </form>
 
-    <div class="admin-users-meta mb-3">{{ total_users }} users</div>
+    <div class="admin-users-meta mb-3">{{ total_users }} customers</div>
 
     {% if server_stats %}
       <div class="admin-server-stats">
@@ -171,7 +176,8 @@
       <table class="admin-users-table">
         <thead>
           <tr>
-            <th>User</th>
+            <th>Customer</th>
+            <th>Mode</th>
             <th>Stage</th>
             <th>Plan</th>
             <th>Subscription</th>
@@ -189,6 +195,7 @@
                 <div class="fw-semibold">{{ user.name }}</div>
                 <div class="admin-users-email">{{ user.email or user.username or user.id }}</div>
               </td>
+              <td><span class="admin-users-pill {% if user.service_mode == 'autopilot' %}is-autopilot{% endif %}">{{ user.service_mode_label }}</span></td>
               <td>
                 {% set stage_label_map = {
                   'no_upload': 'No upload',
@@ -230,7 +237,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="8" class="admin-users-meta text-center py-4">No users matched your search.</td>
+              <td colspan="10" class="admin-users-meta text-center py-4">No customers matched your search.</td>
             </tr>
           {% endfor %}
         </tbody>

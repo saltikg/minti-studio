@@ -8463,6 +8463,17 @@ def _load_storage_plan_admin_users(
         placeholders = ", ".join(["?"] * len(normalized_plan_ids))
         where_clauses.append(f"u.plan_id IN ({placeholders})")
         params.extend(normalized_plan_ids)
+    if autopilot_leads_table_ready(conn):
+        where_clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM autopilot_leads l
+                WHERE CAST(l.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                  AND l.converted_at IS NULL
+            )
+            """
+        )
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     usage_rows = {
@@ -8550,6 +8561,17 @@ def _load_admin_auth_users(
         )
         search_value = f"%{normalized_search}%"
         params.extend([search_value, search_value, search_value, search_value])
+    if autopilot_leads_table_ready(conn):
+        where_clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM autopilot_leads l
+                WHERE CAST(l.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                  AND l.converted_at IS NULL
+            )
+            """
+        )
 
     youtube_columns = table_columns(conn, "youtube_videos")
     generated_columns = table_columns(conn, "shorts_generated_videos")
@@ -8669,7 +8691,8 @@ def _load_admin_auth_users(
           COALESCE(gv.failed_count, 0),
           COALESCE(gv.overdue_count, 0),
           yv.last_video_activity,
-          gv.last_short_activity
+          gv.last_short_activity,
+          COALESCE(u.service_mode, '')
         FROM shorts_users u
         {youtube_join}
         {generated_join}
@@ -8726,6 +8749,7 @@ def _load_admin_auth_users(
             stage = "scheduled"
         else:
             stage = "not_published"
+        is_autopilot = str(row[15] or "").strip().lower() == "autopilot"
         users.append(
             {
                 "id": user_id,
@@ -8742,6 +8766,8 @@ def _load_admin_auth_users(
                 "failed_count": failed_count,
                 "overdue_count": overdue_count,
                 "stage": stage,
+                "service_mode": "autopilot" if is_autopilot else "self",
+                "service_mode_label": "Autopilot" if is_autopilot else "Self-serve",
                 "last_activity_at": last_activity,
                 "cost_summary": cost_lookup.get(user_id) or {
                     "display_monthly_avg_usd": "—",
