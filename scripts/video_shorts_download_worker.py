@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -112,6 +113,46 @@ def _upload_to_s3(local_path: Path, video_id: str) -> str:
     return key
 
 
+def _prepare_editor_preview(local_path: Path, task: dict) -> None:
+    """Build the preview cache before the source is marked downloaded."""
+    try:
+        repo_root = Path(__file__).resolve().parents[1]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from dotenv import load_dotenv
+
+        load_dotenv(repo_root / ".env")
+        from app import create_app
+        from app.video_shorts.routes import generation
+
+        video_pk = int(task["id"])
+        video_id = str(task["video_id"])
+        owner_user_id = str(task.get("owner_user_id") or "").strip()
+        if not owner_user_id:
+            raise RuntimeError("download task is missing owner_user_id")
+
+        app = create_app()
+        with app.app_context():
+            preview_path = generation._ensure_preview_frame(
+                video_id,
+                local_path,
+                task.get("duration_seconds"),
+            )
+            if not preview_path:
+                raise RuntimeError("preview frame was not created")
+            generation._maybe_apply_face_centered_default_crop(
+                video_row_id=video_pk,
+                video_id=video_id,
+                owner_user_id=owner_user_id,
+                brand_id=task.get("brand_id"),
+                preview_metadata=generation._load_preview_frame_metadata(video_id),
+            )
+        print(f"  editor preview ready: {preview_path}")
+    except Exception as exc:
+        # Preview preparation is optional; the source must still become available.
+        print(f"  editor preview skipped: {exc}")
+
+
 def process_task(task: dict) -> None:
     db_id = task["id"]
     video_id = task["video_id"]
@@ -127,6 +168,7 @@ def process_task(task: dict) -> None:
         s3_key = _upload_to_s3(local_path, video_id)
         if s3_key:
             print(f"  uploaded to s3: {s3_key}")
+        _prepare_editor_preview(local_path, task)
         send_status(db_id, "downloaded")
         print("  status sent: downloaded")
 

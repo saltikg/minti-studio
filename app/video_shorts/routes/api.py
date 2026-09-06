@@ -1189,6 +1189,9 @@ def download_tasks():
           yv.video_id,
           yv.title AS video_title,
           yv.video_url,
+          yv.owner_user_id,
+          yv.brand_id,
+          yv.duration_seconds,
           yv.download_status
         FROM youtube_videos yv
         LEFT JOIN youtube_channels ch ON ch.channel_id = yv.channel_id
