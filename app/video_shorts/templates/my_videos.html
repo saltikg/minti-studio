@@ -39,6 +39,24 @@
     color: rgba(226, 232, 240, 0.88);
     font-size: 0.92rem;
   }
+  .mv-hero--autopilot {
+    padding-top: 20px;
+    padding-bottom: 20px;
+  }
+  .mv-hero--autopilot .mv-title {
+    margin-bottom: 2px;
+  }
+  .mv-hero--autopilot .mv-autopilot-notice {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.66);
+  }
+  .mv-hero--autopilot + .mv-recent-shorts {
+    padding-top: 14px;
+  }
   .mv-recent-shorts {
     padding: 22px 0 0;
   }
@@ -618,9 +636,8 @@
   data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}"
   data-coachmark-scope="{{ coachmark_user_scope }}"
 >
-  <section class="mv-hero">
+  <section class="mv-hero{% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %} mv-hero--autopilot{% endif %}">
     <div class="mv-title">My videos</div>
-    <div class="mv-subtitle">Upload a video, then turn it into shorts.</div>
     {% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %}
       <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
     {% endif %}
