@@ -33,6 +33,7 @@
     .admin-leads-email-form .form-control { min-width:0; }
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
+    .admin-leads-summary { color:rgba(255,255,255,.92); }
     @media (max-width:991.98px) { .admin-leads-toolbar { grid-template-columns:1fr 1fr; } }
     @media (max-width:767.98px) { .admin-leads-toolbar, .admin-leads-modal-form { grid-template-columns:1fr; } }
   </style>
@@ -69,7 +70,7 @@
     </form>
 
     <div class="admin-leads-table-wrap">
-      <div class="text-muted small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
+      <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
       <table class="admin-leads-table">
         <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
