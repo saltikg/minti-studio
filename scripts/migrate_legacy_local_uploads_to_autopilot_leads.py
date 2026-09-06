@@ -118,7 +118,7 @@ def _was_emailed(conn, video_id: str) -> bool:
     return bool(row)
 
 
-def _assert_no_existing_lead(conn, *, youtube_channel_id: str, email: str | None) -> None:
+def _existing_lead_id(conn, *, youtube_channel_id: str, email: str | None) -> str | None:
     row = conn.execute(
         """
         SELECT id
@@ -129,8 +129,7 @@ def _assert_no_existing_lead(conn, *, youtube_channel_id: str, email: str | None
         """,
         [youtube_channel_id, email],
     ).fetchone()
-    if row:
-        raise RuntimeError(f"An autopilot lead already exists for this creator ({row[0]}).")
+    return str(row[0]) if row else None
 
 
 def _assert_no_existing_account(conn, email: str) -> None:
@@ -196,8 +195,9 @@ def _insert_local_source_copy(conn, *, source, owner_user_id: str, brand_id: str
     return int(row[0])
 
 
-def _preflight(conn) -> list[tuple[str, int, object, str | None]]:
+def _preflight(conn) -> tuple[list[tuple[str, int, object, str | None]], list[tuple[str, int, str]]]:
     prepared = []
+    skipped = []
     for video_pk, (expected_name, expected_email) in REAL_LEADS.items():
         source = _source_row(conn, video_pk)
         name = str(source[10] or "").strip()
@@ -206,7 +206,9 @@ def _preflight(conn) -> list[tuple[str, int, object, str | None]]:
             raise RuntimeError(f"Source {video_pk} no longer matches its approved creator identity.")
         if _was_emailed(conn, str(source[1] or "")):
             raise RuntimeError(f"Source {video_pk} was emailed after dry run; refusing migration.")
-        _assert_no_existing_lead(conn, youtube_channel_id=str(source[14]), email=email)
+        existing_lead_id = _existing_lead_id(conn, youtube_channel_id=str(source[14]), email=email)
+        if existing_lead_id:
+            raise RuntimeError(f"An autopilot lead already exists for real lead source {video_pk} ({existing_lead_id}).")
         _assert_no_existing_account(conn, email)
         prepared.append(("real", video_pk, source, email))
 
@@ -218,9 +220,12 @@ def _preflight(conn) -> list[tuple[str, int, object, str | None]]:
             raise RuntimeError(f"Source {video_pk} no longer matches its approved discovery identity.")
         if _was_emailed(conn, str(source[1] or "")):
             raise RuntimeError(f"Discovery source {video_pk} was emailed after dry run; refusing migration.")
-        _assert_no_existing_lead(conn, youtube_channel_id=str(source[14]), email=None)
+        existing_lead_id = _existing_lead_id(conn, youtube_channel_id=str(source[14]), email=None)
+        if existing_lead_id:
+            skipped.append(("discovery", video_pk, existing_lead_id))
+            continue
         prepared.append(("discovery", video_pk, source, None))
-    return prepared
+    return prepared, skipped
 
 
 def main() -> int:
@@ -231,8 +236,12 @@ def main() -> int:
     conn = get_db()
     try:
         _require_autopilot_leads_table(conn)
-        prepared = _preflight(conn)
-        print(f"PREFLIGHT_OK real={len(REAL_LEADS)} discovery={len(DISCOVERY_LEADS)}")
+        prepared, skipped = _preflight(conn)
+        prepared_real = sum(1 for kind, *_rest in prepared if kind == "real")
+        prepared_discovery = sum(1 for kind, *_rest in prepared if kind == "discovery")
+        print(f"PREFLIGHT_OK real={prepared_real} discovery={prepared_discovery} skipped_existing={len(skipped)}")
+        for kind, source_pk, lead_id in skipped:
+            print(f"SKIPPED_EXISTING kind={kind} source_pk={source_pk} lead_id={lead_id}")
         if not args.apply:
             return 0
 
@@ -292,7 +301,7 @@ def main() -> int:
         conn.commit()
         for kind, creator_name, lead_id, video_pk in created:
             print(f"CREATED kind={kind} creator={creator_name} lead_id={lead_id} first_video_pk={video_pk}")
-        print(f"APPLIED real={len(REAL_LEADS)} discovery={len(DISCOVERY_LEADS)}")
+        print(f"APPLIED real={prepared_real} discovery={prepared_discovery} skipped_existing={len(skipped)}")
         return 0
     except Exception:
         conn.rollback()
