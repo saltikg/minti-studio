@@ -9433,12 +9433,33 @@ def _load_admin_autopilot_leads(
     return items, total_count
 
 
+def _parse_nonnegative_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _format_compact_number(value: Any) -> str:
+    parsed = _parse_nonnegative_int(value)
+    if parsed is None:
+        return "—"
+    for divisor, suffix in ((1_000_000, "M"), (1_000, "K")):
+        if parsed >= divisor:
+            compact = f"{parsed / divisor:.1f}".rstrip("0").rstrip(".")
+            return f"{compact}{suffix}"
+    return str(parsed)
+
+
 def _load_admin_lead_records(
     conn,
     *,
     lead_type: str = "",
     download_filter: str = "",
     search_query: str = "",
+    subscriber_min: int | None = None,
+    subscriber_max: int | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
@@ -9465,6 +9486,12 @@ def _load_admin_lead_records(
         where_parts.append("lower(coalesce(v.download_status, '')) IN ('downloaded', 'downloaded_deleted')")
     elif normalized_download_filter == "not_downloaded":
         where_parts.append("lower(coalesce(v.download_status, '')) NOT IN ('downloaded', 'downloaded_deleted')")
+    if subscriber_min is not None:
+        where_parts.append("l.subscriber_count >= ?")
+        params.append(subscriber_min)
+    if subscriber_max is not None:
+        where_parts.append("l.subscriber_count <= ?")
+        params.append(subscriber_max)
     if normalized_search:
         where_parts.append(
             "("
@@ -9535,6 +9562,7 @@ def _load_admin_lead_records(
                 "creator_email": str(row[2] or "").strip(),
                 "youtube_channel_id": str(row[3] or "").strip(),
                 "subscriber_count": int(row[4]) if row[4] is not None else None,
+                "subscriber_label": _format_compact_number(row[4]),
                 "owner_user_id": str(row[5] or "").strip(),
                 "brand_id": str(row[6] or "").strip(),
                 "first_video_id": int(row[7]) if row[7] is not None else None,
@@ -10891,6 +10919,8 @@ def admin_leads():
     lead_type = (request.args.get("lead_type") or "").strip().lower()
     download_filter = (request.args.get("download") or "").strip().lower()
     search_query = (request.args.get("q") or "").strip()
+    subscriber_min = _parse_nonnegative_int(request.args.get("subscriber_min"))
+    subscriber_max = _parse_nonnegative_int(request.args.get("subscriber_max"))
     try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
@@ -10904,6 +10934,8 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             search_query=search_query,
+            subscriber_min=subscriber_min,
+            subscriber_max=subscriber_max,
             limit=1,
             offset=0,
         )
@@ -10914,6 +10946,8 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             search_query=search_query,
+            subscriber_min=subscriber_min,
+            subscriber_max=subscriber_max,
             limit=per_page,
             offset=(page - 1) * per_page,
         )
@@ -10926,6 +10960,8 @@ def admin_leads():
         lead_type=lead_type if lead_type in {"real", "discovery"} else "",
         download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
         search_query=search_query,
+        subscriber_min=subscriber_min,
+        subscriber_max=subscriber_max,
         page=page,
         per_page=per_page,
         total_leads=total_leads,

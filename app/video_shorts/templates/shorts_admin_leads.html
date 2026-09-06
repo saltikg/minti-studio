@@ -8,7 +8,7 @@
 
 {% block extra_styles %}
   <style>
-    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(240px,1fr) minmax(150px,.45fr) minmax(170px,.5fr) auto; gap:12px; align-items:end; margin-bottom:20px; }
+    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(4,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
     .admin-leads-toolbar-actions { display:flex; gap:8px; align-items:end; }
     .admin-leads-modal .modal-content { border:1px solid rgba(45,212,191,.24); border-radius:18px; background:#0b131c; color:rgba(255,255,255,.92); }
     .admin-leads-modal .modal-header, .admin-leads-modal .modal-footer { border-color:rgba(255,255,255,.09); }
@@ -62,6 +62,14 @@
           <option value="not_downloaded" {% if download_filter == 'not_downloaded' %}selected{% endif %}>Not downloaded</option>
         </select>
       </div>
+      <div>
+        <label for="admin-leads-subscriber-min" class="form-label mb-2">Subscribers</label>
+        <input id="admin-leads-subscriber-min" type="number" name="subscriber_min" value="{{ subscriber_min if subscriber_min is not none else '' }}" min="0" step="1" class="form-control" placeholder="Min">
+      </div>
+      <div>
+        <label for="admin-leads-subscriber-max" class="form-label mb-2">&nbsp;</label>
+        <input id="admin-leads-subscriber-max" type="number" name="subscriber_max" value="{{ subscriber_max if subscriber_max is not none else '' }}" min="0" step="1" class="form-control" placeholder="Max">
+      </div>
       <div class="admin-leads-toolbar-actions">
         <button type="submit" class="btn btn-primary">Apply</button>
         <a href="{{ url_for('video_shorts_bp.admin_leads') }}" class="btn btn-outline-light">Reset</a>
@@ -72,7 +80,7 @@
     <div class="admin-leads-table-wrap">
       <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
       <table class="admin-leads-table">
-        <thead><tr><th>Creator</th><th>Channel</th><th>Subscribers</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Converted</th><th>Created</th><th></th></tr></thead>
         <tbody>
           {% for lead in leads %}
             {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
@@ -98,9 +106,8 @@
                 {% else %}
                   {{ lead.channel_name }}
                 {% endif %}
-                <div class="admin-leads-muted">{{ lead.youtube_channel_id or '—' }}</div>
+                <div class="admin-leads-muted">Subscribers: {{ lead.subscriber_label }}</div>
               </td>
-              <td>{{ "{:,}".format(lead.subscriber_count) if lead.subscriber_count is not none else '—' }}</td>
               <td>
                 <div class="admin-leads-video">
                   {% if source_video_is_youtube %}
@@ -130,7 +137,7 @@
               </td>
             </tr>
           {% else %}
-            <tr><td colspan="10" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
+            <tr><td colspan="9" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -140,10 +147,10 @@
       <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-leads-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>
