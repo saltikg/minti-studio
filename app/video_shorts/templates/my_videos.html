@@ -8,7 +8,6 @@
     gap: 20px;
     position: relative;
   }
-  .mv-hero,
   .mv-toolbar,
   .mv-list {
     background: rgba(9, 17, 30, 0.92);
@@ -17,14 +16,33 @@
     box-shadow: 0 24px 48px rgba(2, 6, 23, 0.3);
   }
   .mv-hero {
-    padding: 28px;
+    padding: 0;
     position: relative;
   }
+  .mv-page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .mv-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .mv-title-row .vs-app-logo-dot {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    font-size: 0.68rem;
+  }
   .mv-title {
-    font-size: 1.8rem;
-    font-weight: 700;
+    font-size: 1.75rem;
+    font-weight: 600;
     color: #f8fafc;
-    margin-bottom: 4px;
+    margin: 0;
   }
   .mv-subtitle {
     color: rgba(226, 232, 240, 0.76);
@@ -688,9 +706,9 @@
     }
   }
   .mv-add-panel {
-    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 21, 0.98));
-    border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 18px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
   }
   .mv-tabs {
@@ -738,7 +756,7 @@
   }
   .mv-pane {
     display: none;
-    padding: 26px 28px 28px;
+    padding: 24px 0 0;
   }
   .mv-pane.is-active {
     display: block;
@@ -781,11 +799,6 @@
     background: #3ee0cc;
     color: #04211d;
   }
-  .mv-upload-hint {
-    margin: 14px 2px 0;
-    color: rgba(226, 232, 240, 0.62);
-    font-size: 0.84rem;
-  }
   .mv-dropzone {
     min-height: 150px;
     align-items: center;
@@ -807,8 +820,9 @@
     padding: 0 2px;
   }
   .mv-toolbar-grid {
-    grid-template-columns: minmax(240px, 1fr) auto;
+    grid-template-columns: minmax(240px, 1fr) auto auto;
     align-items: center;
+    gap: 16px;
   }
   .mv-field label {
     display: none;
@@ -840,7 +854,7 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    margin: 0 2px 14px;
+    margin: 0;
   }
   .mv-chip-label {
     margin-right: 2px;
@@ -1016,7 +1030,10 @@
   <section class="mv-hero{% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %} mv-hero--autopilot{% endif %}">
     {% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %}
       <div class="mv-autopilot-title-row">
-        <div class="mv-title">My videos</div>
+        <div class="mv-title-row">
+          <span class="vs-app-logo-dot" aria-hidden="true">●</span>
+          <div class="mv-title">My videos</div>
+        </div>
         <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
       </div>
       {% if is_new_autopilot_customer %}
@@ -1029,7 +1046,12 @@
         </div>
       {% endif %}
     {% else %}
-      <div class="mv-title">My videos</div>
+      <div class="mv-page-header">
+        <div class="mv-title-row">
+          <span class="vs-app-logo-dot" aria-hidden="true">●</span>
+          <div class="mv-title">My videos</div>
+        </div>
+      </div>
     {% endif %}
     <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
     {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
@@ -1046,7 +1068,6 @@
             </div>
             <button type="button" id="mv-youtube-submit" class="mv-youtube-submit">Add video</button>
           </div>
-          <p class="mv-upload-hint">Processing starts right away. Longer videos take more time — we'll keep working, and it'll be ready when you come back.</p>
         </div>
         <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
           <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
@@ -1119,21 +1140,21 @@
           <label for="mv-search">Search</label>
           <input id="mv-search" type="search" class="form-control" name="q" value="{{ search_query or '' }}" placeholder="Search your videos…" />
         </div>
+        <div class="mv-filters" aria-label="Video filters">
+          <span class="mv-chip-label">Status</span>
+          <button type="button" class="mv-filter-chip" data-status-filter="ready">Ready</button>
+          <button type="button" class="mv-filter-chip" data-status-filter="processing">Processing</button>
+          <span class="mv-chip-label ms-2">Added</span>
+          <select id="mv-added-filter" class="mv-added-filter" aria-label="Filter by added date">
+            <option value="any">Any time</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </div>
         <div class="mv-count">{{ video_count }} video{% if video_count != 1 %}s{% endif %}</div>
       </div>
     </form>
-    <div class="mv-filters" aria-label="Video filters">
-      <span class="mv-chip-label">Status</span>
-      <button type="button" class="mv-filter-chip" data-status-filter="ready">Ready</button>
-      <button type="button" class="mv-filter-chip" data-status-filter="processing">Processing</button>
-      <span class="mv-chip-label ms-2">Added</span>
-      <select id="mv-added-filter" class="mv-added-filter" aria-label="Filter by added date">
-        <option value="any">Any time</option>
-        <option value="7">Last 7 days</option>
-        <option value="30">Last 30 days</option>
-        <option value="90">Last 90 days</option>
-      </select>
-    </div>
 
   {% if is_autopilot %}
     <h2 class="mv-source-heading">Source videos</h2>
