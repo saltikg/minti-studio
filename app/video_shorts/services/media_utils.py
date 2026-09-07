@@ -316,7 +316,7 @@ def _resolve_ffprobe() -> str:
     raise FileNotFoundError("ffprobe not found")
 
 
-def _probe_video_stream_info(path: Path, *, log: logging.Logger | None = None) -> dict[str, float | int | None]:
+def _probe_video_stream_info(path: Path, *, log: logging.Logger | None = None) -> dict[str, float | int | str | None]:
     active_logger = log or logger
     result = run_media_subprocess(
         [
@@ -326,7 +326,7 @@ def _probe_video_stream_info(path: Path, *, log: logging.Logger | None = None) -
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height:format=duration",
+            "stream=codec_name,width,height:format=duration",
             "-of",
             "json",
             str(path),
@@ -349,7 +349,9 @@ def _probe_video_stream_info(path: Path, *, log: logging.Logger | None = None) -
         duration_seconds = None
     width = stream.get("width")
     height = stream.get("height")
+    codec_name = str(stream.get("codec_name") or "").strip().lower()
     return {
+        "codec_name": codec_name or None,
         "width": int(width) if width is not None else None,
         "height": int(height) if height is not None else None,
         "duration_seconds": duration_seconds,
@@ -621,28 +623,49 @@ def normalize_s3_source_video_for_upload(
 
     width = int(probe.get("width") or 0)
     height = int(probe.get("height") or 0)
+    codec_name = str(probe.get("codec_name") or "").strip().lower()
     duration_seconds = probe.get("duration_seconds")
     try:
         source_size_bytes = int(local_path.stat().st_size)
     except Exception:
         source_size_bytes = 0
     active_logger.info(
-        "normalize probe video_id=%s key=%s path=%s width=%s height=%s size_bytes=%s duration_seconds=%s",
+        "normalize probe video_id=%s key=%s path=%s codec=%s width=%s height=%s size_bytes=%s duration_seconds=%s",
         video_id,
         source_key,
         local_path,
+        codec_name or "unknown",
         width or 0,
         height or 0,
         source_size_bytes,
         duration_seconds,
     )
 
-    if height <= 720:
+    if codec_name == "h264":
         active_logger.info(
-            "normalize transcode skip video_id=%s key=%s path=%s width=%s height=%s reason=height_lte_720",
+            "normalize transcode skip video_id=%s key=%s path=%s codec=%s width=%s height=%s reason=h264_copy_or_streamable",
             video_id,
             source_key,
             local_path,
+            codec_name,
+            width or 0,
+            height or 0,
+        )
+        return remux_s3_source_video_if_needed(
+            video_id,
+            source_key,
+            local_path,
+            target_key=upload_key,
+            log=active_logger,
+        )
+
+    if height <= 720:
+        active_logger.info(
+            "normalize transcode skip video_id=%s key=%s path=%s codec=%s width=%s height=%s reason=height_lte_720",
+            video_id,
+            source_key,
+            local_path,
+            codec_name or "unknown",
             width or 0,
             height or 0,
         )
@@ -656,10 +679,11 @@ def normalize_s3_source_video_for_upload(
 
     if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
         active_logger.warning(
-            "normalize transcode fallback video_id=%s key=%s path=%s width=%s height=%s reason=unsupported_suffix",
+            "normalize transcode fallback video_id=%s key=%s path=%s codec=%s width=%s height=%s reason=unsupported_suffix",
             video_id,
             source_key,
             local_path,
+            codec_name or "unknown",
             width or 0,
             height or 0,
         )
