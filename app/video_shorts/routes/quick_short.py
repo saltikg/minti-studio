@@ -61,7 +61,7 @@ from app.video_shorts.services.storage import (
     public_url_for_stored_media,
 )
 from app.video_shorts.services.user_events import track_event
-from app.video_shorts.services.youtube_oauth import has_refresh_token, resolve_stored_token_owner_brand
+from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
@@ -1104,11 +1104,7 @@ def quick_short_ingest_youtube():
     conn = get_db()
     try:
         ensure_brand_schema(conn)
-        channel_owner_id, channel_brand_id = resolve_stored_token_owner_brand(current_user.get("id"), brand_id)
-        channel_id = _get_or_create_channel(conn, meta, channel_owner_id, channel_brand_id)
-        if not channel_id:
-            return _json_error("Channel details could not be prepared.")
-        video_pk = _upsert_video(conn, meta, channel_id, current_user.get("id"), brand_id)
+        video_pk = _upsert_video(conn, meta, None, current_user.get("id"), brand_id)
         conn.commit()
         track_event(
             current_user["id"],

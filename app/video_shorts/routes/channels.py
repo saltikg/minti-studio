@@ -344,10 +344,8 @@ def my_videos_page():
     params = [current_user["id"]]
     where_clauses = [
         "v.owner_user_id = ?",
-        "lower(coalesce(c.channel_url, '')) = 'local://uploads'",
-        "lower(coalesce(v.video_id, '')) LIKE ?",
+        "(v.channel_id IS NULL OR lower(coalesce(c.channel_url, '')) = 'local://uploads')",
     ]
-    params.append("local_%")
     if brand_id:
         where_clauses.append("v.brand_id = ?")
         params.append(brand_id)
@@ -367,7 +365,7 @@ def my_videos_page():
             v.duration_seconds,
             v.download_status,
             v.transcript_status,
-            COALESCE(v.downloaded_at, v.published_at) AS added_at,
+            COALESCE(v.downloaded_at, v.created_at, v.published_at) AS added_at,
             c.channel_name,
             COALESCE(g.short_count, 0) AS short_count,
             EXISTS (
@@ -397,7 +395,7 @@ def my_videos_page():
             GROUP BY source_video_id
         ) g ON CAST(g.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
         WHERE {where_sql}
-        ORDER BY COALESCE(v.downloaded_at, v.published_at) DESC NULLS LAST, v.id DESC
+        ORDER BY COALESCE(v.downloaded_at, v.created_at, v.published_at) DESC NULLS LAST, v.id DESC
         """,
         params,
     ).fetchall()
