@@ -367,7 +367,10 @@ def my_videos_page():
             v.transcript_status,
             COALESCE(v.downloaded_at, v.created_at, v.published_at) AS added_at,
             c.channel_name,
+            v.channel_id,
+            c.channel_url,
             COALESCE(g.short_count, 0) AS short_count,
+            COALESCE(g.published_count, 0) AS published_count,
             EXISTS (
                 SELECT 1
                 FROM youtube_transcripts t
@@ -390,7 +393,18 @@ def my_videos_page():
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
-            SELECT source_video_id, COUNT(*) AS short_count
+            SELECT
+                source_video_id,
+                COUNT(*) AS short_count,
+                SUM(
+                    CASE
+                        WHEN lower(coalesce(publish_status, '')) = 'published'
+                          OR NULLIF(CAST(youtube_published_at AS VARCHAR), '') IS NOT NULL
+                          OR NULLIF(CAST(published_at AS VARCHAR), '') IS NOT NULL
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS published_count
             FROM shorts_generated_videos
             GROUP BY source_video_id
         ) g ON CAST(g.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
@@ -471,21 +485,33 @@ def my_videos_page():
             "download_status": row[5] or "",
             "transcript_status": row[6] or "",
             "added_at_label": _format_video_timestamp(row[7], user_tz),
+            "added_at_iso": row[7].isoformat() if row[7] and hasattr(row[7], "isoformat") else (str(row[7]) if row[7] else ""),
             "channel_name": row[8] or "",
-            "short_count": int(row[9] or 0),
+            "channel_id": row[9],
+            "channel_url": row[10] or "",
+            "short_count": int(row[11] or 0),
+            "published_count": int(row[12] or 0),
         }
+        item["source_kind"] = "url" if row[9] is None else "upload"
+        item["source_label"] = "From URL" if item["source_kind"] == "url" else "Uploaded"
         # A completed transcript is the durable editing signal. Older rows can
         # retain a failed download status after a successful transcript/clip run.
         item["is_ready_for_editing"] = (
-            str(item["transcript_status"]).strip().lower() == "done" and bool(row[10])
+            str(item["transcript_status"]).strip().lower() == "done" and bool(row[13])
         )
         item["is_processing"] = not item["is_ready_for_editing"] and (
-            str(row[11]).strip().lower() == "ingesting" and bool(row[12])
+            str(row[14]).strip().lower() == "ingesting" and bool(row[15])
         )
         item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
             str(item["download_status"]).strip().lower() in {"download_failed", "failed"}
-            or str(row[11]).strip().lower() == "failed"
+            or str(row[14]).strip().lower() == "failed"
         )
+        if item["is_ready_for_editing"]:
+            item["status_filter"] = "ready"
+        elif item["is_failed"]:
+            item["status_filter"] = "failed"
+        else:
+            item["status_filter"] = "processing"
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
         videos.append(item)
 

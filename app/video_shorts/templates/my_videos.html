@@ -687,6 +687,322 @@
       gap: 3px;
     }
   }
+  .mv-add-panel {
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 21, 0.98));
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  .mv-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 6px 6px 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    background: rgba(8, 13, 21, 0.96);
+  }
+  .mv-tab {
+    position: relative;
+    border: 0;
+    border-radius: 10px 10px 0 0;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.58);
+    padding: 14px 20px 13px;
+    font-size: 0.88rem;
+    font-weight: 700;
+  }
+  .mv-tab:hover,
+  .mv-tab.is-active {
+    color: #f8fafc;
+  }
+  .mv-tab.is-active {
+    background: rgba(15, 23, 42, 0.96);
+  }
+  .mv-tab.is-active::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    bottom: -1px;
+    left: 12px;
+    height: 2px;
+    border-radius: 999px;
+    background: #2dd4bf;
+  }
+  .mv-tab-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 8px;
+    border-radius: 999px;
+    background: #2dd4bf;
+    vertical-align: middle;
+  }
+  .mv-pane {
+    display: none;
+    padding: 26px 28px 28px;
+  }
+  .mv-pane.is-active {
+    display: block;
+  }
+  .mv-url-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+  }
+  .mv-url-field {
+    position: relative;
+  }
+  .mv-url-field .bi {
+    position: absolute;
+    top: 50%;
+    left: 17px;
+    transform: translateY(-50%);
+    color: rgba(148, 163, 184, 0.58);
+  }
+  .mv-youtube-input {
+    width: 100%;
+    min-height: 58px;
+    padding: 0 18px 0 46px;
+    border-color: rgba(40, 57, 77, 0.95);
+    border-radius: 12px;
+    background: rgba(8, 13, 21, 0.96);
+    font-size: 1rem;
+  }
+  .mv-youtube-submit {
+    min-height: 58px;
+    padding: 0 30px;
+    border: 0;
+    border-radius: 12px;
+    background: #2dd4bf;
+    color: #04211d;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .mv-youtube-submit:hover {
+    background: #3ee0cc;
+    color: #04211d;
+  }
+  .mv-upload-hint {
+    margin: 14px 2px 0;
+    color: rgba(226, 232, 240, 0.62);
+    font-size: 0.84rem;
+  }
+  .mv-dropzone {
+    min-height: 150px;
+    align-items: center;
+    border-color: rgba(40, 57, 77, 0.95);
+    border-radius: 14px;
+    background: rgba(8, 13, 21, 0.96);
+    text-align: center;
+  }
+  .mv-dropzone:hover,
+  .mv-dropzone.is-dragover {
+    border-color: rgba(45, 212, 191, 0.78);
+  }
+  .mv-toolbar {
+    margin-top: 14px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0 2px;
+  }
+  .mv-toolbar-grid {
+    grid-template-columns: minmax(240px, 1fr) auto;
+    align-items: center;
+  }
+  .mv-field label {
+    display: none;
+  }
+  .mv-field {
+    position: relative;
+  }
+  .mv-field::before {
+    content: "\F52A";
+    position: absolute;
+    top: 50%;
+    left: 14px;
+    transform: translateY(-50%);
+    color: rgba(148, 163, 184, 0.58);
+    font-family: "bootstrap-icons";
+    font-size: 0.95rem;
+    pointer-events: none;
+  }
+  .mv-field input {
+    height: 44px;
+    padding-left: 40px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 11px;
+    background: rgba(15, 23, 42, 0.92);
+    color: #f8fafc;
+  }
+  .mv-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 2px 14px;
+  }
+  .mv-chip-label {
+    margin-right: 2px;
+    color: rgba(148, 163, 184, 0.68);
+    font-size: 0.75rem;
+    font-weight: 800;
+  }
+  .mv-filter-chip,
+  .mv-added-filter {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.92);
+    color: rgba(226, 232, 240, 0.68);
+    padding: 7px 14px;
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+  .mv-filter-chip.is-active {
+    border-color: rgba(45, 212, 191, 0.72);
+    background: rgba(45, 212, 191, 0.12);
+    color: #2dd4bf;
+  }
+  .mv-added-filter:focus,
+  .mv-filter-chip:focus {
+    outline: none;
+    border-color: rgba(45, 212, 191, 0.72);
+  }
+  .mv-list {
+    border-radius: 16px;
+  }
+  .mv-list-head,
+  .mv-row {
+    grid-template-columns: minmax(280px, 1fr) 90px 120px 88px 98px 116px 150px;
+    gap: 14px;
+  }
+  .mv-list-head {
+    background: rgba(8, 13, 21, 0.96);
+    font-size: 0.72rem;
+  }
+  .mv-row:hover {
+    background: rgba(19, 27, 40, 0.78);
+  }
+  .mv-video-cell {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 14px;
+  }
+  .mv-thumb {
+    width: 76px;
+    border-radius: 7px;
+    flex-shrink: 0;
+  }
+  .mv-source-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 5px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 0.7rem;
+    font-weight: 800;
+  }
+  .mv-source-badge--url {
+    background: rgba(139, 124, 240, 0.14);
+    color: #8b7cf0;
+  }
+  .mv-source-badge--upload {
+    background: rgba(132, 148, 168, 0.14);
+    color: rgba(226, 232, 240, 0.68);
+  }
+  .mv-table-muted {
+    color: rgba(226, 232, 240, 0.68);
+    font-size: 0.84rem;
+  }
+  .mv-table-number {
+    color: #f8fafc;
+    font-size: 0.96rem;
+    font-weight: 800;
+    text-align: center;
+  }
+  .mv-table-number.is-zero {
+    color: rgba(148, 163, 184, 0.6);
+    font-weight: 700;
+  }
+  .mv-table-sub {
+    margin-top: 1px;
+    color: rgba(148, 163, 184, 0.58);
+    font-size: 0.7rem;
+    text-align: center;
+  }
+  .mv-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    font-weight: 800;
+  }
+  .mv-status-pill::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .mv-status-pill--ready {
+    color: #2dd4bf;
+  }
+  .mv-status-pill--processing {
+    color: #f0b03c;
+  }
+  .mv-status-pill--failed {
+    color: #fca5a5;
+  }
+  .mv-row-actions {
+    justify-self: end;
+  }
+  .mv-filter-empty {
+    display: none;
+    padding: 34px 24px;
+    color: rgba(226, 232, 240, 0.72);
+    text-align: center;
+  }
+  @media (max-width: 1100px) {
+    .mv-list-head {
+      display: none;
+    }
+    .mv-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+    }
+    .mv-row > .mv-table-muted,
+    .mv-row > .mv-count-cell,
+    .mv-row > .mv-status-cell {
+      grid-column: 1 / 3;
+    }
+    .mv-row-actions {
+      grid-column: 1 / 3;
+      justify-self: start;
+    }
+  }
+  @media (max-width: 700px) {
+    .mv-pane {
+      padding: 20px;
+    }
+    .mv-url-row,
+    .mv-toolbar-grid {
+      grid-template-columns: 1fr;
+    }
+    .mv-youtube-submit {
+      width: 100%;
+    }
+    .mv-row {
+      grid-template-columns: 1fr;
+    }
+    .mv-row > .mv-table-muted,
+    .mv-row > .mv-count-cell,
+    .mv-row > .mv-status-cell,
+    .mv-row-actions {
+      grid-column: 1;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -717,27 +1033,38 @@
     {% endif %}
     <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
     {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
-      <div class="mv-upload-grid">
-        <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
-          <div class="mv-upload-source">
-            <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
-            <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
-              <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-              <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
-            </label>
-            <div class="mv-youtube-ingest">
-              <input id="mv-youtube-url" class="mv-youtube-input" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube URL" aria-label="YouTube URL">
-              <button type="button" id="mv-youtube-submit" class="btn btn-outline-light">Ekle</button>
+      <div class="mv-add-panel mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
+        <div class="mv-tabs" role="tablist" aria-label="Add video">
+          <button type="button" class="mv-tab is-active" id="mv-tab-url" data-mv-tab="url" role="tab" aria-selected="true" aria-controls="mv-pane-url">Video from URL<span class="mv-tab-dot" aria-hidden="true"></span></button>
+          <button type="button" class="mv-tab" id="mv-tab-upload" data-mv-tab="upload" role="tab" aria-selected="false" aria-controls="mv-pane-upload">Upload a file</button>
+        </div>
+        <div class="mv-pane is-active" id="mv-pane-url" role="tabpanel" aria-labelledby="mv-tab-url">
+          <div class="mv-url-row">
+            <div class="mv-url-field">
+              <i class="bi bi-link-45deg" aria-hidden="true"></i>
+              <input id="mv-youtube-url" class="mv-youtube-input" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link — we'll pull it in and get it ready" aria-label="YouTube URL">
             </div>
+            <button type="button" id="mv-youtube-submit" class="mv-youtube-submit">Add video</button>
           </div>
-          <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
+          <p class="mv-upload-hint">Processing starts right away. Longer videos take more time — we'll keep working, and it'll be ready when you come back.</p>
+        </div>
+        <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
+          <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
+          <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
+            <i class="bi bi-upload fs-3 text-secondary" aria-hidden="true"></i>
+            <span class="mv-dropzone-copy">Choose a file or drag it here</span>
+            <span class="mv-dropzone-meta">Up to 3GB. Smaller files upload faster.</span>
+          </label>
+          <div class="mt-3">
+            <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
+          </div>
+        </div>
+        <div class="px-4 pb-4">
+          <div id="mv-upload-meta" class="mv-upload-meta"></div>
           <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
           <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
             <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
           </div>
-        </div>
-        <div class="mv-upload-actions">
-          <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
         </div>
       </div>
       <div id="mv-upload-feedback" class="mv-upload-feedback mt-3" aria-live="polite"></div>
@@ -787,14 +1114,26 @@
   {% endif %}
 
   <form method="get" class="mv-toolbar">
-    <div class="mv-toolbar-grid">
-      <div class="mv-field">
-        <label for="mv-search">Search</label>
-        <input id="mv-search" type="search" class="form-control" name="q" value="{{ search_query or '' }}" placeholder="Search videos…" />
+      <div class="mv-toolbar-grid">
+        <div class="mv-field">
+          <label for="mv-search">Search</label>
+          <input id="mv-search" type="search" class="form-control" name="q" value="{{ search_query or '' }}" placeholder="Search your videos…" />
+        </div>
+        <div class="mv-count">{{ video_count }} video{% if video_count != 1 %}s{% endif %}</div>
       </div>
-      <div class="mv-count">{{ video_count }} video{% if video_count != 1 %}s{% endif %}</div>
+    </form>
+    <div class="mv-filters" aria-label="Video filters">
+      <span class="mv-chip-label">Status</span>
+      <button type="button" class="mv-filter-chip" data-status-filter="ready">Ready</button>
+      <button type="button" class="mv-filter-chip" data-status-filter="processing">Processing</button>
+      <span class="mv-chip-label ms-2">Added</span>
+      <select id="mv-added-filter" class="mv-added-filter" aria-label="Filter by added date">
+        <option value="any">Any time</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
     </div>
-  </form>
 
   {% if is_autopilot %}
     <h2 class="mv-source-heading">Source videos</h2>
@@ -802,43 +1141,68 @@
   <section class="mv-list">
     <div class="mv-list-head">
       <div>Video</div>
-      <div>Title</div>
-      <div>Meta</div>
+      <div class="text-center">Length</div>
+      <div>Added</div>
+      <div class="text-center">Shorts</div>
+      <div class="text-center">Published</div>
+      <div>Status</div>
       <div></div>
     </div>
     {% if videos %}
       {% for item in videos %}
         <div
           class="mv-row mv-coachmark-anchor"
+          data-video-row
+          data-status="{{ item.status_filter }}"
+          data-added-at="{{ item.added_at_iso }}"
           {% if loop.first %}id="mv-first-video-row" data-first-video-row="true"{% endif %}
         >
-          <div class="mv-thumb">
-            {% if item.thumbnail_url %}
-              <img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
-            {% elif item.preview_image_url %}
-              <img src="{{ item.preview_image_url }}" alt="{{ item.title }}">
-            {% else %}
-              <span>{{ item.thumb_fallback }}</span>
-            {% endif %}
-          </div>
-          <div class="mv-title-cell">
-            <div class="mv-title-edit" data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ url_for('video_shorts_bp.update_my_video_title', video_pk=item.id) }}">
-              <div class="mv-video-title" data-title-text>{{ item.title }}</div>
-              <button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title">
-                <i class="bi bi-pencil-square" aria-hidden="true"></i>
-              </button>
+          <div class="mv-video-cell">
+            <div class="mv-thumb">
+              {% if item.thumbnail_url %}
+                <img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
+              {% elif item.preview_image_url %}
+                <img src="{{ item.preview_image_url }}" alt="{{ item.title }}">
+              {% else %}
+                <span>{{ item.thumb_fallback }}</span>
+              {% endif %}
             </div>
-            <div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>
-            {% if item.channel_name %}
-              <div class="mv-channel-name">{{ item.channel_name }}</div>
+            <div class="mv-title-cell">
+              <div class="mv-title-edit" data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ url_for('video_shorts_bp.update_my_video_title', video_pk=item.id) }}">
+                <div class="mv-video-title" data-title-text>{{ item.title }}</div>
+                <button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title">
+                  <i class="bi bi-pencil-square" aria-hidden="true"></i>
+                </button>
+              </div>
+              <div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>
+              <span class="mv-source-badge mv-source-badge--{{ item.source_kind }}">
+                {% if item.source_kind == 'url' %}
+                  <i class="bi bi-link-45deg" aria-hidden="true"></i>
+                {% else %}
+                  <i class="bi bi-upload" aria-hidden="true"></i>
+                {% endif %}
+                {{ item.source_label }}
+              </span>
+            </div>
+          </div>
+          <div class="mv-table-muted text-center">{{ item.duration_label or "—" }}</div>
+          <div class="mv-table-muted">{{ item.added_at_label or "—" }}</div>
+          <div class="mv-count-cell">
+            <div class="mv-table-number{% if item.short_count == 0 %} is-zero{% endif %}">{{ item.short_count }}</div>
+          </div>
+          <div class="mv-count-cell">
+            <div class="mv-table-number{% if item.published_count == 0 %} is-zero{% endif %}">{{ item.published_count }}</div>
+            {% if item.short_count > 0 %}
+              <div class="mv-table-sub">of {{ item.short_count }}</div>
             {% endif %}
           </div>
-          <div class="mv-meta">
-            {{ item.duration_label }} · {{ item.added_at_label }} · {{ item.short_count }} short{% if item.short_count != 1 %}s{% endif %}
-            {% if item.is_processing %}
-              <div class="mv-processing-note"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span>Processing on our servers</div>
+          <div class="mv-status-cell">
+            {% if item.is_ready_for_editing %}
+              <span class="mv-status-pill mv-status-pill--ready">Ready</span>
             {% elif item.is_failed %}
-              <div class="mv-failed-note"><i class="bi bi-exclamation-circle" aria-hidden="true"></i>Upload failed</div>
+              <span class="mv-status-pill mv-status-pill--failed">Failed</span>
+            {% else %}
+              <span class="mv-status-pill mv-status-pill--processing">Processing</span>
             {% endif %}
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
@@ -854,6 +1218,7 @@
           </div>
         </div>
       {% endfor %}
+      <div id="mv-filter-empty" class="mv-filter-empty">No videos match these filters.</div>
     {% else %}
       <div class="mv-empty">No videos match this view yet.</div>
     {% endif %}
@@ -873,10 +1238,15 @@
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
-  const youtubeUrlInput = document.getElementById('mv-youtube-url');
-  const youtubeSubmit = document.getElementById('mv-youtube-submit');
-  const mobileNotice = document.getElementById('mv-mobile-notice');
-  const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
+	  const youtubeUrlInput = document.getElementById('mv-youtube-url');
+	  const youtubeSubmit = document.getElementById('mv-youtube-submit');
+	  const mobileNotice = document.getElementById('mv-mobile-notice');
+	  const addTabs = Array.from(document.querySelectorAll('[data-mv-tab]'));
+	  const videoRows = Array.from(document.querySelectorAll('[data-video-row]'));
+	  const statusFilterButtons = Array.from(document.querySelectorAll('[data-status-filter]'));
+	  const addedFilter = document.getElementById('mv-added-filter');
+	  const filterEmpty = document.getElementById('mv-filter-empty');
+	  const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
   const firstVideoRow = document.getElementById('mv-first-video-row');
   const firstVideoAction = document.querySelector('[data-first-video-action="true"]');
   const persistentHide = coachmarkShell?.dataset.coachmarkHidden === 'true';
@@ -1190,10 +1560,10 @@
     if (youtubeUrlInput) {
       youtubeUrlInput.disabled = isUploading;
     }
-    if (youtubeSubmit) {
-      youtubeSubmit.disabled = isUploading;
-      youtubeSubmit.textContent = isUploading ? 'İşleniyor…' : 'Ekle';
-    }
+	    if (youtubeSubmit) {
+	      youtubeSubmit.disabled = isUploading;
+	      youtubeSubmit.textContent = isUploading ? 'Processing…' : 'Add video';
+	    }
     if (dropzone) {
       dropzone.classList.toggle('is-disabled', isUploading);
       dropzone.setAttribute('aria-disabled', isUploading ? 'true' : 'false');
@@ -1202,9 +1572,55 @@
     }
   };
 
-  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-  const uploadSessionPollIntervalMs = 2000;
-  const uploadSessionTimeoutMs = 45 * 60 * 1000;
+	  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+	  const uploadSessionPollIntervalMs = 2000;
+	  const uploadSessionTimeoutMs = 45 * 60 * 1000;
+
+	  const activateAddTab = (name) => {
+	    addTabs.forEach((tab) => {
+	      const isActive = tab.dataset.mvTab === name;
+	      tab.classList.toggle('is-active', isActive);
+	      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+	    });
+	    ['url', 'upload'].forEach((paneName) => {
+	      const pane = document.getElementById(`mv-pane-${paneName}`);
+	      const isActive = paneName === name;
+	      pane?.classList.toggle('is-active', isActive);
+	      if (pane) pane.hidden = !isActive;
+	    });
+	  };
+
+	  const selectedStatusFilters = () => statusFilterButtons
+	    .filter((button) => button.classList.contains('is-active'))
+	    .map((button) => button.dataset.statusFilter)
+	    .filter(Boolean);
+
+	  const rowMatchesAddedFilter = (row, daysValue) => {
+	    if (!daysValue || daysValue === 'any') return true;
+	    const days = Number(daysValue);
+	    const raw = row.dataset.addedAt || '';
+	    if (!Number.isFinite(days) || days <= 0 || !raw) return true;
+	    const addedAt = new Date(raw);
+	    if (Number.isNaN(addedAt.getTime())) return true;
+	    const threshold = Date.now() - (days * 24 * 60 * 60 * 1000);
+	    return addedAt.getTime() >= threshold;
+	  };
+
+	  const applyVideoFilters = () => {
+	    const statuses = selectedStatusFilters();
+	    const addedValue = addedFilter?.value || 'any';
+	    let visibleCount = 0;
+	    videoRows.forEach((row) => {
+	      const statusMatch = statuses.length === 0 || statuses.includes(row.dataset.status || '');
+	      const addedMatch = rowMatchesAddedFilter(row, addedValue);
+	      const visible = statusMatch && addedMatch;
+	      row.hidden = !visible;
+	      if (visible) visibleCount += 1;
+	    });
+	    if (filterEmpty) {
+	      filterEmpty.style.display = videoRows.length > 0 && visibleCount === 0 ? 'block' : 'none';
+	    }
+	  };
 
   const isFileOverPerFileLimit = (file) => {
     if (!file) return false;
@@ -1559,12 +1975,24 @@
     }
   });
 
-  if (mobileNotice && isLikelyMobileDevice()) {
-    mobileNotice.classList.add('is-visible');
-  }
+	  if (mobileNotice && isLikelyMobileDevice()) {
+	    mobileNotice.classList.add('is-visible');
+	  }
 
-  uploadSubmit?.addEventListener('click', uploadFile);
-  youtubeSubmit?.addEventListener('click', ingestYoutubeUrl);
+	  addTabs.forEach((tab) => {
+	    tab.addEventListener('click', () => activateAddTab(tab.dataset.mvTab || 'url'));
+	  });
+	  statusFilterButtons.forEach((button) => {
+	    button.addEventListener('click', () => {
+	      button.classList.toggle('is-active');
+	      applyVideoFilters();
+	    });
+	  });
+	  addedFilter?.addEventListener('change', applyVideoFilters);
+	  applyVideoFilters();
+
+	  uploadSubmit?.addEventListener('click', uploadFile);
+	  youtubeSubmit?.addEventListener('click', ingestYoutubeUrl);
   youtubeUrlInput?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
