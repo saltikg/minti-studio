@@ -44,11 +44,13 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
     JOB_TYPE_NORMALIZE_UPLOAD,
+    JOB_TYPE_PREVIEW_FRAME,
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     claim_next_job,
     count_processing_jobs,
+    enqueue_preview_frame_job,
     finalize_job_success,
     get_job,
     mark_job_done,
@@ -59,7 +61,12 @@ from app.video_shorts.services.render_jobs import (
 )
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.disk_guard import disk_guard_triggered
-from app.video_shorts.services.storage import get_media_storage, build_storage_reference
+from app.video_shorts.services.storage import (
+    build_storage_reference,
+    get_media_storage,
+    is_storage_reference,
+    storage_reference_key,
+)
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
 from app.video_shorts.services.usage_metering import check_transcription_quota
@@ -581,7 +588,10 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     video_id = str(payload.get("video_id") or "").strip()
     video_pk = int(payload.get("video_pk"))
     owner_user_id = str(job["user_id"])
+    brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
+    if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
+        raise PermanentRenderJobError("YouTube ingest job is missing its scoped source.")
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
     _set_job_progress(job["id"], stage="queued", message="Queued for ingest.", status="queued")
     _set_job_progress(job["id"], stage="downloading", message="Downloading the source video.", status="processing")
@@ -592,19 +602,29 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         storage.put_file(local_path, source_key)
         conn = get_db()
         try:
-            conn.execute(
+            updated = conn.execute(
                 """
                 UPDATE youtube_videos
                 SET download_status = 'downloaded',
+                    video_url = ?,
                     downloaded_at = CURRENT_TIMESTAMP,
                     last_checked_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
                 """,
-                [video_pk],
+                [build_storage_reference(source_key), video_pk, owner_user_id, brand_id],
             )
+            if getattr(updated, "rowcount", 1) == 0:
+                raise PermanentRenderJobError("YouTube ingest source scope changed before S3 upload completion.")
             conn.commit()
         finally:
             conn.close()
+        enqueue_preview_frame_job(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            source_key=source_key,
+            duration_seconds=duration_seconds,
+        )
         _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
         transcript_text, segments = _transcribe_with_whisper(local_path)
         _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
@@ -724,7 +744,10 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     video_id = str(payload.get("video_id") or "").strip()
     source_key = str(payload.get("source_key") or "").strip()
     video_pk = int(payload.get("video_pk") or 0)
-    if not video_id or not source_key or not video_pk:
+    owner_user_id = str(payload.get("owner_user_id") or job.get("user_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    duration_seconds = payload.get("duration_seconds")
+    if not video_id or not source_key or not video_pk or not owner_user_id or not brand_id:
         app.logger.warning(
             "normalize fallback job_id=%s video_id=%s key=%s error=missing-payload",
             job.get("id"),
@@ -736,10 +759,29 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     storage = get_media_storage()
     source_path = None
     try:
+        def enqueue_preview(preview_source_key: str) -> Dict[str, Any]:
+            try:
+                return enqueue_preview_frame_job(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    source_key=preview_source_key,
+                    duration_seconds=duration_seconds,
+                )
+            except Exception as preview_exc:
+                app.logger.warning(
+                    "preview enqueue skipped after normalize job_id=%s video_id=%s key=%s error=%s",
+                    job.get("id"),
+                    video_id,
+                    preview_source_key,
+                    preview_exc,
+                )
+                return {"kind": "error", "error": str(preview_exc)}
+
         def handle_normalize_progress(percent: int) -> None:
             _update_upload_session_progress(
                 session_id,
-                user_id=str(job.get("user_id") or "").strip(),
+                user_id=owner_user_id,
                 normalize={
                     "status": "processing",
                     "message": "Preparing your video on the server...",
@@ -749,7 +791,7 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
 
         _update_upload_session_progress(
             session_id,
-            user_id=str(job.get("user_id") or "").strip(),
+            user_id=owner_user_id,
             normalize={"status": "processing", "message": "Preparing your video on the server...", "percent": 0},
         )
         source_path = storage.download_to_temp(source_key)
@@ -764,30 +806,33 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         if not new_key:
             _update_upload_session_progress(
                 session_id,
-                user_id=str(job.get("user_id") or "").strip(),
+                user_id=owner_user_id,
                 normalize={"status": "completed", "message": "Video preparation finished.", "percent": 100},
             )
             return {
                 "normalized": False,
                 "reason": "already-streamable-or-fallback",
                 "db_field": "youtube_videos.video_url",
+                "preview": enqueue_preview(source_key),
             }
         conn = get_db()
         try:
-            conn.execute(
+            updated = conn.execute(
                 """
                 UPDATE youtube_videos
                 SET video_url = ?
-                WHERE id = ?
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
                 """,
-                [build_storage_reference(new_key), video_pk],
+                [build_storage_reference(new_key), video_pk, owner_user_id, brand_id],
             )
+            if getattr(updated, "rowcount", 1) == 0:
+                raise PermanentRenderJobError("Upload normalize source scope changed before completion.")
             conn.commit()
         finally:
             conn.close()
         _update_upload_session_progress(
             session_id,
-            user_id=str(job.get("user_id") or "").strip(),
+            user_id=owner_user_id,
             normalize={"status": "completed", "message": "Video preparation finished.", "percent": 100},
         )
         return {
@@ -795,7 +840,10 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             "source_key": source_key,
             "streamable_key": new_key,
             "db_field": "youtube_videos.video_url",
+            "preview": enqueue_preview(new_key),
         }
+    except PermanentRenderJobError:
+        raise
     except Exception as exc:
         app.logger.warning(
             "normalize fallback job_id=%s video_id=%s key=%s error=%s",
@@ -806,7 +854,7 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         )
         _update_upload_session_progress(
             session_id,
-            user_id=str(job.get("user_id") or "").strip(),
+            user_id=owner_user_id,
             normalize={"status": "fallback", "message": "Video preparation finished.", "percent": 100},
         )
         return {
@@ -814,9 +862,82 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             "reason": "fallback",
             "source_key": source_key,
             "db_field": "youtube_videos.video_url",
+            "preview": enqueue_preview(source_key),
         }
     finally:
-        _cleanup_resolved_source_video(Path(source_path) if source_path else None, bool(source_path))
+        _cleanup_resolved_source_video(
+            Path(source_path) if source_path else None,
+            bool(source_path) and getattr(storage, "backend_name", "local") != "local",
+        )
+
+
+def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    video_pk = int(payload.get("video_pk") or 0)
+    video_id = str(payload.get("video_id") or "").strip()
+    source_key = str(payload.get("source_key") or "").strip().lstrip("/")
+    owner_user_id = str(payload.get("owner_user_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    duration_seconds = payload.get("duration_seconds")
+    if not video_pk or not video_id or not source_key or not owner_user_id or not brand_id:
+        raise PermanentRenderJobError("Preview frame job is missing its scoped source.")
+    if str(job.get("user_id") or "").strip() != owner_user_id:
+        raise PermanentRenderJobError("Preview frame job user scope does not match payload.")
+
+    expected_prefix = f"videos/{video_id}."
+    if not source_key.startswith(expected_prefix) or "/" in source_key[len("videos/") :]:
+        raise PermanentRenderJobError("Preview frame source key does not match the scoped video.")
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT video_id, video_url, duration_seconds
+            FROM youtube_videos
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+            """,
+            [video_pk, owner_user_id, brand_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise PermanentRenderJobError("Preview frame source was not found in tenant scope.")
+    row_video_id = str(row[0] or "").strip()
+    row_source = str(row[1] or "").strip()
+    if row_video_id != video_id:
+        raise PermanentRenderJobError("Preview frame source video changed before processing.")
+    if is_storage_reference(row_source) and storage_reference_key(row_source) != source_key:
+        raise PermanentRenderJobError("Preview frame source key changed before processing.")
+    if duration_seconds is None:
+        duration_seconds = row[2]
+
+    storage = get_media_storage()
+    source_path = None
+    try:
+        source_path = storage.download_to_temp(source_key)
+        preview_path = generation._ensure_preview_frame(video_id, Path(source_path), duration_seconds)
+        if not preview_path:
+            raise RuntimeError("Preview frame was not created.")
+        applied_crop = generation._maybe_apply_face_centered_default_crop(
+            video_row_id=video_pk,
+            video_id=video_id,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            preview_metadata=generation._load_preview_frame_metadata(video_id),
+        )
+        return {
+            "video_pk": video_pk,
+            "video_id": video_id,
+            "source_key": source_key,
+            "preview_path": str(preview_path),
+            "metadata_path": str(generation._preview_frame_metadata_path(video_id)),
+            "crop_applied": bool(applied_crop),
+        }
+    finally:
+        _cleanup_resolved_source_video(
+            Path(source_path) if source_path else None,
+            bool(source_path) and getattr(storage, "backend_name", "local") != "local",
+        )
 
 
 def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
@@ -970,6 +1091,8 @@ def process_next_job(app, worker_id: str) -> bool:
             result = _execute_admin_proxy_transcript_job(app, job)
         elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:
             result = _execute_normalize_upload_job(app, job)
+        elif job.get("type") == JOB_TYPE_PREVIEW_FRAME:
+            result = _execute_preview_frame_job(app, job)
         elif job.get("type") == JOB_TYPE_TRANSCRIBE_UPLOAD:
             result = _execute_transcribe_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_PUBLISH_SHORT:

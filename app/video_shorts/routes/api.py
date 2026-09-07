@@ -19,7 +19,7 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
 from app.video_shorts.services.email_verification import send_autopilot_upgrade_request_email
-from app.video_shorts.services.render_jobs import get_job
+from app.video_shorts.services.render_jobs import enqueue_preview_frame_job, get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
@@ -1131,32 +1131,77 @@ def download_status():
     data = request.get_json(silent=True) or {}
     video_db_id = data.get("video_db_id")
     status = (data.get("status") or "").strip().lower()
+    source_key = str(data.get("source_key") or "").strip().lstrip("/")
     if not video_db_id or not status:
         return jsonify({"error": "missing fields"}), 400
+    if status == "downloaded" and not source_key:
+        return jsonify({"error": "missing source_key"}), 400
 
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id FROM youtube_videos WHERE id = ?",
+            """
+            SELECT id, video_id, owner_user_id, brand_id, duration_seconds
+            FROM youtube_videos
+            WHERE id = ?
+            """,
             [video_db_id],
         ).fetchone()
         if not row:
             conn.close()
             return jsonify({"error": "video not found"}), 404
+        owner_user_id = str(row[2] or "").strip()
+        brand_id = str(row[3] or "").strip()
+        if status == "downloaded" and (not owner_user_id or not brand_id):
+            conn.close()
+            return jsonify({"error": "video scope missing"}), 409
+        if status == "downloaded":
+            video_id = str(row[1] or "").strip()
+            expected_prefix = f"videos/{video_id}."
+            if not video_id or not source_key.startswith(expected_prefix) or "/" in source_key[len("videos/") :]:
+                conn.close()
+                return jsonify({"error": "source_key mismatch"}), 400
 
         conn.execute(
             """
             UPDATE youtube_videos
             SET download_status = ?,
+                video_url = CASE WHEN ? = 'downloaded' THEN ? ELSE video_url END,
                 downloaded_at = CASE WHEN ? = 'downloaded' THEN CURRENT_TIMESTAMP ELSE NULL END,
                 last_checked_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
             """,
-            [status, status, video_db_id],
+            [
+                status,
+                status,
+                f"s3://{source_key}",
+                status,
+                video_db_id,
+                owner_user_id,
+                brand_id,
+            ],
         )
         conn.commit()
         conn.close()
-        return jsonify({"ok": True}), 200
+        preview_result = None
+        if status == "downloaded":
+            try:
+                preview_result = enqueue_preview_frame_job(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=int(row[0]),
+                    source_key=source_key,
+                    duration_seconds=row[4],
+                )
+            except Exception as preview_exc:
+                current_app.logger.warning(
+                    "preview enqueue skipped after download callback video_db_id=%s key=%s error=%s",
+                    video_db_id,
+                    source_key,
+                    preview_exc,
+                )
+                preview_result = {"kind": "error", "error": str(preview_exc)}
+        return jsonify({"ok": True, "preview": preview_result}), 200
     except Exception as e:
         try:
             conn.rollback()

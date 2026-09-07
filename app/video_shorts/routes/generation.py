@@ -2527,9 +2527,8 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
     try:
         import cv2
 
-        probe = _probe_video_stream_info(Path(source_path))
-        frame_width = int(probe.get("width") or 0)
-        frame_height = int(probe.get("height") or 0)
+        frame_width = 0
+        frame_height = 0
         cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
         detector = cv2.CascadeClassifier(str(cascade_path))
         if detector.empty():
@@ -2552,6 +2551,8 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                     str(source_path),
                     "-frames:v",
                     "1",
+                    "-vf",
+                    "scale=720:-1",
                     "-q:v",
                     "2",
                     str(candidate_path),
@@ -2567,6 +2568,7 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                 image = cv2.imread(str(candidate_path))
                 if image is None:
                     continue
+                frame_height, frame_width = image.shape[:2]
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 faces = detector.detectMultiScale(
                     gray,
@@ -5095,26 +5097,8 @@ def generate_short(video_pk):
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     short_path = SHORTS_DIR / f"{video['video_id']}.mp4"
     short_exists = short_path.exists()
-    source_path = None
     preview_url = None
     preview_path = _preview_frame_cache_path(video["video_id"])
-    if not preview_path.exists():
-        source_path, source_path_is_temp = _resolve_source_video(video["video_id"])
-        try:
-            if source_path:
-                try:
-                    preview_path = _ensure_preview_frame(
-                        video["video_id"],
-                        source_path,
-                        video.get("duration_seconds"),
-                    ) or preview_path
-                except FileNotFoundError:
-                    current_app.logger.warning(
-                        "Skipping preview frame generation for %s because ffmpeg is unavailable.",
-                        video["video_id"],
-                    )
-        finally:
-            _cleanup_resolved_source_video(source_path, source_path_is_temp)
     crop_is_unset = all(
         video.get(key) is None
         for key in ("crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio")

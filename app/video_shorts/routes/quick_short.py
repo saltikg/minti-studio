@@ -49,6 +49,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     enqueue_job,
+    enqueue_preview_frame_job,
     enqueue_worker_job,
     get_job,
     update_job_payload,
@@ -641,7 +642,10 @@ def _create_uploaded_video_record(
                 "karaoke",
             ],
         )
-    row = conn.execute("SELECT id FROM youtube_videos WHERE video_id = ?", [video_id]).fetchone()
+    row = conn.execute(
+        "SELECT id FROM youtube_videos WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?",
+        [video_id, current_user.get("id"), brand_id],
+    ).fetchone()
     conn.commit()
     track_event(
         current_user["id"],
@@ -671,7 +675,7 @@ def _enqueue_uploaded_video_jobs(
     normalize_input_hash = sha256(
         f"quick-upload-normalize:{current_user['id']}:{brand_id}:{video_id}:{source_key}".encode("utf-8")
     ).hexdigest()
-    enqueue_worker_job(
+    normalize_result = enqueue_worker_job(
         user_id=current_user["id"],
         job_type=JOB_TYPE_NORMALIZE_UPLOAD,
         payload={
@@ -679,10 +683,21 @@ def _enqueue_uploaded_video_jobs(
             "video_pk": int(video_pk),
             "video_id": video_id,
             "source_key": source_key,
+            "owner_user_id": current_user["id"],
+            "brand_id": brand_id,
+            "duration_seconds": duration_seconds,
         },
         input_hash=normalize_input_hash,
         priority=100,
     )
+    if normalize_result.get("kind") == "cached":
+        enqueue_preview_frame_job(
+            owner_user_id=current_user["id"],
+            brand_id=brand_id,
+            video_pk=int(video_pk),
+            source_key=source_key,
+            duration_seconds=duration_seconds,
+        )
     job_input_hash = sha256(f"quick-upload:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
     enqueue_result = enqueue_job(
         user_id=current_user["id"],
@@ -821,8 +836,8 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
     if not video_id:
         return None
     existing = conn.execute(
-        "SELECT id, download_status FROM youtube_videos WHERE video_id = ?",
-        [video_id],
+        "SELECT id, download_status FROM youtube_videos WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?",
+        [video_id, owner_id, brand_id],
     ).fetchone()
     if existing:
         video_pk, download_status = existing
@@ -866,8 +881,8 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
         ],
     )
     row = conn.execute(
-        "SELECT id FROM youtube_videos WHERE video_id = ?",
-        [video_id],
+        "SELECT id FROM youtube_videos WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?",
+        [video_id, owner_id, brand_id],
     ).fetchone()
     return row[0] if row else None
 
@@ -1121,6 +1136,7 @@ def quick_short_ingest_youtube():
             "video_id": video_id,
             "video_url": video_url,
             "duration_seconds": duration,
+            "brand_id": brand_id,
         },
         input_hash=job_input_hash,
     )

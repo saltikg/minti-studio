@@ -19,6 +19,7 @@ JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
 JOB_TYPE_NORMALIZE_UPLOAD = "normalize_upload"
+JOB_TYPE_PREVIEW_FRAME = "preview_frame"
 JOB_TYPE_TRANSCRIBE_UPLOAD = "transcribe_upload"
 JOB_TYPE_ADMIN_PROXY_TRANSCRIPT = "admin_proxy_transcript"
 JOB_TYPE_PUBLISH_SHORT = "publish_short"
@@ -581,6 +582,64 @@ def enqueue_worker_job(
         return {"kind": "queued", "job": job}
     finally:
         conn.close()
+
+
+def enqueue_preview_frame_job(
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    source_key: str,
+    duration_seconds: Any = None,
+    priority: int = 90,
+) -> Dict[str, Any]:
+    """Resolve a preview source inside its tenant scope, then enqueue it idempotently."""
+    owner_user_id = str(owner_user_id or "").strip()
+    brand_id = str(brand_id or "").strip()
+    source_key = str(source_key or "").strip().lstrip("/")
+    if not owner_user_id or not brand_id or not video_pk or not source_key:
+        return {"kind": "invalid_scope"}
+
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        row = conn.execute(
+            """
+            SELECT video_id, duration_seconds
+            FROM youtube_videos
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+            """,
+            [int(video_pk), owner_user_id, brand_id],
+        ).fetchone()
+        if not row:
+            conn.commit()
+            return {"kind": "not_found"}
+        video_id = str(row[0] or "").strip()
+        expected_prefix = f"videos/{video_id}."
+        if not video_id or not source_key.startswith(expected_prefix) or "/" in source_key[len("videos/") :]:
+            conn.commit()
+            return {"kind": "source_mismatch"}
+        resolved_duration = duration_seconds if duration_seconds is not None else row[1]
+    finally:
+        conn.close()
+
+    input_hash = hashlib.sha256(
+        f"preview-frame:{owner_user_id}:{brand_id}:{int(video_pk)}:{video_id}:{source_key}".encode("utf-8")
+    ).hexdigest()
+    return enqueue_worker_job(
+        user_id=owner_user_id,
+        job_type=JOB_TYPE_PREVIEW_FRAME,
+        payload={
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "source_key": source_key,
+            "owner_user_id": owner_user_id,
+            "brand_id": brand_id,
+            "duration_seconds": resolved_duration,
+        },
+        input_hash=input_hash,
+        priority=priority,
+    )
 
 
 def enqueue_admin_proxy_transcript_job(

@@ -122,6 +122,8 @@ def _insert_user(user_id: str, plan_id: str) -> None:
                 duration_seconds DOUBLE,
                 owner_user_id VARCHAR,
                 brand_id VARCHAR,
+                video_url VARCHAR,
+                download_status VARCHAR,
                 transcript_status VARCHAR,
                 fetch_transcript BOOLEAN,
                 published_at TIMESTAMP,
@@ -142,7 +144,15 @@ def _insert_user(user_id: str, plan_id: str) -> None:
         conn.close()
 
 
-def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> None:
+def _insert_video(
+    video_pk: int,
+    source_video_id: str,
+    owner_user_id: str,
+    *,
+    brand_id: str | None = None,
+    video_url: str = "",
+    download_status: str = "",
+) -> None:
     conn = db_service.get_db()
     try:
         conn.execute(
@@ -154,6 +164,8 @@ def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> No
                 duration_seconds DOUBLE,
                 owner_user_id VARCHAR,
                 brand_id VARCHAR,
+                video_url VARCHAR,
+                download_status VARCHAR,
                 transcript_status VARCHAR,
                 fetch_transcript BOOLEAN,
                 published_at TIMESTAMP,
@@ -171,15 +183,26 @@ def _insert_video(video_pk: int, source_video_id: str, owner_user_id: str) -> No
                 duration_seconds,
                 owner_user_id,
                 brand_id,
+                video_url,
+                download_status,
                 transcript_status,
                 fetch_transcript,
                 published_at,
                 downloaded_at,
                 last_checked_at
             )
-            VALUES (?, ?, ?, ?, ?, NULL, '', FALSE, NULL, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', FALSE, NULL, NULL, NULL)
             """,
-            [video_pk, source_video_id, f"Video {source_video_id}", 180.0, owner_user_id],
+            [
+                video_pk,
+                source_video_id,
+                f"Video {source_video_id}",
+                180.0,
+                owner_user_id,
+                brand_id,
+                video_url,
+                download_status,
+            ],
         )
         conn.commit()
     finally:
@@ -232,6 +255,211 @@ def _input_hash(source_video_id: str, plan_index: int = 1) -> str:
         end=20.0,
         options={"plan_index": plan_index, "title": f"Clip {plan_index}"},
     )
+
+
+def test_preview_enqueue_is_tenant_scoped_and_idempotent(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "preview_enqueue.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    _insert_video(
+        11,
+        "preview-a",
+        user_id,
+        brand_id="brand-a",
+        video_url="s3://videos/preview-a.mp4",
+        download_status="downloaded",
+    )
+    _insert_video(
+        12,
+        "preview-b",
+        user_id,
+        brand_id="brand-b",
+        video_url="s3://videos/preview-b.mp4",
+        download_status="downloaded",
+    )
+    monkeypatch.setattr(generation, "SHORTS_DIR", tmp_path / "shorts")
+
+    first = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=11,
+        source_key="videos/preview-a.mp4",
+        duration_seconds=123,
+    )
+    duplicate = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=11,
+        source_key="videos/preview-a.mp4",
+        duration_seconds=123,
+    )
+    second_brand = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-b",
+        video_pk=12,
+        source_key="videos/preview-b.mp4",
+        duration_seconds=123,
+    )
+
+    assert first["kind"] == "queued"
+    assert duplicate["kind"] == "existing"
+    assert duplicate["job"]["id"] == first["job"]["id"]
+    assert second_brand["kind"] == "queued"
+    assert first["job"]["payload"]["brand_id"] == "brand-a"
+    assert second_brand["job"]["payload"]["brand_id"] == "brand-b"
+    assert generation._preview_frame_cache_path("preview-a") != generation._preview_frame_cache_path("preview-b")
+
+
+def test_preview_enqueue_rejects_cross_tenant_and_source_mismatch(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "preview_scope_reject.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    _insert_video(
+        21,
+        "preview-owned",
+        user_id,
+        brand_id="brand-a",
+        video_url="s3://videos/preview-owned.mp4",
+        download_status="downloaded",
+    )
+
+    wrong_brand = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-b",
+        video_pk=21,
+        source_key="videos/preview-owned.mp4",
+        duration_seconds=123,
+    )
+    wrong_source = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=21,
+        source_key="videos/other-video.mp4",
+        duration_seconds=123,
+    )
+
+    assert wrong_brand["kind"] == "not_found"
+    assert wrong_source["kind"] == "source_mismatch"
+
+
+def test_preview_worker_processes_scoped_source(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "preview_worker.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    _insert_video(
+        31,
+        "preview-worker",
+        user_id,
+        brand_id="brand-a",
+        video_url="s3://videos/preview-worker.mp4",
+        download_status="downloaded",
+    )
+    source_path = tmp_path / "preview-worker-source.mp4"
+    source_path.write_bytes(b"source")
+    preview_dir = tmp_path / "shorts"
+    calls = {}
+
+    class FakeStorage:
+        backend_name = "local"
+
+        def download_to_temp(self, key):
+            calls["source_key"] = key
+            return source_path
+
+    def fake_ensure_preview(video_id, local_source_path, duration_seconds):
+        calls["ensure"] = (video_id, Path(local_source_path), duration_seconds)
+        target = generation._preview_frame_cache_path(video_id)
+        target.write_bytes(b"jpg")
+        generation._preview_frame_metadata_path(video_id).write_text(
+            json.dumps({"selected_by": "detail"}),
+            encoding="utf-8",
+        )
+        return target
+
+    monkeypatch.setattr(generation, "SHORTS_DIR", preview_dir)
+    monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
+    monkeypatch.setattr(worker_module, "get_media_storage", lambda: FakeStorage())
+    monkeypatch.setattr(generation, "_ensure_preview_frame", fake_ensure_preview)
+    monkeypatch.setattr(generation, "_maybe_apply_face_centered_default_crop", lambda **kwargs: None)
+
+    queued = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=31,
+        source_key="videos/preview-worker.mp4",
+        duration_seconds=180,
+    )
+    app = create_app()
+    app.secret_key = "test-secret"
+
+    processed = process_next_job(app, "preview-worker-test")
+    job = render_jobs.get_job(queued["job"]["id"], user_id=user_id)
+
+    assert processed is True
+    assert job["status"] == "done"
+    assert calls["source_key"] == "videos/preview-worker.mp4"
+    assert calls["ensure"] == ("preview-worker", source_path, 180)
+    assert generation._preview_frame_cache_path("preview-worker").exists()
+
+
+def test_preview_frame_extraction_scales_to_720_and_uses_scaled_face_ratios(monkeypatch, tmp_path):
+    source_path = tmp_path / "source.mp4"
+    source_path.write_bytes(b"source")
+    shorts_dir = tmp_path / "shorts"
+    commands = []
+
+    class FakeImage:
+        shape = (405, 720, 3)
+
+    class FakeGray:
+        pass
+
+    class FakeLaplacian:
+        def var(self):
+            return 42.0
+
+    class FakeDetector:
+        def __init__(self, path):
+            self.path = path
+
+        def empty(self):
+            return False
+
+        def detectMultiScale(self, gray, **kwargs):
+            return [(72, 40, 144, 80)]
+
+    fake_cv2 = ModuleType("cv2")
+    fake_cv2.data = SimpleNamespace(haarcascades=str(tmp_path))
+    fake_cv2.CascadeClassifier = FakeDetector
+    fake_cv2.imread = lambda path: FakeImage()
+    fake_cv2.cvtColor = lambda image, code: FakeGray()
+    fake_cv2.Laplacian = lambda gray, code: FakeLaplacian()
+    fake_cv2.COLOR_BGR2GRAY = 1
+    fake_cv2.CV_64F = 64
+
+    def fake_run_media_subprocess(cmd, **kwargs):
+        commands.append(cmd)
+        for output_path in kwargs.get("output_paths") or []:
+            Path(output_path).write_bytes(b"candidate")
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    monkeypatch.setattr(generation, "_resolve_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(generation, "run_media_subprocess", fake_run_media_subprocess)
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    with app.app_context():
+        preview_path = generation._ensure_preview_frame("scaled-preview", source_path, 30)
+        metadata = generation._load_preview_frame_metadata("scaled-preview")
+
+    assert preview_path == generation._preview_frame_cache_path("scaled-preview")
+    assert all("-vf" in command and "scale=720:-1" in command for command in commands)
+    assert metadata["frame_width"] == 720
+    assert metadata["frame_height"] == 405
+    assert metadata["face_cx_ratio"] == (72 + 72) / 720
+    assert metadata["face_cy_ratio"] == (40 + 40) / 405
 
 
 def test_priority_claims_paid_before_free(monkeypatch, tmp_path):
