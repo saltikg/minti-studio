@@ -369,13 +369,19 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
     work_dir = Path(tempfile.mkdtemp(prefix=f"vs_quick_{video_id}_"))
     target = work_dir / f"{video_id}.mp4"
+    proxy_url = str(os.getenv("INGEST_PROXY_URL") or "").strip()
+    cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
-        "format": "bestvideo*+bestaudio/best",
+        "format": "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo*+bestaudio/best",
         "quiet": True,
         "noprogress": True,
     }
+    if proxy_url:
+        opts["proxy"] = proxy_url
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([video_url])
     if target.exists():
@@ -385,7 +391,6 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         raise FileNotFoundError(f"download output missing for {video_id}")
     candidates[0].rename(target)
     return target
-
 
 def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[Path, bool, bool]:
     """Download only the source audio into a disposable worker directory."""
