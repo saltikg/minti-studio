@@ -6225,7 +6225,6 @@ def generate_short(video_pk):
         segments_view=segments_view,
         short_exists=short_exists,
         short_filename=short_path.name,
-        source_path=source_path,
         preview_url=preview_url,
         generated_clip_entries=generated_clip_entries,
         title_font_options=title_font_options,
