@@ -241,6 +241,35 @@
     gap: 8px;
     align-self: end;
   }
+  .mv-upload-source {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .mv-youtube-ingest {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .mv-youtube-input {
+    min-height: 44px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(15, 23, 42, 0.88);
+    color: #f8fafc;
+    padding: 0 14px;
+    outline: none;
+  }
+  .mv-youtube-input:focus {
+    border-color: rgba(94, 234, 212, 0.78);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  }
+  .mv-youtube-input::placeholder {
+    color: rgba(226, 232, 240, 0.52);
+  }
+  .mv-youtube-input:disabled {
+    opacity: 0.65;
+  }
   .mv-hidden-input {
     position: absolute;
     width: 1px;
@@ -633,6 +662,9 @@
     .mv-toolbar-grid {
       grid-template-columns: 1fr;
     }
+    .mv-youtube-ingest {
+      grid-template-columns: 1fr;
+    }
     .mv-count {
       justify-self: start;
     }
@@ -687,11 +719,17 @@
     {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
       <div class="mv-upload-grid">
         <div class="mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
-          <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
-          <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
-            <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-            <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
-          </label>
+          <div class="mv-upload-source">
+            <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
+            <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
+              <span class="mv-dropzone-copy">Choose a file or drag it here</span>
+              <span class="mv-dropzone-meta">Upload a video up to 3GB, then turn it into Shorts. Smaller files upload faster.</span>
+            </label>
+            <div class="mv-youtube-ingest">
+              <input id="mv-youtube-url" class="mv-youtube-input" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube URL" aria-label="YouTube URL">
+              <button type="button" id="mv-youtube-submit" class="btn btn-outline-light">Ekle</button>
+            </div>
+          </div>
           <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
           <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
           <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
@@ -835,6 +873,8 @@
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
   const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
+  const youtubeUrlInput = document.getElementById('mv-youtube-url');
+  const youtubeSubmit = document.getElementById('mv-youtube-submit');
   const mobileNotice = document.getElementById('mv-mobile-notice');
   const maxUploadBytesPerFile = 3 * 1024 * 1024 * 1024;
   const firstVideoRow = document.getElementById('mv-first-video-row');
@@ -1147,6 +1187,13 @@
         ? (phase === 'processing' ? 'Processing…' : 'Uploading…')
         : 'Upload video';
     }
+    if (youtubeUrlInput) {
+      youtubeUrlInput.disabled = isUploading;
+    }
+    if (youtubeSubmit) {
+      youtubeSubmit.disabled = isUploading;
+      youtubeSubmit.textContent = isUploading ? 'İşleniyor…' : 'Ekle';
+    }
     if (dropzone) {
       dropzone.classList.toggle('is-disabled', isUploading);
       dropzone.setAttribute('aria-disabled', isUploading ? 'true' : 'false');
@@ -1162,6 +1209,29 @@
   const isFileOverPerFileLimit = (file) => {
     if (!file) return false;
     return Number(file.size || 0) > maxUploadBytesPerFile;
+  };
+
+  const startYoutubeIngest = async (videoUrl) => {
+    const response = await fetch('{{ url_for("video_shorts_bp.quick_short_ingest_youtube") }}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({
+        video_url: videoUrl,
+      }),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = {};
+    }
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || payload.error || 'We could not add that YouTube video right now.');
+    }
+    return payload;
   };
 
   const uploadPart = (url, blob) => new Promise((resolve, reject) => {
@@ -1410,6 +1480,42 @@
     }
   };
 
+  const ingestYoutubeUrl = async () => {
+    if (isUploading) {
+      return;
+    }
+    const videoUrl = String(youtubeUrlInput?.value || '').trim();
+    if (!videoUrl) {
+      setFeedback('Paste a YouTube URL first.', true);
+      youtubeUrlInput?.focus();
+      return;
+    }
+    setCoachmarkState('uploading');
+    renderCoachmark(2);
+    setUploadControlsDisabled(true, 'processing');
+    resetProgress();
+    try {
+      const ingestPayload = await startYoutubeIngest(videoUrl);
+      const sessionId = String(ingestPayload?.session?.id || '').trim();
+      if (!sessionId) {
+        throw new Error('Video was added, but we could not track server processing.');
+      }
+      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
+      await waitForUploadSessionReady(sessionId);
+      setCoachmarkState('uploaded');
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      clearServerProcessingState();
+      setCoachmarkState('');
+      syncCoachmark();
+      const message = error?.message || 'We could not add that YouTube video right now.';
+      reportUploadFailed(message);
+      setFeedback(message, true);
+    } finally {
+      setUploadControlsDisabled(false);
+    }
+  };
+
   uploadInput?.addEventListener('change', (event) => {
     if (isUploading) return;
     const [file] = Array.from(event.target.files || []);
@@ -1458,6 +1564,13 @@
   }
 
   uploadSubmit?.addEventListener('click', uploadFile);
+  youtubeSubmit?.addEventListener('click', ingestYoutubeUrl);
+  youtubeUrlInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      ingestYoutubeUrl();
+    }
+  });
   firstVideoAction?.addEventListener('click', () => {
     dismissCoachmarkForSession();
     setCoachmarkState('');
