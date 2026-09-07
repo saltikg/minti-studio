@@ -45,7 +45,7 @@
             <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_lead_video', brand_id=lead.brand_id, video_pk=video.id) }}">
               <button type="submit" class="btn btn-outline-primary">Download</button>
             </form>
-            {% if video.download_status == 'audio_only' %}
+            {% if video.transcript_status == 'done' %}
               <a class="btn btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_generate_lead_short', brand_id=lead.brand_id, video_pk=video.id) }}">Generate</a>
             {% endif %}
             {% if video.download_status != 'audio_transcribing' %}
