@@ -377,7 +377,7 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
-        "js_runtimes": ["node"],
+        "js_runtimes": {"node": {}},
     }
     if proxy_url:
         opts["proxy"] = proxy_url
