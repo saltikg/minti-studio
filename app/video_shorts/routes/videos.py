@@ -4494,11 +4494,6 @@ def shorts_overview():
         )
 
     filtered_entries = processed_entries
-    filtered_entries = [
-        entry
-        for entry in filtered_entries
-        if entry.get("channel_id") and str(entry.get("channel_id")) in allowed_channel_ids
-    ]
     total_scheduled = sum(1 for entry in filtered_entries if entry["publish_status"] == "scheduled")
     total_published = sum(1 for entry in filtered_entries if entry["publish_status"] == "published")
     pending_videos_total = sum(1 for entry in filtered_entries if (entry.get("pending_comment_count") or 0) > 0)
