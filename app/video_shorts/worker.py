@@ -363,7 +363,6 @@ def _transcription_quota_message(duration_seconds: Any, remaining_minutes: Any) 
         f"but you have {_format_transcription_minutes_label(remaining_minutes)} of transcription left this month."
     )
 
-
 def _download_youtube_video(video_url: str, video_id: str) -> Path:
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
@@ -377,6 +376,8 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "format": "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo*+bestaudio/best",
         "quiet": True,
         "noprogress": True,
+        "legacy_server_connect": True,
+        "js_runtimes": ["node"],
     }
     if proxy_url:
         opts["proxy"] = proxy_url
