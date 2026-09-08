@@ -4558,14 +4558,21 @@ def _load_generated_video_publish_guard_row(
                 CAST(id AS VARCHAR),
                 youtube_video_id,
                 publish_status,
-                planned_publish_at
+                planned_publish_at,
+                {generated_description_expr}
             FROM shorts_generated_videos
             WHERE CAST(source_video_id AS VARCHAR) = ?
               AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
               AND clip_filename = ?
               AND brand_id = ?
             LIMIT 1
-            """,
+            """.format(
+                generated_description_expr=(
+                    "generated_description"
+                    if "generated_description" in generated_columns
+                    else "NULL AS generated_description"
+                )
+            ),
             [source_video_id, clip_filename, brand_id],
         ).fetchone()
         if not row:
@@ -4575,6 +4582,7 @@ def _load_generated_video_publish_guard_row(
             "youtube_video_id": str(row[1] or "").strip() or None,
             "publish_status": str(row[2] or "").strip().lower() or None,
             "planned_publish_at": row[3],
+            "generated_description": str(row[4] or "").strip() or None,
         }
     finally:
         conn.close()
@@ -5625,7 +5633,14 @@ def generate_short(video_pk):
         try:
             generated_columns = table_columns(conn_generated, "shorts_generated_videos")
             if generated_columns:
-                select_fields = ["id", "clip_filename", "generated_title", "publish_status", "planned_publish_at"]
+                select_fields = [
+                    "id",
+                    "clip_filename",
+                    "generated_title",
+                    "generated_description" if "generated_description" in generated_columns else "NULL AS generated_description",
+                    "publish_status",
+                    "planned_publish_at",
+                ]
                 if "share_token" in generated_columns:
                     select_fields.append("share_token")
                 generated_rows = conn_generated.execute(
@@ -5683,9 +5698,10 @@ def generate_short(video_pk):
                     generated_video_map[(source_video_id, clip_name)] = {
                         "id": generated_row[0],
                         "generated_title": generated_row[2] if len(generated_row) > 2 else None,
-                        "publish_status": str(generated_row[3] or "").strip().lower() or None,
-                        "planned_publish_at": generated_row[4],
-                        "share_token": generated_row[5] if len(generated_row) > 5 else None,
+                        "generated_description": generated_row[3] if len(generated_row) > 3 else None,
+                        "publish_status": str(generated_row[4] or "").strip().lower() or None,
+                        "planned_publish_at": generated_row[5] if len(generated_row) > 5 else None,
+                        "share_token": generated_row[6] if len(generated_row) > 6 else None,
                         "recipient_name": str(recipient_info.get("recipient_name") or "").strip(),
                         "recipient_email": str(recipient_info.get("recipient_email") or "").strip(),
                         "trial_days": normalize_trial_days(recipient_info.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS),
@@ -5723,6 +5739,11 @@ def generate_short(video_pk):
         yt_id = entry.get("yt_video_id")
         generated_record = generated_video_map.get((source_video_id, str(clip_filename or "").strip())) or {}
         clip_stats = published_stats_map.get(yt_id) if yt_id else {}
+        yt_description = _first_non_empty(
+            entry.get("yt_description"),
+            entry.get("description"),
+            generated_record.get("generated_description"),
+        )
 
         publish_value = entry.get("publish_at_iso") or entry.get("publish_at")
         publish_display = _format_publish_display(publish_value, user_tz)
@@ -5730,7 +5751,7 @@ def generate_short(video_pk):
         db_publish_status = (
             str(generated_record.get("publish_status") or "").strip().lower()
             or (str(entry.get("publish_status") or "").strip().lower() if entry.get("publish_status") else "")
-            or ("ready" if entry.get("yt_description") else "not_ready")
+            or ("ready" if yt_description else "not_ready")
         )
         db_publish_value = generated_record.get("planned_publish_at") or publish_value
         db_publish_display = _format_publish_display(db_publish_value, user_tz) if db_publish_value else publish_display
@@ -5935,14 +5956,14 @@ def generate_short(video_pk):
             "status": status,
             "render_job_id": entry.get("render_job_id") or "",
             "render_error": entry.get("render_error") or "",
-            "publish_status": entry.get("publish_status") or ("ready" if entry.get("yt_description") else "not_ready"),
+            "publish_status": entry.get("publish_status") or ("ready" if yt_description else "not_ready"),
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),
             "publish_display": publish_display,
             "db_publish_status": db_publish_status,
             "db_publish_display": db_publish_display,
             "youtube_schedule_date": youtube_schedule_date,
-            "yt_description": entry.get("yt_description"),
+            "yt_description": yt_description,
             "category": entry.get("category") or "",
             "display_start_label": display_timings["display_start_label"],
             "display_end_label": display_timings["display_end_label"],
@@ -14024,6 +14045,12 @@ def upload_clip_to_youtube():
         fallback_publish_status = str(generated_guard_row.get("publish_status") or "").strip().lower()
         if fallback_publish_status in {"scheduled", "published", "uploaded"}:
             existing_publish_status = fallback_publish_status
+    if not description:
+        description = _first_non_empty(
+            target_entry.get("yt_description") if target_entry else None,
+            target_entry.get("description") if target_entry else None,
+            generated_guard_row.get("generated_description") if generated_guard_row else None,
+        ) or ""
     skip_youtube_upload = False
     should_update_youtube = False
     if youtube_enabled and existing_yt_id and existing_publish_status in {"scheduled", "published", "uploaded"}:
