@@ -1135,6 +1135,8 @@ def quick_short_ingest_youtube():
             "brand_id": brand_id,
         },
         input_hash=job_input_hash,
+        max_attempts=6,   # <-- ingest için daha çok IP şansı
+
     )
     job = enqueue_result.get("job") or {}
     session = update_session(
