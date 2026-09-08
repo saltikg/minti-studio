@@ -377,6 +377,11 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb", "default"]
+            }
+        },
         "js_runtimes": {"node": {}},
     }
     if proxy_url:
