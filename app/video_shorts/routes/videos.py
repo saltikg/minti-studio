@@ -1654,45 +1654,6 @@ def _preferred_brand_channel_ids(owner_user_id: Optional[str], brand_id: Optiona
     return {channel_id for score, channel_id in scored if score == best_score}
 
 
-def _filter_entries_to_channel_scope(
-    entries: List[Dict[str, Any]],
-    *,
-    owner_user_id: Optional[str],
-    brand_id: Optional[str],
-    preferred_channel_ids: Optional[set[str]],
-) -> List[Dict[str, Any]]:
-    if not entries or not preferred_channel_ids:
-        return entries
-    source_video_ids = sorted({str(entry.get("video_id") or "").strip() for entry in entries if str(entry.get("video_id") or "").strip()})
-    if not source_video_ids:
-        return []
-    conn = get_db_readonly()
-    try:
-        placeholders = ", ".join("?" for _ in source_video_ids)
-        sql = f"""
-            SELECT video_id, COALESCE(channel_id, local_bucket_channel_id) AS channel_id
-            FROM youtube_videos
-            WHERE video_id IN ({placeholders})
-        """
-        params: List[Any] = list(source_video_ids)
-        owner_text = str(owner_user_id or "").strip()
-        if owner_text:
-            sql += " AND owner_user_id = ?"
-            params.append(owner_text)
-        if brand_id:
-            sql += " AND brand_id = ?"
-            params.append(brand_id)
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
-    channel_by_video = {str(video_id): str(channel_id) for video_id, channel_id in rows if video_id is not None and channel_id is not None}
-    return [
-        entry
-        for entry in entries
-        if channel_by_video.get(str(entry.get("video_id") or "").strip()) in preferred_channel_ids
-    ]
-
-
 def _load_video_scope(video_id: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     if not video_id:
         return None, None, None, None
@@ -1796,13 +1757,6 @@ def _build_allowed_comment_video_ids() -> set[str]:
     entries = _collect_short_broadcast_entries(
         brand_id=brand_id,
         owner_user_id=owner_user_id,
-    )
-    preferred_channel_ids = _preferred_brand_channel_ids(owner_user_id, brand_id)
-    entries = _filter_entries_to_channel_scope(
-        entries,
-        owner_user_id=owner_user_id,
-        brand_id=brand_id,
-        preferred_channel_ids=preferred_channel_ids,
     )
     allowed: set[str] = set()
     for entry in entries:
@@ -4164,12 +4118,6 @@ def shorts_overview():
         owner_user_id=owner_scope_user_id,
     )
     preferred_channel_ids = _preferred_brand_channel_ids(owner_scope_user_id, brand_id)
-    all_entries = _filter_entries_to_channel_scope(
-        all_entries,
-        owner_user_id=owner_scope_user_id,
-        brand_id=brand_id,
-        preferred_channel_ids=preferred_channel_ids,
-    )
     total_scheduled = sum(1 for entry in all_entries if entry["publish_status"] == "scheduled")
     total_published = sum(1 for entry in all_entries if entry["publish_status"] == "published")
 
@@ -4228,10 +4176,6 @@ def shorts_overview():
             if brand_id:
                 sql += " AND v.brand_id = ?"
                 params.append(brand_id)
-            if preferred_channel_ids:
-                channel_placeholders = ", ".join("?" for _ in preferred_channel_ids)
-                sql += f" AND CAST(COALESCE(v.channel_id, v.local_bucket_channel_id) AS VARCHAR) IN ({channel_placeholders})"
-                params.extend(sorted(preferred_channel_ids))
             video_rows = conn.execute(sql, params).fetchall()
             for row in video_rows:
                 channel_id_val = row[8]
