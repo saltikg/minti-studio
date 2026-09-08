@@ -369,6 +369,7 @@ def my_videos_page():
             c.channel_name,
             v.channel_id,
             c.channel_url,
+            v.video_url,
             COALESCE(g.short_count, 0) AS short_count,
             COALESCE(g.published_count, 0) AS published_count,
             EXISTS (
@@ -489,22 +490,29 @@ def my_videos_page():
             "channel_name": row[8] or "",
             "channel_id": row[9],
             "channel_url": row[10] or "",
-            "short_count": int(row[11] or 0),
-            "published_count": int(row[12] or 0),
+            "video_url": row[11] or "",
+            "short_count": int(row[12] or 0),
+            "published_count": int(row[13] or 0),
         }
         item["source_kind"] = "url" if row[9] is None else "upload"
         item["source_label"] = "From URL" if item["source_kind"] == "url" else "Uploaded"
+        item["source_href"] = (
+            f"https://www.youtube.com/watch?v={item['video_id']}"
+            if item["source_kind"] == "url" and item["video_id"]
+            else item["video_url"] if str(item["video_url"]).startswith(("http://", "https://"))
+            else ""
+        )
         # A completed transcript is the durable editing signal. Older rows can
         # retain a failed download status after a successful transcript/clip run.
         item["is_ready_for_editing"] = (
-            str(item["transcript_status"]).strip().lower() == "done" and bool(row[13])
+            str(item["transcript_status"]).strip().lower() == "done" and bool(row[14])
         )
         item["is_processing"] = not item["is_ready_for_editing"] and (
-            str(row[14]).strip().lower() == "ingesting" and bool(row[15])
+            str(row[15]).strip().lower() == "ingesting" and bool(row[16])
         )
         item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
             str(item["download_status"]).strip().lower() in {"download_failed", "failed"}
-            or str(row[14]).strip().lower() == "failed"
+            or str(row[15]).strip().lower() == "failed"
         )
         if item["is_ready_for_editing"]:
             item["status_filter"] = "ready"

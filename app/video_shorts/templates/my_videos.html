@@ -568,6 +568,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .mv-video-title-link {
+    color: inherit;
+    text-decoration: none;
+    min-width: 0;
+  }
+  .mv-video-title-link:hover {
+    color: #5eead4;
+    text-decoration: underline;
+  }
   .mv-title-edit {
     display: flex;
     align-items: center;
@@ -1190,7 +1199,11 @@
             </div>
             <div class="mv-title-cell">
               <div class="mv-title-edit" data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ url_for('video_shorts_bp.update_my_video_title', video_pk=item.id) }}">
-                <div class="mv-video-title" data-title-text>{{ item.title }}</div>
+                {% if item.source_href %}
+                  <a class="mv-video-title mv-video-title-link" data-title-text href="{{ item.source_href }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+                {% else %}
+                  <div class="mv-video-title" data-title-text>{{ item.title }}</div>
+                {% endif %}
                 <button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title">
                   <i class="bi bi-pencil-square" aria-hidden="true"></i>
                 </button>
