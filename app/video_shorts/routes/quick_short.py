@@ -66,7 +66,7 @@ from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
-MAX_QUICK_SHORT_SECONDS = 25 * 60
+MAX_QUICK_SHORT_SECONDS = 120 * 60
 ALLOWED_UPLOAD_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 LOCAL_CHANNEL_NAME = "Local uploads"
 MUSIC_CHANNEL_NAME = "Music channel"
