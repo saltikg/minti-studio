@@ -9462,6 +9462,7 @@ def _load_admin_lead_records(
     *,
     lead_type: str = "",
     download_filter: str = "",
+    email_sent_filter: str = "",
     search_query: str = "",
     subscriber_min: int | None = None,
     subscriber_max: int | None = None,
@@ -9478,7 +9479,24 @@ def _load_admin_lead_records(
     normalized_download_filter = (download_filter or "").strip().lower()
     if normalized_download_filter not in {"downloaded", "not_downloaded"}:
         normalized_download_filter = ""
+    normalized_email_sent_filter = (email_sent_filter or "").strip().lower()
+    if normalized_email_sent_filter not in {"sent", "not_sent"}:
+        normalized_email_sent_filter = ""
     normalized_search = (search_query or "").strip().lower()
+
+    share_link_columns = table_columns(conn, "short_share_links")
+    has_emailed_at = "emailed_at" in share_link_columns
+    emailed_share_link_exists_sql = """
+        EXISTS (
+            SELECT 1
+            FROM shorts_generated_videos gv
+            JOIN short_share_links sl
+              ON CAST(sl.generated_video_id AS BIGINT) = CAST(gv.id AS BIGINT)
+            WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
+              AND CAST(gv.brand_id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
+              AND sl.emailed_at IS NOT NULL
+        )
+    """
 
     where_parts: List[str] = []
     params: List[Any] = []
@@ -9491,6 +9509,10 @@ def _load_admin_lead_records(
         where_parts.append("lower(coalesce(v.download_status, '')) IN ('downloaded', 'downloaded_deleted')")
     elif normalized_download_filter == "not_downloaded":
         where_parts.append("lower(coalesce(v.download_status, '')) NOT IN ('downloaded', 'downloaded_deleted')")
+    if normalized_email_sent_filter == "sent":
+        where_parts.append(emailed_share_link_exists_sql if has_emailed_at else "1 = 0")
+    elif normalized_email_sent_filter == "not_sent" and has_emailed_at:
+        where_parts.append(f"NOT {emailed_share_link_exists_sql}")
     if subscriber_min is not None:
         where_parts.append("l.subscriber_count >= ?")
         params.append(subscriber_min)
@@ -9547,6 +9569,7 @@ def _load_admin_lead_records(
                 ),
                 0
             ) AS generated_short_count,
+            {emailed_share_link_exists_sql if has_emailed_at else 'FALSE'} AS email_sent,
             COALESCE(u.service_mode, '') AS service_mode
         {from_sql}
         WHERE {where_sql}
@@ -9582,7 +9605,8 @@ def _load_admin_lead_records(
                 "download_status": str(row[14] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "converted": bool(row[9]) or str(row[16] or "").strip().lower() == "autopilot",
+                "email_sent": bool(row[16]),
+                "converted": bool(row[9]) or str(row[17] or "").strip().lower() == "autopilot",
             }
         )
     return items, total_count
@@ -10923,6 +10947,7 @@ def admin_autopilot_leads():
 def admin_leads():
     lead_type = (request.args.get("lead_type") or "").strip().lower()
     download_filter = (request.args.get("download") or "").strip().lower()
+    email_sent_filter = (request.args.get("email_sent") or "").strip().lower()
     search_query = (request.args.get("q") or "").strip()
     subscriber_min = _parse_nonnegative_int(request.args.get("subscriber_min"))
     subscriber_max = _parse_nonnegative_int(request.args.get("subscriber_max"))
@@ -10938,6 +10963,7 @@ def admin_leads():
             conn,
             lead_type=lead_type,
             download_filter=download_filter,
+            email_sent_filter=email_sent_filter,
             search_query=search_query,
             subscriber_min=subscriber_min,
             subscriber_max=subscriber_max,
@@ -10950,6 +10976,7 @@ def admin_leads():
             conn,
             lead_type=lead_type,
             download_filter=download_filter,
+            email_sent_filter=email_sent_filter,
             search_query=search_query,
             subscriber_min=subscriber_min,
             subscriber_max=subscriber_max,
@@ -10964,6 +10991,7 @@ def admin_leads():
         leads=leads,
         lead_type=lead_type if lead_type in {"real", "discovery"} else "",
         download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
+        email_sent_filter=email_sent_filter if email_sent_filter in {"sent", "not_sent"} else "",
         search_query=search_query,
         subscriber_min=subscriber_min,
         subscriber_max=subscriber_max,
