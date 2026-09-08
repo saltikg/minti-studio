@@ -1669,7 +1669,11 @@ def _filter_entries_to_channel_scope(
     conn = get_db_readonly()
     try:
         placeholders = ", ".join("?" for _ in source_video_ids)
-        sql = f"SELECT video_id, channel_id FROM youtube_videos WHERE video_id IN ({placeholders})"
+        sql = f"""
+            SELECT video_id, COALESCE(channel_id, local_bucket_channel_id) AS channel_id
+            FROM youtube_videos
+            WHERE video_id IN ({placeholders})
+        """
         params: List[Any] = list(source_video_ids)
         owner_text = str(owner_user_id or "").strip()
         if owner_text:
@@ -4209,13 +4213,13 @@ def shorts_overview():
                   v.like_count,
                   v.comment_count,
                   v.video_url,
-                  v.channel_id,
+                  COALESCE(v.channel_id, v.local_bucket_channel_id) AS channel_id,
                   c.channel_name,
                   c.channel_url,
                   c.owner_user_id,
                   v.brand_id
                 FROM youtube_videos v
-                LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+                LEFT JOIN youtube_channels c ON c.channel_id = COALESCE(v.channel_id, v.local_bucket_channel_id)
                 WHERE v.video_id IN ({placeholders})
             """
             params = list(video_ids)
@@ -4226,7 +4230,7 @@ def shorts_overview():
                 params.append(brand_id)
             if preferred_channel_ids:
                 channel_placeholders = ", ".join("?" for _ in preferred_channel_ids)
-                sql += f" AND CAST(v.channel_id AS VARCHAR) IN ({channel_placeholders})"
+                sql += f" AND CAST(COALESCE(v.channel_id, v.local_bucket_channel_id) AS VARCHAR) IN ({channel_placeholders})"
                 params.extend(sorted(preferred_channel_ids))
             video_rows = conn.execute(sql, params).fetchall()
             for row in video_rows:
