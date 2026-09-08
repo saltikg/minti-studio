@@ -16094,6 +16094,11 @@ def autoclip_video(video_pk):
     editor_context = _active_editor_context()
     target_owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
+    target_owner_plan_id = (
+        (current_user or {}).get("plan_id")
+        if str((current_user or {}).get("id") or "") == str(target_owner_user_id or "")
+        else None
+    )
     export_reserved = False
     usage = None
     if not current_user:
@@ -16102,6 +16107,13 @@ def autoclip_video(video_pk):
         conn_usage = get_db_readonly()
         try:
             usage = _get_user_storage_usage(conn_usage, target_owner_user_id)
+            if not target_owner_plan_id and target_owner_user_id:
+                owner_plan_row = conn_usage.execute(
+                    "SELECT plan_id FROM shorts_users WHERE id = ?",
+                    [target_owner_user_id],
+                ).fetchone()
+                if owner_plan_row:
+                    target_owner_plan_id = owner_plan_row[0]
         finally:
             conn_usage.close()
         if usage["used_bytes"] >= usage["limit_bytes"]:
@@ -17564,7 +17576,7 @@ def autoclip_video(video_pk):
             plan_entry["output_filename"] = clip_filename
             try:
                 _maybe_autogenerate_description_for_plan_entry(
-                    current_user={"id": target_owner_user_id},
+                    current_user={"id": target_owner_user_id, "plan_id": target_owner_plan_id},
                     brand_id=brand_id,
                     video_id=vid,
                     video_title=video_title,
