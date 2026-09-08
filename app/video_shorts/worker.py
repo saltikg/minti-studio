@@ -381,6 +381,7 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
+        "nocheckcertificate": True,
         "retries": 5,
         "fragment_retries": 5,
         "retry_sleep_functions": {"http": lambda n: 65},
