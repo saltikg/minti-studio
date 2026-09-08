@@ -10,6 +10,10 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
 
+import logging, urllib.request
+logger = logging.getLogger(__name__)
+
+
 from flask import g
 
 from app import create_app
@@ -377,6 +381,11 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
+        "retries": 5,
+        "fragment_retries": 5,
+        "retry_sleep_functions": {"http": lambda n: 65},
+
+
         "extractor_args": {
             "youtube": {
                 "player_client": ["mweb", "default"]
@@ -386,6 +395,7 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
     }
     if proxy_url:
         opts["proxy"] = proxy_url
+        _log_exit_ip(proxy_url, video_id)   # <-- IP'yi logla
     if cookies_path:
         opts["cookiefile"] = cookies_path
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -397,6 +407,17 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         raise FileNotFoundError(f"download output missing for {video_id}")
     candidates[0].rename(target)
     return target
+
+
+def _log_exit_ip(proxy_url: str, video_id: str) -> None:
+    """Proxy üstünden çıkış IP'sini logla (şifre loglanmaz)."""
+    try:
+        handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        opener = urllib.request.build_opener(handler)
+        ip = opener.open("https://api.ipify.org", timeout=10).read().decode().strip()
+        logger.info("INGEST proxy exit IP for %s: %s", video_id, ip)
+    except Exception as e:
+        logger.warning("INGEST exit IP check failed for %s: %s", video_id, e)
 
 def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[Path, bool, bool]:
     """Download only the source audio into a disposable worker directory."""
