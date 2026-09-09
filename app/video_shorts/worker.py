@@ -6,6 +6,7 @@ import socket
 import time
 import tempfile
 import shutil
+import secrets
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
@@ -367,6 +368,24 @@ def _transcription_quota_message(duration_seconds: Any, remaining_minutes: Any) 
         f"but you have {_format_transcription_minutes_label(remaining_minutes)} of transcription left this month."
     )
 
+def _inject_sessid(proxy_url: str, sessid: str) -> str:
+    """DataImpulse proxy URL'ine ;sessid ekle — username sonuna, şifreden önce.
+
+    Girdi:  http://<user>__cr.us:<pass>@gw.dataimpulse.com:823
+    Çıktı:  http://<user>__cr.us;sessid.<id>:<pass>@gw.dataimpulse.com:823
+
+    sessid, o indirme boyunca aynı IP'yi tutar (~30 dk) → uzun video kesilmez.
+    Her yeni çağrı yeni sessid → yeni IP → retry'da kötü IP'den kaçış.
+    Parse edilemezse orijinal URL döner (proxy yine çalışır, sadece sessid'siz).
+    """
+    try:
+        scheme, rest = proxy_url.split("://", 1)
+        creds, hostpart = rest.split("@", 1)
+        user, password = creds.split(":", 1)  # ilk ':' şifreyi ayırır
+        return f"{scheme}://{user};sessid.{sessid}:{password}@{hostpart}"
+    except Exception:
+        return proxy_url
+
 def _download_youtube_video(video_url: str, video_id: str) -> Path:
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
@@ -384,8 +403,6 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "nocheckcertificate": True,
         "retries": 5,
         "fragment_retries": 5,
-        "retry_sleep_functions": {"http": lambda n: 65},
-
 
         "extractor_args": {
             "youtube": {
@@ -394,9 +411,13 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         },
         "js_runtimes": {"node": {}},
     }
+
     if proxy_url:
+        session_id = secrets.token_hex(4)          # her indirmede yeni IP
+        proxy_url = _inject_sessid(proxy_url, session_id)
         opts["proxy"] = proxy_url
-        _log_exit_ip(proxy_url, video_id)   # <-- IP'yi logla
+        _log_exit_ip(proxy_url, video_id)
+
     if cookies_path:
         opts["cookiefile"] = cookies_path
     with yt_dlp.YoutubeDL(opts) as ydl:
