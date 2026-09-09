@@ -365,7 +365,18 @@ def my_videos_page():
             v.duration_seconds,
             v.download_status,
             v.transcript_status,
-            COALESCE(v.downloaded_at, v.created_at, v.published_at) AS added_at,
+            COALESCE(
+                v.downloaded_at,
+                v.created_at,
+                (
+                    SELECT qs.created_at
+                    FROM shorts_quick_sessions qs
+                    WHERE qs.video_pk = v.id
+                    ORDER BY qs.created_at DESC
+                    LIMIT 1
+                ),
+                v.published_at
+            ) AS added_at,
             c.channel_name,
             v.channel_id,
             c.channel_url,
@@ -387,10 +398,10 @@ def my_videos_page():
             EXISTS (
                 SELECT 1
                 FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload')
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
                   AND j.status IN ('queued', 'processing', 'running')
                   AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-            ) AS has_active_upload_job
+            ) AS has_active_source_job
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
@@ -410,7 +421,7 @@ def my_videos_page():
             GROUP BY source_video_id
         ) g ON CAST(g.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
         WHERE {where_sql}
-        ORDER BY COALESCE(v.downloaded_at, v.created_at, v.published_at) DESC NULLS LAST, v.id DESC
+        ORDER BY added_at DESC NULLS LAST, v.id DESC
         """,
         params,
     ).fetchall()
