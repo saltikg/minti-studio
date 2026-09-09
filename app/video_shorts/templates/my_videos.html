@@ -763,6 +763,20 @@
     background: #2dd4bf;
     vertical-align: middle;
   }
+  .mv-beta-tag {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(220, 38, 38, 0.18);
+    color: #fca5a5;
+    font-size: 0.62rem;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0;
+    vertical-align: middle;
+  }
   .mv-pane {
     display: none;
     padding: 24px 0 0;
@@ -1072,7 +1086,7 @@
     {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
       <div class="mv-add-panel mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
         <div class="mv-tabs" role="tablist" aria-label="Add video">
-          <button type="button" class="mv-tab is-active" id="mv-tab-url" data-mv-tab="url" role="tab" aria-selected="true" aria-controls="mv-pane-url">Video from URL<span class="mv-tab-dot" aria-hidden="true"></span></button>
+          <button type="button" class="mv-tab is-active" id="mv-tab-url" data-mv-tab="url" role="tab" aria-selected="true" aria-controls="mv-pane-url">Video from URL<span class="mv-beta-tag">BETA</span><span class="mv-tab-dot" aria-hidden="true"></span></button>
           <button type="button" class="mv-tab" id="mv-tab-upload" data-mv-tab="upload" role="tab" aria-selected="false" aria-controls="mv-pane-upload">Upload a file</button>
         </div>
         <div class="mv-pane is-active" id="mv-pane-url" role="tabpanel" aria-labelledby="mv-tab-url">
