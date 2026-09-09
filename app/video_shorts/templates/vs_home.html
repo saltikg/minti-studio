@@ -51,6 +51,7 @@
   }
 
   .vs-home {
+    --vs-home-muted: rgba(226, 232, 240, 0.84);
     display: flex;
     flex-direction: column;
     gap: 3.5rem;
@@ -1620,6 +1621,29 @@
     font-size: 0.8rem;
   }
 
+  .vs-home .hero-subtitle,
+  .vs-home .hero-meta,
+  .vs-home .flow-shell-subtitle,
+  .vs-home .flow-shell-tagline,
+  .vs-home .demo-subline,
+  .vs-home .comparison-subline,
+  .vs-home .comparison-head,
+  .vs-home .dashboard-proof-subline,
+  .vs-home .dashboard-proof-callout-copy,
+  .vs-home .pricing-subline,
+  .vs-home .pricing-card-tagline,
+  .vs-home .pricing-price-note,
+  .vs-home .pricing-segment-small,
+  .vs-home .blog-strip-subline,
+  .vs-home .blog-strip-card-text,
+  .vs-home .faq-answer,
+  .vs-home .card-copy,
+  .vs-home .tag-list,
+  .vs-home .footer-cta-subline,
+  .vs-home .footer-note {
+    color: var(--vs-home-muted);
+  }
+
   @media (max-width: 991px) {
     .vs-home .vs-home-hero-inner {
       gap: 1.6rem;
@@ -1977,6 +2001,27 @@
     }
   }
 
+  @media (max-width: 430px) {
+    .vs-home .flow-shell-subtitle,
+    .vs-home .flow-shell-tagline,
+    .vs-home .demo-subline,
+    .vs-home .comparison-subline,
+    .vs-home .dashboard-proof-subline,
+    .vs-home .dashboard-proof-callout-copy,
+    .vs-home .pricing-subline,
+    .vs-home .pricing-card-tagline,
+    .vs-home .pricing-price-note,
+    .vs-home .blog-strip-subline,
+    .vs-home .blog-strip-card-text,
+    .vs-home .faq-answer,
+    .vs-home .card-copy,
+    .vs-home .footer-cta-subline,
+    .vs-home .footer-note {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;
@@ -2029,6 +2074,28 @@
         </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section class="sample-shorts-section" aria-labelledby="sample-shorts-heading">
+    <h2 class="demo-title" id="sample-shorts-heading">See what Minti creates</h2>
+    <p class="demo-subline">Real Shorts, generated from a single long video.</p>
+    <div class="sample-shorts-gallery" aria-label="Sample vertical Shorts">
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-1.png') }}" alt="Sample vertical Short one" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-2.png') }}" alt="Sample vertical Short two" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-3.png') }}" alt="Sample vertical Short three" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-4.png') }}" alt="Sample vertical Short four" loading="lazy">
+      </article>
+      <article class="sample-short-card">
+        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-5.png') }}" alt="Sample vertical Short five" loading="lazy">
+      </article>
     </div>
   </section>
 
@@ -2158,28 +2225,6 @@
       </div>
     </div>
     </section>
-
-  <section class="sample-shorts-section" aria-labelledby="sample-shorts-heading">
-    <h2 class="demo-title" id="sample-shorts-heading">See what Minti creates</h2>
-    <p class="demo-subline">Real Shorts, generated from a single long video.</p>
-    <div class="sample-shorts-gallery" aria-label="Sample vertical Shorts">
-      <article class="sample-short-card">
-        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-1.png') }}" alt="Sample vertical Short one" loading="lazy">
-      </article>
-      <article class="sample-short-card">
-        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-2.png') }}" alt="Sample vertical Short two" loading="lazy">
-      </article>
-      <article class="sample-short-card">
-        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-3.png') }}" alt="Sample vertical Short three" loading="lazy">
-      </article>
-      <article class="sample-short-card">
-        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-4.png') }}" alt="Sample vertical Short four" loading="lazy">
-      </article>
-      <article class="sample-short-card">
-        <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-5.png') }}" alt="Sample vertical Short five" loading="lazy">
-      </article>
-    </div>
-  </section>
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
