@@ -725,6 +725,166 @@ def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
     assert other_response.status_code == 404
 
 
+def test_admin_customer_download_enqueues_target_owned_ingest_job(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_customer_ingest_job.duckdb")
+    admin_id = str(uuid4())
+    owner_id = str(uuid4())
+    other_owner_id = str(uuid4())
+    brand_id = str(uuid4())
+    other_brand_id = str(uuid4())
+    video_pk = 9101
+    other_video_pk = 9102
+
+    _insert_user(admin_id, "plan_10gb")
+    _insert_user(owner_id, "plan_10gb")
+    _insert_user(other_owner_id, "plan_10gb")
+    conn = db_service.get_db()
+    try:
+        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [admin_id])
+        conn.commit()
+    finally:
+        conn.close()
+    _insert_video(
+        video_pk,
+        "local_customer_source",
+        owner_id,
+        brand_id=brand_id,
+        video_url="https://www.youtube.com/watch?v=customer12345",
+        download_status="failed",
+    )
+    _insert_video(
+        other_video_pk,
+        "local_other_customer_source",
+        other_owner_id,
+        brand_id=other_brand_id,
+        video_url="https://www.youtube.com/watch?v=other12345",
+        download_status="failed",
+    )
+
+    enqueued: list[dict] = []
+    monkeypatch.setattr(
+        generation,
+        "_require_admin_operation_scope",
+        lambda **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "customer",
+            "acting_admin_id": admin_id,
+        },
+    )
+    monkeypatch.setattr(generation, "_require_active_customer_workspace", lambda scope: {"brand_id": brand_id})
+    monkeypatch.setattr(generation, "track_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        generation,
+        "enqueue_job",
+        lambda **kwargs: enqueued.append(kwargs) or {"kind": "queued", "job": {"id": "customer-job"}},
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = admin_id
+
+    response = client.post(f"/video_shorts/admin/operation/customer/{brand_id}/video/{video_pk}/download")
+
+    assert response.status_code == 302
+    assert len(enqueued) == 1
+    job = enqueued[0]
+    assert job["user_id"] == owner_id
+    assert job["job_type"] == render_jobs.JOB_TYPE_INGEST_YOUTUBE
+    assert job["max_attempts"] == 6
+    assert job["payload"]["brand_id"] == brand_id
+    assert job["payload"]["video_pk"] == video_pk
+    assert job["payload"]["video_id"] == "local_customer_source"
+    assert job["payload"]["video_url"] == "https://www.youtube.com/watch?v=customer12345"
+    assert job["payload"]["quick_session_id"] == ""
+
+    conn = db_service.get_db_readonly()
+    try:
+        status = conn.execute("SELECT download_status FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()[0]
+    finally:
+        conn.close()
+    assert status == "failed"
+
+
+def test_admin_lead_download_enqueues_only_scoped_brand_ingest_job(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_lead_ingest_job.duckdb")
+    admin_id = str(uuid4())
+    owner_id = str(uuid4())
+    other_owner_id = str(uuid4())
+    brand_id = str(uuid4())
+    other_brand_id = str(uuid4())
+    video_pk = 9201
+    other_video_pk = 9202
+
+    _insert_user(admin_id, "plan_10gb")
+    _insert_user(owner_id, "plan_10gb")
+    _insert_user(other_owner_id, "plan_10gb")
+    conn = db_service.get_db()
+    try:
+        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [admin_id])
+        conn.commit()
+    finally:
+        conn.close()
+    _insert_video(
+        video_pk,
+        "local_lead_source",
+        owner_id,
+        brand_id=brand_id,
+        video_url="https://www.youtube.com/watch?v=lead12345",
+        download_status="audio_only",
+    )
+    _insert_video(
+        other_video_pk,
+        "local_other_lead_source",
+        other_owner_id,
+        brand_id=other_brand_id,
+        video_url="https://www.youtube.com/watch?v=otherlead123",
+        download_status="audio_only",
+    )
+
+    enqueued: list[dict] = []
+    monkeypatch.setattr(
+        generation,
+        "_require_admin_operation_scope",
+        lambda **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "lead",
+            "acting_admin_id": admin_id,
+        },
+    )
+    monkeypatch.setattr(generation, "_require_active_lead_workspace", lambda scope: {"brand_id": brand_id})
+    monkeypatch.setattr(generation, "track_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        generation,
+        "enqueue_job",
+        lambda **kwargs: enqueued.append(kwargs) or {"kind": "queued", "job": {"id": "lead-job"}},
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = admin_id
+
+    response = client.post(f"/video_shorts/admin/operation/lead/{brand_id}/video/{video_pk}/download")
+    cross_scope_response = client.post(f"/video_shorts/admin/operation/lead/{brand_id}/video/{other_video_pk}/download")
+
+    assert response.status_code == 302
+    assert cross_scope_response.status_code == 404
+    assert len(enqueued) == 1
+    job = enqueued[0]
+    assert job["user_id"] == owner_id
+    assert job["job_type"] == render_jobs.JOB_TYPE_INGEST_YOUTUBE
+    assert job["payload"]["brand_id"] == brand_id
+    assert job["payload"]["video_pk"] == video_pk
+    assert job["payload"]["video_id"] == "local_lead_source"
+    assert job["payload"]["video_url"] == "https://www.youtube.com/watch?v=lead12345"
+    assert job["payload"]["brand_id"] != other_brand_id
+
+
 def test_transcribe_start_refuses_over_quota_before_source_resolution(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "transcribe_quota_guard.duckdb")
     user_id = str(uuid4())

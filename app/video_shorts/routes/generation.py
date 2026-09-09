@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone, timedelta
+from hashlib import sha256
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -151,6 +152,7 @@ from app.video_shorts.services.admin_operation_scope import (
     resolve_admin_operation_request_scope,
     set_request_admin_operation_scope,
 )
+from app.video_shorts.services.render_jobs import JOB_TYPE_INGEST_YOUTUBE, enqueue_job
 
 # Read-time filter for common internet scanner probes that otherwise drown the
 # admin errors view. These rows remain stored in user_events; only the default
@@ -11446,45 +11448,70 @@ def admin_operation_ingest_customer_video(brand_id: str):
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/download", methods=["POST"])
 @require_admin
 def admin_operation_download_customer_video(brand_id: str, video_pk: int):
-    """Queue a target-owned customer source for the existing downloader worker."""
+    """Queue a target-owned customer source for the prod ingest worker."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer", video_pk=video_pk)
     _require_active_customer_workspace(scope)
-    conn = get_db()
-    try:
-        row = _fetch_scoped_video_row_with_scope(
-            conn,
-            video_pk,
-            "id, video_id, video_url, download_status",
-            owner_user_id=scope["owner_user_id"],
-            brand_id=scope["brand_id"],
-        )
-        if not row or not str(row[2] or "").strip():
-            abort(404)
-        if str(row[3] or "").strip().lower() != "downloaded":
-            conn.execute(
-                """
-                UPDATE youtube_videos
-                SET download_status = 'pending', downloaded_at = NULL
-                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
-                """,
-                [video_pk, scope["owner_user_id"], scope["brand_id"]],
-            )
-            conn.commit()
-    finally:
-        conn.close()
+    row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
     track_event(
         scope["acting_admin_id"],
         "admin_operation_customer_download_queued",
-        video_id=str(row[1]),
+        video_id=str(row["video_id"]),
         metadata={
             "acting_admin_id": scope["acting_admin_id"],
             "target_owner_user_id": scope["owner_user_id"],
             "target_brand_id": scope["brand_id"],
             "video_pk": video_pk,
+            "job_id": row["job_id"],
+            "enqueue_kind": row["enqueue_kind"],
         },
     )
     flash("Video queued for download.", "success")
     return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
+
+
+def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk: int) -> Dict[str, Any]:
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            "id, video_id, video_url, duration_seconds, download_status",
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    finally:
+        conn.close()
+    if not row or not str(row[2] or "").strip():
+        abort(404)
+    video_id = str(row[1] or "").strip()
+    video_url = str(row[2] or "").strip()
+    if not video_id or not video_url:
+        abort(404)
+    if str(row[4] or "").strip().lower() == "downloaded":
+        return {"video_id": video_id, "job_id": None, "enqueue_kind": "already_downloaded"}
+    job_input_hash = sha256(
+        f"admin-operation-youtube-ingest:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")
+    ).hexdigest()
+    enqueue_result = enqueue_job(
+        user_id=scope["owner_user_id"],
+        job_type=JOB_TYPE_INGEST_YOUTUBE,
+        payload={
+            "quick_session_id": "",
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "video_url": video_url,
+            "duration_seconds": row[3],
+            "brand_id": scope["brand_id"],
+        },
+        input_hash=job_input_hash,
+        max_attempts=6,
+    )
+    job = enqueue_result.get("job") or {}
+    return {
+        "video_id": video_id,
+        "job_id": job.get("id"),
+        "enqueue_kind": enqueue_result.get("kind"),
+    }
 
 
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/generate", methods=["GET"])
@@ -11503,41 +11530,21 @@ def admin_operation_generate_customer_short(brand_id: str, video_pk: int):
 @video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/download", methods=["POST"])
 @require_admin
 def admin_operation_download_lead_video(brand_id: str, video_pk: int):
-    """Queue a scoped source for the existing downloader worker."""
+    """Queue a target-owned lead source for the prod ingest worker."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
     _require_active_lead_workspace(scope)
-    conn = get_db()
-    try:
-        row = _fetch_scoped_video_row_with_scope(
-            conn,
-            video_pk,
-            "id, video_id, video_url, download_status",
-            owner_user_id=scope["owner_user_id"],
-            brand_id=scope["brand_id"],
-        )
-        if not row or not str(row[2] or "").strip():
-            abort(404)
-        if str(row[3] or "").strip().lower() != "downloaded":
-            conn.execute(
-                """
-                UPDATE youtube_videos
-                SET download_status = 'pending', downloaded_at = NULL
-                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
-                """,
-                [video_pk, scope["owner_user_id"], scope["brand_id"]],
-            )
-            conn.commit()
-    finally:
-        conn.close()
+    row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
     track_event(
         scope["acting_admin_id"],
         "admin_operation_lead_download_queued",
-        video_id=str(row[1]),
+        video_id=str(row["video_id"]),
         metadata={
             "acting_admin_id": scope["acting_admin_id"],
             "target_owner_user_id": scope["owner_user_id"],
             "target_brand_id": scope["brand_id"],
             "video_pk": video_pk,
+            "job_id": row["job_id"],
+            "enqueue_kind": row["enqueue_kind"],
         },
     )
     flash("Video queued for download.", "success")
