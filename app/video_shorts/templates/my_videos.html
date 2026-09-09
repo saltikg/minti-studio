@@ -992,11 +992,22 @@
   .mv-status-pill--failed {
     color: #fca5a5;
   }
+  .mv-status-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-width: 0;
+  }
   .mv-status-detail {
+    display: block;
     color: rgba(245, 158, 11, 0.78);
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
+  }
+  .mv-status-detail--ready {
+    color: rgba(45, 212, 191, 0.72);
   }
   .mv-row-actions {
     justify-self: end;
@@ -1253,16 +1264,19 @@
           <div class="mv-status-cell">
             {% if item.is_ready_for_editing %}
               <span class="mv-status-pill mv-status-pill--ready">Ready</span>
+              {% if item.ready_detail_label %}
+                <span class="mv-status-detail mv-status-detail--ready">{{ item.ready_detail_label }}</span>
+              {% endif %}
             {% elif item.is_failed %}
               <span class="mv-status-pill mv-status-pill--failed">Failed</span>
             {% else %}
+              <span class="mv-status-pill mv-status-pill--processing">Processing</span>
               <span
-                class="mv-status-pill mv-status-pill--processing"
+                class="mv-status-detail"
                 data-processing-started-at="{{ item.processing_started_at_iso }}"
                 data-processing-attempt="{{ item.processing_attempt_label }}"
               >
-                Processing
-                <span class="mv-status-detail" data-processing-detail>{{ item.processing_attempt_label }}</span>
+                <span data-processing-detail>{{ item.processing_attempt_label }}</span>
               </span>
             {% endif %}
           </div>

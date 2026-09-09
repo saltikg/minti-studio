@@ -74,6 +74,19 @@ def _utc_iso(value) -> str:
     return str(value)
 
 
+def _format_elapsed_label(started_at, finished_at) -> str:
+    if not started_at or not finished_at:
+        return ""
+    if isinstance(started_at, datetime) and isinstance(finished_at, datetime):
+        seconds = max(0, int((finished_at - started_at).total_seconds()))
+    else:
+        return ""
+    minutes, seconds = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 def _normalize_scope_label(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
     ascii_only = "".join(ch for ch in normalized if not unicodedata.combining(ch))
@@ -438,7 +451,43 @@ def my_videos_page():
                   AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
                 ORDER BY j.created_at DESC
                 LIMIT 1
-            ) AS active_source_job_max_attempts
+            ) AS active_source_job_max_attempts,
+            (
+                SELECT j.started_at
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_source_job_started_at,
+            (
+                SELECT j.finished_at
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_source_job_finished_at,
+            (
+                SELECT j.attempts
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_source_job_attempts,
+            (
+                SELECT j.max_attempts
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_source_job_max_attempts
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
@@ -564,6 +613,22 @@ def my_videos_page():
         item["processing_started_at_iso"] = _utc_iso(active_started_at)
         item["processing_attempt_label"] = (
             f"attempt {active_attempts}/{active_max_attempts}" if active_attempts and active_max_attempts else ""
+        )
+        completed_started_at = row[20]
+        completed_finished_at = row[21]
+        completed_attempts = int(row[22] or 0)
+        completed_max_attempts = int(row[23] or 0)
+        completed_elapsed = _format_elapsed_label(completed_started_at, completed_finished_at)
+        completed_attempt_label = (
+            f"attempt {completed_attempts}/{completed_max_attempts}"
+            if completed_attempts and completed_max_attempts
+            else ""
+        )
+        item["ready_detail_label"] = " · ".join(
+            part for part in [
+                f"completed in {completed_elapsed}" if completed_elapsed else "",
+                completed_attempt_label,
+            ] if part
         )
         item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
             str(item["download_status"]).strip().lower() in {"download_failed", "failed"}
