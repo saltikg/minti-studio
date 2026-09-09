@@ -64,6 +64,16 @@ def _format_channel_timestamp(value, tz_name: str) -> str:
     return local_dt.strftime("%Y-%m-%d %H:%M")
 
 
+def _utc_iso(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    return str(value)
+
+
 def _normalize_scope_label(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
     ascii_only = "".join(ch for ch in normalized if not unicodedata.combining(ch))
@@ -401,7 +411,34 @@ def my_videos_page():
                 WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
                   AND j.status IN ('queued', 'processing', 'running')
                   AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-            ) AS has_active_source_job
+            ) AS has_active_source_job,
+            (
+                SELECT j.started_at
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status IN ('queued', 'processing', 'running')
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_source_job_started_at,
+            (
+                SELECT j.attempts
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status IN ('queued', 'processing', 'running')
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_source_job_attempts,
+            (
+                SELECT j.max_attempts
+                FROM shorts_render_jobs j
+                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+                  AND j.status IN ('queued', 'processing', 'running')
+                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_source_job_max_attempts
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN (
@@ -520,6 +557,13 @@ def my_videos_page():
         )
         item["is_processing"] = not item["is_ready_for_editing"] and (
             str(row[15]).strip().lower() == "ingesting" and bool(row[16])
+        )
+        active_started_at = row[17]
+        active_attempts = int(row[18] or 0)
+        active_max_attempts = int(row[19] or 0)
+        item["processing_started_at_iso"] = _utc_iso(active_started_at)
+        item["processing_attempt_label"] = (
+            f"attempt {active_attempts}/{active_max_attempts}" if active_attempts and active_max_attempts else ""
         )
         item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
             str(item["download_status"]).strip().lower() in {"download_failed", "failed"}

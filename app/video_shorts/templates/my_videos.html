@@ -978,6 +978,12 @@
   .mv-status-pill--failed {
     color: #fca5a5;
   }
+  .mv-status-detail {
+    color: rgba(245, 158, 11, 0.78);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
   .mv-row-actions {
     justify-self: end;
   }
@@ -1236,7 +1242,14 @@
             {% elif item.is_failed %}
               <span class="mv-status-pill mv-status-pill--failed">Failed</span>
             {% else %}
-              <span class="mv-status-pill mv-status-pill--processing">Processing</span>
+              <span
+                class="mv-status-pill mv-status-pill--processing"
+                data-processing-started-at="{{ item.processing_started_at_iso }}"
+                data-processing-attempt="{{ item.processing_attempt_label }}"
+              >
+                Processing
+                <span class="mv-status-detail" data-processing-detail>{{ item.processing_attempt_label }}</span>
+              </span>
             {% endif %}
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
@@ -1655,6 +1668,26 @@
 	      filterEmpty.style.display = videoRows.length > 0 && visibleCount === 0 ? 'block' : 'none';
 	    }
 	  };
+
+	  const formatProcessingSeconds = (startedAt) => {
+	    const startedMs = Date.parse(startedAt || '');
+	    if (!Number.isFinite(startedMs)) return '';
+	    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+	    return `${elapsedSeconds}s`;
+	  };
+
+	  const updateProcessingDetails = () => {
+	    document.querySelectorAll('[data-processing-started-at]').forEach((node) => {
+	      const detail = node.querySelector('[data-processing-detail]');
+	      if (!detail) return;
+	      const elapsed = formatProcessingSeconds(node.dataset.processingStartedAt);
+	      const attempt = node.dataset.processingAttempt || '';
+	      detail.textContent = [elapsed, attempt].filter(Boolean).join(' · ');
+	    });
+	  };
+
+	  updateProcessingDetails();
+	  window.setInterval(updateProcessingDetails, 1000);
 
   const isFileOverPerFileLimit = (file) => {
     if (!file) return false;
