@@ -152,7 +152,6 @@ from app.video_shorts.services.admin_operation_scope import (
     resolve_admin_operation_request_scope,
     set_request_admin_operation_scope,
 )
-from app.video_shorts.services.render_jobs import JOB_TYPE_INGEST_YOUTUBE, enqueue_job
 
 # Read-time filter for common internet scanner probes that otherwise drown the
 # admin errors view. These rows remain stored in user_events; only the default
@@ -300,10 +299,12 @@ from app.video_shorts.services.youtube_oauth import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
+    JOB_TYPE_INGEST_YOUTUBE,
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
     enqueue_admin_proxy_transcript_job,
+    enqueue_job,
     enqueue_render_job,
     get_job,
     invalidate_done_job_cache,
@@ -4228,6 +4229,133 @@ def _fetch_scoped_video_row_with_scope(
     else:
         sql += " AND brand_id IS NULL"
     return conn.execute(sql, params).fetchone()
+
+
+def _format_admin_workspace_elapsed(started_at: Any, finished_at: Any) -> str:
+    if not started_at:
+        return ""
+    try:
+        started = started_at if isinstance(started_at, datetime) else datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        finished = finished_at if isinstance(finished_at, datetime) else (
+            datetime.fromisoformat(str(finished_at).replace("Z", "+00:00")) if finished_at else datetime.utcnow()
+        )
+        seconds = max(0, int((finished.replace(tzinfo=None) - started.replace(tzinfo=None)).total_seconds()))
+    except Exception:
+        return ""
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {remainder}s" if remainder else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
+def _admin_workspace_job_selects() -> str:
+    return """
+            (
+                SELECT j.id
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status IN ('queued', 'processing')
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_ingest_job_id,
+            (
+                SELECT j.started_at
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status IN ('queued', 'processing')
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_ingest_started_at,
+            (
+                SELECT j.attempts
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status IN ('queued', 'processing')
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_ingest_attempts,
+            (
+                SELECT j.max_attempts
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status IN ('queued', 'processing')
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.created_at DESC
+                LIMIT 1
+            ) AS active_ingest_max_attempts,
+            (
+                SELECT j.started_at
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_ingest_started_at,
+            (
+                SELECT j.finished_at
+                FROM shorts_render_jobs j
+                WHERE j.type = 'ingest_youtube'
+                  AND j.status = 'done'
+                  AND j.payload_json ->> 'video_pk' = CAST(youtube_videos.id AS VARCHAR)
+                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 1
+            ) AS completed_ingest_finished_at
+    """
+
+
+def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str) -> Dict[str, Any]:
+    active_started_at = row[7]
+    active_attempts = int(row[8] or 0)
+    active_max_attempts = int(row[9] or 0)
+    completed_elapsed = _format_admin_workspace_elapsed(row[10], row[11])
+    is_ready = str(row[4] or "").strip().lower() == "downloaded" and str(row[5] or "").strip().lower() == "done"
+    is_processing = not is_ready and bool(row[6])
+    status_detail = ""
+    if is_processing:
+        status_detail = f"attempt {active_attempts}/{active_max_attempts}" if active_attempts and active_max_attempts else ""
+    elif is_ready and completed_elapsed:
+        status_detail = f"completed in {completed_elapsed}"
+    return {
+        "id": int(row[0]),
+        "video_id": str(row[1] or ""),
+        "title": str(row[2] or "").strip() or "Untitled video",
+        "thumbnail_url": str(row[3] or "").strip(),
+        "download_status": str(row[4] or "").strip().lower() or "pending",
+        "transcript_status": str(row[5] or "").strip().lower(),
+        "active_ingest_job_id": str(row[6] or ""),
+        "active_ingest_started_at": _coerce_transcribe_state_value(active_started_at) if active_started_at else "",
+        "processing_attempt_label": status_detail if is_processing else "",
+        "ready_detail_label": status_detail if is_ready else "",
+        "is_processing": is_processing,
+        "is_ready": is_ready,
+        "download_status_url": (
+            url_for(
+                "video_shorts_bp.admin_operation_download_status",
+                workspace_kind=workspace_kind,
+                brand_id=brand_id,
+                video_pk=int(row[0]),
+                job_id=str(row[6]),
+            )
+            if row[6]
+            else ""
+        ),
+        "generate_url": url_for(
+            f"video_shorts_bp.admin_operation_generate_{workspace_kind}_short",
+            brand_id=brand_id,
+            video_pk=int(row[0]),
+        ),
+    }
+
+
+def _wants_json_response() -> bool:
+    return request.accept_mimetypes.best == "application/json" or request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 def _require_admin_operation_scope(
@@ -11279,8 +11407,9 @@ def admin_operation_lead_workspace(brand_id: str):
             [lead["id"]],
         ).fetchone()
         rows = conn.execute(
-            """
+            f"""
             SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+                 , {_admin_workspace_job_selects()}
             FROM youtube_videos
             WHERE owner_user_id = ? AND brand_id = ?
             ORDER BY id DESC
@@ -11290,17 +11419,7 @@ def admin_operation_lead_workspace(brand_id: str):
     finally:
         conn.close()
     first_video_id = int(first_row[0]) if first_row and first_row[0] is not None else None
-    videos = [
-        {
-            "id": int(row[0]),
-            "video_id": str(row[1] or ""),
-            "title": str(row[2] or "").strip() or "Untitled video",
-            "thumbnail_url": str(row[3] or "").strip(),
-            "download_status": str(row[4] or "").strip().lower() or "pending",
-            "transcript_status": str(row[5] or "").strip().lower(),
-        }
-        for row in rows
-    ]
+    videos = [_build_admin_workspace_video(row, brand_id=scope["brand_id"], workspace_kind="lead") for row in rows]
     videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
     lead["brand_id"] = scope["brand_id"]
     return render_template("shorts_admin_lead_workspace.html", admin_title="Lead workspace", lead=lead, videos=videos)
@@ -11315,8 +11434,9 @@ def admin_operation_customer_workspace(brand_id: str):
     conn = get_db_readonly()
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+                 , {_admin_workspace_job_selects()}
             FROM youtube_videos
             WHERE owner_user_id = ? AND brand_id = ?
             ORDER BY id DESC
@@ -11325,17 +11445,7 @@ def admin_operation_customer_workspace(brand_id: str):
         ).fetchall()
     finally:
         conn.close()
-    videos = [
-        {
-            "id": int(row[0]),
-            "video_id": str(row[1] or ""),
-            "title": str(row[2] or "").strip() or "Untitled video",
-            "thumbnail_url": str(row[3] or "").strip(),
-            "download_status": str(row[4] or "").strip().lower() or "pending",
-            "transcript_status": str(row[5] or "").strip().lower(),
-        }
-        for row in rows
-    ]
+    videos = [_build_admin_workspace_video(row, brand_id=scope["brand_id"], workspace_kind="customer") for row in rows]
     return render_template(
         "shorts_admin_customer_workspace.html",
         admin_title="Customer workspace",
@@ -11465,6 +11575,25 @@ def admin_operation_download_customer_video(brand_id: str, video_pk: int):
             "enqueue_kind": row["enqueue_kind"],
         },
     )
+    if _wants_json_response():
+        return jsonify(
+            success=True,
+            job_id=row["job_id"],
+            status=row["enqueue_kind"],
+            status_url=(
+                url_for(
+                    "video_shorts_bp.admin_operation_download_status",
+                    workspace_kind="customer",
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    job_id=row["job_id"],
+                )
+                if row["job_id"]
+                else ""
+            ),
+            generate_url=url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=video_pk),
+            already_ready=row["enqueue_kind"] == "already_downloaded",
+        )
     flash("Video queued for download.", "success")
     return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
@@ -11547,8 +11676,79 @@ def admin_operation_download_lead_video(brand_id: str, video_pk: int):
             "enqueue_kind": row["enqueue_kind"],
         },
     )
+    if _wants_json_response():
+        return jsonify(
+            success=True,
+            job_id=row["job_id"],
+            status=row["enqueue_kind"],
+            status_url=(
+                url_for(
+                    "video_shorts_bp.admin_operation_download_status",
+                    workspace_kind="lead",
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    job_id=row["job_id"],
+                )
+                if row["job_id"]
+                else ""
+            ),
+            generate_url=url_for("video_shorts_bp.admin_operation_generate_lead_short", brand_id=brand_id, video_pk=video_pk),
+            already_ready=row["enqueue_kind"] == "already_downloaded",
+        )
     flash("Video queued for download.", "success")
     return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
+
+
+@video_shorts_bp.route("/admin/operation/<workspace_kind>/<brand_id>/video/<int:video_pk>/download/<job_id>/status", methods=["GET"])
+@require_admin
+def admin_operation_download_status(workspace_kind: str, brand_id: str, video_pk: int, job_id: str):
+    workspace_kind = str(workspace_kind or "").strip().lower()
+    if workspace_kind not in {"customer", "lead"}:
+        abort(404)
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind=workspace_kind, video_pk=video_pk)
+    if workspace_kind == "customer":
+        _require_active_customer_workspace(scope)
+        generate_endpoint = "video_shorts_bp.admin_operation_generate_customer_short"
+    else:
+        _require_active_lead_workspace(scope)
+        generate_endpoint = "video_shorts_bp.admin_operation_generate_lead_short"
+    job = get_job(job_id, user_id=str(scope["owner_user_id"]))
+    payload = (job or {}).get("payload") or {}
+    if (
+        not job
+        or str(job.get("type") or "") != JOB_TYPE_INGEST_YOUTUBE
+        or str(payload.get("brand_id") or "") != str(scope["brand_id"])
+        or str(payload.get("video_pk") or "") != str(video_pk)
+    ):
+        abort(404)
+    conn = get_db_readonly()
+    try:
+        video_row = _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            "download_status, transcript_status",
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    finally:
+        conn.close()
+    download_status = str((video_row or [None, None])[0] or "").strip().lower()
+    transcript_status = str((video_row or [None, None])[1] or "").strip().lower()
+    is_ready = download_status == "downloaded" and transcript_status == "done"
+    return jsonify(
+        success=True,
+        id=job["id"],
+        status=job.get("status"),
+        started_at=job.get("started_at") or job.get("created_at"),
+        finished_at=job.get("finished_at"),
+        attempts=job.get("attempts") or 0,
+        max_attempts=job.get("max_attempts") or 0,
+        error=job.get("error"),
+        is_ready=is_ready,
+        download_status=download_status,
+        transcript_status=transcript_status,
+        generate_url=url_for(generate_endpoint, brand_id=brand_id, video_pk=video_pk),
+    )
 
 
 @video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/proxy-transcribe", methods=["POST"])
