@@ -1815,6 +1815,168 @@
     }
   }
 
+  @media (max-width: 768px) {
+    .vs-home {
+      margin-top: -1.5rem;
+    }
+
+    .vs-home .vs-home-hero {
+      margin-inline: -0.25rem;
+      margin-bottom: -2.25rem;
+      background:
+        radial-gradient(circle at top center, rgba(29, 158, 117, 0.15), transparent 34%),
+        linear-gradient(180deg, rgba(15, 23, 42, 0.14), rgba(11, 15, 20, 0));
+    }
+
+    .vs-home .vs-home-hero::after {
+      background: radial-gradient(circle at 72% 10%, rgba(93, 202, 165, 0.08), transparent 32%);
+    }
+
+    .vs-home .vs-home-hero-inner {
+      gap: 0;
+      padding: 1.45rem 0.25rem 1.1rem;
+    }
+
+    .vs-home .vs-home-hero .flow-shell {
+      padding: 0.35rem 0 0;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-header {
+      margin-bottom: 0;
+      padding-inline: 0;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-title {
+      margin-bottom: 1.2rem;
+      font-size: clamp(2.55rem, 11.2vw, 2.7rem);
+      font-weight: 680;
+      line-height: 1.05;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .vs-home .hero-title-line {
+      display: inline;
+    }
+
+    .vs-home .hero-title-line::before {
+      content: " ";
+    }
+
+    .vs-home .hero-growth-word {
+      gap: 0.12em;
+      align-items: baseline;
+      vertical-align: baseline;
+    }
+
+    .vs-home .hero-growth-icon {
+      width: 0.82em;
+      height: 0.82em;
+      transform: translateY(0.08em);
+      border-radius: 0.22em;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-subtitle {
+      max-width: 20.75rem;
+      font-size: 1rem;
+      line-height: 1.45;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-tagline {
+      margin-top: 0.55rem;
+      font-size: 0.86rem;
+      line-height: 1.35;
+    }
+
+    .vs-home .vs-home-hero .hero-actions {
+      align-items: center;
+      justify-content: center;
+      margin-top: 1.6rem;
+    }
+
+    .vs-home .hero-link {
+      width: auto;
+      min-width: 0;
+    }
+
+    .vs-home .hero-primary {
+      width: clamp(180px, 54vw, 220px);
+      min-height: 52px;
+      padding: 0.95rem 1.55rem;
+      font-size: 1rem;
+    }
+
+    .vs-home .vs-home-flow-section {
+      margin-bottom: 1rem;
+    }
+
+    .vs-home .vs-home-flow-section .flow-shell {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .vs-home .vs-home-flow-section-heading {
+      margin-bottom: 1.15rem;
+      font-size: 1.85rem;
+      line-height: 1.1;
+    }
+
+    .vs-home .hero-flow {
+      max-width: 100%;
+      gap: 0.45rem;
+    }
+
+    .vs-home .hero-flow > .flow-stage:nth-child(1) {
+      gap: 0.6rem;
+    }
+
+    .vs-home .hero-flow > .flow-stage:nth-child(1) .flow-card {
+      width: clamp(280px, 78vw, 312px);
+      max-width: calc(100vw - 32px);
+      padding: 0;
+    }
+
+    .vs-home .hero-flow > .flow-stage:nth-child(3) {
+      gap: 0.65rem;
+    }
+
+    .vs-home .hero-flow > .flow-stage:nth-child(3) .flow-card {
+      width: min(100%, 346px);
+      max-width: calc(100vw - 32px);
+      padding: 0;
+    }
+
+    .vs-home .flow-arrow {
+      margin: 0.05rem 0;
+      font-size: 1.45rem;
+      line-height: 1;
+    }
+
+    .vs-home .flow-clips {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.5rem;
+      min-height: 0;
+      height: auto;
+      align-items: start;
+    }
+
+    .vs-home .flow-clip {
+      border-radius: 14px;
+    }
+
+    .vs-home .hero-flow > .flow-arrow:nth-child(4),
+    .vs-home .hero-flow > .flow-stage:nth-child(5),
+    .vs-home .flow-fork {
+      display: none;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;
