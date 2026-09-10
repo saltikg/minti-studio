@@ -3440,6 +3440,31 @@ def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallback_entries: List[Dict[str, Any]]) -> bool:
+    target_index = _coerce_positive_plan_index(updated_entry.get("plan_index"))
+    if target_index is None:
+        _write_plan_entries(video_id, fallback_entries)
+        return True
+    latest_entries = _load_plan_entries(video_id)
+    if not latest_entries:
+        _write_plan_entries(video_id, fallback_entries)
+        return True
+
+    merged_entries: List[Dict[str, Any]] = []
+    replaced = False
+    for entry in latest_entries:
+        entry_index = _coerce_positive_plan_index(entry.get("plan_index"))
+        if entry_index == target_index:
+            merged_entries.append(dict(updated_entry))
+            replaced = True
+        else:
+            merged_entries.append(entry)
+    if not replaced:
+        return False
+    _write_plan_entries(video_id, merged_entries)
+    return True
+
+
 def _coerce_positive_plan_index(value: Any) -> Optional[int]:
     try:
         resolved = int(value)
@@ -17863,7 +17888,13 @@ def autoclip_video(video_pk):
                     clip_filename,
                     vid,
                 )
-                _write_plan_entries(vid, plan_entries)
+                merged = _write_merged_plan_entry(vid, plan_entry, plan_entries)
+                if not merged:
+                    current_app.logger.warning(
+                        "Skipped stale plan update because plan index %s is no longer present video_id=%s",
+                        plan_entry.get("plan_index"),
+                        vid,
+                    )
                 current_app.logger.info(
                     "short plan update success clip_filename=%s video_id=%s",
                     clip_filename,

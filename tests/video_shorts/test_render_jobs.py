@@ -257,6 +257,35 @@ def _input_hash(source_video_id: str, plan_index: int = 1) -> str:
     )
 
 
+def test_plan_entry_merge_preserves_newer_entries(monkeypatch, tmp_path):
+    shorts_dir = tmp_path / "shorts"
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    video_id = "merge-plan-video"
+    original_snapshot = [
+        {"plan_index": 1, "title": "First", "status": "queued"},
+    ]
+    generation._write_plan_entries(video_id, original_snapshot)
+    generation._write_plan_entries(
+        video_id,
+        [
+            {"plan_index": 2, "title": "Second", "status": "queued"},
+            {"plan_index": 1, "title": "First", "status": "queued"},
+        ],
+    )
+
+    merged = generation._write_merged_plan_entry(
+        video_id,
+        {"plan_index": 1, "title": "First", "status": "created", "output_filename": "1_merge-plan-video.mp4"},
+        original_snapshot,
+    )
+    entries = generation._load_plan_entries(video_id)
+
+    assert merged is True
+    assert [entry["plan_index"] for entry in entries] == [2, 1]
+    assert entries[0]["title"] == "Second"
+    assert entries[1]["status"] == "created"
+
+
 def test_preview_enqueue_is_tenant_scoped_and_idempotent(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "preview_enqueue.duckdb")
     user_id = str(uuid4())
