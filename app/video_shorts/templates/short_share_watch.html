@@ -151,7 +151,7 @@
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 480ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 1.82s;
+        animation-delay: 2.02s;
       }
       video {
         display: block;
@@ -176,7 +176,7 @@
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 2.02s;
+        animation-delay: 1.82s;
       }
       .watch-more-title {
         color: var(--text);
@@ -361,11 +361,6 @@
           </a>
         </div>
       {% endif %}
-      <div class="watch-video-wrap">
-        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
-          <source src="{{ playback_url }}" type="video/mp4">
-        </video>
-      </div>
       {% if onboarding_url and additional_shorts_count and additional_shorts_count > 0 %}
         {% set separator = '&' if '?' in onboarding_url else '?' %}
         {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot&landing=my_videos' %}
@@ -380,6 +375,11 @@
           </a>
         </div>
       {% endif %}
+      <div class="watch-video-wrap">
+        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
+          <source src="{{ playback_url }}" type="video/mp4">
+        </video>
+      </div>
       <div class="watch-footer">
         {% if onboarding_url %}
           

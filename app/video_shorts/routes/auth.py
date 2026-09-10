@@ -367,6 +367,8 @@ def _build_service_mode_context() -> dict[str, object]:
     pending_intent = _normalize_service_intent(user.get("pending_service_intent")) or _normalize_service_intent(
         session.get("vs_pending_service_intent")
     )
+    if pending_intent == "autopilot" and request.endpoint == "video_shorts_bp.my_videos_page":
+        return {"show_modal": False}
     pending_tier = _normalize_service_tier(user.get("pending_service_tier"))
     if pending_tier is None:
         pending_tier = _normalize_service_tier(session.get("vs_pending_service_tier"))
