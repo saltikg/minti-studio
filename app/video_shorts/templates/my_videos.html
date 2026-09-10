@@ -1132,47 +1132,47 @@
     {% endif %}
   </section>
 
-  {% if is_autopilot %}
-    <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
-      <div class="mv-recent-shorts-head">
-        <h2 id="mv-recent-shorts-heading" class="mv-section-title">Recently created Shorts</h2>
+  <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
+    <div class="mv-recent-shorts-head">
+      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if is_autopilot %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
+      {% if is_autopilot %}
         <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
-      </div>
-      <div class="mv-shorts-strip">
-        {% if recent_shorts %}
-          {% for short in recent_shorts %}
-          <article class="mv-short-card">
-            <div class="mv-short-frame">
-              <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
-              {% if short.poster_url %}
-                <img src="{{ short.poster_url }}" alt="{{ short.title }}">
-              {% elif short.thumbnail_url %}
-                <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
-              {% else %}
-                <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
-              {% endif %}
-              {% if short.video_url %}
-                <video data-preview-src="{{ short.video_url }}" muted playsinline preload="none" aria-label="Preview: {{ short.title }}"></video>
-              {% endif %}
-              <div class="mv-short-title">{{ short.title }}</div>
-            </div>
-            <div class="mv-short-meta">
-              {% if short.has_real_metrics %}
-                <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
-              {% endif %}
-              <div>{{ short.meta_label }}</div>
-              {% if short.source_video_pk %}
-                <a class="mv-short-editor-link" href="{{ url_for('video_shorts_bp.generate_short', video_pk=short.source_video_pk) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor</a>
-              {% endif %}
-            </div>
-          </article>
-          {% endfor %}
-        {% else %}
-          <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
-        {% endif %}
-      </div>
-    </section>
-  {% endif %}
+      {% endif %}
+    </div>
+    <div class="mv-shorts-strip">
+      {% if recent_shorts %}
+        {% for short in recent_shorts %}
+        <article class="mv-short-card">
+          <div class="mv-short-frame">
+            <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
+            {% if short.poster_url %}
+              <img src="{{ short.poster_url }}" alt="{{ short.title }}">
+            {% elif short.thumbnail_url %}
+              <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
+            {% else %}
+              <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
+            {% endif %}
+            {% if short.video_url %}
+              <video data-preview-src="{{ short.video_url }}" muted playsinline preload="none" aria-label="Preview: {{ short.title }}"></video>
+            {% endif %}
+            <div class="mv-short-title">{{ short.title }}</div>
+          </div>
+          <div class="mv-short-meta">
+            {% if short.has_real_metrics %}
+              <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
+            {% endif %}
+            <div>{{ short.meta_label }}</div>
+            {% if short.source_video_pk %}
+              <a class="mv-short-editor-link" href="{{ url_for('video_shorts_bp.generate_short', video_pk=short.source_video_pk) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor</a>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      {% else %}
+        <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
+      {% endif %}
+    </div>
+  </section>
 
   <form method="get" class="mv-toolbar">
       <div class="mv-toolbar-grid">

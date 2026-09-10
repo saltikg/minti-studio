@@ -538,6 +538,7 @@ def my_videos_page():
             [current_user["id"], brand_id],
         ).fetchone()
         prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
+    if brand_id:
         recent_short_rows = conn.execute(
             """
             SELECT
