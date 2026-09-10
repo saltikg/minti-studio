@@ -524,8 +524,8 @@ def test_claim_is_atomic_under_concurrency(monkeypatch, tmp_path):
     assert len(set(non_null)) == 1
 
 
-def test_free_plan_processing_cap_blocks_second_claim(monkeypatch, tmp_path):
-    _configure_duckdb(monkeypatch, tmp_path, "free_cap.duckdb")
+def test_user_can_queue_render_while_another_is_processing(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "render_queue_while_processing.duckdb")
     user_id = str(uuid4())
     _insert_user(user_id, "plan_free")
 
@@ -540,7 +540,7 @@ def test_free_plan_processing_cap_blocks_second_claim(monkeypatch, tmp_path):
         input_hash=_input_hash("video-b", 2),
     )
     claimed = render_jobs.claim_next_job("worker-free-cap")
-    blocked = render_jobs.enqueue_render_job(
+    queued = render_jobs.enqueue_render_job(
         user_id=user_id,
         payload=_payload(3, "video-c", 3),
         input_hash=_input_hash("video-c", 3),
@@ -549,8 +549,8 @@ def test_free_plan_processing_cap_blocks_second_claim(monkeypatch, tmp_path):
     assert first["kind"] == "queued"
     assert second["kind"] == "queued"
     assert claimed["id"] == first["job"]["id"]
-    assert blocked["kind"] == "concurrency_limit"
-    assert blocked["limit"] == 1
+    assert queued["kind"] == "queued"
+    assert queued["job"]["queue_position"] == 1
 
 
 def test_global_processing_cap_keeps_next_job_queued_without_attempt(monkeypatch, tmp_path):

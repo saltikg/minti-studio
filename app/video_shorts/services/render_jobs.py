@@ -458,16 +458,6 @@ def enqueue_job(
             return {"kind": "existing", "job": existing_active}
 
         plan = _fetch_plan_settings(conn, user_id)
-        if job_type in {JOB_TYPE_RENDER_SHORT, JOB_TYPE_PUBLISH_SHORT}:
-            processing = _count_user_processing(conn, user_id)
-            if processing >= plan["max_concurrent_jobs"]:
-                conn.commit()
-                return {
-                    "kind": "concurrency_limit",
-                    "limit": plan["max_concurrent_jobs"],
-                    "inflight": processing,
-                    "plan_id": plan["plan_id"],
-                }
 
         job_id = str(uuid4())
         payload_json = _serialize_json(payload) or "{}"
