@@ -14,6 +14,8 @@
     .lead-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .lead-workspace-target-line .text-muted { color:#fff !important; }
     .lead-workspace-thumb, .lead-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
+    .lead-workspace-title-link { color:#fff; text-decoration:none; }
+    .lead-workspace-title-link:hover { color:#fff; text-decoration:underline; }
     .lead-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .lead-workspace-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .workspace-download-detail { color:rgba(255,255,255,.58); font-size:.78rem; line-height:1.2; white-space:nowrap; }
@@ -45,8 +47,14 @@
       <article class="lead-workspace-video" data-download-row>
         {% if video.thumbnail_url %}<img class="lead-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="lead-workspace-thumb-placeholder"></span>{% endif %}
         <div>
-          <div class="fw-semibold">{{ video.title }}</div>
-          <div class="lead-workspace-status">Download: <span data-download-status-label>{% if video.is_ready %}ready{% elif video.is_processing %}processing{% else %}{{ video.download_status }}{% endif %}</span>{% if video.transcript_status %} · Transcript: <span data-transcript-status-label>{{ video.transcript_status }}</span>{% endif %}</div>
+          <div class="fw-semibold">
+            {% if video.source_href %}
+              <a class="lead-workspace-title-link" href="{{ video.source_href }}" target="_blank" rel="noopener">{{ video.title }}</a>
+            {% else %}
+              {{ video.title }}
+            {% endif %}
+          </div>
+          <div class="lead-workspace-status">{% if video.duration_label %}Length: {{ video.duration_label }} · {% endif %}Download: <span data-download-status-label>{% if video.is_ready %}ready{% elif video.is_processing %}processing{% else %}{{ video.download_status }}{% endif %}</span>{% if video.transcript_status %} · Transcript: <span data-transcript-status-label>{{ video.transcript_status }}</span>{% endif %}</div>
         </div>
         <div class="lead-workspace-actions">
           {% if video.is_ready %}
@@ -164,7 +172,11 @@
           .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
           .then((data) => {
             if (data.started_at) state.dataset.processingStartedAt = data.started_at;
-            if (data.attempts && data.max_attempts) state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
+            if (data.attempts && data.max_attempts) {
+              state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
+            } else if (data.max_attempts) {
+              state.dataset.processingAttempt = 'waiting to start';
+            }
             if (data.is_ready || data.status === 'done') {
               stopTicker(state);
               setReady(state.closest('[data-download-row]'), data.generate_url || state.dataset.generateUrl, state.dataset.processingStartedAt, data.finished_at || new Date().toISOString());

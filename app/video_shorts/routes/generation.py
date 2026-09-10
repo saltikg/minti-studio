@@ -4311,15 +4311,24 @@ def _admin_workspace_job_selects() -> str:
 
 
 def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str) -> Dict[str, Any]:
-    active_started_at = row[7]
-    active_attempts = int(row[8] or 0)
-    active_max_attempts = int(row[9] or 0)
-    completed_elapsed = _format_admin_workspace_elapsed(row[10], row[11])
-    is_ready = str(row[4] or "").strip().lower() == "downloaded" and str(row[5] or "").strip().lower() == "done"
-    is_processing = not is_ready and bool(row[6])
+    video_url = str(row[4] or "").strip()
+    source_href = video_url if video_url.startswith(("http://", "https://")) else ""
+    if not source_href:
+        video_id_for_url = str(row[1] or "").strip()
+        if video_id_for_url and not video_id_for_url.startswith("local_"):
+            source_href = f"https://www.youtube.com/watch?v={video_id_for_url}"
+    active_started_at = row[9]
+    active_attempts = int(row[10] or 0)
+    active_max_attempts = int(row[11] or 0)
+    completed_elapsed = _format_admin_workspace_elapsed(row[12], row[13])
+    is_ready = str(row[6] or "").strip().lower() == "downloaded" and str(row[7] or "").strip().lower() == "done"
+    is_processing = not is_ready and bool(row[8])
     status_detail = ""
     if is_processing:
-        status_detail = f"attempt {active_attempts}/{active_max_attempts}" if active_attempts and active_max_attempts else ""
+        if active_attempts and active_max_attempts:
+            status_detail = f"attempt {active_attempts}/{active_max_attempts}"
+        elif active_max_attempts:
+            status_detail = "waiting to start"
     elif is_ready and completed_elapsed:
         status_detail = f"completed in {completed_elapsed}"
     return {
@@ -4327,9 +4336,11 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
         "video_id": str(row[1] or ""),
         "title": str(row[2] or "").strip() or "Untitled video",
         "thumbnail_url": str(row[3] or "").strip(),
-        "download_status": str(row[4] or "").strip().lower() or "pending",
-        "transcript_status": str(row[5] or "").strip().lower(),
-        "active_ingest_job_id": str(row[6] or ""),
+        "source_href": source_href,
+        "duration_label": _format_time_label(row[5]) if row[5] is not None else "",
+        "download_status": str(row[6] or "").strip().lower() or "pending",
+        "transcript_status": str(row[7] or "").strip().lower(),
+        "active_ingest_job_id": str(row[8] or ""),
         "active_ingest_started_at": _coerce_transcribe_state_value(active_started_at) if active_started_at else "",
         "processing_attempt_label": status_detail if is_processing else "",
         "ready_detail_label": status_detail if is_ready else "",
@@ -4341,9 +4352,9 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
                 workspace_kind=workspace_kind,
                 brand_id=brand_id,
                 video_pk=int(row[0]),
-                job_id=str(row[6]),
+                job_id=str(row[8]),
             )
-            if row[6]
+            if row[8]
             else ""
         ),
         "generate_url": url_for(
@@ -4352,6 +4363,16 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
             video_pk=int(row[0]),
         ),
     }
+
+
+def _admin_workspace_preview_ready(video_id: str) -> bool:
+    clean_video_id = str(video_id or "").strip()
+    if not clean_video_id:
+        return False
+    try:
+        return _preview_frame_cache_path(clean_video_id).exists()
+    except Exception:
+        return False
 
 
 def _wants_json_response() -> bool:
@@ -11408,7 +11429,7 @@ def admin_operation_lead_workspace(brand_id: str):
         ).fetchone()
         rows = conn.execute(
             f"""
-            SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+            SELECT id, video_id, title, thumbnail_url, video_url, duration_seconds, download_status, transcript_status
                  , {_admin_workspace_job_selects()}
             FROM youtube_videos
             WHERE owner_user_id = ? AND brand_id = ?
@@ -11435,7 +11456,7 @@ def admin_operation_customer_workspace(brand_id: str):
     try:
         rows = conn.execute(
             f"""
-            SELECT id, video_id, title, thumbnail_url, download_status, transcript_status
+            SELECT id, video_id, title, thumbnail_url, video_url, duration_seconds, download_status, transcript_status
                  , {_admin_workspace_job_selects()}
             FROM youtube_videos
             WHERE owner_user_id = ? AND brand_id = ?
@@ -11604,7 +11625,7 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
         row = _fetch_scoped_video_row_with_scope(
             conn,
             video_pk,
-            "id, video_id, video_url, duration_seconds, download_status",
+            "id, video_id, video_url, duration_seconds, download_status, transcript_status",
             owner_user_id=scope["owner_user_id"],
             brand_id=scope["brand_id"],
         )
@@ -11616,7 +11637,15 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
     video_url = str(row[2] or "").strip()
     if not video_id or not video_url:
         abort(404)
-    if str(row[4] or "").strip().lower() == "downloaded":
+    download_status = str(row[4] or "").strip().lower()
+    transcript_status = str(row[5] or "").strip().lower()
+    source_is_youtube = video_url.startswith(("http://", "https://"))
+    ready_for_generate = (
+        download_status == "downloaded"
+        and transcript_status == "done"
+        and _admin_workspace_preview_ready(video_id)
+    )
+    if ready_for_generate or (download_status == "downloaded" and not source_is_youtube):
         return {"video_id": video_id, "job_id": None, "enqueue_kind": "already_downloaded"}
     job_input_hash = sha256(
         f"admin-operation-youtube-ingest:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")

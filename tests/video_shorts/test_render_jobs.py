@@ -885,6 +885,68 @@ def test_admin_lead_download_enqueues_only_scoped_brand_ingest_job(monkeypatch, 
     assert job["payload"]["brand_id"] != other_brand_id
 
 
+def test_admin_lead_download_requeues_incomplete_downloaded_source(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_lead_incomplete_downloaded.duckdb")
+    admin_id = str(uuid4())
+    owner_id = str(uuid4())
+    brand_id = str(uuid4())
+    video_pk = 9301
+
+    _insert_user(admin_id, "plan_10gb")
+    _insert_user(owner_id, "plan_10gb")
+    conn = db_service.get_db()
+    try:
+        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [admin_id])
+        conn.commit()
+    finally:
+        conn.close()
+    _insert_video(
+        video_pk,
+        "legacy_incomplete_source",
+        owner_id,
+        brand_id=brand_id,
+        video_url="https://www.youtube.com/watch?v=legacy12345",
+        download_status="downloaded",
+    )
+
+    enqueued: list[dict] = []
+    monkeypatch.setattr(generation, "SHORTS_DIR", tmp_path / "shorts")
+    monkeypatch.setattr(
+        generation,
+        "_require_admin_operation_scope",
+        lambda **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "lead",
+            "acting_admin_id": admin_id,
+        },
+    )
+    monkeypatch.setattr(generation, "_require_active_lead_workspace", lambda scope: {"brand_id": brand_id})
+    monkeypatch.setattr(generation, "track_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        generation,
+        "enqueue_job",
+        lambda **kwargs: enqueued.append(kwargs) or {"kind": "queued", "job": {"id": "lead-refresh-job"}},
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = admin_id
+
+    response = client.post(f"/video_shorts/admin/operation/lead/{brand_id}/video/{video_pk}/download")
+
+    assert response.status_code == 302
+    assert len(enqueued) == 1
+    job = enqueued[0]
+    assert job["user_id"] == owner_id
+    assert job["job_type"] == render_jobs.JOB_TYPE_INGEST_YOUTUBE
+    assert job["payload"]["brand_id"] == brand_id
+    assert job["payload"]["video_pk"] == video_pk
+    assert job["payload"]["video_url"] == "https://www.youtube.com/watch?v=legacy12345"
+
+
 def test_transcribe_start_refuses_over_quota_before_source_resolution(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "transcribe_quota_guard.duckdb")
     user_id = str(uuid4())

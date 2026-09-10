@@ -152,7 +152,11 @@
           .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
           .then((data) => {
             if (data.started_at) state.dataset.processingStartedAt = data.started_at;
-            if (data.attempts && data.max_attempts) state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
+            if (data.attempts && data.max_attempts) {
+              state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
+            } else if (data.max_attempts) {
+              state.dataset.processingAttempt = 'waiting to start';
+            }
             if (data.is_ready || data.status === 'done') {
               stopTicker(state);
               setReady(state.closest('[data-download-row]'), data.generate_url || state.dataset.generateUrl, state.dataset.processingStartedAt, data.finished_at || new Date().toISOString());
