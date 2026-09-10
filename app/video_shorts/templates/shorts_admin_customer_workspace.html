@@ -12,6 +12,8 @@
     .customer-workspace-ingest { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-bottom:20px; }
     .customer-workspace-video { display:grid; grid-template-columns:120px minmax(0,1fr) auto; gap:16px; align-items:center; padding:16px 0; border-bottom:1px solid rgba(255,255,255,.08); }
     .customer-workspace-video:last-child { border-bottom:0; }
+    .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .customer-workspace-target-line .text-muted { color:#fff !important; }
     .customer-workspace-thumb, .customer-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
     .customer-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .customer-workspace-actions { display:flex; flex-direction:column; gap:5px; align-items:flex-start; min-width:116px; }
@@ -27,9 +29,11 @@
   <section class="vs-admin-card p-3 p-lg-4">
     <div class="customer-workspace-header">
       <div>
-        <div class="text-uppercase text-muted small fw-semibold">Target customer brand</div>
-        <div class="fs-5 fw-semibold">Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</div>
-        {% if customer.creator_email %}<div class="text-muted small">{{ customer.creator_email }}</div>{% endif %}
+        <div class="text-uppercase small fw-semibold text-white">Target customer brand</div>
+        <div class="fs-5 fw-semibold customer-workspace-target-line">
+          <span>Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</span>
+          {% if customer.creator_email %}<span class="text-muted small">{{ customer.creator_email }}</span>{% endif %}
+        </div>
       </div>
       <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
@@ -78,9 +82,14 @@
       const pollTimers = new WeakMap();
       const tickTimers = new WeakMap();
       const formatElapsed = (startedAt, finishedAt) => {
-        const startedMs = Date.parse(startedAt || '');
+        const normalizeTimestamp = (value) => {
+          const text = String(value || '').trim();
+          if (!text) return '';
+          return /(?:z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
+        };
+        const startedMs = Date.parse(normalizeTimestamp(startedAt));
         if (!Number.isFinite(startedMs)) return '';
-        const endMs = finishedAt ? Date.parse(finishedAt) : Date.now();
+        const endMs = finishedAt ? Date.parse(normalizeTimestamp(finishedAt)) : Date.now();
         const elapsed = Math.max(0, Math.floor(((Number.isFinite(endMs) ? endMs : Date.now()) - startedMs) / 1000));
         if (elapsed < 60) return `${elapsed}s`;
         const minutes = Math.floor(elapsed / 60);
