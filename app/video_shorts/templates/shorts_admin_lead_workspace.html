@@ -16,6 +16,8 @@
     .lead-workspace-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .workspace-download-detail { color:rgba(255,255,255,.58); font-size:.78rem; line-height:1.2; white-space:nowrap; }
     .workspace-download-state { display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
+    .workspace-download-spinner { display:inline-block; width:.85em; height:.85em; margin-right:6px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:999px; vertical-align:-1px; animation:workspace-download-spin .75s linear infinite; }
+    @keyframes workspace-download-spin { to { transform:rotate(360deg); } }
     .proxy-transcript-status { color:rgba(255,255,255,.62); font-size:.82rem; max-width:240px; }
     @media (max-width:767.98px) { .lead-workspace-header, .lead-workspace-video { align-items:flex-start; flex-direction:column; grid-template-columns:1fr; } .lead-workspace-actions { width:100%; } }
   </style>
@@ -50,7 +52,7 @@
             </div>
           {% elif video.is_processing %}
             <div class="workspace-download-state" data-download-status-url="{{ video.download_status_url }}" data-generate-url="{{ video.generate_url }}" data-processing-started-at="{{ video.active_ingest_started_at }}" data-processing-attempt="{{ video.processing_attempt_label }}">
-              <button type="button" class="btn btn-secondary" disabled>Processing</button>
+              <button type="button" class="btn btn-secondary" disabled><span class="workspace-download-spinner" aria-hidden="true"></span>Processing</button>
               <span class="workspace-download-detail" data-download-detail>{{ video.processing_attempt_label }}</span>
             </div>
           {% else %}
@@ -82,7 +84,8 @@
 {% block extra_scripts %}
   <script>
     (() => {
-      const timers = new WeakMap();
+      const pollTimers = new WeakMap();
+      const tickTimers = new WeakMap();
       const formatElapsed = (startedAt, finishedAt) => {
         const startedMs = Date.parse(startedAt || '');
         if (!Number.isFinite(startedMs)) return '';
@@ -102,6 +105,15 @@
         const elapsed = formatElapsed(state.dataset.processingStartedAt, finishedAt);
         const attempt = state.dataset.processingAttempt || '';
         detail.textContent = [finishedAt ? `completed in ${elapsed}` : elapsed, attempt].filter(Boolean).join(' · ');
+      };
+      const startTicker = (state) => {
+        window.clearInterval(tickTimers.get(state));
+        updateDetail(state);
+        tickTimers.set(state, window.setInterval(() => updateDetail(state), 1000));
+      };
+      const stopTicker = (state) => {
+        window.clearInterval(tickTimers.get(state));
+        tickTimers.delete(state);
       };
       const setReady = (row, generateUrl, startedAt = '', finishedAt = '') => {
         const actions = row.querySelector('.lead-workspace-actions');
@@ -125,6 +137,7 @@
         actions.appendChild(state);
       };
       const setFailed = (state, message) => {
+        stopTicker(state);
         const button = state.querySelector('button');
         const detail = state.querySelector('[data-download-detail]');
         if (button) {
@@ -134,8 +147,8 @@
         if (detail) detail.textContent = message || 'Download failed.';
       };
       const poll = (state) => {
-        window.clearTimeout(timers.get(state));
-        updateDetail(state);
+        window.clearTimeout(pollTimers.get(state));
+        startTicker(state);
         const statusUrl = state.dataset.downloadStatusUrl;
         if (!statusUrl) return;
         fetch(statusUrl, {headers: {'Accept': 'application/json'}})
@@ -144,6 +157,7 @@
             if (data.started_at) state.dataset.processingStartedAt = data.started_at;
             if (data.attempts && data.max_attempts) state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
             if (data.is_ready || data.status === 'done') {
+              stopTicker(state);
               setReady(state.closest('[data-download-row]'), data.generate_url || state.dataset.generateUrl, state.dataset.processingStartedAt, data.finished_at || new Date().toISOString());
               return;
             }
@@ -152,10 +166,10 @@
               return;
             }
             updateDetail(state);
-            timers.set(state, window.setTimeout(() => poll(state), 2000));
+            pollTimers.set(state, window.setTimeout(() => poll(state), 2000));
           })
           .catch(() => {
-            timers.set(state, window.setTimeout(() => poll(state), 4000));
+            pollTimers.set(state, window.setTimeout(() => poll(state), 4000));
           });
       };
       document.querySelectorAll('[data-download-status-url]').forEach(poll);
@@ -175,12 +189,16 @@
           button.type = 'button';
           button.className = 'btn btn-secondary';
           button.disabled = true;
-          button.textContent = 'Processing';
+          const spinner = document.createElement('span');
+          spinner.className = 'workspace-download-spinner';
+          spinner.setAttribute('aria-hidden', 'true');
+          button.append(spinner, 'Processing');
           const detail = document.createElement('span');
           detail.className = 'workspace-download-detail';
           detail.setAttribute('data-download-detail', '');
           state.append(button, detail);
           actions.appendChild(state);
+          startTicker(state);
           fetch(form.action, {method: 'POST', headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}})
             .then((response) => response.json().then((data) => ({response, data})))
             .then(({response, data}) => {
