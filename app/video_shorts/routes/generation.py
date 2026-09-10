@@ -9673,6 +9673,9 @@ def _load_admin_lead_records(
     lead_type: str = "",
     download_filter: str = "",
     email_sent_filter: str = "",
+    generated_filter: str = "",
+    sort_key: str = "created",
+    sort_dir: str = "desc",
     search_query: str = "",
     subscriber_min: int | None = None,
     subscriber_max: int | None = None,
@@ -9692,6 +9695,15 @@ def _load_admin_lead_records(
     normalized_email_sent_filter = (email_sent_filter or "").strip().lower()
     if normalized_email_sent_filter not in {"sent", "not_sent"}:
         normalized_email_sent_filter = ""
+    normalized_generated_filter = (generated_filter or "").strip().lower()
+    if normalized_generated_filter not in {"0", "1-5", "5+"}:
+        normalized_generated_filter = ""
+    normalized_sort_key = (sort_key or "created").strip().lower()
+    if normalized_sort_key not in {"generation", "email_sent", "created"}:
+        normalized_sort_key = "created"
+    normalized_sort_dir = (sort_dir or "desc").strip().lower()
+    if normalized_sort_dir not in {"asc", "desc"}:
+        normalized_sort_dir = "desc"
     normalized_search = (search_query or "").strip().lower()
 
     share_link_columns = table_columns(conn, "short_share_links")
@@ -9705,6 +9717,17 @@ def _load_admin_lead_records(
             WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
               AND CAST(gv.brand_id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
               AND sl.emailed_at IS NOT NULL
+        )
+    """
+    generated_count_sql = """
+        COALESCE(
+            (
+                SELECT COUNT(*)
+                FROM shorts_generated_videos gv
+                WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
+                  AND CAST(gv.brand_id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
+            ),
+            0
         )
     """
 
@@ -9723,6 +9746,12 @@ def _load_admin_lead_records(
         where_parts.append(emailed_share_link_exists_sql if has_emailed_at else "1 = 0")
     elif normalized_email_sent_filter == "not_sent" and has_emailed_at:
         where_parts.append(f"NOT {emailed_share_link_exists_sql}")
+    if normalized_generated_filter == "0":
+        where_parts.append(f"{generated_count_sql} = 0")
+    elif normalized_generated_filter == "1-5":
+        where_parts.append(f"{generated_count_sql} BETWEEN 1 AND 5")
+    elif normalized_generated_filter == "5+":
+        where_parts.append(f"{generated_count_sql} > 5")
     if subscriber_min is not None:
         where_parts.append("l.subscriber_count >= ?")
         params.append(subscriber_min)
@@ -9751,6 +9780,13 @@ def _load_admin_lead_records(
     total_count = int(
         conn.execute(f"SELECT COUNT(*) {from_sql} WHERE {where_sql}", params).fetchone()[0] or 0
     )
+    sort_column_map = {
+        "generation": "generated_short_count",
+        "email_sent": "email_sent",
+        "created": "l.created_at",
+    }
+    order_column = sort_column_map[normalized_sort_key]
+    order_direction = "ASC" if normalized_sort_dir == "asc" else "DESC"
 
     rows = conn.execute(
         f"""
@@ -9770,20 +9806,12 @@ def _load_admin_lead_records(
             v.video_id,
             v.thumbnail_url,
             v.download_status,
-            COALESCE(
-                (
-                    SELECT COUNT(*)
-                    FROM shorts_generated_videos gv
-                    WHERE CAST(gv.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
-                      AND CAST(gv.brand_id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
-                ),
-                0
-            ) AS generated_short_count,
+            {generated_count_sql} AS generated_short_count,
             {emailed_share_link_exists_sql if has_emailed_at else 'FALSE'} AS email_sent,
             COALESCE(u.service_mode, '') AS service_mode
         {from_sql}
         WHERE {where_sql}
-        ORDER BY l.created_at DESC, l.id DESC
+        ORDER BY {order_column} {order_direction} NULLS LAST, l.created_at DESC, l.id DESC
         LIMIT ? OFFSET ?
         """,
         [*params, limit, offset],
@@ -11158,6 +11186,9 @@ def admin_leads():
     lead_type = (request.args.get("lead_type") or "").strip().lower()
     download_filter = (request.args.get("download") or "").strip().lower()
     email_sent_filter = (request.args.get("email_sent") or "").strip().lower()
+    generated_filter = (request.args.get("generated") or "").strip().lower()
+    sort_key = (request.args.get("sort") or "created").strip().lower()
+    sort_dir = (request.args.get("dir") or "desc").strip().lower()
     search_query = (request.args.get("q") or "").strip()
     subscriber_min = _parse_nonnegative_int(request.args.get("subscriber_min"))
     subscriber_max = _parse_nonnegative_int(request.args.get("subscriber_max"))
@@ -11174,6 +11205,9 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             email_sent_filter=email_sent_filter,
+            generated_filter=generated_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
             search_query=search_query,
             subscriber_min=subscriber_min,
             subscriber_max=subscriber_max,
@@ -11187,6 +11221,9 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             email_sent_filter=email_sent_filter,
+            generated_filter=generated_filter,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
             search_query=search_query,
             subscriber_min=subscriber_min,
             subscriber_max=subscriber_max,
@@ -11202,6 +11239,9 @@ def admin_leads():
         lead_type=lead_type if lead_type in {"real", "discovery"} else "",
         download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
         email_sent_filter=email_sent_filter if email_sent_filter in {"sent", "not_sent"} else "",
+        generated_filter=generated_filter if generated_filter in {"0", "1-5", "5+"} else "",
+        sort_key=sort_key if sort_key in {"generation", "email_sent", "created"} else "created",
+        sort_dir=sort_dir if sort_dir in {"asc", "desc"} else "desc",
         search_query=search_query,
         subscriber_min=subscriber_min,
         subscriber_max=subscriber_max,

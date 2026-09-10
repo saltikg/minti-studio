@@ -8,7 +8,7 @@
 
 {% block extra_styles %}
   <style>
-    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(5,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
+    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(6,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
     .admin-leads-toolbar-actions { display:flex; gap:8px; align-items:end; }
     .admin-leads-modal .modal-content { border:1px solid rgba(45,212,191,.24); border-radius:18px; background:#0b131c; color:rgba(255,255,255,.92); }
     .admin-leads-modal .modal-header, .admin-leads-modal .modal-footer { border-color:rgba(255,255,255,.09); }
@@ -34,6 +34,9 @@
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
+    .admin-leads-sort-link { color:rgba(255,255,255,.72); text-decoration:none; display:inline-flex; gap:5px; align-items:center; }
+    .admin-leads-sort-link:hover, .admin-leads-sort-link:focus { color:#8ff3d8; text-decoration:none; }
+    .admin-leads-sort-arrow { color:#8ff3d8; font-size:.82rem; }
     @media (max-width:991.98px) { .admin-leads-toolbar { grid-template-columns:1fr 1fr; } }
     @media (max-width:767.98px) { .admin-leads-toolbar, .admin-leads-modal-form { grid-template-columns:1fr; } }
   </style>
@@ -41,7 +44,12 @@
 
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
+    {% set next_generation_dir = 'asc' if sort_key != 'generation' or sort_dir == 'desc' else 'desc' %}
+    {% set next_email_sent_dir = 'asc' if sort_key != 'email_sent' or sort_dir == 'desc' else 'desc' %}
+    {% set next_created_dir = 'asc' if sort_key != 'created' or sort_dir == 'desc' else 'desc' %}
     <form method="get" class="admin-leads-toolbar">
+      <input type="hidden" name="sort" value="{{ sort_key }}">
+      <input type="hidden" name="dir" value="{{ sort_dir }}">
       <div>
         <label for="admin-leads-search" class="form-label mb-2">Search</label>
         <input id="admin-leads-search" type="search" name="q" value="{{ search_query }}" class="form-control" placeholder="Channel or creator">
@@ -71,6 +79,15 @@
         </select>
       </div>
       <div>
+        <label for="admin-leads-generated" class="form-label mb-2">Generated Shorts</label>
+        <select id="admin-leads-generated" name="generated" class="form-select">
+          <option value="" {% if not generated_filter %}selected{% endif %}>All counts</option>
+          <option value="0" {% if generated_filter == '0' %}selected{% endif %}>0</option>
+          <option value="1-5" {% if generated_filter == '1-5' %}selected{% endif %}>1-5</option>
+          <option value="5+" {% if generated_filter == '5+' %}selected{% endif %}>5+</option>
+        </select>
+      </div>
+      <div>
         <label for="admin-leads-subscriber-min" class="form-label mb-2">Subscribers</label>
         <input id="admin-leads-subscriber-min" type="number" name="subscriber_min" value="{{ subscriber_min if subscriber_min is not none else '' }}" min="0" step="1" class="form-control" placeholder="Min">
       </div>
@@ -86,9 +103,43 @@
     </form>
 
     <div class="admin-leads-table-wrap">
-      <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · newest first · {{ per_page }} per page</div>
+      <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · {{ per_page }} per page</div>
       <table class="admin-leads-table">
-        <thead><tr><th>Creator</th><th>Channel</th><th>First source video</th><th>Lead type</th><th>Download</th><th>Generation</th><th>Email sent</th><th>Converted</th><th>Created</th><th></th></tr></thead>
+        <thead>
+          <tr>
+            <th>Creator</th>
+            <th>Channel</th>
+            <th>First source video</th>
+            <th>Lead type</th>
+            <th>Download</th>
+            <th>
+              <a
+                class="admin-leads-sort-link"
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='generation', dir=next_generation_dir, page=1) }}">
+                <span>Generation</span>
+                {% if sort_key == 'generation' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
+              </a>
+            </th>
+            <th>
+              <a
+                class="admin-leads-sort-link"
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='email_sent', dir=next_email_sent_dir, page=1) }}">
+                <span>Email sent</span>
+                {% if sort_key == 'email_sent' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
+              </a>
+            </th>
+            <th>Converted</th>
+            <th>
+              <a
+                class="admin-leads-sort-link"
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='created', dir=next_created_dir, page=1) }}">
+                <span>Created</span>
+                {% if sort_key == 'created' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
+              </a>
+            </th>
+            <th></th>
+          </tr>
+        </thead>
         <tbody>
           {% for lead in leads %}
             {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
@@ -156,10 +207,10 @@
       <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-leads-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>
