@@ -1640,6 +1640,7 @@ def redeem_onboarding_magic_link(token: str):
 
     requested_intent = _normalize_service_intent(request.args.get("intent"))
     autopilot_requested = requested_intent == "autopilot"
+    requested_landing = str(request.args.get("landing") or "").strip().lower()
     token_hash = hash_onboarding_magic_token(normalized_token)
     conn = get_db()
     needs_password_setup = False
@@ -1793,7 +1794,7 @@ def redeem_onboarding_magic_link(token: str):
                 welcome_email,
                 outreach_language,
             )
-    if autopilot_requested:
+    if autopilot_requested and requested_landing != "my_videos":
         return redirect(url_for("video_shorts_bp.social_connect"))
     return redirect(url_for("video_shorts_bp.my_videos_page"))
 

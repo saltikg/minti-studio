@@ -6564,6 +6564,8 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
               sl.recipient_email,
               sl.language,
               COALESCE(sl.trial_days, ?) AS trial_days,
+              sl.autopilot_lead_id,
+              gv.brand_id,
               'recipient' AS token_source
             FROM short_share_links sl
             JOIN shorts_generated_videos gv
@@ -6589,7 +6591,9 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
                 "recipient_email": str(row[8] or "").strip().lower(),
                 "language": str(row[9] or "").strip().upper(),
                 "trial_days": normalize_trial_days(row[10], default=DEFAULT_SHARE_TRIAL_DAYS),
-                "token_source": str(row[11] or "recipient").strip() or "recipient",
+                "autopilot_lead_id": str(row[11] or "").strip(),
+                "brand_id": str(row[12] or "").strip(),
+                "token_source": str(row[13] or "recipient").strip() or "recipient",
             }
 
     generated_columns = table_columns(conn, "shorts_generated_videos")
@@ -6625,9 +6629,35 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
         "recipient_email": "",
         "language": "",
         "trial_days": DEFAULT_SHARE_TRIAL_DAYS,
+        "autopilot_lead_id": "",
+        "brand_id": "",
         "token": normalized_token,
         "token_source": "legacy",
     }
+
+
+def _count_additional_lead_shorts(conn, *, shared_short: dict[str, Any]) -> int:
+    generated_video_id = str(shared_short.get("generated_video_id") or "").strip()
+    autopilot_lead_id = str(shared_short.get("autopilot_lead_id") or "").strip()
+    brand_id = str(shared_short.get("brand_id") or "").strip()
+    if not generated_video_id or not autopilot_lead_id or not brand_id:
+        return 0
+
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM shorts_generated_videos gv
+        JOIN autopilot_leads l
+          ON CAST(l.id AS VARCHAR) = ?
+         AND CAST(l.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND CAST(l.brand_id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
+        WHERE CAST(gv.brand_id AS VARCHAR) = ?
+          AND CAST(gv.id AS VARCHAR) <> ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+        """,
+        [autopilot_lead_id, brand_id, generated_video_id],
+    ).fetchone()
+    return max(0, int(row[0] or 0)) if row else 0
 
 
 @video_shorts_bp.route("/api/generated-shorts/share-link", methods=["POST"])
@@ -6967,9 +6997,12 @@ def _render_public_short_watch_page(token: str):
         abort(404)
     preview_mode = (request.args.get("preview") or "").strip().lower() in {"1", "true", "yes", "on"}
 
+    additional_shorts_count = 0
     conn = get_db_readonly()
     try:
         row = _load_shared_short_row(conn, normalized_token)
+        if row:
+            additional_shorts_count = _count_additional_lead_shorts(conn, shared_short=row)
     finally:
         conn.close()
 
@@ -7013,6 +7046,7 @@ def _render_public_short_watch_page(token: str):
         poster_url=poster_url,
         event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
         onboarding_url=onboarding_url or None,
+        additional_shorts_count=additional_shorts_count,
         language=resolved_language,
         trial_duration_label=_trial_duration_label(row.get("trial_days"), resolved_language),
         preview_mode=preview_mode,

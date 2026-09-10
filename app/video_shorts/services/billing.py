@@ -100,12 +100,17 @@ def create_embedded_checkout_session(
     plan_id: str,
     interval: str,
     return_url: str,
+    trial_days: int | None = None,
 ) -> stripe.checkout.Session:
     metadata = {
         "shorts_user_id": str(shorts_user_id),
         "plan_id": str(plan_id),
         "interval": str(interval),
     }
+    subscription_data: Dict[str, Any] = {"metadata": metadata}
+    if trial_days:
+        subscription_data["trial_period_days"] = int(trial_days)
+        metadata["trial_days"] = str(int(trial_days))
     return stripe.checkout.Session.create(
         mode="subscription",
         ui_mode="embedded_page",
@@ -115,7 +120,7 @@ def create_embedded_checkout_session(
         line_items=[{"price": price_id, "quantity": 1}],
         return_url=return_url,
         metadata=metadata,
-        subscription_data={"metadata": metadata},
+        subscription_data=subscription_data,
     )
 
 

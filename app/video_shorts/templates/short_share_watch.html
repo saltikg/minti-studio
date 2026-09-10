@@ -165,6 +165,39 @@
         justify-content: center;
         margin: 12px auto 14px;
       }
+      .watch-more-shorts {
+        margin: 14px auto 0;
+        width: min(100%, 360px);
+        padding: 14px;
+        border: 1px solid rgba(110, 231, 216, 0.24);
+        border-radius: 18px;
+        background: rgba(110, 231, 216, 0.08);
+        text-align: center;
+        opacity: 0;
+        transform: translateY(14px);
+        animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        animation-delay: 2.02s;
+      }
+      .watch-more-title {
+        color: var(--text);
+        font-weight: 800;
+        font-size: 1rem;
+        line-height: 1.25;
+      }
+      .watch-more-cta {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 10px;
+        color: var(--accent);
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .watch-more-cta:hover,
+      .watch-more-cta:focus-visible {
+        color: #99f6e4;
+        text-decoration: underline;
+      }
       .watch-footer {
         margin-top: 14px;
         display: flex;
@@ -256,6 +289,7 @@
         .watch-step-card,
         .watch-step-arrow,
         .watch-video-wrap,
+        .watch-more-shorts,
         .watch-footer {
           opacity: 1;
           animation: none;
@@ -332,6 +366,20 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
       </div>
+      {% if onboarding_url and additional_shorts_count and additional_shorts_count > 0 %}
+        {% set separator = '&' if '?' in onboarding_url else '?' %}
+        {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot&landing=my_videos' %}
+        <div class="watch-more-shorts">
+          <div class="watch-more-title">{{ additional_shorts_count }} more Short{% if additional_shorts_count != 1 %}s{% endif %} ready for you</div>
+          <a
+            href="{{ shorts_onboarding_url }}"
+            data-share-cta="all_shorts"
+            class="watch-more-cta"
+            rel="noreferrer">
+            See all your Shorts →
+          </a>
+        </div>
+      {% endif %}
       <div class="watch-footer">
         {% if onboarding_url %}
           

@@ -232,6 +232,20 @@
     color: #99f6e4;
     text-decoration: underline;
   }
+  .mv-autopilot-conversion-copy {
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 0.98rem;
+    line-height: 1.55;
+  }
+  .mv-autopilot-conversion-checkout {
+    min-height: 420px;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.72);
+  }
+  .mv-autopilot-conversion-status {
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.9rem;
+  }
   .mv-short-metrics {
     display: flex;
     gap: 7px;
@@ -1066,9 +1080,10 @@
   id="mv-shell"
   data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}"
   data-coachmark-scope="{{ coachmark_user_scope }}"
+  data-autopilot-conversion="{{ 'true' if is_pending_autopilot_lead and recent_shorts else 'false' }}"
 >
-  <section class="mv-hero{% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %} mv-hero--autopilot{% endif %}">
-    {% if vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot' %}
+  <section class="mv-hero{% if show_autopilot_framing %} mv-hero--autopilot{% endif %}">
+    {% if show_autopilot_framing %}
       <div class="mv-autopilot-title-row">
         <div class="mv-title-row">
           <span class="vs-app-logo-dot" aria-hidden="true">●</span>
@@ -1079,7 +1094,7 @@
       {% if is_new_autopilot_customer %}
         <div class="mv-autopilot-start-copy">
           {% if recent_shorts %}
-            We're preparing your Shorts — your first ones are ready below, and more are coming within a day or two.
+            We prepared these Shorts for you — watch them below, and Minti can keep managing the whole channel from here.
           {% else %}
             Your first Shorts are being prepared — check back soon.
           {% endif %}
@@ -1094,7 +1109,7 @@
       </div>
     {% endif %}
     <div id="mv-mobile-notice" class="mv-mobile-notice">You're using Minti on mobile. Minti works best on desktop.</div>
-    {% if not (vs_current_user and (vs_current_user.get('service_mode') or '')|lower == 'autopilot') %}
+    {% if not show_autopilot_framing %}
       <div class="mv-add-panel mv-coachmark-anchor" id="mv-coachmark-upload-anchor">
         <div class="mv-tabs" role="tablist" aria-label="Add video">
           <button type="button" class="mv-tab is-active" id="mv-tab-url" data-mv-tab="url" role="tab" aria-selected="true" aria-controls="mv-pane-url">Video from URL<span class="mv-beta-tag">BETA</span><span class="mv-tab-dot" aria-hidden="true"></span></button>
@@ -1134,8 +1149,8 @@
 
   <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
     <div class="mv-recent-shorts-head">
-      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if is_autopilot %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
-      {% if is_autopilot %}
+      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if show_autopilot_framing %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
+      {% if show_autopilot_framing %}
         <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
       {% endif %}
     </div>
@@ -1146,7 +1161,7 @@
           <div class="mv-short-frame">
             <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
             {% if short.video_url %}
-              <video src="{{ short.video_url }}#t=1" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
+              <video src="{{ short.video_url }}#t=1" data-short-preview-video data-short-index="{{ loop.index0 }}" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
             {% elif short.poster_url %}
               <img src="{{ short.poster_url }}" alt="{{ short.title }}">
             {% elif short.thumbnail_url %}
@@ -1195,7 +1210,7 @@
       </div>
     </form>
 
-  {% if is_autopilot %}
+  {% if show_autopilot_framing %}
     <h2 class="mv-source-heading">Source videos</h2>
   {% endif %}
   <section class="mv-list">
@@ -1298,9 +1313,39 @@
     {% endif %}
   </section>
 </div>
+
+{% if is_pending_autopilot_lead and recent_shorts %}
+  <div class="modal fade" id="mvAutopilotConversionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content vs-modal">
+        <div class="modal-header vs-modal-header">
+          <div>
+            <h5 class="modal-title vs-modal-title">Autopilot is this easy</h5>
+            <div class="small text-muted">You watch your Shorts. Your channel grows.</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body vs-modal-body">
+          <p class="mv-autopilot-conversion-copy mb-3">
+            We already prepared these Shorts for you. Start your free trial and Minti will keep finding moments, making Shorts, and managing the publishing rhythm for your channel.
+          </p>
+          <button type="button" class="btn vs-btn vs-btn-primary" id="mvAutopilotTrialCta">Start my 1-month free trial</button>
+          <div id="mvAutopilotCheckoutStatus" class="mv-autopilot-conversion-status mt-3 d-none"></div>
+          <div id="mvAutopilotCheckoutShell" class="mv-autopilot-conversion-checkout mt-3 d-none">
+            <div id="mvAutopilotCheckoutMount"></div>
+          </div>
+          <div id="mvAutopilotCheckoutError" class="alert alert-danger mt-3 d-none" role="alert"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if is_pending_autopilot_lead and recent_shorts %}
+  {% include "_billing_embedded_checkout_script.html" %}
+{% endif %}
 <script>
 (() => {
   const coachmarkShell = document.getElementById('mv-shell');
@@ -1328,12 +1373,120 @@
   const coachmarkDismissedSessionKey = `mvCoachmarkDismissed:${coachmarkScope}`;
   const coachmarkStateKey = `mvCoachmarkStage:${coachmarkScope}`;
   const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
+  const showAutopilotFraming = {{ show_autopilot_framing|tojson }};
   const canHoverShortPreviews = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   let selectedFile = null;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
   let serviceModeModalOpen = Boolean(window.__vsServiceModeModalOpen);
   let effectiveServiceMode = String(initialServiceMode || '').trim().toLowerCase();
+  const conversionSessionKey = `mvAutopilotConversionShown:${coachmarkScope}`;
+  const conversionEnabled = coachmarkShell?.dataset.autopilotConversion === 'true';
+  const conversionModalEl = document.getElementById('mvAutopilotConversionModal');
+  const conversionTrialCta = document.getElementById('mvAutopilotTrialCta');
+  const conversionCheckoutShell = document.getElementById('mvAutopilotCheckoutShell');
+  const conversionCheckoutStatus = document.getElementById('mvAutopilotCheckoutStatus');
+  const conversionCheckoutError = document.getElementById('mvAutopilotCheckoutError');
+  const conversionModal = conversionModalEl && window.bootstrap ? new bootstrap.Modal(conversionModalEl) : null;
+  const autopilotActivationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
+  let firstPlayedShortIndex = null;
+
+  const markConversionShown = () => {
+    try {
+      sessionStorage.setItem(conversionSessionKey, 'true');
+    } catch (_) {}
+  };
+
+  const conversionAlreadyShown = () => {
+    try {
+      return sessionStorage.getItem(conversionSessionKey) === 'true';
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const showAutopilotConversionModal = () => {
+    if (!conversionEnabled || !conversionModal || conversionAlreadyShown()) {
+      return;
+    }
+    markConversionShown();
+    conversionModal.show();
+  };
+
+  conversionModalEl?.addEventListener('hidden.bs.modal', markConversionShown);
+  conversionTrialCta?.addEventListener('click', async () => {
+    if (!window.MintiEmbeddedCheckout?.mount || conversionTrialCta.disabled) {
+      if (conversionCheckoutError) {
+        conversionCheckoutError.textContent = 'Checkout is not available right now.';
+        conversionCheckoutError.classList.remove('d-none');
+      }
+      return;
+    }
+    conversionTrialCta.disabled = true;
+    try {
+      const activationResponse = await fetch(autopilotActivationEndpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ service_mode: 'autopilot' }),
+      });
+      const activationPayload = await activationResponse.json().catch(() => null);
+      if (!activationResponse.ok || !activationPayload || !activationPayload.ok) {
+        throw new Error((activationPayload && activationPayload.error) || 'Could not start autopilot.');
+      }
+      effectiveServiceMode = 'autopilot';
+    } catch (error) {
+      conversionTrialCta.disabled = false;
+      if (conversionCheckoutError) {
+        conversionCheckoutError.textContent = error?.message || 'Could not start autopilot.';
+        conversionCheckoutError.classList.remove('d-none');
+      }
+      return;
+    }
+    if (conversionCheckoutShell) conversionCheckoutShell.classList.remove('d-none');
+    await window.MintiEmbeddedCheckout.mount({
+      planId: 'plan_10gb',
+      interval: 'month',
+      trialDays: 30,
+      mountSelector: '#mvAutopilotCheckoutMount',
+      errorSelector: '#mvAutopilotCheckoutError',
+      onMounting: () => {
+        if (conversionCheckoutStatus) {
+          conversionCheckoutStatus.textContent = 'Preparing secure checkout...';
+          conversionCheckoutStatus.classList.remove('d-none');
+        }
+      },
+      onMounted: () => {
+        if (conversionCheckoutStatus) {
+          conversionCheckoutStatus.textContent = 'Complete checkout to start your 1-month free trial.';
+        }
+      },
+      onError: () => {
+        conversionTrialCta.disabled = false;
+        if (conversionCheckoutStatus) {
+          conversionCheckoutStatus.classList.add('d-none');
+          conversionCheckoutStatus.textContent = '';
+        }
+      },
+    });
+  });
+
+  document.querySelectorAll('[data-short-preview-video]').forEach((preview) => {
+    preview.addEventListener('ended', showAutopilotConversionModal, { passive: true });
+    preview.addEventListener('play', () => {
+      const currentIndex = String(preview.dataset.shortIndex || '');
+      if (firstPlayedShortIndex === null) {
+        firstPlayedShortIndex = currentIndex;
+        return;
+      }
+      if (currentIndex && currentIndex !== firstPlayedShortIndex) {
+        showAutopilotConversionModal();
+      }
+    }, { passive: true });
+  });
 
   if (canHoverShortPreviews) {
     document.querySelectorAll('.mv-short-card').forEach((card) => {
@@ -1420,7 +1573,7 @@
     }
   };
 
-  const shouldSuppressCoachmark = () => serviceModeModalOpen || effectiveServiceMode === 'autopilot';
+  const shouldSuppressCoachmark = () => showAutopilotFraming || serviceModeModalOpen || effectiveServiceMode === 'autopilot';
 
   const saveCoachmarkPreference = async () => {
     try {

@@ -23,6 +23,7 @@
         const {
           planId,
           interval,
+          trialDays,
           mountSelector,
           errorSelector,
           onMounting,
@@ -77,7 +78,8 @@
                 credentials: "same-origin",
                 body: JSON.stringify({
                   plan_id: planId,
-                  interval: interval
+                  interval: interval,
+                  trial_days: trialDays || undefined
                 })
               });
               const payload = await response.json().catch(() => null);

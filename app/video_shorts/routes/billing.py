@@ -325,8 +325,20 @@ def create_checkout_session_route():
     payload = request.get_json(silent=True) or {}
     plan_id = (payload.get("plan_id") or "").strip()
     interval = (payload.get("interval") or "").strip().lower()
+    requested_trial_days = 0
+    try:
+        requested_trial_days = int(payload.get("trial_days") or 0)
+    except (TypeError, ValueError):
+        requested_trial_days = 0
     if not plan_is_paid(plan_id) or not interval_is_supported(interval):
         return _billing_error("invalid_plan", 400)
+    if requested_trial_days:
+        lead_autopilot_context = (
+            str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
+            or str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+        )
+        if requested_trial_days != 30 or plan_id != "plan_10gb" or interval != "month" or not lead_autopilot_context:
+            return _billing_error("invalid_trial", 400)
 
     price_id = get_price_id_for_plan(plan_id, interval)
     if not price_id:
@@ -375,6 +387,7 @@ def create_checkout_session_route():
                 plan_id=plan_id,
                 interval=interval,
                 return_url=return_url,
+                trial_days=requested_trial_days or None,
             )
         except stripe.StripeError as exc:
             if customer_id and _is_missing_stripe_customer_error(exc):
@@ -386,6 +399,7 @@ def create_checkout_session_route():
                     plan_id=plan_id,
                     interval=interval,
                     return_url=return_url,
+                    trial_days=requested_trial_days or None,
                 )
             else:
                 raise

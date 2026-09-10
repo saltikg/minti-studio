@@ -8,6 +8,7 @@ from flask import current_app, flash, g, jsonify, redirect, render_template, req
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
+from app.video_shorts.services.billing import STRIPE_PUBLISHABLE_KEY, stripe_is_configured
 from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
     get_db,
@@ -513,10 +514,15 @@ def my_videos_page():
     ).fetchall()
 
     is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    is_pending_autopilot_lead = (
+        str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
+        and not is_autopilot
+    )
+    show_autopilot_framing = is_autopilot or is_pending_autopilot_lead
     is_new_autopilot_customer = False
     recent_short_rows = []
     prepared_short_count = 0
-    if is_autopilot and brand_id:
+    if show_autopilot_framing and brand_id:
         new_autopilot_row = conn.execute(
             """
             SELECT 1
@@ -526,7 +532,7 @@ def my_videos_page():
             """,
             [current_user["id"]],
         ).fetchone()
-        is_new_autopilot_customer = bool(new_autopilot_row)
+        is_new_autopilot_customer = bool(new_autopilot_row) or is_pending_autopilot_lead
         prepared_short_count_row = conn.execute(
             """
             SELECT COUNT(*)
@@ -695,10 +701,14 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         is_autopilot=is_autopilot,
+        is_pending_autopilot_lead=is_pending_autopilot_lead,
+        show_autopilot_framing=show_autopilot_framing,
         is_new_autopilot_customer=is_new_autopilot_customer,
         recent_shorts=recent_shorts,
         prepared_short_count=prepared_short_count,
-        autopilot_service_tier=int(current_user.get("service_tier") or 15),
+        autopilot_service_tier=int(current_user.get("service_tier") or current_user.get("pending_service_tier") or 15),
+        stripe_ready=stripe_is_configured(),
+        stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
         search_query=search_query,
         coachmark_user_scope=f"user-{current_user['id']}",
         hide_my_videos_coachmark=load_user_bool_preference(
