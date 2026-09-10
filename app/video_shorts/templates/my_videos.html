@@ -161,7 +161,7 @@
   }
   .mv-short-frame video {
     background: #0f172a;
-    opacity: 0;
+    opacity: 1;
     transition: opacity .16s ease;
   }
   .mv-short-card.is-previewing .mv-short-frame video {
@@ -1145,15 +1145,14 @@
         <article class="mv-short-card">
           <div class="mv-short-frame">
             <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
-            {% if short.poster_url %}
+            {% if short.video_url %}
+              <video src="{{ short.video_url }}#t=1" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
+            {% elif short.poster_url %}
               <img src="{{ short.poster_url }}" alt="{{ short.title }}">
             {% elif short.thumbnail_url %}
               <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
             {% else %}
               <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
-            {% endif %}
-            {% if short.video_url %}
-              <video data-preview-src="{{ short.video_url }}" muted playsinline preload="none" aria-label="Preview: {{ short.title }}"></video>
             {% endif %}
             <div class="mv-short-title">{{ short.title }}</div>
           </div>
@@ -1340,17 +1339,18 @@
     document.querySelectorAll('.mv-short-card').forEach((card) => {
       const preview = card.querySelector('video[data-preview-src]');
       if (!preview) return;
+      const seekToStartFrame = () => {
+        try { preview.currentTime = 1; } catch (_) {}
+      };
       const resetPreview = () => {
         preview.pause();
-        try { preview.currentTime = 0; } catch (_) {}
-        preview.removeAttribute('src');
-        preview.load();
+        seekToStartFrame();
         card.classList.remove('is-previewing');
       };
+      preview.addEventListener('loadedmetadata', seekToStartFrame, { once: true });
       card.addEventListener('mouseenter', () => {
-        preview.src = preview.dataset.previewSrc || '';
+        if (!preview.getAttribute('src')) preview.src = `${preview.dataset.previewSrc || ''}#t=1`;
         if (!preview.src) return;
-        preview.load();
         preview.play().then(() => card.classList.add('is-previewing')).catch(() => {});
       });
       card.addEventListener('mouseleave', resetPreview);
