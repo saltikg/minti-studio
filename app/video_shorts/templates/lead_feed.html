@@ -73,44 +73,15 @@
         bottom: calc(32px + env(safe-area-inset-bottom));
         left: 18px;
         z-index: 2;
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 18px;
       }
       .lead-feed-title {
-        max-width: 70%;
+        max-width: 100%;
         margin: 0;
         color: #fff;
         font-size: 1rem;
         line-height: 1.3;
         font-weight: 800;
         text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
-      }
-      .lead-feed-download {
-        display: inline-flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        min-width: 92px;
-        min-height: 64px;
-        padding: 10px 12px;
-        border-radius: 18px;
-        background: rgba(248, 250, 252, 0.92);
-        color: #020617;
-        text-decoration: none;
-        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
-      }
-      .lead-feed-download strong {
-        font-size: 0.94rem;
-        line-height: 1;
-      }
-      .lead-feed-download span {
-        margin-top: 5px;
-        color: rgba(2, 6, 23, 0.68);
-        font-size: 0.72rem;
-        line-height: 1.15;
-        text-align: center;
       }
       .lead-feed-card {
         display: grid;
@@ -141,9 +112,10 @@
       }
       .lead-feed-card-copy {
         margin: 18px 0 0;
-        color: rgba(226, 232, 240, 0.82);
-        font-size: 1.05rem;
-        line-height: 1.55;
+        color: #f8fafc;
+        font-size: 1.12rem;
+        line-height: 1.42;
+        font-weight: 650;
       }
       .lead-feed-trial-btn {
         display: inline-flex;
@@ -282,36 +254,34 @@
             <section class="lead-feed-slide" data-feed-slide data-slide-kind="short">
               <video
                 class="lead-feed-video"
-                src="{{ short.video_url }}"
+                data-src="{{ short.video_url }}"
                 poster="{{ short.poster_url or '' }}"
                 playsinline
-                preload="metadata"
+                preload="none"
                 loop
                 muted
                 data-feed-video></video>
               <div class="lead-feed-gradient"></div>
               <div class="lead-feed-short-actions">
                 <h2 class="lead-feed-title">{{ short.title }}</h2>
-                <a class="lead-feed-download" href="{{ short.video_url }}" download>
-                  <strong>Download</strong>
-                  <span>post it on your channel.</span>
-                </a>
               </div>
             </section>
             {% if loop.index == 1 %}
               <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="message">
                 <div class="lead-feed-card-inner">
-                  <p class="lead-feed-kicker">Minti Autopilot</p>
-                  <h2 class="lead-feed-card-title">Keep making long videos.</h2>
-                  <p class="lead-feed-card-copy">We'll make 15 Shorts every month from your videos — watch your channel grow while you just keep making long videos.</p>
+                  <p class="lead-feed-kicker">MINTI AUTOPILOT</p>
+                  <h2 class="lead-feed-card-title">15 Shorts/mo — done for you</h2>
+                  <p class="lead-feed-card-copy">You make long videos. We turn them into Shorts.</p>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutA">Start free →</button>
+                  <div class="lead-feed-status d-none" data-checkout-status></div>
+                  <div class="lead-feed-error d-none" id="leadFeedCheckoutAError" data-checkout-error></div>
+                  <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutA"></div></div>
                 </div>
               </section>
             {% elif loop.index == 2 %}
               <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
                 <div class="lead-feed-card-inner">
-                  <p class="lead-feed-kicker">1 month free</p>
-                  <h2 class="lead-feed-card-title">Start your free trial.</h2>
-                  <p class="lead-feed-card-copy">Autopilot makes the Shorts, keeps the rhythm, and helps your channel grow.</p>
+                  <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
                   <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutMid">Start my trial</button>
                   <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
@@ -323,10 +293,9 @@
           {% endfor %}
           <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
             <div class="lead-feed-card-inner">
-              <p class="lead-feed-kicker">Ready when you are</p>
-              <h2 class="lead-feed-card-title">Start your free trial.</h2>
-              <p class="lead-feed-card-copy">Let Minti turn your next long videos into Shorts on autopilot. First month is free.</p>
+              <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
               <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutEnd">Start my trial</button>
+              <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
               <div class="lead-feed-status d-none" data-checkout-status></div>
               <div class="lead-feed-error d-none" id="leadFeedCheckoutEndError" data-checkout-error></div>
               <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutEnd"></div></div>
@@ -365,6 +334,9 @@
 
         const slides = Array.from(track.querySelectorAll("[data-feed-slide]"));
         const videos = Array.from(track.querySelectorAll("[data-feed-video]"));
+        const videoSlideIndexes = slides
+          .map((slide, index) => slide.querySelector("[data-feed-video]") ? index : null)
+          .filter((index) => index !== null);
         const activationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
         const myVideosUrl = {{ my_videos_url|tojson }};
         let activeIndex = 0;
@@ -374,14 +346,57 @@
         const clampIndex = (index) => Math.max(0, Math.min(slides.length - 1, index));
         const currentVideo = () => slides[activeIndex]?.querySelector("[data-feed-video]");
 
-        const playActive = async () => {
-          videos.forEach((video) => {
-            if (video !== currentVideo()) {
-              video.pause();
+        const ensureVideoLoaded = (video) => {
+          if (!video || video.dataset.loaded === "true") return;
+          const src = video.dataset.src;
+          if (!src) return;
+          video.src = src;
+          video.preload = "auto";
+          video.load();
+          video.dataset.loaded = "true";
+        };
+
+        const unloadVideo = (video) => {
+          if (!video || video.dataset.loaded !== "true") return;
+          video.pause();
+          video.muted = true;
+          video.removeAttribute("src");
+          video.load();
+          video.dataset.loaded = "false";
+        };
+
+        const syncPreloadWindow = () => {
+          const wanted = new Set();
+          const activeVideo = currentVideo();
+          if (activeVideo) wanted.add(activeIndex);
+          const previousVideoIndex = [...videoSlideIndexes].reverse().find((index) => index < activeIndex);
+          const nextVideoIndex = videoSlideIndexes.find((index) => index > activeIndex);
+          if (previousVideoIndex !== undefined) wanted.add(previousVideoIndex);
+          if (nextVideoIndex !== undefined) wanted.add(nextVideoIndex);
+
+          slides.forEach((slide, index) => {
+            const video = slide.querySelector("[data-feed-video]");
+            if (!video) return;
+            if (wanted.has(index)) {
+              ensureVideoLoaded(video);
+            } else {
+              unloadVideo(video);
             }
           });
-          const video = currentVideo();
+        };
+
+        const playActive = async () => {
+          syncPreloadWindow();
+          const activeVideo = currentVideo();
+          videos.forEach((video) => {
+            if (video !== activeVideo) {
+              video.pause();
+              video.muted = true;
+            }
+          });
+          const video = activeVideo;
           if (!started || !video) return;
+          ensureVideoLoaded(video);
           video.muted = false;
           video.volume = 1;
           try {
@@ -430,6 +445,7 @@
           landing?.classList.add("is-hidden");
           activeIndex = 0;
           track.scrollTo({ top: 0, behavior: "auto" });
+          syncPreloadWindow();
           await playActive();
         });
 
