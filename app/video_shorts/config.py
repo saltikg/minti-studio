@@ -587,7 +587,7 @@ STYLE_TEMPLATES = [
     },
     {
         "key": "opus",
-        "label": "Opus",
+        "label": "Bold Pop",
         "subtitle_preset": "opus",
         "title_engine": "pillow",
         "title_uppercase": True,

@@ -2436,6 +2436,43 @@
       0 8px 14px rgba(0, 0, 0, 0.48);
     box-shadow: none;
   }
+  .style-template-card-preview--opus::after {
+    opacity: 0;
+  }
+  .style-template-card-preview--opus .style-template-card-preview-title {
+    background: transparent;
+    color: #ffffff;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.72),
+      0 8px 14px rgba(0, 0, 0, 0.45);
+  }
+  .style-template-card-preview--opus .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 900;
+    text-transform: uppercase;
+    text-shadow:
+      -1px -1px 0 rgba(0, 0, 0, 0.98),
+      1px -1px 0 rgba(0, 0, 0, 0.98),
+      -1px 1px 0 rgba(0, 0, 0, 0.98),
+      1px 1px 0 rgba(0, 0, 0, 0.98);
+  }
+  .style-template-card-preview--opus .style-template-card-preview-word.is-active {
+    color: #1ee05c;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: 1.1em;
+    text-shadow:
+      -1px -1px 0 rgba(0, 0, 0, 0.98),
+      1px -1px 0 rgba(0, 0, 0, 0.98),
+      -1px 1px 0 rgba(0, 0, 0, 0.98),
+      1px 1px 0 rgba(0, 0, 0, 0.98);
+    box-shadow: none;
+  }
   .style-template-card-preview--silver-pop::after {
     opacity: 0;
   }
@@ -2990,6 +3027,8 @@
     padding: var(--word-highlight-active-padding, 0.14em 0.48em);
     border-radius: var(--word-highlight-active-radius, 999px);
     text-shadow: var(--word-highlight-active-text-shadow, none);
+    transform: scale(var(--word-highlight-active-scale, 1));
+    transform-origin: center bottom;
   }
   .shorts-preview-video canvas {
     display: block;
@@ -11476,6 +11515,19 @@ document.addEventListener("DOMContentLoaded", function () {
       fontFamily: "\"Montserrat\", sans-serif",
       fontWeight: "900",
     },
+    opus: {
+      pillColor: "transparent",
+      activeTextColor: "#1EE05C",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)",
+      activeTextShadow: "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Montserrat\", sans-serif",
+      fontWeight: "900",
+      activeScale: "1.1",
+      uppercase: true,
+    },
     silver_pop: {
       pillColor: "transparent",
       activeTextColor: "#FFFFFF",
@@ -11795,6 +11847,8 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       subtitlePreview.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       subtitlePreview.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
+      subtitlePreview.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
+      subtitlePreview.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
     }
     if (previewSubtitle) {
       previewSubtitle.style.color = textRgba;
@@ -11810,6 +11864,8 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       previewSubtitle.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       previewSubtitle.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
+      previewSubtitle.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
+      previewSubtitle.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
     }
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;
