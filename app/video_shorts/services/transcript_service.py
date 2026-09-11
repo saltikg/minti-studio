@@ -522,10 +522,12 @@ def _turkish_upper(text: str) -> str:
     return str(text).replace("i", "İ").replace("ı", "I").upper()
 
 
-def _caption_display_words(words: List[str], *, force_uppercase: bool = False) -> List[str]:
+def _caption_display_words(words: List[str], *, force_uppercase: bool = False, language: str = "") -> List[str]:
     if not force_uppercase:
         return [str(word) for word in words]
-    return [_turkish_upper(str(word)) for word in words]
+    if str(language or "").strip().lower() == "tr":
+        return [_turkish_upper(str(word)) for word in words]
+    return [str(word).upper() for word in words]
 
 
 def _build_ass_pill_shape(width: float, height: float) -> str:
@@ -1395,6 +1397,7 @@ def _render_word_highlight_caption_frame(
     active_index: int,
     font: ImageFont.FreeTypeFont,
     active_font: Optional[ImageFont.FreeTypeFont] = None,
+    caption_language: str = "",
     subtitle_margin: int,
     font_size: int,
     inactive_color: str,
@@ -1412,7 +1415,7 @@ def _render_word_highlight_caption_frame(
     out_path: Path,
 ) -> Dict[str, Any]:
     active_font = active_font or font
-    display_words = _caption_display_words(words, force_uppercase=force_uppercase)
+    display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
     word_fonts = [active_font if index == active_index else font for index in range(len(display_words))]
     base_pad_x = max(10, int(round(float(font_size) * 0.48)))
     pad_y = max(4, int(round(float(font_size) * 0.14)))
@@ -1674,6 +1677,7 @@ def _build_word_highlight_caption_overlay(
     subtitle_font_size: int,
     subtitle_margin: int,
     subtitle_preset: Optional[str],
+    caption_language: str = "",
 ) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
     preset = _resolve_subtitle_preset(subtitle_preset)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
@@ -1830,7 +1834,11 @@ def _build_word_highlight_caption_overlay(
                 continue
             chunk_key = tuple(word_tokens)
             precomputed_layout = None
-            display_word_tokens = _caption_display_words(word_tokens, force_uppercase=force_uppercase)
+            display_word_tokens = _caption_display_words(
+                word_tokens,
+                force_uppercase=force_uppercase,
+                language=caption_language,
+            )
             active_font_changes_layout = active_font_size_delta != 0
             if not draw_pill and not active_font_changes_layout:
                 precomputed_layout = layout_cache.get(chunk_key)
@@ -1969,6 +1977,7 @@ def _build_word_highlight_caption_overlay(
                     active_index=index,
                     font=font,
                     active_font=active_font,
+                    caption_language=caption_language,
                     subtitle_margin=subtitle_margin,
                     font_size=subtitle_font_size,
                     inactive_color=inactive_color,

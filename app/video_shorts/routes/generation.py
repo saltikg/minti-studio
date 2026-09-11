@@ -17398,6 +17398,7 @@ def autoclip_video(video_pk):
                             subtitle_font_size=sub_font_size,
                             subtitle_margin=sub_margin,
                             subtitle_preset=video_subtitle_preset,
+                            caption_language="",
                         )
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                         overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
@@ -17477,6 +17478,7 @@ def autoclip_video(video_pk):
                         subtitle_font_size=sub_font_size,
                         subtitle_margin=sub_margin,
                         subtitle_preset=video_subtitle_preset,
+                        caption_language=plan_entry.get("language") or "",
                     )
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                     overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
