@@ -18,7 +18,7 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        min-height: 100vh;
+        min-height: 100svh;
         font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         color: var(--text);
         background:
@@ -64,12 +64,12 @@
         box-shadow: 0 10px 24px rgba(110, 231, 216, 0.18);
       }
       .watch-intro {
-        margin: 0 0 10px;
+        margin: 0 0 14px;
         text-align: center;
         color: var(--text);
-        font-size: 0.92rem;
-        line-height: 1.4;
-        font-weight: 600;
+        font-size: 1.04rem;
+        line-height: 1.32;
+        font-weight: 750;
       }
       .watch-intro-accent {
         color: #3fe0c5;
@@ -78,9 +78,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 10px;
-        margin-bottom: 14px;
+        gap: 8px;
+        margin: 16px auto 0;
         flex-wrap: nowrap;
+        width: min(100%, 420px);
       }
       .watch-step-card,
       .watch-step-arrow {
@@ -90,10 +91,10 @@
       .watch-step-card {
         min-width: 0;
         flex: 1 1 0;
-        max-width: 156px;
-        padding: 12px 10px;
-        border-radius: 14px;
-        background: #101d2e;
+        max-width: 132px;
+        padding: 10px 8px;
+        border-radius: 12px;
+        background: rgba(16, 29, 46, 0.72);
         border: 1px solid rgba(255, 255, 255, 0.08);
         text-align: center;
       }
@@ -110,7 +111,7 @@
         display: block;
         color: var(--text);
         font-weight: 600;
-        font-size: 0.78rem;
+        font-size: 0.72rem;
         line-height: 1.35;
       }
       .watch-step-arrow {
@@ -146,57 +147,35 @@
         }
       }
       .watch-video-wrap {
-        width: min(100%, 360px);
+        width: min(100%, calc(65svh * 9 / 16), 360px);
         margin: 0 auto;
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 480ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 2.02s;
+        animation-delay: 0.22s;
       }
       video {
         display: block;
         width: 100%;
+        height: min(65svh, 640px);
+        aspect-ratio: 9 / 16;
+        object-fit: contain;
         border-radius: 18px;
         background: #000;
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
       }
       .watch-prompt-banner {
         display: flex;
+        flex-direction: column;
+        align-items: center;
         justify-content: center;
-        margin: 12px auto 14px;
-      }
-      .watch-more-shorts {
-        margin: 14px auto 0;
-        width: min(100%, 360px);
-        padding: 14px;
-        border: 1px solid rgba(110, 231, 216, 0.24);
-        border-radius: 18px;
-        background: rgba(110, 231, 216, 0.08);
+        margin: 0 auto 14px;
+        width: min(100%, 380px);
         text-align: center;
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 1.82s;
-      }
-      .watch-more-title {
-        color: var(--text);
-        font-weight: 800;
-        font-size: 1rem;
-        line-height: 1.25;
-      }
-      .watch-more-cta {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-top: 10px;
-        color: var(--accent);
-        font-weight: 700;
-        text-decoration: none;
-      }
-      .watch-more-cta:hover,
-      .watch-more-cta:focus-visible {
-        color: #99f6e4;
-        text-decoration: underline;
+        animation-delay: 0.08s;
       }
       .watch-footer {
         margin-top: 14px;
@@ -216,6 +195,7 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        width: 100%;
         min-height: 56px;
         padding: 0 28px;
         border-radius: 999px;
@@ -228,6 +208,12 @@
         box-shadow:
           0 18px 38px rgba(110, 231, 216, 0.28),
           0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+      }
+      .watch-cta-subline {
+        margin-top: 8px;
+        color: rgba(238, 247, 246, 0.72);
+        font-size: 0.86rem;
+        line-height: 1.3;
       }
       .watch-cta-primary:hover,
       .watch-cta-primary:focus-visible {
@@ -257,14 +243,14 @@
           border-radius: 20px;
         }
         .watch-intro {
-          font-size: 0.88rem;
-          margin-bottom: 10px;
+          font-size: 0.98rem;
+          margin-bottom: 12px;
         }
         .watch-steps {
           flex-direction: column;
           align-items: stretch;
           gap: 6px;
-          margin: 0 auto 12px;
+          margin: 14px auto 0;
           width: min(100%, 280px);
         }
         .watch-step-card {
@@ -274,22 +260,18 @@
           align-self: center;
           font-size: 0.78rem;
         }
-        .watch-prompt-card {
-          padding: 12px 14px;
-          border-radius: 16px;
+        .watch-video-wrap {
+          width: min(100%, calc(64svh * 9 / 16));
         }
-        .watch-prompt-title {
-          font-size: 0.88rem;
-        }
-        .watch-value-line {
-          font-size: 0.88rem;
+        video {
+          height: min(64svh, 620px);
         }
       }
       @media (prefers-reduced-motion: reduce) {
         .watch-step-card,
         .watch-step-arrow,
         .watch-video-wrap,
-        .watch-more-shorts,
+        .watch-prompt-banner,
         .watch-footer {
           opacity: 1;
           animation: none;
@@ -305,74 +287,25 @@
         <span>mintistudio.com</span>
       </a>
       <p class="watch-intro">
-        {% if language == 'TR' %}
-          Videondan bunu yaptık — <span class="watch-intro-accent">gerisini de senin için biz halledelim.</span>
-        {% else %}
-          We made this from your video — <span class="watch-intro-accent">and we'll handle the rest for you.</span>
-        {% endif %}
+        We made this from your video
       </p>
-      <div class="watch-steps" aria-label="How it works">
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">🔗</span>
-          <span class="watch-step-label">
-            {% if language == 'TR' %}
-              Kanalı bağla
-            {% else %}
-              Connect channel
-            {% endif %}
-          </span>
-        </div>
-        <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">✨</span>
-          <span class="watch-step-label">
-            {% if language == 'TR' %}
-              En iyi anları buluruz
-            {% else %}
-              We find moments
-            {% endif %}
-          </span>
-        </div>
-        <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">🚀</span>
-          <span class="watch-step-label">
-            {% if language == 'TR' %}
-              Biz yayınlarız
-            {% else %}
-              We publish
-            {% endif %}
-          </span>
-        </div>
-      </div>
       {% if onboarding_url %}
-        {% set autopilot_onboarding_url = onboarding_url ~ '?intent=autopilot' %}
+        {% set separator = '&' if '?' in onboarding_url else '?' %}
+        {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot' %}
+        {% set total_shorts_count = (additional_shorts_count or 0) + 1 %}
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
           <a
-            href="{{ autopilot_onboarding_url }}"
-            data-share-cta="autopilot"
+            href="{{ shorts_onboarding_url }}"
+            data-share-cta="lead_feed"
             class="watch-cta-primary"
             rel="noreferrer">
-            {% if language == 'TR' %}
-              Bize bırak — ayda 15 Short, ilk ay ücretsiz
+            {% if total_shorts_count > 1 %}
+              See all {{ total_shorts_count }} of your Shorts →
             {% else %}
-              Let us do it for you — 15 Shorts/mo, first month free
+              See your Short →
             {% endif %}
           </a>
-        </div>
-      {% endif %}
-      {% if onboarding_url and additional_shorts_count and additional_shorts_count > 0 %}
-        {% set separator = '&' if '?' in onboarding_url else '?' %}
-        {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot&landing=my_videos' %}
-        <div class="watch-more-shorts">
-          <div class="watch-more-title">{{ additional_shorts_count }} more Short{% if additional_shorts_count != 1 %}s{% endif %} ready for you</div>
-          <a
-            href="{{ shorts_onboarding_url }}"
-            data-share-cta="all_shorts"
-            class="watch-more-cta"
-            rel="noreferrer">
-            See all your Shorts →
-          </a>
+          <div class="watch-cta-subline">We publish 15 Shorts/mo for you — first month free</div>
         </div>
       {% endif %}
       <div class="watch-video-wrap">
@@ -380,13 +313,33 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
       </div>
-      <div class="watch-footer">
-        {% if onboarding_url %}
-          
-        {% else %}
-          <a href="https://mintistudio.com" target="_blank" rel="noreferrer">MintiStudio ile uzun videolarını otomatik short'a çevir</a>
-        {% endif %}
+      <div class="watch-steps" aria-label="How it works">
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">🔗</span>
+          <span class="watch-step-label">
+            Connect channel
+          </span>
+        </div>
+        <span class="watch-step-arrow" aria-hidden="true">→</span>
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">✨</span>
+          <span class="watch-step-label">
+            We find moments
+          </span>
+        </div>
+        <span class="watch-step-arrow" aria-hidden="true">→</span>
+        <div class="watch-step-card">
+          <span class="watch-step-icon" aria-hidden="true">🚀</span>
+          <span class="watch-step-label">
+            We publish
+          </span>
+        </div>
       </div>
+      {% if not onboarding_url %}
+        <div class="watch-footer">
+          <a href="https://mintistudio.com" target="_blank" rel="noreferrer">Turn your long videos into Shorts with MintiStudio</a>
+        </div>
+      {% endif %}
     </main>
     <script>
       (() => {
