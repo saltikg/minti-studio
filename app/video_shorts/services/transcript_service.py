@@ -510,6 +510,24 @@ def _measure_line_height(font: ImageFont.FreeTypeFont) -> int:
         return int(max(1, bbox[3] - bbox[1]))
 
 
+def _font_ascent(font: ImageFont.FreeTypeFont) -> int:
+    try:
+        ascent, _descent = font.getmetrics()
+        return int(max(1, ascent))
+    except Exception:
+        return _measure_line_height(font)
+
+
+def _turkish_upper(text: str) -> str:
+    return str(text).replace("i", "İ").replace("ı", "I").upper()
+
+
+def _caption_display_words(words: List[str], *, force_uppercase: bool = False) -> List[str]:
+    if not force_uppercase:
+        return [str(word) for word in words]
+    return [_turkish_upper(str(word)) for word in words]
+
+
 def _build_ass_pill_shape(width: float, height: float) -> str:
     safe_width = max(1.0, float(width))
     safe_height = max(1.0, float(height))
@@ -1174,6 +1192,7 @@ def _wrap_words_to_lines(
     font: ImageFont.FreeTypeFont,
     max_width: int,
     slot_widths: Optional[List[int]] = None,
+    word_fonts: Optional[List[ImageFont.FreeTypeFont]] = None,
 ) -> List[List[Dict[str, Any]]]:
     lines: List[List[Dict[str, Any]]] = []
     current_line: List[Dict[str, Any]] = []
@@ -1181,15 +1200,16 @@ def _wrap_words_to_lines(
     space_width = _measure_text_width(font, " ")
 
     for index, word in enumerate(words):
-        word_width = _measure_text_width(font, word)
+        word_font = word_fonts[index] if word_fonts and index < len(word_fonts) else font
+        word_width = _measure_text_width(word_font, word)
         slot_width = max(word_width, int((slot_widths or [])[index])) if slot_widths and index < len(slot_widths) else word_width
         candidate_width = slot_width if not current_line else current_width + space_width + slot_width
         if current_line and candidate_width > max_width:
             lines.append(current_line)
-            current_line = [{"word": word, "width": word_width, "slot_width": slot_width}]
+            current_line = [{"word": word, "width": word_width, "slot_width": slot_width, "font": word_font}]
             current_width = slot_width
             continue
-        current_line.append({"word": word, "width": word_width, "slot_width": slot_width})
+        current_line.append({"word": word, "width": word_width, "slot_width": slot_width, "font": word_font})
         current_width = candidate_width
 
     if current_line:
@@ -1206,10 +1226,13 @@ def _layout_wrapped_caption(
     canvas_width: int,
     canvas_height: int,
     slot_widths: Optional[List[int]] = None,
+    word_fonts: Optional[List[ImageFont.FreeTypeFont]] = None,
+    line_height_font: Optional[ImageFont.FreeTypeFont] = None,
 ) -> Dict[str, Any]:
-    lines = _wrap_words_to_lines(words, font, max_width, slot_widths=slot_widths)
+    lines = _wrap_words_to_lines(words, font, max_width, slot_widths=slot_widths, word_fonts=word_fonts)
     space_width = _measure_text_width(font, " ")
-    line_height = _measure_line_height(font)
+    line_height = max(_measure_line_height(font), _measure_line_height(line_height_font or font))
+    line_ascent = max(_font_ascent(font), _font_ascent(line_height_font or font))
     line_gap = max(4, int(round(line_height * 0.18)))
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
     block_top = max(0, canvas_height - int(subtitle_margin) - total_height)
@@ -1228,13 +1251,15 @@ def _layout_wrapped_caption(
         for pos, item in enumerate(line_words):
             slot_width = int(item.get("slot_width") or item["width"])
             word_x = int(round(slot_x + max(0, (slot_width - item["width"]) / 2.0)))
+            word_font = item.get("font") or font
+            word_y = line_y + max(0, line_ascent - _font_ascent(word_font))
             entry = {
                 "word": item["word"],
                 "width": item["width"],
                 "slot_width": slot_width,
                 "slot_x": slot_x,
                 "x": word_x,
-                "y": line_y,
+                "y": word_y,
                 "line_index": line_number,
                 "line_width": line_width,
                 "global_index": word_index,
@@ -1369,31 +1394,38 @@ def _render_word_highlight_caption_frame(
     *,
     active_index: int,
     font: ImageFont.FreeTypeFont,
+    active_font: Optional[ImageFont.FreeTypeFont] = None,
     subtitle_margin: int,
     font_size: int,
     inactive_color: str,
     active_color: str,
     outline_color: str,
     outline_width: int,
+    active_outline: bool = False,
     pill_color: str,
     draw_pill: bool = True,
+    force_uppercase: bool = False,
     precomputed_layout: Optional[Dict[str, Any]] = None,
     shadow_region: Optional[Dict[str, Any]] = None,
     fill_mode: str = "flat",
     gradient_layers: Optional[Dict[int, Dict[str, Dict[str, Any] | None]]] = None,
     out_path: Path,
 ) -> Dict[str, Any]:
+    active_font = active_font or font
+    display_words = _caption_display_words(words, force_uppercase=force_uppercase)
+    word_fonts = [active_font if index == active_index else font for index in range(len(display_words))]
     base_pad_x = max(10, int(round(float(font_size) * 0.48)))
     pad_y = max(4, int(round(float(font_size) * 0.14)))
     if precomputed_layout is None:
         probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
         probe_draw = ImageDraw.Draw(probe_image)
         word_metrics: List[Dict[str, int]] = []
-        for word in words:
+        for index, word in enumerate(display_words):
+            word_font = word_fonts[index]
             bbox = probe_draw.textbbox(
                 (0, 0),
                 str(word),
-                font=font,
+                font=word_font,
                 anchor="la",
                 stroke_width=outline_width,
             )
@@ -1413,13 +1445,15 @@ def _render_word_highlight_caption_frame(
         slot_widths = [metric["text_w"] for metric in word_metrics]
         slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
         layout = _layout_wrapped_caption(
-            words,
+            display_words,
             font=font,
             subtitle_margin=subtitle_margin,
             max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
             canvas_width=_PILLOW_CAPTION_WIDTH,
             canvas_height=_PILLOW_CAPTION_HEIGHT,
             slot_widths=slot_widths,
+            word_fonts=word_fonts,
+            line_height_font=active_font,
         )
     else:
         layout = precomputed_layout
@@ -1435,7 +1469,7 @@ def _render_word_highlight_caption_frame(
     active_bbox = draw.textbbox(
         (int(active_word["x"]), int(active_word["y"])),
         str(active_word["word"]),
-        font=font,
+        font=active_font,
         anchor="la",
         stroke_width=outline_width,
     )
@@ -1518,10 +1552,10 @@ def _render_word_highlight_caption_frame(
                 int(word["x"]),
                 int(word["y"]),
                 str(word["word"]),
-                font=font,
+                font=active_font if is_active_word else font,
                 fill=fill,
                 stroke_fill=outline_rgba,
-                stroke_width=0 if is_active_word else outline_width,
+                stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
             )
     else:
         for word in layout["words"]:
@@ -1532,10 +1566,10 @@ def _render_word_highlight_caption_frame(
                 int(word["x"]),
                 int(word["y"]),
                 str(word["word"]),
-                font=font,
+                font=active_font if is_active_word else font,
                 fill=fill,
                 stroke_fill=outline_rgba,
-                stroke_width=0 if is_active_word else outline_width,
+                stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
             )
 
     image.save(out_path)
@@ -1653,6 +1687,17 @@ def _build_word_highlight_caption_overlay(
     temp_dir = Path(tempfile.mkdtemp(prefix="word_highlight_overlay_"))
     cleanup_paths: List[Path] = [temp_dir]
     font = ImageFont.truetype(str(font_path), int(subtitle_font_size))
+    try:
+        active_font_size_delta = int(preset.get("active_font_size_delta", 0) or 0)
+    except Exception:
+        active_font_size_delta = 0
+    active_font = (
+        ImageFont.truetype(str(font_path), max(1, int(subtitle_font_size) + active_font_size_delta))
+        if active_font_size_delta
+        else font
+    )
+    active_outline = bool(preset.get("active_outline", False))
+    force_uppercase = bool(preset.get("force_uppercase", False))
     inactive_color = str(preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
     active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
@@ -1785,11 +1830,13 @@ def _build_word_highlight_caption_overlay(
                 continue
             chunk_key = tuple(word_tokens)
             precomputed_layout = None
-            if not draw_pill:
+            display_word_tokens = _caption_display_words(word_tokens, force_uppercase=force_uppercase)
+            active_font_changes_layout = active_font_size_delta != 0
+            if not draw_pill and not active_font_changes_layout:
                 precomputed_layout = layout_cache.get(chunk_key)
                 if precomputed_layout is None:
                     precomputed_layout = _layout_wrapped_caption(
-                        word_tokens,
+                        display_word_tokens,
                         font=font,
                         subtitle_margin=subtitle_margin,
                         max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
@@ -1800,7 +1847,7 @@ def _build_word_highlight_caption_overlay(
             gradient_layers = None
             if uses_gradient_layers:
                 layout_for_gradient = precomputed_layout or _layout_wrapped_caption(
-                    word_tokens,
+                    display_word_tokens,
                     font=font,
                     subtitle_margin=subtitle_margin,
                     max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
@@ -1890,7 +1937,7 @@ def _build_word_highlight_caption_overlay(
                 shadow_region = shadow_cache.get(chunk_key)
                 if chunk_key not in shadow_cache:
                     layout_for_shadow = precomputed_layout or _layout_wrapped_caption(
-                        word_tokens,
+                        display_word_tokens,
                         font=font,
                         subtitle_margin=subtitle_margin,
                         max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
@@ -1921,14 +1968,17 @@ def _build_word_highlight_caption_overlay(
                     word_tokens,
                     active_index=index,
                     font=font,
+                    active_font=active_font,
                     subtitle_margin=subtitle_margin,
                     font_size=subtitle_font_size,
                     inactive_color=inactive_color,
                     active_color=active_color,
                     outline_color=outline_color,
                     outline_width=outline_width,
+                    active_outline=active_outline,
                     pill_color=pill_color,
                     draw_pill=draw_pill,
+                    force_uppercase=force_uppercase,
                     precomputed_layout=precomputed_layout,
                     shadow_region=shadow_region,
                     fill_mode="gradient" if uses_gradient_layers else "flat",
