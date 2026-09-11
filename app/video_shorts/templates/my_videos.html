@@ -246,50 +246,6 @@
     color: rgba(226, 232, 240, 0.72);
     font-size: 0.9rem;
   }
-  .mv-autopilot-activated-dialog {
-    width: min(92vw, 440px);
-    margin-right: auto;
-    margin-left: auto;
-  }
-  .mv-autopilot-activated-content {
-    border: 1px solid rgba(94, 234, 212, 0.22);
-    border-radius: 20px;
-    background:
-      radial-gradient(circle at 50% 0%, rgba(94, 234, 212, 0.16), transparent 38%),
-      #07111f;
-    box-shadow: 0 28px 80px rgba(2, 6, 23, 0.56);
-  }
-  .mv-autopilot-activated-body {
-    padding: 26px;
-    text-align: center;
-  }
-  .mv-autopilot-activated-title {
-    margin: 0;
-    color: #f8fafc;
-    font-size: 1.5rem;
-    line-height: 1.08;
-    font-weight: 850;
-  }
-  .mv-autopilot-activated-copy {
-    margin: 16px 0 0;
-    color: rgba(226, 232, 240, 0.84);
-    font-size: 0.98rem;
-    line-height: 1.55;
-  }
-  .mv-autopilot-activated-note {
-    margin: 18px 0 0;
-    padding: 10px 12px;
-    border-radius: 14px;
-    background: rgba(45, 212, 191, 0.1);
-    color: #ccfbf1;
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
-  .mv-autopilot-activated-btn {
-    width: 100%;
-    min-height: 48px;
-    margin-top: 22px;
-  }
   .mv-short-metrics {
     display: flex;
     gap: 7px;
@@ -1095,51 +1051,6 @@
     }
   }
   @media (max-width: 700px) {
-    #mvAutopilotActivatedModal {
-      background: #020617;
-    }
-    #mvAutopilotActivatedModal .modal-dialog {
-      width: 100vw;
-      max-width: none;
-      min-height: 100dvh;
-      margin: 0;
-      transform: none;
-    }
-    #mvAutopilotActivatedModal .modal-content {
-      min-height: 100dvh;
-      border: 0;
-      border-radius: 0;
-      background:
-        radial-gradient(circle at 50% 0%, rgba(94, 234, 212, 0.18), transparent 34%),
-        #020617;
-      box-shadow: none;
-    }
-    .mv-autopilot-activated-body {
-      display: flex;
-      min-height: 100dvh;
-      flex-direction: column;
-      justify-content: center;
-      padding: max(34px, env(safe-area-inset-top)) 24px max(28px, env(safe-area-inset-bottom));
-    }
-    .mv-autopilot-activated-title {
-      font-size: 2rem;
-      line-height: 1.04;
-    }
-    .mv-autopilot-activated-copy {
-      margin-top: 20px;
-      font-size: 1.08rem;
-      line-height: 1.55;
-    }
-    .mv-autopilot-activated-note {
-      margin-top: 24px;
-      padding: 14px 16px;
-      font-size: 1rem;
-    }
-    .mv-autopilot-activated-btn {
-      min-height: 58px;
-      margin-top: auto;
-      font-size: 1.05rem;
-    }
     .mv-pane {
       padding: 20px;
     }
@@ -1403,26 +1314,6 @@
   </section>
 </div>
 
-{% if show_autopilot_activated_modal %}
-  <div class="modal fade" id="mvAutopilotActivatedModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered mv-autopilot-activated-dialog">
-      <div class="modal-content mv-autopilot-activated-content">
-        <div class="modal-body mv-autopilot-activated-body">
-          <h5 class="mv-autopilot-activated-title">🎉 You're all set — Autopilot is on</h5>
-          <p class="mv-autopilot-activated-copy">
-            We're preparing your Shorts now. Your first ones go live on your channel in 2–3 days.
-          </p>
-          <p class="mv-autopilot-activated-copy">
-            We'll email you when they're ready — you just keep making your long videos, we handle the rest.
-          </p>
-          <div class="mv-autopilot-activated-note">This month: 15 Shorts, prepared and published for you.</div>
-          <button type="button" class="btn vs-btn vs-btn-primary mv-autopilot-activated-btn" data-bs-dismiss="modal">Got it</button>
-        </div>
-      </div>
-    </div>
-  </div>
-{% endif %}
-
 {% if is_pending_autopilot_lead and recent_shorts %}
   <div class="modal fade" id="mvAutopilotConversionModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -1497,15 +1388,8 @@
   const conversionCheckoutStatus = document.getElementById('mvAutopilotCheckoutStatus');
   const conversionCheckoutError = document.getElementById('mvAutopilotCheckoutError');
   const conversionModal = conversionModalEl && window.bootstrap ? new bootstrap.Modal(conversionModalEl) : null;
-  const activatedModalEl = document.getElementById('mvAutopilotActivatedModal');
-  const activatedModal = activatedModalEl && window.bootstrap ? new bootstrap.Modal(
-    activatedModalEl,
-    window.matchMedia('(max-width: 700px)').matches ? { backdrop: 'static', keyboard: false } : {}
-  ) : null;
   const autopilotActivationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
   let firstPlayedShortIndex = null;
-
-  activatedModal?.show();
 
   const markConversionShown = () => {
     try {

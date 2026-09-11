@@ -425,6 +425,24 @@ def lead_feed_page():
         stripe_ready=stripe_is_configured(),
         stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
         my_videos_url=url_for("video_shorts_bp.my_videos_page"),
+        autopilot_confirmation_url=url_for("video_shorts_bp.autopilot_confirmation_page"),
+    )
+
+
+@video_shorts_bp.route("/autopilot-confirmation", methods=["GET"])
+def autopilot_confirmation_page():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+
+    is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    should_show = bool(session.pop("vs_show_autopilot_confirmation", False)) and is_autopilot
+    if not should_show:
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
+
+    return render_template(
+        "autopilot_confirmation.html",
+        my_videos_url=url_for("video_shorts_bp.my_videos_page"),
     )
 
 
@@ -595,7 +613,6 @@ def my_videos_page():
     ).fetchall()
 
     is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
-    show_autopilot_activated_modal = bool(session.pop("vs_show_autopilot_activated_modal", False)) and is_autopilot
     is_pending_autopilot_lead = (
         str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
         and not is_autopilot
@@ -783,7 +800,6 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         is_autopilot=is_autopilot,
-        show_autopilot_activated_modal=show_autopilot_activated_modal,
         is_pending_autopilot_lead=is_pending_autopilot_lead,
         show_autopilot_framing=show_autopilot_framing,
         is_new_autopilot_customer=is_new_autopilot_customer,

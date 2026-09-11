@@ -373,7 +373,7 @@
           .map((slide, index) => slide.querySelector("[data-feed-video]") ? index : null)
           .filter((index) => index !== null);
         const activationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
-        const myVideosUrl = {{ my_videos_url|tojson }};
+        const autopilotConfirmationUrl = {{ autopilot_confirmation_url|tojson }};
         let activeIndex = 0;
         let started = false;
         let wheelLocked = false;
@@ -654,7 +654,7 @@
                   "Content-Type": "application/json",
                   "X-Requested-With": "XMLHttpRequest",
                 },
-                body: JSON.stringify({ service_mode: "autopilot" }),
+                body: JSON.stringify({ service_mode: "autopilot", activation_source: "lead_feed" }),
               });
               const payload = await response.json().catch(() => null);
               if (!response.ok || !payload || !payload.ok) {
@@ -672,7 +672,7 @@
               }
               return;
             }
-            window.location.assign(myVideosUrl);
+            window.location.assign(autopilotConfirmationUrl);
           });
         });
       })();
