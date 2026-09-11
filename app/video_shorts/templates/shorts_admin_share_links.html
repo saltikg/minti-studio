@@ -191,6 +191,51 @@
       background: rgba(255, 255, 255, 0.08);
       color: rgba(255, 255, 255, 0.72);
     }
+    .admin-share-links-funnel {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .admin-share-links-funnel-step {
+      min-height: 124px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.045);
+      padding: 14px;
+    }
+    .admin-share-links-funnel-label {
+      color: rgba(255, 255, 255, 0.64);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .admin-share-links-funnel-count {
+      margin-top: 8px;
+      color: #fff;
+      font-size: 1.8rem;
+      font-weight: 850;
+      line-height: 1;
+    }
+    .admin-share-links-funnel-meta {
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.8rem;
+      line-height: 1.35;
+      white-space: normal;
+    }
+    .admin-share-links-feed-detail {
+      display: grid;
+      gap: 4px;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 0.82rem;
+      line-height: 1.25;
+    }
+    .admin-share-links-feed-strong {
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 700;
+    }
     .admin-share-links-pagination {
       display: flex;
       justify-content: space-between;
@@ -208,9 +253,15 @@
       .admin-share-links-toolbar {
         grid-template-columns: repeat(2, minmax(220px, 1fr));
       }
+      .admin-share-links-funnel {
+        grid-template-columns: repeat(3, minmax(150px, 1fr));
+      }
     }
     @media (max-width: 767.98px) {
       .admin-share-links-toolbar {
+        grid-template-columns: 1fr;
+      }
+      .admin-share-links-funnel {
         grid-template-columns: 1fr;
       }
     }
@@ -263,6 +314,25 @@
 
     <div class="admin-share-links-meta mb-3">{{ total_links }} matching links · showing up to {{ per_page }} per page</div>
 
+    <div class="admin-share-links-funnel" aria-label="Lead funnel summary">
+      {% for step in funnel_summary %}
+        <div class="admin-share-links-funnel-step">
+          <div class="admin-share-links-funnel-label">{{ step.label }}</div>
+          <div class="admin-share-links-funnel-count">{{ step.count }}</div>
+          <div class="admin-share-links-funnel-meta">
+            {% if loop.first %}
+              {{ '%.1f%%'|format(step.total_rate) }} of sent
+            {% else %}
+              {{ '%.1f%%'|format(step.previous_rate) }} from previous · {{ '%.1f%%'|format(step.total_rate) }} of sent
+              {% if step.dropoff %}
+                <br>{{ step.dropoff }} dropped
+              {% endif %}
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
     <div class="admin-share-links-table-wrap">
       <table class="admin-share-links-table">
         <thead>
@@ -299,6 +369,11 @@
             <th>CTA</th>
             <th>Max watched</th>
             <th>Device</th>
+            <th>Entered feed?</th>
+            <th>Feed depth</th>
+            <th>Cards</th>
+            <th>Trial CTA?</th>
+            <th>Converted?</th>
             <th>Redeemed?</th>
             <th>Connected?</th>
             <th>Redeemed at</th>
@@ -421,6 +496,38 @@
               <td class="admin-share-links-meta">{{ link.cta_clicked or '—' }}</td>
               <td class="admin-share-links-meta">{{ ('%.0f%%'|format(link.max_percent_watched)) if link.max_percent_watched else '—' }}</td>
               <td class="admin-share-links-meta">{{ link.device_type or '—' }}</td>
+              <td>
+                {% if link.entered_feed %}
+                  <span class="admin-share-links-pill is-yes">Yes</span>
+                {% else %}
+                  <span class="admin-share-links-meta">—</span>
+                {% endif %}
+              </td>
+              <td class="admin-share-links-meta">{{ link.feed_depth_label or '—' }}</td>
+              <td class="admin-share-links-meta">
+                {% if link.feed_cards_seen_label %}
+                  <span class="admin-share-links-feed-strong">{{ link.feed_cards_seen_label }}</span>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if link.feed_trial_cta_clicked %}
+                  <span class="admin-share-links-pill is-yes">Yes</span>
+                {% else %}
+                  <span class="admin-share-links-meta">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if link.converted %}
+                  <div class="admin-share-links-feed-detail">
+                    <span class="admin-share-links-pill is-yes">Yes</span>
+                    <span>{{ link.converted_at_pst }}</span>
+                  </div>
+                {% else %}
+                  <span class="admin-share-links-pill is-no">No</span>
+                {% endif %}
+              </td>
               <td><span class="admin-share-links-pill {% if link.redeemed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.redeemed else 'No' }}</span></td>
               <td class="admin-share-links-meta">
                 {% if link.channel_connected %}
@@ -441,7 +548,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="19" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="24" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>

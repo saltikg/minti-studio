@@ -9214,7 +9214,7 @@ def _load_admin_share_links(
     sort_dir: str = "desc",
     limit: int = 200,
     offset: int = 0,
-) -> Tuple[List[Dict[str, Any]], int, str, str, str]:
+) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, List[Dict[str, Any]]]:
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     has_emailed_at = "emailed_at" in share_link_columns
@@ -9260,6 +9260,11 @@ def _load_admin_share_links(
     percent_watched_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
     cta_expr = _user_event_metadata_text_sql(conn, "cta")
     device_expr = _user_event_metadata_text_sql(conn, "device_type")
+    feed_share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
+    feed_lead_expr = _user_event_metadata_text_sql(conn, "autopilot_lead_id")
+    feed_item_type_expr = _user_event_metadata_text_sql(conn, "item_type")
+    feed_card_type_expr = _user_event_metadata_text_sql(conn, "card_type")
+    feed_item_index_expr = _user_event_metadata_numeric_sql(conn, "item_index")
     if getattr(conn, "backend_name", "") == "postgres":
         channel_connected_agg_sql = "string_agg(DISTINCT ue.platform, ', ' ORDER BY ue.platform)"
     else:
@@ -9421,6 +9426,7 @@ def _load_admin_share_links(
               {("sl.followup_sent" if has_followup_sent else "FALSE")} AS followup_sent,
               {("sl.followup_sent_at" if has_followup_sent_at else "NULL")} AS followup_sent_at,
               sl.created_at,
+              NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id,
               COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
               SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
               SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count,
@@ -9446,8 +9452,65 @@ def _load_admin_share_links(
               {("sl.followup_sent," if has_followup_sent else "")}
               {("sl.followup_sent_at," if has_followup_sent_at else "")}
               sl.created_at,
+              sl.autopilot_lead_id,
               gv.generated_title,
               gv.clip_filename
+        ),
+        lead_feed_events AS (
+            SELECT
+              sl.id AS share_link_id,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_view' THEN 1 ELSE 0 END) AS entered_feed,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_watch_start' THEN 1 ELSE 0 END) AS watched_in_feed,
+              COUNT(DISTINCT CASE WHEN ue.event_name = 'lead_feed_item_active' AND {feed_item_type_expr} = 'short' THEN {feed_item_index_expr} END) AS active_short_count,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_item_active' AND {feed_item_type_expr} = 'short' THEN {feed_item_index_expr} END) AS max_short_item_index,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_card_seen' AND COALESCE({feed_card_type_expr}, {feed_item_type_expr}) = 'card_a' THEN 1 ELSE 0 END) AS reached_card_a,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_card_seen' AND COALESCE({feed_card_type_expr}, {feed_item_type_expr}) = 'card_b' THEN 1 ELSE 0 END) AS reached_card_b,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_card_seen' AND COALESCE({feed_card_type_expr}, {feed_item_type_expr}) = 'end_card' THEN 1 ELSE 0 END) AS reached_end_card,
+              MAX(CASE WHEN ue.event_name = 'lead_feed_trial_cta_click' THEN 1 ELSE 0 END) AS trial_cta_clicked
+            FROM short_share_links sl
+            JOIN user_events ue
+              ON ue.event_name IN (
+                   'lead_feed_view',
+                   'lead_feed_watch_start',
+                   'lead_feed_item_active',
+                   'lead_feed_card_seen',
+                   'lead_feed_trial_cta_click'
+                 )
+             AND (
+               (
+                 {feed_share_link_expr} IS NOT NULL
+                 AND {feed_share_link_expr} = CAST(sl.id AS VARCHAR)
+               )
+               OR (
+                 NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+                 AND {feed_lead_expr} = CAST(sl.autopilot_lead_id AS VARCHAR)
+               )
+             )
+            GROUP BY sl.id
+        ),
+        share_link_conversion AS (
+            SELECT
+              sl.id AS share_link_id,
+              MAX(l.converted_at) AS converted_at
+            FROM short_share_links sl
+            LEFT JOIN autopilot_leads l
+              ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+             AND CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
+            GROUP BY sl.id
+        ),
+        lead_feed_short_counts AS (
+            SELECT
+              sl.id AS share_link_id,
+              COUNT(DISTINCT gv.id) AS feed_short_total
+            FROM short_share_links sl
+            JOIN autopilot_leads l
+              ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+             AND CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
+            LEFT JOIN shorts_generated_videos gv
+              ON CAST(gv.user_id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+             AND CAST(gv.brand_id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+             AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+            GROUP BY sl.id
         )
         {redeemed_magic_cte_sql}
     """
@@ -9471,6 +9534,60 @@ def _load_admin_share_links(
         ).fetchone()[0]
         or 0
     )
+    sent_condition_sql = "sr.emailed_at IS NOT NULL" if has_emailed_at else "1=1"
+    funnel_row = conn.execute(
+        f"""
+        {base_cte_sql}
+        SELECT
+          SUM(CASE WHEN {sent_condition_sql} THEN 1 ELSE 0 END) AS sent_count,
+          SUM(CASE WHEN {sent_condition_sql} AND COALESCE(sr.views_count, 0) > 0 THEN 1 ELSE 0 END) AS viewed_count,
+          SUM(CASE WHEN {sent_condition_sql} AND (lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0) THEN 1 ELSE 0 END) AS entered_feed_count,
+          SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.watched_in_feed, 0) > 0 THEN 1 ELSE 0 END) AS watched_in_feed_count,
+          SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.reached_card_b, 0) > 0 THEN 1 ELSE 0 END) AS reached_trial_card_count,
+          SUM(CASE WHEN {sent_condition_sql} AND slc.converted_at IS NOT NULL THEN 1 ELSE 0 END) AS converted_count
+        FROM share_rows sr
+        LEFT JOIN latest_share_cta lsc
+          ON lsc.share_link_id = sr.id
+        LEFT JOIN lead_feed_events lfe
+          ON lfe.share_link_id = sr.id
+        LEFT JOIN share_link_conversion slc
+          ON slc.share_link_id = sr.id
+        WHERE {having_sql}
+        """,
+        params,
+    ).fetchone()
+    raw_funnel_counts = [
+        int(funnel_row[0] or 0) if funnel_row else 0,
+        int(funnel_row[1] or 0) if funnel_row else 0,
+        int(funnel_row[2] or 0) if funnel_row else 0,
+        int(funnel_row[3] or 0) if funnel_row else 0,
+        int(funnel_row[4] or 0) if funnel_row else 0,
+        int(funnel_row[5] or 0) if funnel_row else 0,
+    ]
+    funnel_labels = [
+        "Sent",
+        "Viewed",
+        "Entered feed",
+        "Watched in feed",
+        "Reached trial card",
+        "Converted",
+    ]
+    funnel_summary = []
+    for index, label in enumerate(funnel_labels):
+        count = raw_funnel_counts[index]
+        previous = raw_funnel_counts[index - 1] if index > 0 else count
+        previous_rate = (count / previous * 100.0) if previous else 0.0
+        total_rate = (count / raw_funnel_counts[0] * 100.0) if raw_funnel_counts[0] else 0.0
+        dropoff = max(0, previous - count) if index > 0 else 0
+        funnel_summary.append(
+            {
+                "label": label,
+                "count": count,
+                "previous_rate": round(previous_rate, 1),
+                "total_rate": round(total_rate, 1),
+                "dropoff": dropoff,
+            }
+        )
 
     rows = conn.execute(
         f"""
@@ -9499,12 +9616,27 @@ def _load_admin_share_links(
           {("lr.redeemed_at," if onboarding_magic_link_columns else "NULL AS redeemed_at,")}
           {("lr.redeemed_user_id," if onboarding_magic_link_columns else "NULL AS redeemed_user_id,")}
           {("rcc.connected_platforms," if onboarding_magic_link_columns else "NULL AS connected_platforms,")}
-          {("rcc.connected_at" if onboarding_magic_link_columns else "NULL AS connected_at")}
+          {("rcc.connected_at" if onboarding_magic_link_columns else "NULL AS connected_at")},
+          CASE WHEN lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0 THEN 1 ELSE 0 END AS entered_feed,
+          COALESCE(lfe.watched_in_feed, 0) AS watched_in_feed,
+          COALESCE(lfe.active_short_count, 0) AS active_short_count,
+          COALESCE(lfe.reached_card_a, 0) AS reached_card_a,
+          COALESCE(lfe.reached_card_b, 0) AS reached_card_b,
+          COALESCE(lfe.reached_end_card, 0) AS reached_end_card,
+          COALESCE(lfe.trial_cta_clicked, 0) AS feed_trial_cta_clicked,
+          slc.converted_at,
+          COALESCE(lfsc.feed_short_total, 0) AS feed_short_total
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
         LEFT JOIN latest_share_device lsd
           ON lsd.share_link_id = sr.id
+        LEFT JOIN lead_feed_events lfe
+          ON lfe.share_link_id = sr.id
+        LEFT JOIN share_link_conversion slc
+          ON slc.share_link_id = sr.id
+        LEFT JOIN lead_feed_short_counts lfsc
+          ON lfsc.share_link_id = sr.id
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
@@ -9532,6 +9664,16 @@ def _load_admin_share_links(
                 emailed_at_utc = None
             if emailed_at_utc is not None:
                 followup_eligible = emailed_at_utc <= (datetime.now(timezone.utc) - timedelta(days=3))
+        feed_depth_count = int(row[26] or 0)
+        feed_short_total = int(row[32] or 0)
+        feed_cards_seen = []
+        if bool(row[27]):
+            feed_cards_seen.append("A")
+        if bool(row[28]):
+            feed_cards_seen.append("B")
+        if bool(row[29]):
+            feed_cards_seen.append("End")
+        converted_at = row[31]
         items.append(
             {
                 "id": row[0],
@@ -9574,6 +9716,24 @@ def _load_admin_share_links(
                 "channel_connected": bool(str(row[22] or "").strip()),
                 "connected_at": row[23],
                 "connected_at_pst": _format_datetime_pst(row[23]),
+                "entered_feed": bool(row[24]),
+                "watched_in_feed": bool(row[25]),
+                "feed_depth_count": feed_depth_count,
+                "feed_short_total": feed_short_total,
+                "feed_depth_label": (
+                    f"{feed_depth_count}/{feed_short_total}"
+                    if feed_depth_count and feed_short_total
+                    else f"{feed_depth_count}" if feed_depth_count else ""
+                ),
+                "feed_cards_seen": feed_cards_seen,
+                "feed_cards_seen_label": ", ".join(feed_cards_seen),
+                "feed_reached_card_a": bool(row[27]),
+                "feed_reached_card_b": bool(row[28]),
+                "feed_reached_end_card": bool(row[29]),
+                "feed_trial_cta_clicked": bool(row[30]),
+                "converted": bool(converted_at),
+                "converted_at": converted_at,
+                "converted_at_pst": _format_datetime_pst(converted_at),
                 "redeemed_user_detail_url": (
                     url_for("video_shorts_bp.admin_user_detail", user_id=str(row[21]).strip())
                     if str(row[21] or "").strip()
@@ -9588,6 +9748,7 @@ def _load_admin_share_links(
         normalized_archive_filter,
         normalized_sort_key,
         normalized_sort_dir,
+        funnel_summary,
     )
 
 
@@ -11096,6 +11257,7 @@ def admin_share_links():
             normalized_archive_filter,
             normalized_sort_key,
             normalized_sort_dir,
+            funnel_summary,
         ) = _load_admin_share_links(
             conn,
             email_query=email_query,
@@ -11122,6 +11284,7 @@ def admin_share_links():
         per_page=per_page,
         total_links=total_links,
         total_pages=total_pages,
+        funnel_summary=funnel_summary,
     )
 
 
