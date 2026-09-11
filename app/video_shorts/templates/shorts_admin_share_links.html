@@ -438,23 +438,31 @@
                     <button
                       type="button"
                       class="admin-share-links-followup-copy-btn"
-                      data-recipient-name="{{ link.recipient_name }}"
-                      data-share-url="{{ link.share_url }}"
+                      data-preview-endpoint="{{ url_for('video_shorts_bp.admin_share_link_email_preview', share_link_id=link.id) }}"
                       data-language="EN"
-                      data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
-                      data-trial-days="{{ link.trial_days }}"
                       title="Copy follow-up email in English"
                       aria-label="Copy follow-up email in English">2. email (EN)</button>
                     <button
                       type="button"
                       class="admin-share-links-followup-copy-btn"
-                      data-recipient-name="{{ link.recipient_name }}"
-                      data-share-url="{{ link.share_url }}"
+                      data-preview-endpoint="{{ url_for('video_shorts_bp.admin_share_link_email_preview', share_link_id=link.id) }}"
                       data-language="TR"
-                      data-engaged="{{ 'true' if (link.viewed or link.played) else 'false' }}"
-                      data-trial-days="{{ link.trial_days }}"
                       title="Copy follow-up email in Turkish"
                       aria-label="Copy follow-up email in Turkish">2. email (TR)</button>
+                    <button
+                      type="button"
+                      class="admin-share-links-followup-send-btn"
+                      data-send-endpoint="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=link.id) }}"
+                      data-language="EN"
+                      title="Send follow-up email in English via Resend"
+                      aria-label="Send follow-up email in English">Send EN</button>
+                    <button
+                      type="button"
+                      class="admin-share-links-followup-send-btn"
+                      data-send-endpoint="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=link.id) }}"
+                      data-language="TR"
+                      title="Send follow-up email in Turkish via Resend"
+                      aria-label="Send follow-up email in Turkish">Send TR</button>
                     <button
                       type="button"
                       class="admin-share-links-followup-mark-btn"
@@ -571,80 +579,6 @@
 
 {% block extra_scripts %}
   <script>
-    const FOLLOWUP_TEMPLATES = {
-      A_EN: `Subject: A hands-off way to grow your channel — first month free
-
-Hi [Name],
-
-Did you get the Short we made from your video last week? [link]
-
-Here's the thing — even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
-
-So here's the simpler version: **you keep making your long videos, and we grow your channel with Shorts — without you lifting a finger.** We're not a clip tool you have to learn. Connect your channel once, and we handle everything — finding the best moments, captioning, and publishing to your channels, every month.
-
-Your first month is on us — 15 Shorts, made and published for you, free.
-
-Take a look at your Short, and tap "Let us do it for you" to start.
-
-Best,
-Gokhan`,
-      A_TR: `Subject: Short'unuz denemeye hazır
-
-Merhaba [Name],
-
-Minti'nin videonuzdan ne çıkardığını gördünüz. Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — doğrudan o sayfadan.
-
-Sizin gibi içerik üreticileri için tasarlandı: uzun videolarınızı Short'a dönüştürün, YouTube, Instagram ve Facebook'ta yayınlayın, ekstra düzenleme zamanı harcamadan kanalınızı büyütün.
-
-Başlamak için "Kendi Short'unu oluştur"a dokunun — [trial] ücretsiz, kayıt yok.
-
-İyi çalışmalar,
-Gökhan`,
-      B_EN: `Subject: A hands-off way to grow your channel — first month free
-
-Hi [Name],
-
-Did you get the Short we made from your video last week? [link]
-
-Here's the thing — even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
-
-So here's the simpler version: **you keep making your long videos, and we grow your channel with Shorts — without you lifting a finger.** We're not a clip tool you have to learn. Connect your channel once, and we handle everything — finding the best moments, captioning, and publishing to your channels, every month.
-
-Your first month is on us — 15 Shorts, made and published for you, free.
-
-Take a look at your Short, and tap "Let us do it for you" to start.
-
-Best,
-Gokhan`,
-      B_TR: `Subject: Videonuzdan yaptığım Short'u gördünüz mü?
-
-Merhaba [Name],
-
-Geçen hafta videonuzdan yaptığım bir Short göndermiştim — gözden kaçmış olabilir. İşte burada: [link]
-
-Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz — o sayfada "Kendi Short'unu oluştur"a dokunmanız yeterli. [trial] ücretsiz, kayıt yok.
-
-İyi çalışmalar,
-Gökhan`,
-    };
-
-    function buildFollowupText(button) {
-      const recipientName = String(button.dataset.recipientName || "").trim() || "there";
-      const shareUrl = String(button.dataset.shareUrl || "").trim();
-      const normalizedLanguage = String(button.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
-      const engaged = String(button.dataset.engaged || "").trim().toLowerCase() === "true";
-      const trialDaysRaw = Number.parseInt(String(button.dataset.trialDays || "").trim(), 10);
-      const trialDays = Number.isFinite(trialDaysRaw) && trialDaysRaw > 0 ? trialDaysRaw : 90;
-      const key = `${engaged ? "A" : "B"}_${normalizedLanguage}`;
-      const template = FOLLOWUP_TEMPLATES[key] || FOLLOWUP_TEMPLATES.B_EN;
-      const trialLabel = trialDays % 30 === 0
-        ? (normalizedLanguage === "TR"
-          ? `${Math.round(trialDays / 30)} ay`
-          : `${Math.round(trialDays / 30)} ${Math.round(trialDays / 30) === 1 ? "month" : "months"}`)
-        : (normalizedLanguage === "TR" ? `${trialDays} gün` : `${trialDays} days`);
-      return template.replaceAll("[Name]", recipientName).replaceAll("[link]", shareUrl).replaceAll("[trial]", trialLabel);
-    }
-
     function setFollowupFeedback(row, message, kind = "") {
       const feedback = row.querySelector("[data-followup-feedback]");
       if (!feedback) {
@@ -715,17 +649,100 @@ Gökhan`,
         const row = followupCopyButton.closest(".admin-share-links-row");
         const originalLabel = followupCopyButton.textContent;
         const language = String(followupCopyButton.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
+        const previewEndpoint = String(followupCopyButton.dataset.previewEndpoint || "").trim();
+        if (!previewEndpoint || followupCopyButton.disabled) {
+          return;
+        }
+        followupCopyButton.disabled = true;
+        followupCopyButton.textContent = "Hazırlanıyor...";
+        setFollowupFeedback(row, "");
         try {
-          await navigator.clipboard.writeText(buildFollowupText(followupCopyButton));
+          const url = new URL(previewEndpoint, window.location.origin);
+          url.searchParams.set("language", language);
+          const response = await fetch(url.toString(), {
+            method: "GET",
+            credentials: "same-origin",
+            headers: {
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok || !payload.clipboard_text) {
+            throw new Error(payload.error || `HTTP ${response.status}`);
+          }
+          await navigator.clipboard.writeText(String(payload.clipboard_text || ""));
           followupCopyButton.textContent = `Kopyalandı (${language})`;
           setFollowupFeedback(row, `Follow-up metni panoya kopyalandı (${language}).`, "is-success");
         } catch (err) {
           followupCopyButton.textContent = "Kopyalama başarısız";
-          setFollowupFeedback(row, "Panoya kopyalanamadı.", "is-error");
+          setFollowupFeedback(row, err?.message || "Panoya kopyalanamadı.", "is-error");
         }
         setTimeout(() => {
           followupCopyButton.textContent = originalLabel;
+          followupCopyButton.disabled = false;
         }, 1400);
+        return;
+      }
+
+      const followupSendButton = event.target.closest(".admin-share-links-followup-send-btn");
+      if (followupSendButton) {
+        const row = followupSendButton.closest(".admin-share-links-row");
+        const endpoint = String(followupSendButton.dataset.sendEndpoint || "").trim();
+        const language = String(followupSendButton.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
+        if (!endpoint || followupSendButton.disabled) {
+          return;
+        }
+        const originalLabel = followupSendButton.textContent;
+        const sendRequest = async (confirmResend = false) => {
+          return fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({ language, confirm_resend: confirmResend }),
+          });
+        };
+        followupSendButton.disabled = true;
+        followupSendButton.textContent = "Sending...";
+        setFollowupFeedback(row, "");
+        try {
+          let response = await sendRequest(false);
+          let payload = await response.json().catch(() => ({}));
+          if (response.status === 409 && payload.requires_confirmation) {
+            const confirmed = window.confirm("This email was sent recently. Send it again?");
+            if (!confirmed) {
+              setFollowupFeedback(row, "Send cancelled.", "");
+              return;
+            }
+            response = await sendRequest(true);
+            payload = await response.json().catch(() => ({}));
+          }
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+          }
+          row.classList.remove("is-followup-eligible");
+          const badge = row.querySelector(".admin-share-links-followup-badge");
+          if (badge) {
+            badge.remove();
+          }
+          const markButton = row.querySelector(".admin-share-links-followup-mark-btn");
+          if (markButton) {
+            markButton.disabled = true;
+            markButton.textContent = "✓ 2. email gönderildi";
+          }
+          setFollowupFeedback(
+            row,
+            payload.followup_sent_at ? `Email sent (${language}): ${payload.followup_sent_at}` : `Email sent (${language}).`,
+            "is-success",
+          );
+        } catch (err) {
+          setFollowupFeedback(row, err?.message || "Email could not be sent.", "is-error");
+        } finally {
+          followupSendButton.disabled = false;
+          followupSendButton.textContent = originalLabel;
+        }
         return;
       }
 

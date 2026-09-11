@@ -136,6 +136,12 @@ from app.video_shorts.services.trial_copy import (
     normalize_trial_days,
     trial_duration_text,
 )
+from app.video_shorts.services.email_verification import send_resend_email
+from app.video_shorts.services.outreach_email_templates import (
+    normalize_outreach_template_language,
+    render_outreach_clipboard_text,
+    render_outreach_email,
+)
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
     load_user_bool_preference,
@@ -840,7 +846,7 @@ def _upsert_storage_asset(
 ) -> None:
     if not file_key or not file_path:
         return
-    conn = get_db()
+    conn = get_db_readonly()
     ensure_storage_user_schema(conn)
     try:
         asset_columns = table_columns(conn, "shorts_storage_assets")
@@ -1490,7 +1496,7 @@ def _resolve_user_podcast_audio_path(user_id: str, audio_filename: str) -> Optio
     if not safe_name or safe_name != (audio_filename or ""):
         return None
     brand_id = current_brand_id()
-    conn = get_db_readonly()
+    conn = get_db()
     try:
         row = conn.execute(
             """
@@ -1615,7 +1621,7 @@ def _build_video_meta_map_for_storage(conn) -> Dict[str, Dict[str, Any]]:
 
 
 def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
-    conn = get_db_readonly()
+    conn = get_db()
     brand_id = current_brand_id()
     try:
         video_meta = _build_video_meta_map_for_storage(conn)
@@ -7310,6 +7316,230 @@ def admin_share_link_set_followup_sent(share_link_id: int):
         except Exception:
             pass
         return jsonify({"ok": False, "error": "update_failed"}), 500
+    finally:
+        conn.close()
+
+
+def _render_admin_share_link_outreach_email(conn, share_link_id: int, language: object) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT
+          sl.id,
+          sl.token,
+          sl.recipient_name,
+          sl.recipient_email,
+          sl.language,
+          COALESCE(sl.trial_days, ?) AS trial_days,
+          sl.followup_sent,
+          sl.followup_sent_at,
+          sl.followup_template_key
+        FROM short_share_links sl
+        WHERE sl.id = ?
+        LIMIT 1
+        """,
+        [DEFAULT_SHARE_TRIAL_DAYS, share_link_id],
+    ).fetchone()
+    if not row:
+        raise LookupError("not_found")
+
+    token = str(row[1] or "").strip()
+    if not token:
+        raise ValueError("missing_share_token")
+
+    engagement_row = conn.execute(
+        f"""
+        SELECT
+          SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
+          SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count
+        FROM short_share_links sl
+        LEFT JOIN user_events ue
+          ON {_share_link_event_join_sql(conn)}
+        WHERE sl.id = ?
+        GROUP BY sl.id
+        """,
+        [share_link_id],
+    ).fetchone()
+    engaged = bool(engagement_row and (int(engagement_row[0] or 0) > 0 or int(engagement_row[1] or 0) > 0))
+    share_url = _share_public_url(token)
+    trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
+    rendered_email = render_outreach_email(
+        engaged=engaged,
+        language=language,
+        recipient_name=row[2],
+        share_url=share_url,
+        trial_days=trial_days,
+    )
+    return {
+        "row": row,
+        "recipient_email": str(row[3] or "").strip(),
+        "recipient_name": str(row[2] or "").strip(),
+        "share_url": share_url,
+        "trial_days": trial_days,
+        "engaged": engaged,
+        "email": rendered_email,
+        "clipboard_text": render_outreach_clipboard_text(
+            engaged=engaged,
+            language=language,
+            recipient_name=row[2],
+            share_url=share_url,
+            trial_days=trial_days,
+        ),
+        "followup_sent_at": row[7],
+        "followup_template_key": str(row[8] or "").strip(),
+    }
+
+
+@video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/email-preview", methods=["GET"])
+def admin_share_link_email_preview(share_link_id: int):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if not current_user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    language = normalize_outreach_template_language(request.args.get("language"))
+
+    conn = get_db_readonly()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
+        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, language)
+        return jsonify(
+            {
+                "ok": True,
+                "template_key": rendered["email"]["key"],
+                "subject": rendered["email"]["subject"],
+                "text": rendered["email"]["text"],
+                "clipboard_text": rendered["clipboard_text"],
+                "share_url": rendered["share_url"],
+                "trial_days": rendered["trial_days"],
+            }
+        )
+    except LookupError:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc) or "invalid_share_link"}), 400
+    except Exception:
+        current_app.logger.exception("Failed to preview outreach email for short_share_link id=%s", share_link_id)
+        return jsonify({"ok": False, "error": "preview_failed"}), 500
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/send-email", methods=["POST"])
+def admin_share_link_send_email(share_link_id: int):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if not current_user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    language = normalize_outreach_template_language(payload.get("language"))
+    confirm_resend = bool(payload.get("confirm_resend"))
+    resend_cooldown = timedelta(minutes=10)
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
+        share_link_columns = table_columns(conn, "short_share_links")
+        required_columns = {
+            "recipient_email",
+            "recipient_name",
+            "token",
+            "trial_days",
+            "followup_sent",
+            "followup_sent_at",
+            "followup_provider_message_id",
+            "followup_template_key",
+        }
+        if not required_columns.issubset(set(share_link_columns)):
+            return jsonify({"ok": False, "error": "share_link_email_tracking_unavailable"}), 503
+
+        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, language)
+        recipient_email = rendered["recipient_email"]
+        if not recipient_email or "@" not in recipient_email:
+            return jsonify({"ok": False, "error": "missing_recipient_email"}), 400
+        rendered_email = rendered["email"]
+        template_key = rendered_email["key"]
+
+        followup_sent_at = rendered["followup_sent_at"]
+        previous_template_key = rendered["followup_template_key"]
+        if followup_sent_at and previous_template_key == template_key and not confirm_resend:
+            try:
+                sent_at_utc = followup_sent_at if followup_sent_at.tzinfo else followup_sent_at.replace(tzinfo=timezone.utc)
+            except AttributeError:
+                sent_at_utc = _parse_iso_datetime(str(followup_sent_at))
+                if sent_at_utc and sent_at_utc.tzinfo is None:
+                    sent_at_utc = sent_at_utc.replace(tzinfo=timezone.utc)
+            if sent_at_utc and sent_at_utc >= (datetime.now(timezone.utc) - resend_cooldown):
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "recently_sent",
+                        "message": "This template was sent recently. Confirm to send it again.",
+                        "requires_confirmation": True,
+                        "followup_sent_at": _format_datetime_pst(followup_sent_at),
+                    }
+                ), 409
+
+        send_result = send_resend_email(
+            to_email=recipient_email,
+            subject=rendered_email["subject"],
+            html=rendered_email["html"],
+            text=rendered_email["text"],
+            from_display_name="Gokhan Saltik",
+            reply_to_email="info@mintistudio.com",
+            error_message="Outreach email could not be sent.",
+        )
+        provider_message_id = str(send_result.get("request_id") or "").strip()
+        conn.execute(
+            """
+            UPDATE short_share_links
+               SET emailed_at = COALESCE(emailed_at, CURRENT_TIMESTAMP),
+                   followup_sent = TRUE,
+                   followup_sent_at = CURRENT_TIMESTAMP,
+                   followup_provider_message_id = ?,
+                   followup_template_key = ?
+             WHERE id = ?
+            """,
+            [provider_message_id or None, template_key, share_link_id],
+        )
+        conn.commit()
+        updated_row = conn.execute(
+            """
+            SELECT emailed_at, followup_sent_at, followup_provider_message_id, followup_template_key
+            FROM short_share_links
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [share_link_id],
+        ).fetchone()
+        return jsonify(
+            {
+                "ok": True,
+                "template_key": template_key,
+                "provider_message_id": str(updated_row[2] or "") if updated_row else provider_message_id,
+                "emailed_at": _format_datetime_pst(updated_row[0] if updated_row else None),
+                "followup_sent_at": _format_datetime_pst(updated_row[1] if updated_row else None),
+                "followup_sent_at_iso": (
+                    updated_row[1].isoformat()
+                    if updated_row and hasattr(updated_row[1], "isoformat")
+                    else str((updated_row[1] if updated_row else "") or "")
+                ),
+            }
+        )
+    except LookupError:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc) or "invalid_share_link"}), 400
+    except Exception as exc:
+        current_app.logger.exception("Failed to send outreach email for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "send_failed", "message": str(exc) or "Email could not be sent."}), 500
     finally:
         conn.close()
 

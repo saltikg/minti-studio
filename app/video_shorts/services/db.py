@@ -220,6 +220,8 @@ def ensure_short_share_links_schema(conn) -> None:
                 archived BOOLEAN DEFAULT FALSE,
                 followup_sent BOOLEAN DEFAULT FALSE,
                 followup_sent_at TIMESTAMP,
+                followup_provider_message_id VARCHAR,
+                followup_template_key VARCHAR,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -239,6 +241,8 @@ def ensure_short_share_links_schema(conn) -> None:
         ("archived", "BOOLEAN DEFAULT FALSE"),
         ("followup_sent", "BOOLEAN DEFAULT FALSE"),
         ("followup_sent_at", "TIMESTAMP"),
+        ("followup_provider_message_id", "VARCHAR"),
+        ("followup_template_key", "VARCHAR"),
         ("created_at", "TIMESTAMP"),
     ):
         if col_name in cols:
