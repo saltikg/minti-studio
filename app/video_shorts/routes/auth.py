@@ -1796,6 +1796,8 @@ def redeem_onboarding_magic_link(token: str):
                 welcome_email,
                 outreach_language,
             )
+    if autopilot_requested and onboarding_autopilot_lead_id:
+        return redirect(url_for("video_shorts_bp.lead_feed_page"))
     if autopilot_requested and requested_landing != "my_videos":
         return redirect(url_for("video_shorts_bp.social_connect"))
     return redirect(url_for("video_shorts_bp.my_videos_page"))

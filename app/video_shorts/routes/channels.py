@@ -347,6 +347,87 @@ def _video_status_payload(download_status: str | None, transcript_status: str | 
     }
 
 
+def _current_user_is_pending_autopilot_lead(current_user: dict, brand_id: str | None) -> bool:
+    if not current_user or not brand_id:
+        return False
+    if str(current_user.get("service_mode") or "").strip().lower() == "autopilot":
+        return False
+    if str(current_user.get("pending_service_intent") or "").strip().lower() != "autopilot":
+        return False
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM autopilot_leads
+            WHERE CAST(user_id AS VARCHAR) = ?
+              AND CAST(brand_id AS VARCHAR) = ?
+              AND converted_at IS NULL
+            LIMIT 1
+            """,
+            [current_user["id"], brand_id],
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/lead-feed", methods=["GET"])
+def lead_feed_page():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+
+    brand_id = current_brand_id()
+    if not _current_user_is_pending_autopilot_lead(current_user, brand_id):
+        return redirect(url_for("video_shorts_bp.my_videos_page"))
+
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                gv.id,
+                gv.clip_filename,
+                gv.generated_title,
+                gv.created_at
+            FROM shorts_generated_videos gv
+            WHERE CAST(gv.user_id AS VARCHAR) = ?
+              AND CAST(gv.brand_id AS VARCHAR) = ?
+              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+            ORDER BY gv.created_at ASC, gv.id ASC
+            """,
+            [current_user["id"], brand_id],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    shorts = []
+    for row in rows:
+        clip_filename = str(row[1] or "").strip()
+        video_url, poster_url = _short_card_media_urls(clip_filename)
+        if not video_url:
+            continue
+        shorts.append(
+            {
+                "id": str(row[0] or "").strip(),
+                "title": str(row[2] or "").strip() or "Your Short",
+                "video_url": video_url,
+                "poster_url": poster_url,
+            }
+        )
+
+    return render_template(
+        "lead_feed.html",
+        shorts=shorts,
+        first_short=shorts[0] if shorts else None,
+        stripe_ready=stripe_is_configured(),
+        stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
+        my_videos_url=url_for("video_shorts_bp.my_videos_page"),
+    )
+
+
 @video_shorts_bp.route("/my-videos", methods=["GET"])
 def my_videos_page():
     current_user = getattr(g, "vs_current_user", None)

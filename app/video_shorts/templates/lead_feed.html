@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Your Shorts | MintiStudio</title>
+    <link rel="shortcut icon" href="{{ url_for('video_shorts_bp.static', filename='img/favicon-admin.ico') }}">
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #030712;
+        --panel: #07111f;
+        --text: #f8fafc;
+        --muted: rgba(226, 232, 240, 0.72);
+        --accent: #5eead4;
+      }
+      * { box-sizing: border-box; }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .lead-feed-shell {
+        position: relative;
+        display: grid;
+        min-height: 100svh;
+        place-items: center;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(45, 212, 191, 0.12), transparent 34%),
+          #020617;
+      }
+      .lead-feed-track {
+        width: 100vw;
+        height: 100svh;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        scroll-snap-type: y mandatory;
+        scrollbar-width: none;
+        background: #000;
+      }
+      .lead-feed-track::-webkit-scrollbar { display: none; }
+      .lead-feed-slide {
+        position: relative;
+        width: 100%;
+        height: 100svh;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+        overflow: hidden;
+        background: #000;
+      }
+      .lead-feed-video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        background: #000;
+      }
+      .lead-feed-gradient {
+        position: absolute;
+        inset: auto 0 0;
+        min-height: 34%;
+        pointer-events: none;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.84));
+      }
+      .lead-feed-short-actions {
+        position: absolute;
+        right: 18px;
+        bottom: calc(32px + env(safe-area-inset-bottom));
+        left: 18px;
+        z-index: 2;
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .lead-feed-title {
+        max-width: 70%;
+        margin: 0;
+        color: #fff;
+        font-size: 1rem;
+        line-height: 1.3;
+        font-weight: 800;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+      }
+      .lead-feed-download {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-width: 92px;
+        min-height: 64px;
+        padding: 10px 12px;
+        border-radius: 18px;
+        background: rgba(248, 250, 252, 0.92);
+        color: #020617;
+        text-decoration: none;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+      }
+      .lead-feed-download strong {
+        font-size: 0.94rem;
+        line-height: 1;
+      }
+      .lead-feed-download span {
+        margin-top: 5px;
+        color: rgba(2, 6, 23, 0.68);
+        font-size: 0.72rem;
+        line-height: 1.15;
+        text-align: center;
+      }
+      .lead-feed-card {
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        background:
+          radial-gradient(circle at 50% 12%, rgba(94, 234, 212, 0.2), transparent 38%),
+          linear-gradient(180deg, #07111f 0%, #030712 100%);
+      }
+      .lead-feed-card-inner {
+        width: min(100%, 340px);
+        text-align: center;
+      }
+      .lead-feed-kicker {
+        margin: 0 0 12px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .lead-feed-card-title {
+        margin: 0;
+        color: #fff;
+        font-size: clamp(2rem, 8vw, 3rem);
+        line-height: 0.96;
+        font-weight: 900;
+      }
+      .lead-feed-card-copy {
+        margin: 18px 0 0;
+        color: rgba(226, 232, 240, 0.82);
+        font-size: 1.05rem;
+        line-height: 1.55;
+      }
+      .lead-feed-trial-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 58px;
+        margin-top: 24px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #03111f;
+        font-size: 1rem;
+        font-weight: 900;
+        cursor: pointer;
+      }
+      .lead-feed-keep-watching {
+        display: inline-flex;
+        margin-top: 14px;
+        color: rgba(226, 232, 240, 0.7);
+        font-size: 0.92rem;
+        text-decoration: none;
+      }
+      .lead-feed-checkout {
+        display: none;
+        width: min(100%, 380px);
+        min-height: 420px;
+        margin: 18px auto 0;
+        border-radius: 18px;
+        background: rgba(15, 23, 42, 0.86);
+        overflow: hidden;
+      }
+      .lead-feed-checkout.is-visible {
+        display: block;
+      }
+      .lead-feed-error,
+      .lead-feed-status {
+        margin-top: 12px;
+        font-size: 0.88rem;
+      }
+      .d-none { display: none !important; }
+      .lead-feed-error {
+        color: #fecaca;
+      }
+      .lead-feed-status {
+        color: rgba(226, 232, 240, 0.72);
+      }
+      .lead-feed-empty {
+        display: grid;
+        min-height: 100svh;
+        place-items: center;
+        padding: 28px;
+        text-align: center;
+        background: #07111f;
+      }
+      .lead-feed-landing {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: grid;
+        place-items: center;
+        background: #000;
+      }
+      .lead-feed-landing.is-hidden {
+        display: none;
+      }
+      .lead-feed-landing-poster {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.8;
+      }
+      .lead-feed-landing::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(2, 6, 23, 0.1), rgba(2, 6, 23, 0.88));
+      }
+      .lead-feed-watch-btn {
+        position: relative;
+        z-index: 1;
+        width: min(72vw, 260px);
+        min-height: 76px;
+        border: 0;
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #020617;
+        font-size: 1.35rem;
+        font-weight: 950;
+        cursor: pointer;
+        box-shadow: 0 24px 56px rgba(0, 0, 0, 0.38);
+      }
+      .lead-feed-nav {
+        display: none;
+      }
+      @media (min-width: 760px) {
+        .lead-feed-track {
+          width: min(100vw, 420px);
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 28px 80px rgba(0, 0, 0, 0.44);
+        }
+        .lead-feed-landing {
+          width: min(100vw, 420px);
+          left: 50%;
+          transform: translateX(-50%);
+          box-shadow: 0 0 0 9999px #020617;
+        }
+        .lead-feed-nav {
+          position: fixed;
+          top: 50%;
+          right: calc(50% - 280px);
+          z-index: 4;
+          display: grid;
+          gap: 10px;
+          transform: translateY(-50%);
+        }
+        .lead-feed-nav button {
+          width: 48px;
+          height: 48px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 999px;
+          background: rgba(15, 23, 42, 0.9);
+          color: #fff;
+          font-size: 1.3rem;
+          cursor: pointer;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="lead-feed-shell">
+      {% if shorts %}
+        <div class="lead-feed-track" id="leadFeedTrack" aria-label="Your Shorts feed">
+          {% for short in shorts %}
+            <section class="lead-feed-slide" data-feed-slide data-slide-kind="short">
+              <video
+                class="lead-feed-video"
+                src="{{ short.video_url }}"
+                poster="{{ short.poster_url or '' }}"
+                playsinline
+                preload="metadata"
+                loop
+                muted
+                data-feed-video></video>
+              <div class="lead-feed-gradient"></div>
+              <div class="lead-feed-short-actions">
+                <h2 class="lead-feed-title">{{ short.title }}</h2>
+                <a class="lead-feed-download" href="{{ short.video_url }}" download>
+                  <strong>Download</strong>
+                  <span>post it on your channel.</span>
+                </a>
+              </div>
+            </section>
+            {% if loop.index == 1 %}
+              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="message">
+                <div class="lead-feed-card-inner">
+                  <p class="lead-feed-kicker">Minti Autopilot</p>
+                  <h2 class="lead-feed-card-title">Keep making long videos.</h2>
+                  <p class="lead-feed-card-copy">We'll make 15 Shorts every month from your videos — watch your channel grow while you just keep making long videos.</p>
+                </div>
+              </section>
+            {% elif loop.index == 2 %}
+              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
+                <div class="lead-feed-card-inner">
+                  <p class="lead-feed-kicker">1 month free</p>
+                  <h2 class="lead-feed-card-title">Start your free trial.</h2>
+                  <p class="lead-feed-card-copy">Autopilot makes the Shorts, keeps the rhythm, and helps your channel grow.</p>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutMid">Start my trial</button>
+                  <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
+                  <div class="lead-feed-status d-none" data-checkout-status></div>
+                  <div class="lead-feed-error d-none" id="leadFeedCheckoutMidError" data-checkout-error></div>
+                  <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutMid"></div></div>
+                </div>
+              </section>
+            {% endif %}
+          {% endfor %}
+          <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
+            <div class="lead-feed-card-inner">
+              <p class="lead-feed-kicker">Ready when you are</p>
+              <h2 class="lead-feed-card-title">Start your free trial.</h2>
+              <p class="lead-feed-card-copy">Let Minti turn your next long videos into Shorts on autopilot. First month is free.</p>
+              <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutEnd">Start my trial</button>
+              <div class="lead-feed-status d-none" data-checkout-status></div>
+              <div class="lead-feed-error d-none" id="leadFeedCheckoutEndError" data-checkout-error></div>
+              <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutEnd"></div></div>
+            </div>
+          </section>
+        </div>
+        <div class="lead-feed-landing" id="leadFeedLanding">
+          {% if first_short.poster_url %}
+            <img class="lead-feed-landing-poster" src="{{ first_short.poster_url }}" alt="">
+          {% else %}
+            <video class="lead-feed-landing-poster" src="{{ first_short.video_url }}#t=1" muted playsinline preload="metadata"></video>
+          {% endif %}
+          <button type="button" class="lead-feed-watch-btn" id="leadFeedWatch">İZLE / Watch</button>
+        </div>
+        <div class="lead-feed-nav" aria-hidden="false">
+          <button type="button" data-feed-prev aria-label="Previous">↑</button>
+          <button type="button" data-feed-next aria-label="Next">↓</button>
+        </div>
+      {% else %}
+        <div class="lead-feed-empty">
+          <div>
+            <p class="lead-feed-kicker">Minti Autopilot</p>
+            <h1 class="lead-feed-card-title">Your Shorts are being prepared.</h1>
+            <p class="lead-feed-card-copy">Check back soon from your email link.</p>
+          </div>
+        </div>
+      {% endif %}
+    </main>
+    {% include "_billing_embedded_checkout_script.html" %}
+    <script>
+      (() => {
+        const track = document.getElementById("leadFeedTrack");
+        const landing = document.getElementById("leadFeedLanding");
+        const watchButton = document.getElementById("leadFeedWatch");
+        if (!track) return;
+
+        const slides = Array.from(track.querySelectorAll("[data-feed-slide]"));
+        const videos = Array.from(track.querySelectorAll("[data-feed-video]"));
+        const activationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
+        const myVideosUrl = {{ my_videos_url|tojson }};
+        let activeIndex = 0;
+        let started = false;
+        let wheelLocked = false;
+
+        const clampIndex = (index) => Math.max(0, Math.min(slides.length - 1, index));
+        const currentVideo = () => slides[activeIndex]?.querySelector("[data-feed-video]");
+
+        const playActive = async () => {
+          videos.forEach((video) => {
+            if (video !== currentVideo()) {
+              video.pause();
+            }
+          });
+          const video = currentVideo();
+          if (!started || !video) return;
+          video.muted = false;
+          video.volume = 1;
+          try {
+            await video.play();
+          } catch (_) {}
+        };
+
+        const goTo = (index) => {
+          activeIndex = clampIndex(index);
+          slides[activeIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
+          window.setTimeout(playActive, 180);
+        };
+
+        const findNearestSlideIndex = () => {
+          const trackRect = track.getBoundingClientRect();
+          const center = trackRect.top + trackRect.height / 2;
+          let bestIndex = activeIndex;
+          let bestDistance = Infinity;
+          slides.forEach((slide, index) => {
+            const rect = slide.getBoundingClientRect();
+            const distance = Math.abs(rect.top + rect.height / 2 - center);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              bestIndex = index;
+            }
+          });
+          return bestIndex;
+        };
+
+        const syncActiveFromScroll = () => {
+          const nextIndex = findNearestSlideIndex();
+          if (nextIndex !== activeIndex) {
+            activeIndex = nextIndex;
+            playActive();
+          }
+        };
+
+        let scrollTimer = null;
+        track.addEventListener("scroll", () => {
+          window.clearTimeout(scrollTimer);
+          scrollTimer = window.setTimeout(syncActiveFromScroll, 80);
+        }, { passive: true });
+
+        watchButton?.addEventListener("click", async () => {
+          started = true;
+          landing?.classList.add("is-hidden");
+          activeIndex = 0;
+          track.scrollTo({ top: 0, behavior: "auto" });
+          await playActive();
+        });
+
+        videos.forEach((video) => {
+          video.addEventListener("click", () => {
+            if (!started) return;
+            if (video.paused) {
+              video.muted = false;
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+            }
+          });
+        });
+
+        track.addEventListener("wheel", (event) => {
+          if (Math.abs(event.deltaY) < 12 || wheelLocked) return;
+          event.preventDefault();
+          wheelLocked = true;
+          goTo(activeIndex + (event.deltaY > 0 ? 1 : -1));
+          window.setTimeout(() => { wheelLocked = false; }, 520);
+        }, { passive: false });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            goTo(activeIndex + 1);
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            goTo(activeIndex - 1);
+          }
+        });
+
+        document.querySelector("[data-feed-prev]")?.addEventListener("click", () => goTo(activeIndex - 1));
+        document.querySelector("[data-feed-next]")?.addEventListener("click", () => goTo(activeIndex + 1));
+        document.querySelectorAll("[data-next-slide]").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            goTo(activeIndex + 1);
+          });
+        });
+
+        document.querySelectorAll("[data-trial-cta]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const card = button.closest(".lead-feed-card-inner");
+            const status = card?.querySelector("[data-checkout-status]");
+            const error = card?.querySelector("[data-checkout-error]");
+            const shell = card?.querySelector("[data-checkout-shell]");
+            const mountId = button.dataset.checkoutMount || "";
+            if (!window.MintiEmbeddedCheckout?.mount || !mountId) {
+              if (error) {
+                error.textContent = "Checkout is not available right now.";
+                error.classList.remove("d-none");
+              }
+              return;
+            }
+            button.disabled = true;
+            if (error) {
+              error.textContent = "";
+              error.classList.add("d-none");
+            }
+            try {
+              const response = await fetch(activationEndpoint, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Requested-With": "XMLHttpRequest",
+                },
+                body: JSON.stringify({ service_mode: "autopilot" }),
+              });
+              const payload = await response.json().catch(() => null);
+              if (!response.ok || !payload || !payload.ok) {
+                throw new Error((payload && payload.error) || "Could not start autopilot.");
+              }
+            } catch (activationError) {
+              button.disabled = false;
+              if (error) {
+                error.textContent = activationError?.message || "Could not start autopilot.";
+                error.classList.remove("d-none");
+              }
+              return;
+            }
+            shell?.classList.add("is-visible");
+            await window.MintiEmbeddedCheckout.mount({
+              planId: "plan_10gb",
+              interval: "month",
+              trialDays: 30,
+              mountSelector: `#${mountId}`,
+              errorSelector: `#${mountId}Error`,
+              onMounting: () => {
+                if (status) {
+                  status.textContent = "Preparing secure checkout...";
+                  status.classList.remove("d-none");
+                }
+              },
+              onMounted: () => {
+                if (status) {
+                  status.textContent = "Complete checkout to start your 1-month free trial.";
+                }
+              },
+              onComplete: () => {
+                window.location.assign(myVideosUrl);
+              },
+              onError: () => {
+                button.disabled = false;
+                if (status) {
+                  status.textContent = "";
+                  status.classList.add("d-none");
+                }
+              },
+            });
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
