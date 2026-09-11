@@ -185,13 +185,13 @@
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: 56px;
-        padding: 0 28px;
+        min-height: 64px;
+        padding: 0 30px;
         border-radius: 999px;
         background: var(--accent);
         color: #07121b !important;
-        font-weight: 700;
-        font-size: 1rem;
+        font-weight: 850;
+        font-size: 1.12rem;
         letter-spacing: 0.01em;
         text-decoration: none !important;
         box-shadow:
@@ -204,6 +204,14 @@
         box-shadow:
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
+      }
+      .watch-more-context {
+        margin: 10px auto 0;
+        width: min(100%, 360px);
+        color: rgba(238, 247, 246, 0.7);
+        font-size: 0.88rem;
+        line-height: 1.35;
+        text-align: center;
       }
       .watch-cta-secondary {
         color: var(--accent);
@@ -245,11 +253,17 @@
         video {
           height: min(64svh, 620px);
         }
+        .watch-cta-primary {
+          min-height: 62px;
+          font-size: 1.04rem;
+          padding: 0 22px;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
         .watch-step-card,
         .watch-step-arrow,
         .watch-video-wrap,
+        .watch-more-context,
         .watch-prompt-banner,
         .watch-footer {
           opacity: 1;
@@ -276,9 +290,9 @@
             class="watch-cta-primary"
             rel="noreferrer">
             {% if total_shorts_count > 1 %}
-              See all {{ total_shorts_count }} of your Shorts →
+              Watch all {{ total_shorts_count }} Shorts →
             {% else %}
-              See your Short →
+              Watch your Short →
             {% endif %}
           </a>
         </div>
@@ -288,6 +302,11 @@
           <source src="{{ playback_url }}" type="video/mp4">
         </video>
       </div>
+      {% if onboarding_url and total_shorts_count > 1 %}
+        <div class="watch-more-context">
+          This is your first Short — {{ total_shorts_count - 1 }} more inside.
+        </div>
+      {% endif %}
       <div class="watch-steps" aria-label="How it works">
         <div class="watch-step-card">
           <span class="watch-step-icon" aria-hidden="true">🔗</span>
