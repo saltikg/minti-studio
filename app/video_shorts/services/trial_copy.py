@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-DEFAULT_SHARE_TRIAL_DAYS = 60
+DEFAULT_SHARE_TRIAL_DAYS = 30
 LEGACY_SHARE_TRIAL_DAYS = 90
 
 
@@ -33,4 +33,3 @@ def trial_access_phrase(days: Any, language: str = "EN") -> str:
     if normalized_language == "TR":
         return f"{duration_text} ücretsiz erişim"
     return f"{duration_text} of complimentary access"
-
