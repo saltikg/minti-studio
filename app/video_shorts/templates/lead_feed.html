@@ -139,18 +139,6 @@
         font-size: 0.92rem;
         text-decoration: none;
       }
-      .lead-feed-checkout {
-        display: none;
-        width: min(100%, 380px);
-        min-height: 420px;
-        margin: 18px auto 0;
-        border-radius: 18px;
-        background: rgba(15, 23, 42, 0.86);
-        overflow: hidden;
-      }
-      .lead-feed-checkout.is-visible {
-        display: block;
-      }
       .lead-feed-error,
       .lead-feed-status {
         margin-top: 12px;
@@ -272,21 +260,19 @@
                   <p class="lead-feed-kicker">MINTI AUTOPILOT</p>
                   <h2 class="lead-feed-card-title">15 Shorts/mo — done for you</h2>
                   <p class="lead-feed-card-copy">You make long videos. We turn them into Shorts.</p>
-                  <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutA">Start free →</button>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start free →</button>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
-                  <div class="lead-feed-error d-none" id="leadFeedCheckoutAError" data-checkout-error></div>
-                  <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutA"></div></div>
+                  <div class="lead-feed-error d-none" data-checkout-error></div>
                 </div>
               </section>
             {% elif loop.index == 2 %}
               <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
                 <div class="lead-feed-card-inner">
                   <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
-                  <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutMid">Start my trial</button>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
                   <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
-                  <div class="lead-feed-error d-none" id="leadFeedCheckoutMidError" data-checkout-error></div>
-                  <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutMid"></div></div>
+                  <div class="lead-feed-error d-none" data-checkout-error></div>
                 </div>
               </section>
             {% endif %}
@@ -294,11 +280,10 @@
           <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
             <div class="lead-feed-card-inner">
               <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
-              <button type="button" class="lead-feed-trial-btn" data-trial-cta data-checkout-mount="leadFeedCheckoutEnd">Start my trial</button>
+              <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
               <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
               <div class="lead-feed-status d-none" data-checkout-status></div>
-              <div class="lead-feed-error d-none" id="leadFeedCheckoutEndError" data-checkout-error></div>
-              <div class="lead-feed-checkout" data-checkout-shell><div id="leadFeedCheckoutEnd"></div></div>
+              <div class="lead-feed-error d-none" data-checkout-error></div>
             </div>
           </section>
         </div>
@@ -324,7 +309,6 @@
         </div>
       {% endif %}
     </main>
-    {% include "_billing_embedded_checkout_script.html" %}
     <script>
       (() => {
         const track = document.getElementById("leadFeedTrack");
@@ -493,19 +477,14 @@
             const card = button.closest(".lead-feed-card-inner");
             const status = card?.querySelector("[data-checkout-status]");
             const error = card?.querySelector("[data-checkout-error]");
-            const shell = card?.querySelector("[data-checkout-shell]");
-            const mountId = button.dataset.checkoutMount || "";
-            if (!window.MintiEmbeddedCheckout?.mount || !mountId) {
-              if (error) {
-                error.textContent = "Checkout is not available right now.";
-                error.classList.remove("d-none");
-              }
-              return;
-            }
             button.disabled = true;
             if (error) {
               error.textContent = "";
               error.classList.add("d-none");
+            }
+            if (status) {
+              status.textContent = "Starting your autopilot trial...";
+              status.classList.remove("d-none");
             }
             try {
               const response = await fetch(activationEndpoint, {
@@ -523,41 +502,17 @@
               }
             } catch (activationError) {
               button.disabled = false;
+              if (status) {
+                status.textContent = "";
+                status.classList.add("d-none");
+              }
               if (error) {
                 error.textContent = activationError?.message || "Could not start autopilot.";
                 error.classList.remove("d-none");
               }
               return;
             }
-            shell?.classList.add("is-visible");
-            await window.MintiEmbeddedCheckout.mount({
-              planId: "plan_10gb",
-              interval: "month",
-              trialDays: 30,
-              mountSelector: `#${mountId}`,
-              errorSelector: `#${mountId}Error`,
-              onMounting: () => {
-                if (status) {
-                  status.textContent = "Preparing secure checkout...";
-                  status.classList.remove("d-none");
-                }
-              },
-              onMounted: () => {
-                if (status) {
-                  status.textContent = "Complete checkout to start your 1-month free trial.";
-                }
-              },
-              onComplete: () => {
-                window.location.assign(myVideosUrl);
-              },
-              onError: () => {
-                button.disabled = false;
-                if (status) {
-                  status.textContent = "";
-                  status.classList.add("d-none");
-                }
-              },
-            });
+            window.location.assign(myVideosUrl);
           });
         });
       })();
