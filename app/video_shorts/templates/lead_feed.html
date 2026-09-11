@@ -43,6 +43,10 @@
         scrollbar-width: none;
         background: #000;
       }
+      .lead-feed-track.is-peeking .lead-feed-slide {
+        animation: lead-feed-visual-peek 1.05s cubic-bezier(0.32, 0.72, 0.24, 1) both;
+        will-change: transform;
+      }
       .lead-feed-track::-webkit-scrollbar { display: none; }
       .lead-feed-slide {
         position: relative;
@@ -121,6 +125,10 @@
       @keyframes lead-feed-hint-rise {
         0%, 100% { transform: translateY(0); }
         50% { transform: translateY(-8px); }
+      }
+      @keyframes lead-feed-visual-peek {
+        0%, 100% { transform: translateY(0); }
+        46% { transform: translateY(-25svh); }
       }
       .lead-feed-card {
         display: grid;
@@ -369,9 +377,8 @@
         let activeIndex = 0;
         let started = false;
         let wheelLocked = false;
-        let hintTimer = null;
         let peekTimer = null;
-        let peekRaf = null;
+        let peekResetTimer = null;
         let peekPlayed = false;
         const desktopQuery = window.matchMedia("(min-width: 760px)");
 
@@ -387,8 +394,6 @@
         };
 
         const hideAllHints = () => {
-          window.clearTimeout(hintTimer);
-          hintTimer = null;
           slides.forEach((slide) => {
             slide.querySelector("[data-swipe-hint]")?.classList.remove("is-visible", "is-prominent");
           });
@@ -400,18 +405,11 @@
           const hint = currentHint();
           if (!started || !video || !hint || video.paused) return;
           updateHintCopy(hint);
+          hint.classList.add("is-visible");
           hint.classList.toggle("is-prominent", video.dataset.loopedOnce === "true");
-          hintTimer = window.setTimeout(() => {
-            if (currentVideo() !== video || video.paused) return;
-            updateHintCopy(hint);
-            hint.classList.add("is-visible");
-            hint.classList.toggle("is-prominent", video.dataset.loopedOnce === "true");
-          }, 3000);
         };
 
         const showProminentActiveHint = () => {
-          window.clearTimeout(hintTimer);
-          hintTimer = null;
           const video = currentVideo();
           const hint = currentHint();
           if (!started || !video || !hint || video.paused) return;
@@ -421,30 +419,21 @@
 
         const cancelPeek = () => {
           window.clearTimeout(peekTimer);
+          window.clearTimeout(peekResetTimer);
           peekTimer = null;
-          if (peekRaf) {
-            window.cancelAnimationFrame(peekRaf);
-            peekRaf = null;
-          }
+          peekResetTimer = null;
+          track.classList.remove("is-peeking");
         };
 
         const runPeek = () => {
-          const baseTop = track.scrollTop;
-          const distance = Math.round(track.clientHeight * 0.25);
-          const duration = 1050;
-          const start = performance.now();
-          const step = (now) => {
-            const elapsed = Math.min(1, (now - start) / duration);
-            const offset = Math.sin(Math.PI * elapsed) * distance;
-            track.scrollTop = baseTop + offset;
-            if (elapsed < 1) {
-              peekRaf = window.requestAnimationFrame(step);
-            } else {
-              track.scrollTop = baseTop;
-              peekRaf = null;
-            }
-          };
-          peekRaf = window.requestAnimationFrame(step);
+          track.classList.remove("is-peeking");
+          void track.offsetWidth;
+          track.classList.add("is-peeking");
+          window.clearTimeout(peekResetTimer);
+          peekResetTimer = window.setTimeout(() => {
+            track.classList.remove("is-peeking");
+            peekResetTimer = null;
+          }, 1100);
         };
 
         const schedulePeek = () => {
@@ -506,7 +495,10 @@
             }
           });
           const video = activeVideo;
-          if (!started || !video) return;
+          if (!started || !video) {
+            hideAllHints();
+            return;
+          }
           ensureVideoLoaded(video);
           video.muted = false;
           video.volume = 1;
@@ -519,6 +511,7 @@
 
         const goTo = (index) => {
           activeIndex = clampIndex(index);
+          hideAllHints();
           slides[activeIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
           window.setTimeout(playActive, 180);
         };
@@ -542,6 +535,7 @@
         const syncActiveFromScroll = () => {
           const nextIndex = findNearestSlideIndex();
           if (nextIndex !== activeIndex) {
+            hideAllHints();
             activeIndex = nextIndex;
             playActive();
           }
@@ -555,7 +549,6 @@
         track.addEventListener("touchstart", cancelPeek, { passive: true });
         track.addEventListener("touchmove", () => {
           cancelPeek();
-          hideAllHints();
         }, { passive: true });
 
         watchButton?.addEventListener("click", async () => {
@@ -605,7 +598,6 @@
           if (Math.abs(event.deltaY) < 12 || wheelLocked) return;
           event.preventDefault();
           cancelPeek();
-          hideAllHints();
           wheelLocked = true;
           goTo(activeIndex + (event.deltaY > 0 ? 1 : -1));
           window.setTimeout(() => { wheelLocked = false; }, 520);
@@ -615,31 +607,26 @@
           if (event.key === "ArrowDown") {
             event.preventDefault();
             cancelPeek();
-            hideAllHints();
             goTo(activeIndex + 1);
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
             cancelPeek();
-            hideAllHints();
             goTo(activeIndex - 1);
           }
         });
 
         document.querySelector("[data-feed-prev]")?.addEventListener("click", () => {
           cancelPeek();
-          hideAllHints();
           goTo(activeIndex - 1);
         });
         document.querySelector("[data-feed-next]")?.addEventListener("click", () => {
           cancelPeek();
-          hideAllHints();
           goTo(activeIndex + 1);
         });
         document.querySelectorAll("[data-next-slide]").forEach((link) => {
           link.addEventListener("click", (event) => {
             event.preventDefault();
             cancelPeek();
-            hideAllHints();
             goTo(activeIndex + 1);
           });
         });
