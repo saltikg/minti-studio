@@ -4,7 +4,7 @@ from pathlib import Path
 import unicodedata
 from zoneinfo import ZoneInfo
 
-from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
@@ -595,6 +595,7 @@ def my_videos_page():
     ).fetchall()
 
     is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    show_autopilot_activated_modal = bool(session.pop("vs_show_autopilot_activated_modal", False)) and is_autopilot
     is_pending_autopilot_lead = (
         str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
         and not is_autopilot
@@ -782,6 +783,7 @@ def my_videos_page():
         videos=videos,
         video_count=len(videos),
         is_autopilot=is_autopilot,
+        show_autopilot_activated_modal=show_autopilot_activated_modal,
         is_pending_autopilot_lead=is_pending_autopilot_lead,
         show_autopilot_framing=show_autopilot_framing,
         is_new_autopilot_customer=is_new_autopilot_customer,

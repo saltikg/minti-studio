@@ -2292,6 +2292,15 @@ def save_service_mode_choice():
         return {"ok": False, "error": "invalid_service_mode"}, 400
     service_tier = 15 if service_mode == "autopilot" else None
     onboarding_autopilot_lead_id = str(session.get("vs_onboarding_autopilot_lead_id") or "").strip()
+    was_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
+    lead_activation = (
+        service_mode == "autopilot"
+        and not was_autopilot
+        and (
+            bool(onboarding_autopilot_lead_id)
+            or str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
+        )
+    )
     conn = get_db()
     chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     try:
@@ -2340,6 +2349,8 @@ def save_service_mode_choice():
     current_user["pending_service_tier"] = None
     _clear_pending_service_choice()
     session.pop("vs_onboarding_autopilot_lead_id", None)
+    if lead_activation:
+        session["vs_show_autopilot_activated_modal"] = True
     if service_mode == "autopilot":
         user_email = str(current_user.get("email") or current_user.get("username") or "").strip()
         user_name = str(current_user.get("name") or current_user.get("username") or "").strip()
