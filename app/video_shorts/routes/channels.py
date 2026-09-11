@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from flask import current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.video_shorts import video_shorts_bp
+from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.billing import STRIPE_PUBLISHABLE_KEY, stripe_is_configured
 from app.video_shorts.services.db import (
@@ -18,6 +19,7 @@ from app.video_shorts.services.db import (
 from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
 from app.video_shorts.services.youtube_oauth import resolve_stored_token_owner_brand
 
@@ -35,6 +37,20 @@ VIDEOS_DIR = Path("app/video_shorts/static/videos")
 SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
 SHORTS_DIR = Path("app/video_shorts/static/shorts")
 PREVIEW_FRAME_CACHE_VERSION = "v3"
+LEAD_FEED_EVENT_MAX_BODY_BYTES = 1024
+LEAD_FEED_EVENT_RATE_LIMITS = [
+    RateLimitRule(limit=60, window_seconds=60),
+    RateLimitRule(limit=300, window_seconds=3600),
+]
+LEAD_FEED_EVENT_TYPES = {
+    "lead_feed_view",
+    "lead_feed_watch_start",
+    "lead_feed_item_active",
+    "lead_feed_card_seen",
+    "lead_feed_trial_cta_click",
+}
+LEAD_FEED_ITEM_TYPES = {"short", "card_a", "card_b", "end_card"}
+LEAD_FEED_CARD_TYPES = {"card_a", "card_b", "end_card"}
 
 
 def _pseudo_channel_id(kind: str, user_id: str, brand_id: str | None) -> int:
@@ -373,6 +389,70 @@ def _current_user_is_pending_autopilot_lead(current_user: dict, brand_id: str | 
         conn.close()
 
 
+def _load_current_lead_feed_tracking_context(
+    current_user: dict,
+    brand_id: str | None,
+    *,
+    require_unconverted: bool = True,
+) -> dict:
+    if not current_user or not brand_id:
+        return {}
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                l.id,
+                (
+                    SELECT sl.id
+                    FROM short_share_links sl
+                    WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                    ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                    LIMIT 1
+                ) AS share_link_id
+            FROM autopilot_leads l
+            WHERE CAST(l.user_id AS VARCHAR) = ?
+              AND CAST(l.brand_id AS VARCHAR) = ?
+              AND (? = FALSE OR l.converted_at IS NULL)
+            ORDER BY l.created_at DESC NULLS LAST, l.id DESC
+            LIMIT 1
+            """,
+            [current_user["id"], brand_id, require_unconverted],
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "autopilot_lead_id": str(row[0] or "").strip(),
+            "share_link_id": str(row[1] or "").strip(),
+            "brand_id": str(brand_id or "").strip(),
+        }
+    finally:
+        conn.close()
+
+
+def _normalize_lead_feed_device_type(value) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"mobile", "desktop", "tablet"}:
+        return normalized
+    return ""
+
+
+def _normalize_lead_feed_item_type(value) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in LEAD_FEED_ITEM_TYPES:
+        return normalized
+    return ""
+
+
+def _normalize_lead_feed_item_index(value):
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric >= 0 else None
+
+
 @video_shorts_bp.route("/lead-feed", methods=["GET"])
 def lead_feed_page():
     current_user = getattr(g, "vs_current_user", None)
@@ -382,6 +462,7 @@ def lead_feed_page():
     brand_id = current_brand_id()
     if not _current_user_is_pending_autopilot_lead(current_user, brand_id):
         return redirect(url_for("video_shorts_bp.my_videos_page"))
+    tracking_context = _load_current_lead_feed_tracking_context(current_user, brand_id)
 
     conn = get_db_readonly()
     try:
@@ -426,7 +507,82 @@ def lead_feed_page():
         stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
         my_videos_url=url_for("video_shorts_bp.my_videos_page"),
         autopilot_confirmation_url=url_for("video_shorts_bp.autopilot_confirmation_page"),
+        lead_feed_event_url=url_for("video_shorts_bp.lead_feed_event"),
+        lead_feed_tracking=tracking_context,
     )
+
+
+@video_shorts_bp.route("/lead-feed/event", methods=["POST"])
+def lead_feed_event():
+    if int(request.content_length or 0) > LEAD_FEED_EVENT_MAX_BODY_BYTES:
+        return ("", 204)
+
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return ("", 204)
+
+    brand_id = current_brand_id()
+    tracking_context = _load_current_lead_feed_tracking_context(
+        current_user,
+        brand_id,
+        require_unconverted=False,
+    )
+    if not tracking_context.get("autopilot_lead_id"):
+        return ("", 204)
+
+    key_parts = [
+        str(current_user.get("id") or ""),
+        str(brand_id or ""),
+        request.headers.get("X-Forwarded-For", ""),
+        request.remote_addr or "",
+    ]
+    allowed, _retry_after = check_rate_limits("lead-feed-event", key_parts, LEAD_FEED_EVENT_RATE_LIMITS)
+    if not allowed:
+        return ("", 204)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return ("", 204)
+
+    event_name = str(payload.get("event_name") or "").strip().lower()
+    if event_name not in LEAD_FEED_EVENT_TYPES:
+        return ("", 204)
+
+    metadata = {
+        "brand_id": tracking_context["brand_id"],
+        "autopilot_lead_id": tracking_context["autopilot_lead_id"],
+    }
+    if tracking_context.get("share_link_id"):
+        metadata["share_link_id"] = tracking_context["share_link_id"]
+
+    device_type = _normalize_lead_feed_device_type(payload.get("device_type"))
+    if device_type:
+        metadata["device_type"] = device_type
+
+    item_type = _normalize_lead_feed_item_type(payload.get("item_type"))
+    item_index = _normalize_lead_feed_item_index(payload.get("item_index"))
+    if item_type:
+        metadata["item_type"] = item_type
+    if item_index is not None:
+        metadata["item_index"] = item_index
+        metadata["item_position"] = item_index + 1
+
+    if event_name == "lead_feed_card_seen":
+        card_type = _normalize_lead_feed_item_type(payload.get("card_type") or item_type)
+        if card_type not in LEAD_FEED_CARD_TYPES:
+            return ("", 204)
+        metadata["card_type"] = card_type
+    elif event_name in {"lead_feed_item_active", "lead_feed_trial_cta_click"} and not item_type:
+        return ("", 204)
+
+    short_id = str(payload.get("short_id") or "").strip()
+    track_event(
+        current_user["id"],
+        event_name,
+        short_id=short_id or None,
+        metadata=metadata,
+    )
+    return ("", 204)
 
 
 @video_shorts_bp.route("/autopilot-confirmation", methods=["GET"])

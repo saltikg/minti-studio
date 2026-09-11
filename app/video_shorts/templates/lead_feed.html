@@ -286,7 +286,7 @@
       {% if shorts %}
         <div class="lead-feed-track" id="leadFeedTrack" aria-label="Your Shorts feed">
           {% for short in shorts %}
-            <section class="lead-feed-slide" data-feed-slide data-slide-kind="short">
+            <section class="lead-feed-slide" data-feed-slide data-slide-kind="short" data-feed-item-type="short" data-short-id="{{ short.id }}">
               <video
                 class="lead-feed-video"
                 data-src="{{ short.video_url }}"
@@ -306,7 +306,7 @@
               </div>
             </section>
             {% if loop.index == 1 %}
-              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="message">
+              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="message" data-feed-item-type="card_a">
                 <div class="lead-feed-card-inner">
                   <p class="lead-feed-kicker">MINTI AUTOPILOT</p>
                   <h2 class="lead-feed-card-title">15 Shorts/mo — done for you</h2>
@@ -317,7 +317,7 @@
                 </div>
               </section>
             {% elif loop.index == 2 %}
-              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
+              <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial" data-feed-item-type="card_b">
                 <div class="lead-feed-card-inner">
                   <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
                   <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
@@ -328,7 +328,7 @@
               </section>
             {% endif %}
           {% endfor %}
-          <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial">
+          <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial" data-feed-item-type="end_card">
             <div class="lead-feed-card-inner">
               <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
               <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
@@ -374,17 +374,82 @@
           .filter((index) => index !== null);
         const activationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
         const autopilotConfirmationUrl = {{ autopilot_confirmation_url|tojson }};
+        const feedEventUrl = {{ lead_feed_event_url|tojson }};
         let activeIndex = 0;
         let started = false;
         let wheelLocked = false;
         let peekTimer = null;
         let peekResetTimer = null;
         let peekPlayed = false;
+        const sentActiveItems = new Set();
+        const sentSeenCards = new Set();
         const desktopQuery = window.matchMedia("(min-width: 760px)");
 
         const clampIndex = (index) => Math.max(0, Math.min(slides.length - 1, index));
         const currentVideo = () => slides[activeIndex]?.querySelector("[data-feed-video]");
         const currentHint = () => slides[activeIndex]?.querySelector("[data-swipe-hint]");
+        const classifyDeviceType = () => {
+          const ua = navigator.userAgent || "";
+          const width = Math.max(window.innerWidth || 0, screen.width || 0);
+          const isTablet = /iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua) || (width >= 768 && width <= 1024);
+          const isMobile = /Mobi|Android|iPhone|iPod/i.test(ua) || width < 768;
+          if (isTablet) return "tablet";
+          if (isMobile) return "mobile";
+          return "desktop";
+        };
+        const deviceType = classifyDeviceType();
+
+        const feedItemPayload = (index = activeIndex) => {
+          const slide = slides[index];
+          const itemType = String(slide?.dataset.feedItemType || slide?.dataset.slideKind || "").trim();
+          const payload = {
+            item_index: index,
+            item_type: itemType,
+          };
+          const shortId = String(slide?.dataset.shortId || "").trim();
+          if (shortId) payload.short_id = shortId;
+          if (itemType === "card_a" || itemType === "card_b" || itemType === "end_card") {
+            payload.card_type = itemType;
+          }
+          return payload;
+        };
+
+        const fireFeedEvent = (eventName, extra = {}) => {
+          if (!feedEventUrl) return;
+          const body = JSON.stringify({
+            event_name: eventName,
+            device_type: deviceType,
+            ...extra,
+          });
+          if (navigator.sendBeacon) {
+            const blob = new Blob([body], { type: "application/json" });
+            navigator.sendBeacon(feedEventUrl, blob);
+            return;
+          }
+          fetch(feedEventUrl, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        };
+
+        const trackActiveItem = () => {
+          const payload = feedItemPayload(activeIndex);
+          if (!payload.item_type) return;
+          const key = `${activeIndex}:${payload.item_type}`;
+          if (!sentActiveItems.has(key)) {
+            sentActiveItems.add(key);
+            fireFeedEvent("lead_feed_item_active", payload);
+          }
+          if (payload.card_type && !sentSeenCards.has(key)) {
+            sentSeenCards.add(key);
+            fireFeedEvent("lead_feed_card_seen", payload);
+          }
+        };
+
+        fireFeedEvent("lead_feed_view");
 
         const updateHintCopy = (hint) => {
           if (!hint) return;
@@ -497,6 +562,7 @@
           const video = activeVideo;
           if (!started || !video) {
             hideAllHints();
+            if (started) trackActiveItem();
             return;
           }
           ensureVideoLoaded(video);
@@ -507,6 +573,7 @@
             scheduleActiveHint();
             schedulePeek();
           } catch (_) {}
+          trackActiveItem();
         };
 
         const goTo = (index) => {
@@ -557,6 +624,7 @@
           activeIndex = 0;
           track.scrollTo({ top: 0, behavior: "auto" });
           syncPreloadWindow();
+          fireFeedEvent("lead_feed_watch_start", feedItemPayload(0));
           await playActive();
         });
 
@@ -635,6 +703,9 @@
         document.querySelectorAll("[data-trial-cta]").forEach((button) => {
           button.addEventListener("click", async () => {
             const card = button.closest(".lead-feed-card-inner");
+            const slide = button.closest("[data-feed-slide]");
+            const ctaIndex = slides.indexOf(slide);
+            fireFeedEvent("lead_feed_trial_cta_click", feedItemPayload(ctaIndex >= 0 ? ctaIndex : activeIndex));
             const status = card?.querySelector("[data-checkout-status]");
             const error = card?.querySelector("[data-checkout-error]");
             button.disabled = true;

@@ -9179,7 +9179,7 @@ def _normalize_share_watch_device_type(value: Any) -> str:
 
 def _normalize_share_watch_cta(value: Any) -> str:
     normalized = str(value or "").strip().lower()
-    if normalized in {"autopilot", "self_serve"}:
+    if normalized in {"autopilot", "self_serve", "lead_feed"}:
         return normalized
     return ""
 
