@@ -134,6 +134,22 @@
       padding: 4px 8px;
       font: inherit;
     }
+    .admin-share-links-schedule-input {
+      width: 178px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.9);
+      padding: 4px 8px;
+      font: inherit;
+    }
+    .admin-share-links-schedule-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255, 255, 255, 0.68);
+      white-space: normal;
+    }
     .admin-share-links-email-preview {
       position: absolute;
       z-index: 30;
@@ -493,6 +509,16 @@
                       data-send-endpoint="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=link.id) }}"
                       title="Send selected email via Resend"
                       aria-label="Send selected email">Send</button>
+                    <input
+                      type="datetime-local"
+                      class="admin-share-links-schedule-input"
+                      aria-label="Schedule selected email date and time">
+                    <button
+                      type="button"
+                      class="admin-share-links-email-schedule-btn"
+                      data-schedule-endpoint="{{ url_for('video_shorts_bp.admin_share_link_schedule_email', share_link_id=link.id) }}"
+                      title="Schedule selected email"
+                      aria-label="Schedule selected email">Schedule</button>
                     <button
                       type="button"
                       class="admin-share-links-followup-mark-btn"
@@ -500,6 +526,18 @@
                       {% if link.followup_sent %}disabled{% endif %}
                       aria-label="Mark follow-up as sent">{% if link.followup_sent %}✓ 2. email gönderildi{% else %}2. email gönderildi{% endif %}</button>
                     <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
+                    <span class="admin-share-links-schedule-state" data-schedule-state>
+                      {% if link.outreach_schedule_id %}
+                        Scheduled ({{ link.outreach_schedule_language }}, {{ link.outreach_schedule_stage }}) for {{ link.outreach_scheduled_at_pst }}
+                        {% if link.outreach_schedule_status == 'scheduled' %}
+                          <button
+                            type="button"
+                            class="admin-share-links-email-cancel-schedule-btn"
+                            data-cancel-endpoint="{{ url_for('video_shorts_bp.admin_share_link_cancel_scheduled_email', share_link_id=link.id, schedule_id=link.outreach_schedule_id) }}"
+                            aria-label="Cancel scheduled email">Cancel</button>
+                        {% endif %}
+                      {% endif %}
+                    </span>
                     <div class="admin-share-links-email-preview" data-email-preview role="tooltip" aria-live="polite">
                       <div class="admin-share-links-email-preview-subject" data-email-preview-subject></div>
                       <div class="admin-share-links-email-preview-body" data-email-preview-body></div>
@@ -622,6 +660,28 @@
       feedback.classList.remove("is-error", "is-success");
       if (kind) {
         feedback.classList.add(kind);
+      }
+    }
+
+    function setScheduleState(row, schedule) {
+      const state = row?.querySelector("[data-schedule-state]");
+      if (!state) {
+        return;
+      }
+      if (!schedule) {
+        state.textContent = "";
+        return;
+      }
+      state.textContent = `Scheduled (${schedule.language}, ${schedule.stage}) for ${schedule.scheduled_at_pst || schedule.scheduled_at}`;
+      if (schedule.status === "scheduled" && schedule.cancel_endpoint) {
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.className = "admin-share-links-email-cancel-schedule-btn";
+        cancelButton.dataset.cancelEndpoint = schedule.cancel_endpoint;
+        cancelButton.textContent = "Cancel";
+        cancelButton.setAttribute("aria-label", "Cancel scheduled email");
+        state.append(" ");
+        state.appendChild(cancelButton);
       }
     }
 
@@ -886,6 +946,85 @@
         } finally {
           emailSendButton.disabled = false;
           emailSendButton.textContent = originalLabel;
+        }
+        return;
+      }
+
+      const scheduleButton = event.target.closest(".admin-share-links-email-schedule-btn");
+      if (scheduleButton) {
+        const row = scheduleButton.closest(".admin-share-links-row");
+        const endpoint = String(scheduleButton.dataset.scheduleEndpoint || "").trim();
+        const scheduleInput = row?.querySelector(".admin-share-links-schedule-input");
+        if (!endpoint || !row || !scheduleInput || scheduleButton.disabled) {
+          return;
+        }
+        const { stage, language } = parseEmailSelection(row);
+        const scheduledAt = String(scheduleInput.value || "").trim();
+        if (!scheduledAt) {
+          setFollowupFeedback(row, "Choose a schedule time.", "is-error");
+          return;
+        }
+        const originalLabel = scheduleButton.textContent;
+        scheduleButton.disabled = true;
+        scheduleButton.textContent = "Scheduling...";
+        setFollowupFeedback(row, "");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({ stage, language, scheduled_at: scheduledAt }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+          }
+          const cancelEndpoint = `${endpoint}/${payload.schedule.id}/cancel`;
+          setScheduleState(row, { ...payload.schedule, cancel_endpoint: cancelEndpoint });
+          setFollowupFeedback(row, `Scheduled (${language}, ${stage}) for ${payload.schedule.scheduled_at_pst}.`, "is-success");
+        } catch (err) {
+          setFollowupFeedback(row, err?.message || "Email could not be scheduled.", "is-error");
+        } finally {
+          scheduleButton.disabled = false;
+          scheduleButton.textContent = originalLabel;
+        }
+        return;
+      }
+
+      const cancelScheduleButton = event.target.closest(".admin-share-links-email-cancel-schedule-btn");
+      if (cancelScheduleButton) {
+        const row = cancelScheduleButton.closest(".admin-share-links-row");
+        const endpoint = String(cancelScheduleButton.dataset.cancelEndpoint || "").trim();
+        if (!endpoint || cancelScheduleButton.disabled) {
+          return;
+        }
+        const originalLabel = cancelScheduleButton.textContent;
+        cancelScheduleButton.disabled = true;
+        cancelScheduleButton.textContent = "Cancelling...";
+        setFollowupFeedback(row, "");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({}),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || `HTTP ${response.status}`);
+          }
+          setScheduleState(row, null);
+          setFollowupFeedback(row, "Scheduled email cancelled.", "is-success");
+        } catch (err) {
+          cancelScheduleButton.disabled = false;
+          cancelScheduleButton.textContent = originalLabel;
+          setFollowupFeedback(row, err?.message || "Schedule could not be cancelled.", "is-error");
         }
         return;
       }

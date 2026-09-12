@@ -65,6 +65,7 @@ from app.video_shorts.services.render_jobs import (
     update_job_result,
 )
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
+from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
 from app.video_shorts.services.disk_guard import disk_guard_triggered
 from app.video_shorts.services.storage import (
     build_storage_reference,
@@ -1217,6 +1218,11 @@ def run_worker_loop() -> None:
         while True:
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
+            try:
+                if process_due_scheduled_outreach_email():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("Scheduled outreach email processing failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
                 if process_next_job(app, worker_id):
                     processed_any = True

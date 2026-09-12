@@ -1,7 +1,6 @@
 import json
 import errno
 import math
-import os
 import re
 import shutil
 import string
@@ -137,12 +136,13 @@ from app.video_shorts.services.trial_copy import (
     normalize_trial_days,
     trial_duration_text,
 )
-from app.video_shorts.services.email_verification import send_resend_email
-from app.video_shorts.services.outreach_email_templates import (
-    normalize_outreach_template_language,
-    normalize_outreach_template_stage,
-    render_outreach_clipboard_text,
-    render_outreach_email,
+from app.video_shorts.services.outreach_email_templates import normalize_outreach_template_language, normalize_outreach_template_stage
+from app.video_shorts.services.outreach_email_send import (
+    cancel_scheduled_outreach_email,
+    ensure_outreach_scheduled_email_schema,
+    render_share_link_outreach_email,
+    schedule_outreach_email,
+    send_share_link_outreach_email,
 )
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
@@ -7322,114 +7322,6 @@ def admin_share_link_set_followup_sent(share_link_id: int):
         conn.close()
 
 
-def _resend_sender_domain_verified(sender_email: str) -> bool:
-    sender_domain = str(sender_email or "").strip().lower().rsplit("@", 1)[-1]
-    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
-    if not sender_domain or not api_key:
-        return False
-    try:
-        response = requests.get(
-            "https://api.resend.com/domains",
-            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-            timeout=8,
-        )
-        if response.status_code >= 400:
-            current_app.logger.warning(
-                "Could not verify Resend sender domain %s: status=%s",
-                sender_domain,
-                response.status_code,
-            )
-            return False
-        payload = response.json()
-    except Exception:
-        current_app.logger.exception("Could not verify Resend sender domain %s", sender_domain)
-        return False
-    domains = payload.get("data") if isinstance(payload, dict) else payload
-    if not isinstance(domains, list):
-        return False
-    for domain in domains:
-        if not isinstance(domain, dict):
-            continue
-        if str(domain.get("name") or "").strip().lower() != sender_domain:
-            continue
-        status = str(domain.get("status") or "").strip().lower()
-        return status in {"verified", "success", "active"}
-    return False
-
-
-def _render_admin_share_link_outreach_email(conn, share_link_id: int, *, stage: object, language: object) -> dict[str, Any]:
-    row = conn.execute(
-        """
-        SELECT
-          sl.id,
-          sl.token,
-          sl.recipient_name,
-          sl.recipient_email,
-          sl.language,
-          COALESCE(sl.trial_days, ?) AS trial_days,
-          sl.emailed_at,
-          sl.first_email_template_key,
-          sl.followup_sent,
-          sl.followup_sent_at,
-          sl.followup_template_key
-        FROM short_share_links sl
-        WHERE sl.id = ?
-        LIMIT 1
-        """,
-        [DEFAULT_SHARE_TRIAL_DAYS, share_link_id],
-    ).fetchone()
-    if not row:
-        raise LookupError("not_found")
-
-    token = str(row[1] or "").strip()
-    if not token:
-        raise ValueError("missing_share_token")
-
-    engagement_row = conn.execute(
-        f"""
-        SELECT
-          SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
-          SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count
-        FROM short_share_links sl
-        LEFT JOIN user_events ue
-          ON {_share_link_event_join_sql(conn)}
-        WHERE sl.id = ?
-        GROUP BY sl.id
-        """,
-        [share_link_id],
-    ).fetchone()
-    engaged = bool(engagement_row and (int(engagement_row[0] or 0) > 0 or int(engagement_row[1] or 0) > 0))
-    share_url = _share_public_url(token)
-    trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
-    rendered_email = render_outreach_email(
-        stage=stage,
-        language=language,
-        recipient_name=row[2],
-        share_url=share_url,
-        trial_days=trial_days,
-    )
-    return {
-        "row": row,
-        "recipient_email": str(row[3] or "").strip(),
-        "recipient_name": str(row[2] or "").strip(),
-        "share_url": share_url,
-        "trial_days": trial_days,
-        "engaged": engaged,
-        "email": rendered_email,
-        "clipboard_text": render_outreach_clipboard_text(
-            stage=stage,
-            language=language,
-            recipient_name=row[2],
-            share_url=share_url,
-            trial_days=trial_days,
-        ),
-        "emailed_at": row[6],
-        "first_email_template_key": str(row[7] or "").strip(),
-        "followup_sent_at": row[9],
-        "followup_template_key": str(row[10] or "").strip(),
-    }
-
-
 @video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/email-preview", methods=["GET"])
 def admin_share_link_email_preview(share_link_id: int):
     current_user = getattr(g, "vs_current_user", None) or {}
@@ -7444,7 +7336,7 @@ def admin_share_link_email_preview(share_link_id: int):
     try:
         if not _short_share_links_ready(conn):
             return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
-        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, stage=stage, language=language)
+        rendered = render_share_link_outreach_email(conn, share_link_id, stage=stage, language=language)
         return jsonify(
             {
                 "ok": True,
@@ -7481,7 +7373,6 @@ def admin_share_link_send_email(share_link_id: int):
     stage = normalize_outreach_template_stage(payload.get("stage"))
     language = normalize_outreach_template_language(payload.get("language"))
     confirm_resend = bool(payload.get("confirm_resend"))
-    resend_cooldown = timedelta(minutes=10)
 
     conn = get_db()
     try:
@@ -7504,70 +7395,16 @@ def admin_share_link_send_email(share_link_id: int):
         if not required_columns.issubset(set(share_link_columns)):
             return jsonify({"ok": False, "error": "share_link_email_tracking_unavailable"}), 503
 
-        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, stage=stage, language=language)
-        recipient_email = rendered["recipient_email"]
-        if not recipient_email or "@" not in recipient_email:
-            return jsonify({"ok": False, "error": "missing_recipient_email"}), 400
-        rendered_email = rendered["email"]
-        template_key = rendered_email["key"]
-
-        previous_sent_at = rendered["followup_sent_at"] if stage == "followup" else rendered["emailed_at"]
-        previous_template_key = rendered["followup_template_key"] if stage == "followup" else rendered["first_email_template_key"]
-        if previous_sent_at and previous_template_key == template_key and not confirm_resend:
-            try:
-                sent_at_utc = previous_sent_at if previous_sent_at.tzinfo else previous_sent_at.replace(tzinfo=timezone.utc)
-            except AttributeError:
-                sent_at_utc = _parse_iso_datetime(str(previous_sent_at))
-                if sent_at_utc and sent_at_utc.tzinfo is None:
-                    sent_at_utc = sent_at_utc.replace(tzinfo=timezone.utc)
-            if sent_at_utc and sent_at_utc >= (datetime.now(timezone.utc) - resend_cooldown):
-                return jsonify(
-                    {
-                        "ok": False,
-                        "error": "recently_sent",
-                        "message": "This template was sent recently. Confirm to send it again.",
-                        "requires_confirmation": True,
-                        "sent_at": _format_datetime_pst(previous_sent_at),
-                    }
-                ), 409
-
-        requested_from_email = "info@mintistudio.com"
-        verified_info_sender = _resend_sender_domain_verified(requested_from_email)
-        outreach_from_email = requested_from_email if verified_info_sender else ""
-        send_result = send_resend_email(
-            to_email=recipient_email,
-            subject=rendered_email["subject"],
-            html=rendered_email["html"],
-            text=rendered_email["text"],
-            from_display_name="Gokhan Saltik",
-            from_email=outreach_from_email,
-            reply_to_email="info@mintistudio.com",
-            error_message="Outreach email could not be sent.",
+        result = send_share_link_outreach_email(
+            conn,
+            share_link_id=share_link_id,
+            stage=stage,
+            language=language,
+            confirm_resend=confirm_resend,
         )
-        provider_message_id = str(send_result.get("request_id") or "").strip()
-        if stage == "followup":
-            conn.execute(
-                """
-                UPDATE short_share_links
-                   SET followup_sent = TRUE,
-                       followup_sent_at = CURRENT_TIMESTAMP,
-                       followup_provider_message_id = ?,
-                       followup_template_key = ?
-                 WHERE id = ?
-                """,
-                [provider_message_id or None, template_key, share_link_id],
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE short_share_links
-                   SET emailed_at = COALESCE(emailed_at, CURRENT_TIMESTAMP),
-                       first_email_provider_message_id = ?,
-                       first_email_template_key = ?
-                 WHERE id = ?
-                """,
-                [provider_message_id or None, template_key, share_link_id],
-            )
+        if not result.get("ok"):
+            status_code = 409 if result.get("requires_confirmation") else 400
+            return jsonify(result), status_code
         conn.commit()
         updated_row = conn.execute(
             """
@@ -7587,14 +7424,12 @@ def admin_share_link_send_email(share_link_id: int):
         return jsonify(
             {
                 "ok": True,
-                "template_key": template_key,
+                "template_key": result.get("template_key"),
                 "stage": stage,
-                "language": rendered_email["language"],
-                "from_email": requested_from_email if verified_info_sender else os.getenv("MAIL_FROM", ""),
-                "info_sender_verified": verified_info_sender,
-                "provider_message_id": (
-                    str(updated_row[4 if stage == "followup" else 1] or "") if updated_row else provider_message_id
-                ),
+                "language": result.get("language"),
+                "from_email": result.get("from_email"),
+                "info_sender_verified": bool(result.get("info_sender_verified")),
+                "provider_message_id": str(updated_row[4 if stage == "followup" else 1] or "") if updated_row else "",
                 "emailed_at": _format_datetime_pst(updated_row[0] if updated_row else None),
                 "followup_sent_at": _format_datetime_pst(updated_row[3] if updated_row else None),
                 "followup_sent_at_iso": (
@@ -7615,6 +7450,118 @@ def admin_share_link_send_email(share_link_id: int):
         except Exception:
             pass
         return jsonify({"ok": False, "error": "send_failed", "message": str(exc) or "Email could not be sent."}), 500
+    finally:
+        conn.close()
+
+
+def _parse_admin_scheduled_at(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=PST_ZONE)
+    return parsed.astimezone(timezone.utc)
+
+
+@video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/schedule-email", methods=["POST"])
+def admin_share_link_schedule_email(share_link_id: int):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if not current_user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    stage = normalize_outreach_template_stage(payload.get("stage"))
+    language = normalize_outreach_template_language(payload.get("language"))
+    scheduled_at = _parse_admin_scheduled_at(payload.get("scheduled_at"))
+    if not scheduled_at:
+        return jsonify({"ok": False, "error": "invalid_scheduled_at", "message": "Choose a valid future date/time."}), 400
+    if scheduled_at <= datetime.now(timezone.utc):
+        return jsonify({"ok": False, "error": "scheduled_at_not_future", "message": "Scheduled time must be in the future."}), 400
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
+        exists = conn.execute(
+            """
+            SELECT 1
+            FROM short_share_links
+            WHERE id = ?
+              AND COALESCE(archived, false) = false
+            LIMIT 1
+            """,
+            [share_link_id],
+        ).fetchone()
+        if not exists:
+            return jsonify({"ok": False, "error": "not_found_or_archived"}), 404
+        ensure_outreach_scheduled_email_schema(conn)
+        created_by = str(current_user.get("id") or current_user.get("email") or "").strip()
+        scheduled = schedule_outreach_email(
+            conn,
+            share_link_id=share_link_id,
+            stage=stage,
+            language=language,
+            scheduled_at=scheduled_at,
+            created_by=created_by,
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "schedule": {
+                    "id": scheduled["id"],
+                    "stage": scheduled["stage"],
+                    "language": scheduled["language"],
+                    "status": scheduled["status"],
+                    "scheduled_at": scheduled["scheduled_at"].isoformat()
+                    if hasattr(scheduled["scheduled_at"], "isoformat")
+                    else str(scheduled["scheduled_at"]),
+                    "scheduled_at_pst": _format_datetime_pst(scheduled["scheduled_at"]),
+                },
+                "replaced_prior_active": True,
+            }
+        )
+    except Exception:
+        current_app.logger.exception("Failed to schedule outreach email for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "schedule_failed"}), 500
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/schedule-email/<int:schedule_id>/cancel", methods=["POST"])
+def admin_share_link_cancel_scheduled_email(share_link_id: int, schedule_id: int):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if not current_user:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    conn = get_db()
+    try:
+        ensure_outreach_scheduled_email_schema(conn)
+        cancelled = cancel_scheduled_outreach_email(conn, schedule_id=schedule_id, share_link_id=share_link_id)
+        conn.commit()
+        if not cancelled:
+            return jsonify({"ok": False, "error": "not_cancellable"}), 409
+        return jsonify({"ok": True, "status": "cancelled"})
+    except Exception:
+        current_app.logger.exception("Failed to cancel scheduled outreach email id=%s", schedule_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "cancel_failed"}), 500
     finally:
         conn.close()
 
@@ -9522,6 +9469,7 @@ def _load_admin_share_links(
 ) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, List[Dict[str, Any]]]:
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
+    outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
     has_emailed_at = "emailed_at" in share_link_columns
     has_archived = "archived" in share_link_columns
     has_language = "language" in share_link_columns
@@ -9529,6 +9477,7 @@ def _load_admin_share_links(
     has_followup_sent = "followup_sent" in share_link_columns
     has_followup_sent_at = "followup_sent_at" in share_link_columns
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
+    has_outreach_scheduled_emails = bool(outreach_scheduled_email_columns)
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
     normalized_archive_filter = (archive_filter or "all").strip().lower()
@@ -9669,6 +9618,7 @@ def _load_admin_share_links(
             GROUP BY sl.id
         )
         """
+
     else:
         redeemed_magic_cte_sql = f"""
         ,
@@ -9713,6 +9663,44 @@ def _load_admin_share_links(
                 AND {device_expr} IS NOT NULL
             ) ranked_share_device
             WHERE rn = 1
+        )
+        """
+
+    if has_outreach_scheduled_emails:
+        latest_scheduled_outreach_cte_sql = """
+        ,
+        latest_scheduled_outreach AS (
+            SELECT share_link_id, schedule_id, stage, language, scheduled_at, status
+            FROM (
+                SELECT
+                  share_link_id,
+                  id AS schedule_id,
+                  stage,
+                  language,
+                  scheduled_at,
+                  status,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY share_link_id
+                    ORDER BY scheduled_at ASC, id DESC
+                  ) AS rn
+                FROM outreach_scheduled_emails
+                WHERE status IN ('scheduled', 'processing')
+            ) ranked_schedules
+            WHERE rn = 1
+        )
+        """
+    else:
+        latest_scheduled_outreach_cte_sql = """
+        ,
+        latest_scheduled_outreach AS (
+            SELECT
+              CAST(NULL AS BIGINT) AS share_link_id,
+              CAST(NULL AS BIGINT) AS schedule_id,
+              CAST(NULL AS VARCHAR) AS stage,
+              CAST(NULL AS VARCHAR) AS language,
+              CAST(NULL AS TIMESTAMP) AS scheduled_at,
+              CAST(NULL AS VARCHAR) AS status
+            WHERE 1=0
         )
         """
 
@@ -9818,6 +9806,7 @@ def _load_admin_share_links(
             GROUP BY sl.id
         )
         {redeemed_magic_cte_sql}
+        {latest_scheduled_outreach_cte_sql}
     """
 
     having_clauses = ["1=1"]
@@ -9930,7 +9919,12 @@ def _load_admin_share_links(
           COALESCE(lfe.reached_end_card, 0) AS reached_end_card,
           COALESCE(lfe.trial_cta_clicked, 0) AS feed_trial_cta_clicked,
           slc.converted_at,
-          COALESCE(lfsc.feed_short_total, 0) AS feed_short_total
+          COALESCE(lfsc.feed_short_total, 0) AS feed_short_total,
+          lso.schedule_id,
+          lso.stage AS scheduled_stage,
+          lso.language AS scheduled_language,
+          lso.scheduled_at AS outreach_scheduled_at,
+          lso.status AS outreach_schedule_status
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -9942,6 +9936,8 @@ def _load_admin_share_links(
           ON slc.share_link_id = sr.id
         LEFT JOIN lead_feed_short_counts lfsc
           ON lfsc.share_link_id = sr.id
+        LEFT JOIN latest_scheduled_outreach lso
+          ON lso.share_link_id = sr.id
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
@@ -9971,6 +9967,11 @@ def _load_admin_share_links(
                 followup_eligible = emailed_at_utc <= (datetime.now(timezone.utc) - timedelta(days=3))
         feed_depth_count = int(row[26] or 0)
         feed_short_total = int(row[32] or 0)
+        outreach_schedule_id = row[33]
+        outreach_schedule_stage = str(row[34] or "").strip()
+        outreach_schedule_language = str(row[35] or "").strip().upper()
+        outreach_scheduled_at = row[36]
+        outreach_schedule_status = str(row[37] or "").strip()
         feed_cards_seen = []
         if bool(row[27]):
             feed_cards_seen.append("A")
@@ -10039,6 +10040,12 @@ def _load_admin_share_links(
                 "converted": bool(converted_at),
                 "converted_at": converted_at,
                 "converted_at_pst": _format_datetime_pst(converted_at),
+                "outreach_schedule_id": int(outreach_schedule_id) if outreach_schedule_id is not None else None,
+                "outreach_schedule_stage": outreach_schedule_stage,
+                "outreach_schedule_language": outreach_schedule_language,
+                "outreach_scheduled_at": outreach_scheduled_at,
+                "outreach_scheduled_at_pst": _format_datetime_pst(outreach_scheduled_at),
+                "outreach_schedule_status": outreach_schedule_status,
                 "redeemed_user_detail_url": (
                     url_for("video_shorts_bp.admin_user_detail", user_id=str(row[21]).strip())
                     if str(row[21] or "").strip()
