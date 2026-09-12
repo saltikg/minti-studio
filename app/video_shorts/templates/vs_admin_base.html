@@ -190,6 +190,14 @@
           </span>
         </a>
         <a
+          href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/outreach-emails') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Outreach Emails</span>
+          </span>
+        </a>
+        <a
           href="{{ url_for('video_shorts_bp.admin_users') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>

@@ -1,0 +1,354 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Outreach Emails{% endblock %}
+{% block admin_heading %}Outreach Emails{% endblock %}
+{% block admin_subheading %}
+  <p>Monitor scheduled, sent, failed, and cancelled outreach emails from Share Links.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .admin-outreach-toolbar {
+      display: grid;
+      grid-template-columns: minmax(180px, 220px) minmax(240px, 1fr) repeat(2, minmax(150px, 180px)) auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .admin-outreach-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .admin-outreach-summary-card {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.045);
+      padding: 14px;
+    }
+    .admin-outreach-summary-label {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .admin-outreach-summary-count {
+      margin-top: 8px;
+      color: #fff;
+      font-size: 1.8rem;
+      font-weight: 850;
+      line-height: 1;
+    }
+    .admin-outreach-table-wrap {
+      overflow-x: auto;
+    }
+    .admin-outreach-table {
+      width: 100%;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .admin-outreach-table th,
+    .admin-outreach-table td {
+      padding: 14px 16px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+    .admin-outreach-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .admin-outreach-recipient {
+      font-weight: 700;
+    }
+    .admin-outreach-muted {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.84rem;
+    }
+    .admin-outreach-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 86px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+    .admin-outreach-pill.status-scheduled {
+      background: rgba(148, 163, 184, 0.16);
+      color: #cbd5e1;
+    }
+    .admin-outreach-pill.status-processing {
+      background: rgba(59, 130, 246, 0.18);
+      color: #93c5fd;
+    }
+    .admin-outreach-pill.status-sent {
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .admin-outreach-pill.status-failed {
+      background: rgba(248, 113, 113, 0.18);
+      color: #fca5a5;
+      border: 1px solid rgba(248, 113, 113, 0.26);
+    }
+    .admin-outreach-pill.status-cancelled {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.58);
+    }
+    .admin-outreach-error {
+      max-width: 340px;
+      white-space: normal;
+      color: #fca5a5;
+      line-height: 1.35;
+    }
+    .admin-outreach-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .admin-outreach-actions a,
+    .admin-outreach-actions button {
+      color: #8ddfcb;
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .admin-outreach-actions a:hover,
+    .admin-outreach-actions a:focus,
+    .admin-outreach-actions button:hover,
+    .admin-outreach-actions button:focus {
+      text-decoration: underline;
+    }
+    .admin-outreach-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .admin-outreach-feedback {
+      min-height: 18px;
+      margin-bottom: 12px;
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.86rem;
+    }
+    .admin-outreach-feedback.is-error {
+      color: #fca5a5;
+    }
+    .admin-outreach-feedback.is-success {
+      color: #8ff3d8;
+    }
+    @media (max-width: 1199.98px) {
+      .admin-outreach-toolbar {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+      .admin-outreach-summary {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+      }
+    }
+    @media (max-width: 767.98px) {
+      .admin-outreach-toolbar,
+      .admin-outreach-summary {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="get" class="admin-outreach-toolbar">
+      <div>
+        <label class="form-label mb-2" for="outreach-status">Status</label>
+        <select id="outreach-status" name="status" class="form-select">
+          {% for status in ['all', 'scheduled', 'sent', 'failed', 'cancelled'] %}
+            <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-2" for="outreach-email">Recipient email contains</label>
+        <input id="outreach-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="name@example.com">
+      </div>
+      <div>
+        <label class="form-label mb-2" for="outreach-date-from">Scheduled from</label>
+        <input id="outreach-date-from" type="date" name="date_from" value="{{ date_from }}" class="form-control">
+      </div>
+      <div>
+        <label class="form-label mb-2" for="outreach-date-to">Scheduled to</label>
+        <input id="outreach-date-to" type="date" name="date_to" value="{{ date_to }}" class="form-control">
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary">Filter</button>
+        <a href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}" class="btn btn-outline-light ms-2">Reset</a>
+      </div>
+    </form>
+
+    <div class="admin-outreach-summary" aria-label="Outreach email summary">
+      <div class="admin-outreach-summary-card">
+        <div class="admin-outreach-summary-label">Scheduled</div>
+        <div class="admin-outreach-summary-count">{{ summary_counts.scheduled }}</div>
+      </div>
+      <div class="admin-outreach-summary-card">
+        <div class="admin-outreach-summary-label">Sent</div>
+        <div class="admin-outreach-summary-count">{{ summary_counts.sent }}</div>
+      </div>
+      <div class="admin-outreach-summary-card">
+        <div class="admin-outreach-summary-label">Failed</div>
+        <div class="admin-outreach-summary-count">{{ summary_counts.failed }}</div>
+      </div>
+      <div class="admin-outreach-summary-card">
+        <div class="admin-outreach-summary-label">Cancelled</div>
+        <div class="admin-outreach-summary-count">{{ summary_counts.cancelled }}</div>
+      </div>
+    </div>
+
+    <div class="admin-outreach-feedback" data-outreach-feedback></div>
+    <div class="admin-outreach-muted mb-3">{{ total_items }} matching emails · showing up to {{ per_page }} per page</div>
+
+    <div class="admin-outreach-table-wrap">
+      <table class="admin-outreach-table">
+        <thead>
+          <tr>
+            <th>Recipient</th>
+            <th>Stage</th>
+            <th>Scheduled for</th>
+            <th>Status</th>
+            <th>Sent at</th>
+            <th>Attempts</th>
+            <th>Error</th>
+            <th>Provider id</th>
+            <th>Links</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in emails %}
+            <tr data-outreach-row>
+              <td>
+                <div class="admin-outreach-recipient">{{ item.recipient_name }}</div>
+                <div class="admin-outreach-muted">{{ item.recipient_email }}</div>
+              </td>
+              <td>
+                <div>{{ item.stage or '—' }}</div>
+                <div class="admin-outreach-muted">{{ item.language or '—' }}</div>
+              </td>
+              <td>{{ item.scheduled_at_pst or '—' }}</td>
+              <td><span class="admin-outreach-pill status-{{ item.status }}">{{ item.status or '—' }}</span></td>
+              <td>{{ item.sent_at_pst or '—' }}</td>
+              <td>{{ item.attempts }} / {{ item.max_attempts }}</td>
+              <td>
+                {% if item.error %}
+                  <div class="admin-outreach-error" title="{{ item.error }}">{{ item.error_short }}</div>
+                {% else %}
+                  <span class="admin-outreach-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="admin-outreach-muted">{{ item.provider_message_id or '—' }}</td>
+              <td>
+                <div class="admin-outreach-actions">
+                  {% if item.share_url %}
+                    <a href="{{ item.share_url }}" target="_blank" rel="noopener noreferrer">Watch link</a>
+                  {% endif %}
+                  <a href="{{ item.share_links_url }}">Share Links</a>
+                  {% if item.status == 'scheduled' and item.cancel_url %}
+                    <button type="button" data-cancel-endpoint="{{ item.cancel_url }}">Cancel</button>
+                  {% endif %}
+                  {% if item.status == 'failed' %}
+                    <a href="{{ item.share_links_url }}">Reschedule in Share Links</a>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="9" class="admin-outreach-muted text-center py-4">No outreach emails matched your filters.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="admin-outreach-pagination">
+      <div class="admin-outreach-muted">Page {{ page }} of {{ total_pages }}</div>
+      <div class="d-flex gap-2 flex-wrap">
+        {% if page > 1 %}
+          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', status=selected_status, email=email_query, date_from=date_from, date_to=date_to, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', status=selected_status, email=email_query, date_from=date_from, date_to=date_to, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    function setOutreachFeedback(message, kind = "") {
+      const feedback = document.querySelector("[data-outreach-feedback]");
+      if (!feedback) {
+        return;
+      }
+      feedback.textContent = message || "";
+      feedback.classList.remove("is-error", "is-success");
+      if (kind) {
+        feedback.classList.add(kind);
+      }
+    }
+
+    document.addEventListener("click", async (event) => {
+      const cancelButton = event.target.closest("[data-cancel-endpoint]");
+      if (!cancelButton || cancelButton.disabled) {
+        return;
+      }
+      const endpoint = String(cancelButton.dataset.cancelEndpoint || "").trim();
+      const row = cancelButton.closest("[data-outreach-row]");
+      if (!endpoint) {
+        return;
+      }
+      const originalLabel = cancelButton.textContent;
+      cancelButton.disabled = true;
+      cancelButton.textContent = "Cancelling...";
+      setOutreachFeedback("");
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        const pill = row?.querySelector(".admin-outreach-pill");
+        if (pill) {
+          pill.textContent = "cancelled";
+          pill.className = "admin-outreach-pill status-cancelled";
+        }
+        cancelButton.remove();
+        setOutreachFeedback("Scheduled email cancelled.", "is-success");
+      } catch (err) {
+        cancelButton.disabled = false;
+        cancelButton.textContent = originalLabel;
+        setOutreachFeedback(err?.message || "Cancel failed.", "is-error");
+      }
+    });
+  </script>
+{% endblock %}

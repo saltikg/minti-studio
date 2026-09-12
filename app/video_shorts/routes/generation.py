@@ -10064,6 +10064,167 @@ def _load_admin_share_links(
     )
 
 
+def _parse_admin_date_filter(value: str, *, end_of_day: bool = False) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, "%Y-%m-%d")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=PST_ZONE)
+    if end_of_day and len(raw) <= 10:
+        parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return parsed.astimezone(timezone.utc)
+
+
+def _load_admin_outreach_emails(
+    conn,
+    *,
+    status_filter: str = "all",
+    email_query: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 200,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int, dict[str, int], str, str, str, str]:
+    outreach_columns = table_columns(conn, "outreach_scheduled_emails")
+    if not outreach_columns:
+        return [], 0, {"scheduled": 0, "sent": 0, "failed": 0, "cancelled": 0}, "all", "", "", ""
+
+    normalized_status = str(status_filter or "all").strip().lower()
+    if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled"}:
+        normalized_status = "all"
+    normalized_email = str(email_query or "").strip().lower()
+    scheduled_from = _parse_admin_date_filter(date_from)
+    scheduled_to = _parse_admin_date_filter(date_to, end_of_day=True)
+
+    where_clauses = ["1=1"]
+    params: list[Any] = []
+    if normalized_status != "all":
+        where_clauses.append("lower(coalesce(ose.status, '')) = ?")
+        params.append(normalized_status)
+    if normalized_email:
+        where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
+        params.append(f"%{normalized_email}%")
+    if scheduled_from:
+        where_clauses.append("ose.scheduled_at >= ?")
+        params.append(scheduled_from)
+    if scheduled_to:
+        where_clauses.append("ose.scheduled_at <= ?")
+        params.append(scheduled_to)
+    where_sql = " AND ".join(where_clauses)
+    base_from_sql = f"""
+        FROM outreach_scheduled_emails ose
+        LEFT JOIN short_share_links sl
+          ON CAST(sl.id AS BIGINT) = CAST(ose.share_link_id AS BIGINT)
+        WHERE {where_sql}
+    """
+
+    total_count = int(conn.execute(f"SELECT COUNT(*) {base_from_sql}", params).fetchone()[0] or 0)
+    summary_row = conn.execute(
+        f"""
+        SELECT
+          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'scheduled' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'sent' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'failed' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'cancelled' THEN 1 ELSE 0 END)
+        {base_from_sql}
+        """,
+        params,
+    ).fetchone()
+    summary_counts = {
+        "scheduled": int(summary_row[0] or 0) if summary_row else 0,
+        "sent": int(summary_row[1] or 0) if summary_row else 0,
+        "failed": int(summary_row[2] or 0) if summary_row else 0,
+        "cancelled": int(summary_row[3] or 0) if summary_row else 0,
+    }
+
+    rows = conn.execute(
+        f"""
+        SELECT
+          ose.id,
+          ose.share_link_id,
+          ose.stage,
+          ose.language,
+          ose.scheduled_at,
+          ose.status,
+          ose.attempts,
+          ose.max_attempts,
+          ose.provider_message_id,
+          ose.error,
+          ose.sent_at,
+          ose.created_at,
+          ose.updated_at,
+          sl.recipient_name,
+          sl.recipient_email,
+          sl.token
+        {base_from_sql}
+        ORDER BY
+          CASE
+            WHEN lower(coalesce(ose.status, '')) = 'scheduled' AND ose.scheduled_at >= now() THEN 0
+            WHEN lower(coalesce(ose.status, '')) = 'failed' THEN 1
+            ELSE 2
+          END ASC,
+          CASE WHEN lower(coalesce(ose.status, '')) = 'scheduled' THEN ose.scheduled_at END ASC NULLS LAST,
+          ose.updated_at DESC NULLS LAST,
+          ose.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        params + [limit, offset],
+    ).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        token = str(row[15] or "").strip()
+        recipient_email = str(row[14] or "").strip()
+        error_text = str(row[9] or "").strip()
+        share_link_id = int(row[1]) if row[1] is not None else None
+        items.append(
+            {
+                "id": int(row[0]),
+                "share_link_id": share_link_id,
+                "stage": str(row[2] or "").strip(),
+                "language": str(row[3] or "").strip().upper(),
+                "scheduled_at_pst": _format_datetime_pst(row[4]),
+                "status": str(row[5] or "").strip().lower(),
+                "attempts": int(row[6] or 0),
+                "max_attempts": int(row[7] or 0),
+                "provider_message_id": str(row[8] or "").strip(),
+                "error": error_text,
+                "error_short": (error_text[:120] + "...") if len(error_text) > 120 else error_text,
+                "sent_at_pst": _format_datetime_pst(row[10]),
+                "created_at_pst": _format_datetime_pst(row[11]),
+                "updated_at_pst": _format_datetime_pst(row[12]),
+                "recipient_name": str(row[13] or "—").strip() or "—",
+                "recipient_email": recipient_email or "—",
+                "share_url": _share_public_url(token) if token else "",
+                "share_links_url": url_for("video_shorts_bp.admin_share_links", email=recipient_email),
+                "cancel_url": (
+                    url_for(
+                        "video_shorts_bp.admin_share_link_cancel_scheduled_email",
+                        share_link_id=share_link_id,
+                        schedule_id=int(row[0]),
+                    )
+                    if share_link_id is not None
+                    else ""
+                ),
+            }
+        )
+    return (
+        items,
+        total_count,
+        summary_counts,
+        normalized_status,
+        normalized_email,
+        date_from if scheduled_from else "",
+        date_to if scheduled_to else "",
+    )
+
+
 def _load_admin_autopilot_leads(
     conn,
     *,
@@ -11597,6 +11758,69 @@ def admin_share_links():
         total_links=total_links,
         total_pages=total_pages,
         funnel_summary=funnel_summary,
+    )
+
+
+@video_shorts_bp.route("/admin/outreach-emails", methods=["GET"])
+@require_admin
+def admin_outreach_emails():
+    status_filter = (request.args.get("status") or "all").strip().lower()
+    email_query = (request.args.get("email") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 200
+
+    conn = get_db_readonly()
+    try:
+        total_items = _load_admin_outreach_emails(
+            conn,
+            status_filter=status_filter,
+            email_query=email_query,
+            date_from=date_from,
+            date_to=date_to,
+            limit=1,
+            offset=0,
+        )[1]
+        total_pages = max(1, (total_items + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        (
+            emails,
+            total_items,
+            summary_counts,
+            normalized_status,
+            normalized_email,
+            normalized_date_from,
+            normalized_date_to,
+        ) = _load_admin_outreach_emails(
+            conn,
+            status_filter=status_filter,
+            email_query=email_query,
+            date_from=date_from,
+            date_to=date_to,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+        )
+    finally:
+        conn.close()
+
+    return render_template(
+        "shorts_admin_outreach_emails.html",
+        admin_title="Outreach Emails",
+        emails=emails,
+        summary_counts=summary_counts,
+        selected_status=normalized_status,
+        email_query=normalized_email,
+        date_from=normalized_date_from,
+        date_to=normalized_date_to,
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=total_pages,
     )
 
 
