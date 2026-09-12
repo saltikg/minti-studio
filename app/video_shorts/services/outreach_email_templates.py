@@ -8,6 +8,7 @@ from app.video_shorts.services.trial_copy import trial_duration_text
 
 
 OutreachLanguage = Literal["EN", "TR"]
+OutreachStage = Literal["first", "followup"]
 
 
 @dataclass(frozen=True)
@@ -18,44 +19,58 @@ class OutreachEmailTemplate:
 
 
 OUTREACH_EMAIL_TEMPLATES: dict[str, OutreachEmailTemplate] = {
-    "A_EN": OutreachEmailTemplate(
-        key="A_EN",
-        subject="A hands-off way to grow your channel - first month free",
+    "FIRST_EN": OutreachEmailTemplate(
+        key="FIRST_EN",
+        subject="I made a Short from your video — first month free",
         text="""Hi [Name],
 
-Did you get the Short we made from your video last week? [link]
+I'm the founder of Minti Studio, based in San Francisco. Instead of explaining what we do, I thought I'd show you.
 
-Here's the thing - even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
+I turned one of your recent videos into a Short - here's how it came out:
 
-So here's the simpler version: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to your channels, every month.
+[link]
+
+Here's the idea: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to YouTube, Instagram, and Facebook, every month.
 
 Your first month is on us - 15 Shorts, made and published for you, free.
 
-Take a look at your Short, and tap "Watch all Shorts" to start.
+Take a look at your Short, and tap "Watch all Shorts" to start. Or reply with any questions.
 
 Best,
-Gokhan""",
+Gokhan Saltik
+Founder, Minti Studio
+mintistudio.com""",
     ),
-    "A_TR": OutreachEmailTemplate(
-        key="A_TR",
-        subject="Short'unuz denemeye hazır",
+    "FIRST_TR": OutreachEmailTemplate(
+        key="FIRST_TR",
+        subject="Videonuzdan hazırladığımız kısa bir örnek",
         text="""Merhaba [Name],
 
-Minti'nin videonuzdan ne çıkardığını gördünüz. Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz - doğrudan o sayfadan.
+San Francisco'da Minti Studio adında bir video platformu geliştiriyoruz. Ne yaptığımızı uzun uzun anlatmak yerine, nasıl çalıştığını doğrudan kendi içeriğiniz üzerinden göstermek istedim.
 
-Sizin gibi içerik üreticileri için tasarlandı: uzun videolarınızı Short'a dönüştürün, YouTube, Instagram ve Facebook'ta yayınlayın, ekstra düzenleme zamanı harcamadan kanalınızı büyütün.
+Kanalınızdaki videonuzdan, sizin için hazırladığımız kısa bir örnek:
 
-Başlamak için "Watch all Shorts" butonuna dokunun - [trial] ücretsiz, kayıt yok.
+[link]
 
-İyi çalışmalar,
-Gokhan""",
+Buradaki örnekte uzun videonuzun içinden kısa videoya uygun bir bölüm Minti ile seçilerek altyazılı, dikey bir videoya dönüştürüldü.
+
+Minti klip üretmekle kalmıyor - YouTube, Instagram ve Facebook'a yayınlıyor; yorumları yönetiyor ve hepsinin performansını tek yerden karşılaştırıyorsunuz.
+
+Kendi videolarınızla denemek isterseniz, örnek sayfasındaki "Watch all Shorts" butonuna basmanız yeterli. [trial] ücretsiz erişim otomatik olarak tanımlanıyor.
+
+Herhangi bir sorunuz olursa memnuniyetle yardımcı olurum.
+
+Selamlar,
+Gokhan Saltik
+Founder, Minti Studio
+mintistudio.com""",
     ),
-    "B_EN": OutreachEmailTemplate(
-        key="B_EN",
+    "FOLLOWUP_EN": OutreachEmailTemplate(
+        key="FOLLOWUP_EN",
         subject="A hands-off way to grow your channel - first month free",
         text="""Hi [Name],
 
-Did you get the Short we made from your video last week? [link]
+Did you get the Short we made from your video? [link]
 
 Here's the thing - even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
 
@@ -68,12 +83,12 @@ Take a look at your Short, and tap "Watch all Shorts" to start.
 Best,
 Gokhan""",
     ),
-    "B_TR": OutreachEmailTemplate(
-        key="B_TR",
+    "FOLLOWUP_TR": OutreachEmailTemplate(
+        key="FOLLOWUP_TR",
         subject="Videonuzdan yaptığım Short'u gördünüz mü?",
         text="""Merhaba [Name],
 
-Geçen hafta videonuzdan yaptığım bir Short göndermiştim - gözden kaçmış olabilir. İşte burada: [link]
+Videonuzdan yaptığım Short gözden kaçmış olabilir. İşte burada: [link]
 
 Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz - o sayfada "Watch all Shorts" butonuna dokunmanız yeterli. [trial] ücretsiz, kayıt yok.
 
@@ -87,9 +102,14 @@ def normalize_outreach_template_language(value: object) -> OutreachLanguage:
     return "TR" if str(value or "").strip().upper() == "TR" else "EN"
 
 
-def outreach_template_key(*, engaged: bool, language: object) -> str:
+def normalize_outreach_template_stage(value: object) -> OutreachStage:
+    return "followup" if str(value or "").strip().lower() == "followup" else "first"
+
+
+def outreach_template_key(*, stage: object, language: object) -> str:
+    normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
-    return f"{'A' if engaged else 'B'}_{normalized_language}"
+    return f"{normalized_stage.upper()}_{normalized_language}"
 
 
 def _simple_html_email(*, subject: str, body_text: str) -> str:
@@ -112,15 +132,16 @@ def _simple_html_email(*, subject: str, body_text: str) -> str:
 
 def render_outreach_email(
     *,
-    engaged: bool,
+    stage: object,
     language: object,
     recipient_name: object,
     share_url: str,
     trial_days: object,
 ) -> dict[str, str]:
+    normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
-    key = outreach_template_key(engaged=engaged, language=normalized_language)
-    template = OUTREACH_EMAIL_TEMPLATES.get(key) or OUTREACH_EMAIL_TEMPLATES["B_EN"]
+    key = outreach_template_key(stage=normalized_stage, language=normalized_language)
+    template = OUTREACH_EMAIL_TEMPLATES.get(key) or OUTREACH_EMAIL_TEMPLATES["FIRST_EN"]
     safe_name = str(recipient_name or "").strip() or ("there" if normalized_language == "EN" else "Merhaba")
     trial_phrase = trial_duration_text(trial_days, normalized_language)
     text = (
@@ -130,6 +151,8 @@ def render_outreach_email(
     )
     return {
         "key": template.key,
+        "stage": normalized_stage,
+        "language": normalized_language,
         "subject": template.subject,
         "text": text,
         "html": _simple_html_email(subject=template.subject, body_text=text),
@@ -138,14 +161,14 @@ def render_outreach_email(
 
 def render_outreach_clipboard_text(
     *,
-    engaged: bool,
+    stage: object,
     language: object,
     recipient_name: object,
     share_url: str,
     trial_days: object,
 ) -> str:
     rendered = render_outreach_email(
-        engaged=engaged,
+        stage=stage,
         language=language,
         recipient_name=recipient_name,
         share_url=share_url,

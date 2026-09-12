@@ -1,6 +1,7 @@
 import json
 import errno
 import math
+import os
 import re
 import shutil
 import string
@@ -139,6 +140,7 @@ from app.video_shorts.services.trial_copy import (
 from app.video_shorts.services.email_verification import send_resend_email
 from app.video_shorts.services.outreach_email_templates import (
     normalize_outreach_template_language,
+    normalize_outreach_template_stage,
     render_outreach_clipboard_text,
     render_outreach_email,
 )
@@ -7320,7 +7322,42 @@ def admin_share_link_set_followup_sent(share_link_id: int):
         conn.close()
 
 
-def _render_admin_share_link_outreach_email(conn, share_link_id: int, language: object) -> dict[str, Any]:
+def _resend_sender_domain_verified(sender_email: str) -> bool:
+    sender_domain = str(sender_email or "").strip().lower().rsplit("@", 1)[-1]
+    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    if not sender_domain or not api_key:
+        return False
+    try:
+        response = requests.get(
+            "https://api.resend.com/domains",
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            timeout=8,
+        )
+        if response.status_code >= 400:
+            current_app.logger.warning(
+                "Could not verify Resend sender domain %s: status=%s",
+                sender_domain,
+                response.status_code,
+            )
+            return False
+        payload = response.json()
+    except Exception:
+        current_app.logger.exception("Could not verify Resend sender domain %s", sender_domain)
+        return False
+    domains = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(domains, list):
+        return False
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        if str(domain.get("name") or "").strip().lower() != sender_domain:
+            continue
+        status = str(domain.get("status") or "").strip().lower()
+        return status in {"verified", "success", "active"}
+    return False
+
+
+def _render_admin_share_link_outreach_email(conn, share_link_id: int, *, stage: object, language: object) -> dict[str, Any]:
     row = conn.execute(
         """
         SELECT
@@ -7330,6 +7367,8 @@ def _render_admin_share_link_outreach_email(conn, share_link_id: int, language: 
           sl.recipient_email,
           sl.language,
           COALESCE(sl.trial_days, ?) AS trial_days,
+          sl.emailed_at,
+          sl.first_email_template_key,
           sl.followup_sent,
           sl.followup_sent_at,
           sl.followup_template_key
@@ -7363,7 +7402,7 @@ def _render_admin_share_link_outreach_email(conn, share_link_id: int, language: 
     share_url = _share_public_url(token)
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
     rendered_email = render_outreach_email(
-        engaged=engaged,
+        stage=stage,
         language=language,
         recipient_name=row[2],
         share_url=share_url,
@@ -7378,14 +7417,16 @@ def _render_admin_share_link_outreach_email(conn, share_link_id: int, language: 
         "engaged": engaged,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
-            engaged=engaged,
+            stage=stage,
             language=language,
             recipient_name=row[2],
             share_url=share_url,
             trial_days=trial_days,
         ),
-        "followup_sent_at": row[7],
-        "followup_template_key": str(row[8] or "").strip(),
+        "emailed_at": row[6],
+        "first_email_template_key": str(row[7] or "").strip(),
+        "followup_sent_at": row[9],
+        "followup_template_key": str(row[10] or "").strip(),
     }
 
 
@@ -7396,17 +7437,20 @@ def admin_share_link_email_preview(share_link_id: int):
         return jsonify({"ok": False, "error": "unauthorized"}), 401
     if (current_user.get("role") or "").strip().lower() != "admin":
         return jsonify({"ok": False, "error": "forbidden"}), 403
+    stage = normalize_outreach_template_stage(request.args.get("stage"))
     language = normalize_outreach_template_language(request.args.get("language"))
 
     conn = get_db_readonly()
     try:
         if not _short_share_links_ready(conn):
             return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
-        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, language)
+        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, stage=stage, language=language)
         return jsonify(
             {
                 "ok": True,
                 "template_key": rendered["email"]["key"],
+                "stage": rendered["email"]["stage"],
+                "language": rendered["email"]["language"],
                 "subject": rendered["email"]["subject"],
                 "text": rendered["email"]["text"],
                 "clipboard_text": rendered["clipboard_text"],
@@ -7434,6 +7478,7 @@ def admin_share_link_send_email(share_link_id: int):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     payload = request.get_json(silent=True) or {}
+    stage = normalize_outreach_template_stage(payload.get("stage"))
     language = normalize_outreach_template_language(payload.get("language"))
     confirm_resend = bool(payload.get("confirm_resend"))
     resend_cooldown = timedelta(minutes=10)
@@ -7448,6 +7493,9 @@ def admin_share_link_send_email(share_link_id: int):
             "recipient_name",
             "token",
             "trial_days",
+            "emailed_at",
+            "first_email_provider_message_id",
+            "first_email_template_key",
             "followup_sent",
             "followup_sent_at",
             "followup_provider_message_id",
@@ -7456,20 +7504,20 @@ def admin_share_link_send_email(share_link_id: int):
         if not required_columns.issubset(set(share_link_columns)):
             return jsonify({"ok": False, "error": "share_link_email_tracking_unavailable"}), 503
 
-        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, language)
+        rendered = _render_admin_share_link_outreach_email(conn, share_link_id, stage=stage, language=language)
         recipient_email = rendered["recipient_email"]
         if not recipient_email or "@" not in recipient_email:
             return jsonify({"ok": False, "error": "missing_recipient_email"}), 400
         rendered_email = rendered["email"]
         template_key = rendered_email["key"]
 
-        followup_sent_at = rendered["followup_sent_at"]
-        previous_template_key = rendered["followup_template_key"]
-        if followup_sent_at and previous_template_key == template_key and not confirm_resend:
+        previous_sent_at = rendered["followup_sent_at"] if stage == "followup" else rendered["emailed_at"]
+        previous_template_key = rendered["followup_template_key"] if stage == "followup" else rendered["first_email_template_key"]
+        if previous_sent_at and previous_template_key == template_key and not confirm_resend:
             try:
-                sent_at_utc = followup_sent_at if followup_sent_at.tzinfo else followup_sent_at.replace(tzinfo=timezone.utc)
+                sent_at_utc = previous_sent_at if previous_sent_at.tzinfo else previous_sent_at.replace(tzinfo=timezone.utc)
             except AttributeError:
-                sent_at_utc = _parse_iso_datetime(str(followup_sent_at))
+                sent_at_utc = _parse_iso_datetime(str(previous_sent_at))
                 if sent_at_utc and sent_at_utc.tzinfo is None:
                     sent_at_utc = sent_at_utc.replace(tzinfo=timezone.utc)
             if sent_at_utc and sent_at_utc >= (datetime.now(timezone.utc) - resend_cooldown):
@@ -7479,36 +7527,57 @@ def admin_share_link_send_email(share_link_id: int):
                         "error": "recently_sent",
                         "message": "This template was sent recently. Confirm to send it again.",
                         "requires_confirmation": True,
-                        "followup_sent_at": _format_datetime_pst(followup_sent_at),
+                        "sent_at": _format_datetime_pst(previous_sent_at),
                     }
                 ), 409
 
+        requested_from_email = "info@mintistudio.com"
+        verified_info_sender = _resend_sender_domain_verified(requested_from_email)
+        outreach_from_email = requested_from_email if verified_info_sender else ""
         send_result = send_resend_email(
             to_email=recipient_email,
             subject=rendered_email["subject"],
             html=rendered_email["html"],
             text=rendered_email["text"],
             from_display_name="Gokhan Saltik",
+            from_email=outreach_from_email,
             reply_to_email="info@mintistudio.com",
             error_message="Outreach email could not be sent.",
         )
         provider_message_id = str(send_result.get("request_id") or "").strip()
-        conn.execute(
-            """
-            UPDATE short_share_links
-               SET emailed_at = COALESCE(emailed_at, CURRENT_TIMESTAMP),
-                   followup_sent = TRUE,
-                   followup_sent_at = CURRENT_TIMESTAMP,
-                   followup_provider_message_id = ?,
-                   followup_template_key = ?
-             WHERE id = ?
-            """,
-            [provider_message_id or None, template_key, share_link_id],
-        )
+        if stage == "followup":
+            conn.execute(
+                """
+                UPDATE short_share_links
+                   SET followup_sent = TRUE,
+                       followup_sent_at = CURRENT_TIMESTAMP,
+                       followup_provider_message_id = ?,
+                       followup_template_key = ?
+                 WHERE id = ?
+                """,
+                [provider_message_id or None, template_key, share_link_id],
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE short_share_links
+                   SET emailed_at = COALESCE(emailed_at, CURRENT_TIMESTAMP),
+                       first_email_provider_message_id = ?,
+                       first_email_template_key = ?
+                 WHERE id = ?
+                """,
+                [provider_message_id or None, template_key, share_link_id],
+            )
         conn.commit()
         updated_row = conn.execute(
             """
-            SELECT emailed_at, followup_sent_at, followup_provider_message_id, followup_template_key
+            SELECT
+              emailed_at,
+              first_email_provider_message_id,
+              first_email_template_key,
+              followup_sent_at,
+              followup_provider_message_id,
+              followup_template_key
             FROM short_share_links
             WHERE id = ?
             LIMIT 1
@@ -7519,13 +7588,19 @@ def admin_share_link_send_email(share_link_id: int):
             {
                 "ok": True,
                 "template_key": template_key,
-                "provider_message_id": str(updated_row[2] or "") if updated_row else provider_message_id,
+                "stage": stage,
+                "language": rendered_email["language"],
+                "from_email": requested_from_email if verified_info_sender else os.getenv("MAIL_FROM", ""),
+                "info_sender_verified": verified_info_sender,
+                "provider_message_id": (
+                    str(updated_row[4 if stage == "followup" else 1] or "") if updated_row else provider_message_id
+                ),
                 "emailed_at": _format_datetime_pst(updated_row[0] if updated_row else None),
-                "followup_sent_at": _format_datetime_pst(updated_row[1] if updated_row else None),
+                "followup_sent_at": _format_datetime_pst(updated_row[3] if updated_row else None),
                 "followup_sent_at_iso": (
-                    updated_row[1].isoformat()
-                    if updated_row and hasattr(updated_row[1], "isoformat")
-                    else str((updated_row[1] if updated_row else "") or "")
+                    updated_row[3].isoformat()
+                    if updated_row and hasattr(updated_row[3], "isoformat")
+                    else str((updated_row[3] if updated_row else "") or "")
                 ),
             }
         )

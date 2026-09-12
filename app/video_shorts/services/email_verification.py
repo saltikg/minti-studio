@@ -137,12 +137,14 @@ def _resend_payload(
     html: str,
     text: str,
     from_display_name: str = "MintiStudio",
+    from_email: str = "",
     reply_to_email: str = "",
 ) -> dict[str, object]:
     _api_key, mail_from, reply_to = _resolve_mail_settings()
     resolved_from_name = (from_display_name or "").strip() or "MintiStudio"
+    resolved_from_email = (from_email or "").strip() or mail_from
     payload: dict[str, object] = {
-        "from": formataddr((resolved_from_name, mail_from)),
+        "from": formataddr((resolved_from_name, resolved_from_email)),
         "to": [to_email],
         "subject": subject,
         "html": html,
@@ -161,23 +163,26 @@ def send_resend_email(
     html: str,
     text: str,
     from_display_name: str = "MintiStudio",
+    from_email: str = "",
     reply_to_email: str = "",
     error_message: str = "Verification email could not be sent.",
 ) -> dict[str, object]:
     api_key, mail_from, reply_to = _resolve_mail_settings()
     resolved_reply_to = (reply_to_email or "").strip() or reply_to
     resolved_from_name = (from_display_name or "").strip() or "MintiStudio"
+    resolved_from_email = (from_email or "").strip() or mail_from
     payload = _resend_payload(
         to_email=to_email,
         subject=subject,
         html=html,
         text=text,
         from_display_name=resolved_from_name,
+        from_email=resolved_from_email,
         reply_to_email=reply_to_email,
     )
     logger.info(
         "Resend email request prepared: from=%s reply_to=%s to=%s",
-        formataddr((resolved_from_name, mail_from)),
+        formataddr((resolved_from_name, resolved_from_email)),
         resolved_reply_to or "(empty)",
         to_email,
     )

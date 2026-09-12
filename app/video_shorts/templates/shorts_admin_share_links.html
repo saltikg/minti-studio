@@ -125,6 +125,43 @@
       opacity: 0.7;
       text-decoration: none;
     }
+    .admin-share-links-email-select {
+      min-width: 150px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.9);
+      padding: 4px 8px;
+      font: inherit;
+    }
+    .admin-share-links-email-preview {
+      position: absolute;
+      z-index: 30;
+      display: none;
+      width: min(420px, calc(100vw - 32px));
+      max-height: 360px;
+      overflow: auto;
+      padding: 14px;
+      border: 1px solid rgba(141, 223, 203, 0.34);
+      border-radius: 10px;
+      background: #0d1520;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+      white-space: normal;
+    }
+    .admin-share-links-email-preview.is-visible {
+      display: block;
+    }
+    .admin-share-links-email-preview-subject {
+      color: #8ff3d8;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .admin-share-links-email-preview-body {
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 0.82rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
     .admin-share-links-followup-badge {
       display: inline-flex;
       align-items: center;
@@ -435,34 +472,27 @@
                       data-copy-text="{{ link.share_url }}"
                       title="Copy share link"
                       aria-label="Copy share link">📋 Copy</button>
-                    <button
-                      type="button"
-                      class="admin-share-links-followup-copy-btn"
+                    <select
+                      class="admin-share-links-email-select"
                       data-preview-endpoint="{{ url_for('video_shorts_bp.admin_share_link_email_preview', share_link_id=link.id) }}"
-                      data-language="EN"
-                      title="Copy follow-up email in English"
-                      aria-label="Copy follow-up email in English">2. email (EN)</button>
+                      aria-label="Choose outreach email template">
+                      <option value="first:EN">1st Email — EN</option>
+                      <option value="first:TR">1st Email — TR</option>
+                      <option value="followup:EN">Follow-up — EN</option>
+                      <option value="followup:TR">Follow-up — TR</option>
+                    </select>
                     <button
                       type="button"
-                      class="admin-share-links-followup-copy-btn"
+                      class="admin-share-links-email-copy-btn"
                       data-preview-endpoint="{{ url_for('video_shorts_bp.admin_share_link_email_preview', share_link_id=link.id) }}"
-                      data-language="TR"
-                      title="Copy follow-up email in Turkish"
-                      aria-label="Copy follow-up email in Turkish">2. email (TR)</button>
+                      title="Copy selected email"
+                      aria-label="Copy selected email">Copy email</button>
                     <button
                       type="button"
-                      class="admin-share-links-followup-send-btn"
+                      class="admin-share-links-email-send-btn"
                       data-send-endpoint="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=link.id) }}"
-                      data-language="EN"
-                      title="Send follow-up email in English via Resend"
-                      aria-label="Send follow-up email in English">Send EN</button>
-                    <button
-                      type="button"
-                      class="admin-share-links-followup-send-btn"
-                      data-send-endpoint="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=link.id) }}"
-                      data-language="TR"
-                      title="Send follow-up email in Turkish via Resend"
-                      aria-label="Send follow-up email in Turkish">Send TR</button>
+                      title="Send selected email via Resend"
+                      aria-label="Send selected email">Send</button>
                     <button
                       type="button"
                       class="admin-share-links-followup-mark-btn"
@@ -470,6 +500,10 @@
                       {% if link.followup_sent %}disabled{% endif %}
                       aria-label="Mark follow-up as sent">{% if link.followup_sent %}✓ 2. email gönderildi{% else %}2. email gönderildi{% endif %}</button>
                     <a href="{{ link.preview_url }}" target="_blank" rel="noopener noreferrer">Test (no tracking)</a>
+                    <div class="admin-share-links-email-preview" data-email-preview role="tooltip" aria-live="polite">
+                      <div class="admin-share-links-email-preview-subject" data-email-preview-subject></div>
+                      <div class="admin-share-links-email-preview-body" data-email-preview-body></div>
+                    </div>
                   </div>
                   {% if link.followup_eligible %}
                     <div class="admin-share-links-followup-badge">Follow-up önerilir</div>
@@ -598,7 +632,86 @@
       }
     }
 
+    const emailPreviewCache = new Map();
+
+    function parseEmailSelection(row) {
+      const select = row?.querySelector(".admin-share-links-email-select");
+      const rawValue = String(select?.value || "first:EN");
+      const [stageRaw, languageRaw] = rawValue.split(":");
+      const stage = stageRaw === "followup" ? "followup" : "first";
+      const language = String(languageRaw || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
+      return { select, stage, language };
+    }
+
+    async function fetchEmailPreview(row) {
+      const { select, stage, language } = parseEmailSelection(row);
+      const endpoint = String(select?.dataset.previewEndpoint || "").trim();
+      if (!endpoint) {
+        throw new Error("Preview endpoint missing.");
+      }
+      const cacheKey = `${endpoint}|${stage}|${language}`;
+      if (emailPreviewCache.has(cacheKey)) {
+        return emailPreviewCache.get(cacheKey);
+      }
+      const url = new URL(endpoint, window.location.origin);
+      url.searchParams.set("stage", stage);
+      url.searchParams.set("language", language);
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      emailPreviewCache.set(cacheKey, payload);
+      return payload;
+    }
+
+    async function showEmailPreview(row, anchor) {
+      const preview = row?.querySelector("[data-email-preview]");
+      const subject = preview?.querySelector("[data-email-preview-subject]");
+      const body = preview?.querySelector("[data-email-preview-body]");
+      if (!preview || !subject || !body || !anchor) {
+        return;
+      }
+      subject.textContent = "Loading preview...";
+      body.textContent = "";
+      preview.classList.add("is-visible");
+      const anchorRect = anchor.getBoundingClientRect();
+      const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+      const scrollLeft = window.scrollX || document.documentElement.scrollLeft || 0;
+      preview.style.top = `${anchorRect.bottom + scrollTop + 8}px`;
+      preview.style.left = `${Math.max(16 + scrollLeft, Math.min(anchorRect.left + scrollLeft, window.innerWidth - 440 + scrollLeft))}px`;
+      try {
+        const payload = await fetchEmailPreview(row);
+        subject.textContent = payload.subject || "Email preview";
+        body.textContent = payload.text || "";
+      } catch (err) {
+        subject.textContent = "Preview unavailable";
+        body.textContent = err?.message || "Could not load preview.";
+      }
+    }
+
+    function hideEmailPreview(row) {
+      const preview = row?.querySelector("[data-email-preview]");
+      if (preview) {
+        preview.classList.remove("is-visible");
+      }
+    }
+
     document.addEventListener("change", async (event) => {
+      const emailSelect = event.target.closest(".admin-share-links-email-select");
+      if (emailSelect) {
+        emailPreviewCache.clear();
+        const row = emailSelect.closest(".admin-share-links-row");
+        hideEmailPreview(row);
+        return;
+      }
+
       const archiveToggle = event.target.closest("[data-archive-toggle]");
       if (!archiveToggle) {
         return;
@@ -643,56 +756,83 @@
       }
     });
 
+    document.addEventListener("mouseover", (event) => {
+      const previewTarget = event.target.closest(".admin-share-links-email-select, .admin-share-links-email-copy-btn, .admin-share-links-email-send-btn");
+      if (!previewTarget) {
+        return;
+      }
+      const row = previewTarget.closest(".admin-share-links-row");
+      showEmailPreview(row, previewTarget);
+    });
+
+    document.addEventListener("mouseout", (event) => {
+      const previewTarget = event.target.closest(".admin-share-links-email-select, .admin-share-links-email-copy-btn, .admin-share-links-email-send-btn");
+      if (!previewTarget) {
+        return;
+      }
+      const row = previewTarget.closest(".admin-share-links-row");
+      const related = event.relatedTarget;
+      if (related && row?.contains(related) && related.closest("[data-email-preview]")) {
+        return;
+      }
+      hideEmailPreview(row);
+    });
+
+    document.addEventListener("focusin", (event) => {
+      const previewTarget = event.target.closest(".admin-share-links-email-select, .admin-share-links-email-copy-btn, .admin-share-links-email-send-btn");
+      if (!previewTarget) {
+        return;
+      }
+      const row = previewTarget.closest(".admin-share-links-row");
+      showEmailPreview(row, previewTarget);
+    });
+
+    document.addEventListener("focusout", (event) => {
+      const previewTarget = event.target.closest(".admin-share-links-email-select, .admin-share-links-email-copy-btn, .admin-share-links-email-send-btn");
+      if (!previewTarget) {
+        return;
+      }
+      const row = previewTarget.closest(".admin-share-links-row");
+      hideEmailPreview(row);
+    });
+
     document.addEventListener("click", async (event) => {
-      const followupCopyButton = event.target.closest(".admin-share-links-followup-copy-btn");
-      if (followupCopyButton) {
-        const row = followupCopyButton.closest(".admin-share-links-row");
-        const originalLabel = followupCopyButton.textContent;
-        const language = String(followupCopyButton.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
-        const previewEndpoint = String(followupCopyButton.dataset.previewEndpoint || "").trim();
-        if (!previewEndpoint || followupCopyButton.disabled) {
+      const emailCopyButton = event.target.closest(".admin-share-links-email-copy-btn");
+      if (emailCopyButton) {
+        const row = emailCopyButton.closest(".admin-share-links-row");
+        const originalLabel = emailCopyButton.textContent;
+        if (!row || emailCopyButton.disabled) {
           return;
         }
-        followupCopyButton.disabled = true;
-        followupCopyButton.textContent = "Hazırlanıyor...";
+        const { language } = parseEmailSelection(row);
+        emailCopyButton.disabled = true;
+        emailCopyButton.textContent = "Hazırlanıyor...";
         setFollowupFeedback(row, "");
         try {
-          const url = new URL(previewEndpoint, window.location.origin);
-          url.searchParams.set("language", language);
-          const response = await fetch(url.toString(), {
-            method: "GET",
-            credentials: "same-origin",
-            headers: {
-              "X-Requested-With": "XMLHttpRequest",
-            },
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || !payload.ok || !payload.clipboard_text) {
-            throw new Error(payload.error || `HTTP ${response.status}`);
-          }
+          const payload = await fetchEmailPreview(row);
           await navigator.clipboard.writeText(String(payload.clipboard_text || ""));
-          followupCopyButton.textContent = `Kopyalandı (${language})`;
-          setFollowupFeedback(row, `Follow-up metni panoya kopyalandı (${language}).`, "is-success");
+          emailCopyButton.textContent = `Kopyalandı (${language})`;
+          setFollowupFeedback(row, `Email metni panoya kopyalandı (${language}).`, "is-success");
         } catch (err) {
-          followupCopyButton.textContent = "Kopyalama başarısız";
+          emailCopyButton.textContent = "Kopyalama başarısız";
           setFollowupFeedback(row, err?.message || "Panoya kopyalanamadı.", "is-error");
         }
         setTimeout(() => {
-          followupCopyButton.textContent = originalLabel;
-          followupCopyButton.disabled = false;
+          emailCopyButton.textContent = originalLabel;
+          emailCopyButton.disabled = false;
         }, 1400);
         return;
       }
 
-      const followupSendButton = event.target.closest(".admin-share-links-followup-send-btn");
-      if (followupSendButton) {
-        const row = followupSendButton.closest(".admin-share-links-row");
-        const endpoint = String(followupSendButton.dataset.sendEndpoint || "").trim();
-        const language = String(followupSendButton.dataset.language || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN";
-        if (!endpoint || followupSendButton.disabled) {
+      const emailSendButton = event.target.closest(".admin-share-links-email-send-btn");
+      if (emailSendButton) {
+        const row = emailSendButton.closest(".admin-share-links-row");
+        const endpoint = String(emailSendButton.dataset.sendEndpoint || "").trim();
+        if (!endpoint || !row || emailSendButton.disabled) {
           return;
         }
-        const originalLabel = followupSendButton.textContent;
+        const { stage, language } = parseEmailSelection(row);
+        const originalLabel = emailSendButton.textContent;
         const sendRequest = async (confirmResend = false) => {
           return fetch(endpoint, {
             method: "POST",
@@ -701,11 +841,11 @@
               "Content-Type": "application/json",
               "X-Requested-With": "XMLHttpRequest",
             },
-            body: JSON.stringify({ language, confirm_resend: confirmResend }),
+            body: JSON.stringify({ stage, language, confirm_resend: confirmResend }),
           });
         };
-        followupSendButton.disabled = true;
-        followupSendButton.textContent = "Sending...";
+        emailSendButton.disabled = true;
+        emailSendButton.textContent = "Sending...";
         setFollowupFeedback(row, "");
         try {
           let response = await sendRequest(false);
@@ -722,26 +862,30 @@
           if (!response.ok || !payload.ok) {
             throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
           }
-          row.classList.remove("is-followup-eligible");
-          const badge = row.querySelector(".admin-share-links-followup-badge");
-          if (badge) {
-            badge.remove();
-          }
-          const markButton = row.querySelector(".admin-share-links-followup-mark-btn");
-          if (markButton) {
-            markButton.disabled = true;
-            markButton.textContent = "✓ 2. email gönderildi";
+          if (stage === "followup") {
+            row.classList.remove("is-followup-eligible");
+            const badge = row.querySelector(".admin-share-links-followup-badge");
+            if (badge) {
+              badge.remove();
+            }
+            const markButton = row.querySelector(".admin-share-links-followup-mark-btn");
+            if (markButton) {
+              markButton.disabled = true;
+              markButton.textContent = "✓ 2. email gönderildi";
+            }
           }
           setFollowupFeedback(
             row,
-            payload.followup_sent_at ? `Email sent (${language}): ${payload.followup_sent_at}` : `Email sent (${language}).`,
+            payload.from_email
+              ? `Email sent (${language}, ${stage}) from ${payload.from_email}.`
+              : `Email sent (${language}, ${stage}).`,
             "is-success",
           );
         } catch (err) {
           setFollowupFeedback(row, err?.message || "Email could not be sent.", "is-error");
         } finally {
-          followupSendButton.disabled = false;
-          followupSendButton.textContent = originalLabel;
+          emailSendButton.disabled = false;
+          emailSendButton.textContent = originalLabel;
         }
         return;
       }
@@ -819,9 +963,7 @@
           if (!response.ok || !payload.success) {
             throw new Error(payload.message || `HTTP ${response.status}`);
           }
-          row.querySelectorAll(".admin-share-links-followup-copy-btn").forEach((button) => {
-            button.dataset.trialDays = String(payload.trial_days || trialDays);
-          });
+          emailPreviewCache.clear();
           const labelContainer = input.closest("td")?.querySelector("div");
           if (labelContainer) {
             labelContainer.textContent = String(payload.trial_duration_label_en || `${payload.trial_days} days`);
