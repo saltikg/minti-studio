@@ -1367,6 +1367,36 @@
     margin-bottom: 14px;
     flex-wrap: wrap;
   }
+  .clip-score-batch-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.5);
+  }
+  .clip-score-threshold-label {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 0.84rem;
+    font-weight: 700;
+  }
+  .clip-score-threshold-value {
+    color: #bfdbfe;
+    font-weight: 900;
+  }
+  .clip-score-threshold-input {
+    width: min(240px, 48vw);
+    accent-color: #3b82f6;
+  }
+  .clip-score-batch-feedback {
+    width: 100%;
+    min-height: 18px;
+    font-size: 0.78rem;
+  }
   .clip-pane-title {
     color: #fff;
     font-weight: 700;
@@ -3156,6 +3186,9 @@
     .clip-rail-list {
       max-height: none;
     }
+    .clip-score-threshold-input {
+      width: 100%;
+    }
     .clip-workbench-side {
       position: relative;
       top: auto;
@@ -3475,6 +3508,24 @@
                   {% endif %}
                 </div>
               </div>
+              <div class="clip-score-batch-controls" id="clip-score-batch-controls">
+                <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
+                  Auto-create clips scoring ≥ <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
+                </label>
+                <input
+                  type="range"
+                  class="form-range clip-score-threshold-input"
+                  id="clip-score-threshold"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="70">
+                <button type="button" class="btn btn-sm btn-primary d-inline-flex align-items-center gap-2" id="clip-score-batch-create-btn" disabled>
+                  <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                  <span class="btn-label">Create 0 clips (score ≥ 70)</span>
+                </button>
+                <div class="clip-score-batch-feedback text-white-50 d-none" id="clip-score-batch-feedback" aria-live="polite"></div>
+              </div>
               <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                 {% set focus_category_label_map = {
                   "tez": "Thesis",
@@ -3501,7 +3552,7 @@
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
                   {% set rail_score = row.get('score') %}
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}">
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
                         <video muted playsinline preload="metadata">
@@ -7161,6 +7212,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
         });
       }
       initGenerateClipForms();
+      initScoreThresholdBatchControls();
       initDeleteClipAjax();
       initRemovePlanEntryAjax();
       initClipTitleRowAjax();
@@ -7943,6 +7995,278 @@ const loadGenerateUsageSummary = async () => {
   } catch (error) {
     renderGenerateUsageSummary(null);
   }
+};
+
+const scoreThresholdStorageKey = "minti_score_threshold";
+const scoreBatchState = {
+  running: false,
+};
+
+const clampScoreThreshold = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 70;
+  }
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+};
+
+const getScoreBatchControls = () => ({
+  wrapper: document.getElementById("clip-score-batch-controls"),
+  input: document.getElementById("clip-score-threshold"),
+  value: document.getElementById("clip-score-threshold-value"),
+  button: document.getElementById("clip-score-batch-create-btn"),
+  label: document.querySelector("#clip-score-batch-create-btn .btn-label"),
+  spinner: document.querySelector("#clip-score-batch-create-btn .spinner-border"),
+  feedback: document.getElementById("clip-score-batch-feedback"),
+});
+
+const getRemainingExportsFromUsage = () => {
+  if (latestUsageSnapshot?.exports) {
+    const used = Number(latestUsageSnapshot.exports.used || 0);
+    const limit = Number(latestUsageSnapshot.exports.limit || 0);
+    if (Number.isFinite(used) && Number.isFinite(limit)) {
+      return Math.max(0, limit - used);
+    }
+  }
+  const usageText = document.getElementById("generate-usage-summary")?.textContent || "";
+  const match = usageText.match(/(\d+)\s+exports?\s+left/i);
+  if (match) {
+    return Number(match[1]);
+  }
+  return null;
+};
+
+const setScoreBatchFeedback = (message = "", tone = "text-white-50") => {
+  const { feedback } = getScoreBatchControls();
+  if (!feedback) {
+    return;
+  }
+  const hasMessage = !!String(message || "").trim();
+  feedback.textContent = hasMessage ? message : "";
+  feedback.classList.toggle("d-none", !hasMessage);
+  feedback.classList.remove("text-success", "text-danger", "text-warning", "text-white-50");
+  feedback.classList.add(tone);
+};
+
+const getQualifyingScoreClipTargets = (threshold) => {
+  return Array.from(document.querySelectorAll(".clip-rail-item"))
+    .map((railItem) => {
+      const planIndex = String(railItem.dataset.planIndex || "").trim();
+      const score = Number(railItem.dataset.score);
+      const status = String(railItem.dataset.status || "").trim().toLowerCase();
+      const card = getClipCardByPlanIndex(planIndex);
+      return {
+        railItem,
+        card,
+        form: card?.querySelector(".generate-clip-form"),
+        planIndex,
+        score,
+        status,
+        isAi: railItem.dataset.aiSuggestion === "1",
+      };
+    })
+    .filter((target) => (
+      target.isAi &&
+      target.planIndex &&
+      target.form &&
+      Number.isFinite(target.score) &&
+      target.score >= threshold &&
+      target.status === "pending"
+    ));
+};
+
+const updateScoreBatchControls = () => {
+  const { input, value, button, label, spinner } = getScoreBatchControls();
+  if (!input || !button || !label) {
+    return;
+  }
+  const threshold = clampScoreThreshold(input.value);
+  input.value = threshold;
+  if (value) {
+    value.textContent = threshold;
+  }
+  const count = getQualifyingScoreClipTargets(threshold).length;
+  label.textContent = `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
+  button.disabled = scoreBatchState.running || count === 0;
+  spinner?.classList.toggle("d-none", !scoreBatchState.running);
+};
+
+const enqueueScoreClipTarget = async (target) => {
+  const { card, form, planIndex, railItem } = target;
+  const titleSource = card?.querySelector(".clip-title-input");
+  const hiddenTitleInput = form?.querySelector("input[name='title']");
+  if (hiddenTitleInput && titleSource) {
+    hiddenTitleInput.value = titleSource.value || "";
+  }
+  clearClipNotice(card);
+  setClipFeedbackState(card, {
+    message: "Generating your short…",
+    tone: "text-white",
+    busy: true,
+  });
+  const response = await fetch(form.action, {
+    method: "POST",
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(new FormData(form)),
+    credentials: "same-origin",
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = {};
+  }
+  if (response.status === 403 && isExportLimitPayload(payload)) {
+    handleClipJobFailurePayload(planIndex, payload);
+    return { success: false, limitReached: true, payload };
+  }
+  if (response.status === 429 && payload.code === "concurrency_limit") {
+    setClipFeedbackState(card, {
+      message: "Finish your current short first — your plan runs one at a time.",
+      tone: "text-warning",
+      busy: false,
+      showSpinner: false,
+      disableButton: false,
+    });
+    return { success: false, payload };
+  }
+  const clipAlreadyExists =
+    response.status === 409 &&
+    typeof payload.message === "string" &&
+    payload.message.toLowerCase().includes("already generated");
+  if (payload.cached && payload.result) {
+    await finalizeClipJobSuccess(planIndex, { cached: true });
+    return { success: true, cached: true, jobId: payload.job_id || "" };
+  }
+  if (response.ok && payload.job_id) {
+    const status = payload.status || "queued";
+    if (card) {
+      card.dataset.status = status;
+    }
+    if (railItem) {
+      railItem.dataset.status = status;
+    }
+    renderClipJobProgressState(card, status, payload.queue_position);
+    void pollClipJobUntilDone(planIndex, payload.job_id, {
+      initialStatus: status,
+      initialQueuePosition: payload.queue_position,
+      startedAt: Date.now(),
+    });
+    loadGenerateUsageSummary();
+    return { success: true, jobId: payload.job_id };
+  }
+  if ((response.ok && payload.success && payload.status === "created") || clipAlreadyExists) {
+    await finalizeClipJobSuccess(planIndex, { cached: false });
+    return { success: true, jobId: payload.job_id || "" };
+  }
+  handleClipJobFailurePayload(planIndex, payload);
+  return { success: false, payload };
+};
+
+const runScoreThresholdBatchCreate = async () => {
+  const { input } = getScoreBatchControls();
+  if (!input || scoreBatchState.running) {
+    return;
+  }
+  const threshold = clampScoreThreshold(input.value);
+  const qualifying = getQualifyingScoreClipTargets(threshold);
+  if (!qualifying.length) {
+    updateScoreBatchControls();
+    return;
+  }
+  if (!latestUsageSnapshot) {
+    await loadGenerateUsageSummary();
+  }
+  const remainingExports = getRemainingExportsFromUsage();
+  const limitedByQuota = Number.isFinite(remainingExports) && qualifying.length > remainingExports;
+  const targets = limitedByQuota ? qualifying.slice(0, Math.max(0, remainingExports)) : qualifying;
+  const confirmMessage = limitedByQuota
+    ? `You have ${remainingExports} exports left; ${targets.length} of ${qualifying.length} clips will be created. Upgrade for the rest.`
+    : `Create ${qualifying.length} ${qualifying.length === 1 ? "clip" : "clips"} scoring ≥ ${threshold}?`;
+  if (!window.confirm(confirmMessage)) {
+    return;
+  }
+  if (!targets.length) {
+    setScoreBatchFeedback("No exports left — upgrade to continue.", "text-warning");
+    updateScoreBatchControls();
+    return;
+  }
+
+  scoreBatchState.running = true;
+  updateScoreBatchControls();
+  setScoreBatchFeedback(`Creating 0 of ${targets.length} clips…`, "text-white-50");
+  let createdCount = 0;
+  const jobIds = [];
+  for (const target of targets) {
+    try {
+      const result = await enqueueScoreClipTarget(target);
+      if (result.success) {
+        createdCount += 1;
+        if (result.jobId) {
+          jobIds.push(result.jobId);
+        }
+        setScoreBatchFeedback(`Creating ${createdCount} of ${targets.length} clips…`, "text-white-50");
+        continue;
+      }
+      if (result.limitReached) {
+        setScoreBatchFeedback(`Created ${createdCount} clips; export limit reached — upgrade to continue.`, "text-warning");
+        break;
+      }
+      setScoreBatchFeedback(`Created ${createdCount} clips; one clip could not be queued.`, "text-warning");
+      break;
+    } catch (error) {
+      handleClipJobFailure(target.planIndex);
+      setScoreBatchFeedback(`Created ${createdCount} clips; one clip could not be queued.`, "text-warning");
+      break;
+    }
+  }
+  if (createdCount === targets.length) {
+    setScoreBatchFeedback(
+      jobIds.length
+        ? `Queued ${createdCount} ${createdCount === 1 ? "clip" : "clips"}: ${jobIds.join(", ")}`
+        : `Queued ${createdCount} ${createdCount === 1 ? "clip" : "clips"}.`,
+      "text-success",
+    );
+  }
+  scoreBatchState.running = false;
+  loadGenerateUsageSummary();
+  updateScoreBatchControls();
+};
+
+const initScoreThresholdBatchControls = () => {
+  const { input, button } = getScoreBatchControls();
+  if (!input || !button) {
+    return;
+  }
+  if (input.dataset.scoreThresholdRestored !== "1") {
+    try {
+      input.value = clampScoreThreshold(window.localStorage.getItem(scoreThresholdStorageKey) || input.value);
+    } catch (error) {
+      input.value = clampScoreThreshold(input.value);
+    }
+    input.dataset.scoreThresholdRestored = "1";
+  }
+  if (input.dataset.scoreThresholdBound !== "1") {
+    input.dataset.scoreThresholdBound = "1";
+    input.addEventListener("input", () => {
+      const threshold = clampScoreThreshold(input.value);
+      input.value = threshold;
+      try {
+        window.localStorage.setItem(scoreThresholdStorageKey, String(threshold));
+      } catch (error) {
+        // Ignore storage failures.
+      }
+      updateScoreBatchControls();
+      setScoreBatchFeedback("");
+    });
+  }
+  if (button.dataset.scoreBatchBound !== "1") {
+    button.dataset.scoreBatchBound = "1";
+    button.addEventListener("click", runScoreThresholdBatchCreate);
+  }
+  updateScoreBatchControls();
 };
 
 const initGenerateClipForms = () => {
@@ -9304,6 +9628,7 @@ const initLongVideoDeleteButtons = () => {
   });
 };
 document.addEventListener("DOMContentLoaded", () => {
+  initScoreThresholdBatchControls();
   initGenerateClipForms();
   initClipTitleRowAjax();
   bindClipTimeInputFocus();
