@@ -12013,8 +12013,12 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
     subtitlePresetField.value = nextValue;
+    subtitlePresetField.dispatchEvent(new Event("input", { bubbles: true }));
+    subtitlePresetField.dispatchEvent(new Event("change", { bubbles: true }));
     if (subtitleStyleField) {
       subtitleStyleField.value = "karaoke";
+      subtitleStyleField.dispatchEvent(new Event("input", { bubbles: true }));
+      subtitleStyleField.dispatchEvent(new Event("change", { bubbles: true }));
     }
     syncSubtitlePresetCards();
     applySubtitlePreview();
