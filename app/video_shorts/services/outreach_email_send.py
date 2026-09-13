@@ -133,7 +133,11 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         SELECT
           sl.id,
           sl.token,
-          sl.recipient_name,
+          CASE
+            WHEN NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+            THEN COALESCE(NULLIF(l.recipient_name, ''), NULLIF(l.creator_name, ''), sl.recipient_name)
+            ELSE sl.recipient_name
+          END AS effective_recipient_name,
           sl.recipient_email,
           sl.language,
           COALESCE(sl.trial_days, ?) AS trial_days,
@@ -144,6 +148,9 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
           sl.followup_template_key,
           COALESCE(sl.archived, false) AS archived
         FROM short_share_links sl
+        LEFT JOIN autopilot_leads l
+          ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+         AND CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
         WHERE sl.id = ?
         LIMIT 1
         """,
@@ -161,24 +168,25 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         raise ValueError("share_link_archived")
     share_url = _share_public_url(token)
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
+    recipient_name = str(row[2] or "").strip()
     rendered_email = render_outreach_email(
         stage=normalized_stage,
         language=normalized_language,
-        recipient_name=row[2],
+        recipient_name=recipient_name,
         share_url=share_url,
         trial_days=trial_days,
     )
     return {
         "row": row,
         "recipient_email": recipient_email,
-        "recipient_name": str(row[2] or "").strip(),
+        "recipient_name": recipient_name,
         "share_url": share_url,
         "trial_days": trial_days,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
             stage=normalized_stage,
             language=normalized_language,
-            recipient_name=row[2],
+            recipient_name=recipient_name,
             share_url=share_url,
             trial_days=trial_days,
         ),

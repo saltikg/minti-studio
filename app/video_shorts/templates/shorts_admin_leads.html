@@ -43,6 +43,8 @@
     .admin-leads-outreach-state, .admin-leads-outreach-feedback { color:rgba(255,255,255,.58); font-size:.82rem; }
     .admin-leads-outreach-feedback.is-success { color:#8ff3d8; }
     .admin-leads-outreach-feedback.is-error { color:#fca5a5; }
+    .admin-leads-preview-subject { color:#8ff3d8; font-weight:800; margin-bottom:12px; }
+    .admin-leads-preview-body { white-space:pre-wrap; color:rgba(255,255,255,.86); line-height:1.5; }
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
@@ -241,6 +243,7 @@
                       class="admin-leads-outreach"
                       data-outreach-row="{{ lead.id }}"
                       data-share-link-id="{{ lead.watch_share_link_id or '' }}"
+                      data-preview-template="{{ url_for('video_shorts_bp.admin_share_link_email_preview', share_link_id=0) }}"
                       data-send-template="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=0) }}"
                       data-schedule-template="{{ url_for('video_shorts_bp.admin_share_link_schedule_email', share_link_id=0) }}"
                       data-cancel-template="{{ url_for('video_shorts_bp.admin_share_link_cancel_scheduled_email', share_link_id=0, schedule_id=0) }}">
@@ -260,6 +263,7 @@
                           <option value="followup:EN">Follow-up · EN</option>
                           <option value="followup:TR">Follow-up · TR</option>
                         </select>
+                        <button type="button" class="btn btn-sm btn-outline-light" data-outreach-preview {% if not lead.watch_share_link_id %}disabled{% endif %}>Preview email</button>
                         <button type="button" class="btn btn-sm btn-outline-info" data-outreach-send {% if not lead.watch_share_link_id %}disabled{% endif %}>Send email</button>
                       </div>
                       <div class="admin-leads-outreach-row">
@@ -329,6 +333,24 @@
             <button type="submit" class="btn btn-primary">Add lead</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade admin-leads-modal" id="emailPreviewModal" tabindex="-1" aria-labelledby="emailPreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title fs-5" id="emailPreviewModalLabel">Email preview</h2>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="admin-leads-preview-subject" data-email-preview-modal-subject></div>
+          <div class="admin-leads-preview-body" data-email-preview-modal-body></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Close</button>
+        </div>
       </div>
     </div>
   </div>
@@ -427,6 +449,22 @@
         return endpoint;
       }
 
+      function showEmailPreviewModal(subject, body) {
+        const modalEl = document.getElementById("emailPreviewModal");
+        const subjectEl = modalEl?.querySelector("[data-email-preview-modal-subject]");
+        const bodyEl = modalEl?.querySelector("[data-email-preview-modal-body]");
+        if (!modalEl || !subjectEl || !bodyEl) return;
+        subjectEl.textContent = subject || "Email preview";
+        bodyEl.textContent = body || "";
+        if (window.bootstrap?.Modal) {
+          window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        } else {
+          modalEl.classList.add("show");
+          modalEl.style.display = "block";
+          modalEl.removeAttribute("aria-hidden");
+        }
+      }
+
       function parseOutreachSelection(row) {
         const select = row?.querySelector("[data-outreach-select]");
         const rawValue = String(select?.value || "first:EN");
@@ -469,7 +507,7 @@
         const row = document.querySelector(`[data-outreach-row="${leadId}"]`);
         if (!row || !shareLinkId) return;
         row.dataset.shareLinkId = shareLinkId;
-        row.querySelectorAll("[data-outreach-select], [data-outreach-send], [data-outreach-schedule-input], [data-outreach-schedule]").forEach((control) => {
+        row.querySelectorAll("[data-outreach-select], [data-outreach-preview], [data-outreach-send], [data-outreach-schedule-input], [data-outreach-schedule]").forEach((control) => {
           control.disabled = false;
         });
         const state = row.querySelector("[data-outreach-state]");
@@ -478,6 +516,40 @@
       }
 
       document.addEventListener("click", async (event) => {
+        const previewButton = event.target.closest("[data-outreach-preview]");
+        if (previewButton) {
+          const row = previewButton.closest("[data-outreach-row]");
+          const shareLinkId = String(row?.dataset.shareLinkId || "").trim();
+          if (!row || !shareLinkId || previewButton.disabled) return;
+          const { stage, language } = parseOutreachSelection(row);
+          const endpoint = endpointFromTemplate(row.dataset.previewTemplate, shareLinkId);
+          const url = new URL(endpoint, window.location.origin);
+          url.searchParams.set("stage", stage);
+          url.searchParams.set("language", language);
+          const originalLabel = previewButton.textContent;
+          previewButton.disabled = true;
+          previewButton.textContent = "Loading...";
+          setOutreachFeedback(row, "");
+          try {
+            const response = await fetch(url.toString(), {
+              method: "GET",
+              credentials: "same-origin",
+              headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+            }
+            showEmailPreviewModal(payload.subject, payload.text);
+          } catch (err) {
+            setOutreachFeedback(row, err?.message || "Email preview could not be loaded.", "is-error");
+          } finally {
+            previewButton.disabled = false;
+            previewButton.textContent = originalLabel;
+          }
+          return;
+        }
+
         const sendButton = event.target.closest("[data-outreach-send]");
         if (sendButton) {
           const row = sendButton.closest("[data-outreach-row]");
