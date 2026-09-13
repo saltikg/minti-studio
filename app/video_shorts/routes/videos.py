@@ -4476,12 +4476,8 @@ def shorts_overview():
         elif entry["publish_status"] == "scheduled" and entry.get("video_id"):
             entry["short_thumbnail_url"] = entry["short_thumbnail_url"] or f"https://i.ytimg.com/vi/{entry['video_id']}/hqdefault.jpg"
         if short_id and entry.get("publish_status") != "published":
-            comment_activity = (
-                (entry.get("pending_comment_count") or 0)
-                + (entry.get("published_comment_count") or 0)
-                + (entry.get("rejected_comment_count") or 0)
-            )
-            if stats or comment_activity > 0:
+            published_at = entry.get("published_at") or entry.get("youtube_published_at")
+            if published_at:
                 entry["publish_status"] = "published"
                 entry["publish_status_label"] = "Published"
         total_comments = _normalize_nonnegative_int(entry.get("platform_comment_count")) or 0
@@ -4545,6 +4541,16 @@ def shorts_overview():
     filtered_entries.sort(key=_entry_sort_key, reverse=sort_dir == "desc")
 
     calendar_summary: Dict[str, Dict[str, Dict[str, int]]] = {}
+    try:
+        calendar_tz = ZoneInfo(user_tz)
+    except Exception:
+        calendar_tz = ZoneInfo(DEFAULT_TIME_ZONE)
+
+    def _local_publish_date_key(value: Optional[str]) -> Optional[str]:
+        publish_dt = _normalize_timestamp(value)
+        if not publish_dt:
+            return None
+        return publish_dt.astimezone(calendar_tz).date().isoformat()
 
     def _platform_bucket(day_key: str, platform: str) -> Dict[str, int]:
         day_summary = calendar_summary.setdefault(day_key, {})
@@ -4552,9 +4558,8 @@ def shorts_overview():
 
     for entry in filtered_entries:
         publish_iso = entry.get("publish_at_iso")
-        publish_dt = _normalize_timestamp(publish_iso)
-        if publish_dt:
-            date_key = publish_dt.date().isoformat()
+        date_key = _local_publish_date_key(publish_iso)
+        if date_key:
             status_key = (entry.get("publish_status") or "").lower()
             if status_key in {"scheduled", "published"}:
                 bucket = _platform_bucket(date_key, "youtube")
@@ -4601,8 +4606,7 @@ def shorts_overview():
         filtered_entries = [
             entry
             for entry in filtered_entries
-            if _normalize_timestamp(entry.get("publish_at_iso"))
-            and _normalize_timestamp(entry.get("publish_at_iso")).date().isoformat() == day_filter
+            if _local_publish_date_key(entry.get("publish_at_iso")) == day_filter
         ]
 
     try:
