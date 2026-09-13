@@ -901,15 +901,17 @@ def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict
             for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
         }
     clean_user_defaults = _clean_short_editor_default_payload(user_defaults)
-    row_is_default_like = all(
-        _values_equal_for_editor_default(raw_values.get(name), config_defaults[name])
-        for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
-    )
     resolved: Dict[str, Any] = {}
     for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES:
         raw_value = raw_values.get(name)
-        if row_is_default_like or _is_blank_editor_default_value(raw_value):
+        has_user_default = (
+            name in clean_user_defaults
+            and not _is_blank_editor_default_value(clean_user_defaults.get(name))
+        )
+        if _is_blank_editor_default_value(raw_value):
             resolved[name] = clean_user_defaults.get(name, config_defaults[name])
+        elif has_user_default and _values_equal_for_editor_default(raw_value, config_defaults[name]):
+            resolved[name] = clean_user_defaults[name]
         else:
             resolved[name] = raw_value
     return resolved
