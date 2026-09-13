@@ -318,10 +318,13 @@ _SELECTOR_SYSTEM_PROMPTS = {
         "Sadece geçerli JSON döndür.\n"
         "{\n"
         "  \"selected\": [\n"
-        "    {\"candidate_id\": number, \"reason\": str},\n"
+        "    {\"candidate_id\": number, \"reason\": str, \"score\": number, \"breakdown\": {\"hook\": number, \"standalone\": number, \"quotability\": number, \"length\": number}},\n"
         "    ...\n"
         "  ]\n"
         "}\n"
+        "Rubric: hook = ilk 2 saniyenin yakalama gücü; standalone = kaynak videoyu bilmeden anlaşılır olması; "
+        "quotability = duygusal/paylaşılabilir/alintilanabilir payoff; length = Short formatına temiz oturması, düşünceyi ortadan kesmemesi.\n"
+        "hook, standalone, quotability ve length puanları 0-25 arası olmalı; score bu dört puanın toplamı olarak 0-100 olmalı.\n"
         "reason kısa olsun; neden seçildiğini 1 cümlede belirt.\n"
     ),
     "en": (
@@ -348,10 +351,13 @@ _SELECTOR_SYSTEM_PROMPTS = {
         "Return valid JSON only.\n"
         "{\n"
         "  \"selected\": [\n"
-        "    {\"candidate_id\": number, \"reason\": str},\n"
+        "    {\"candidate_id\": number, \"reason\": str, \"score\": number, \"breakdown\": {\"hook\": number, \"standalone\": number, \"quotability\": number, \"length\": number}},\n"
         "    ...\n"
         "  ]\n"
         "}\n"
+        "Rubric: hook = first 2s grab; standalone = understandable without the source video; "
+        "quotability = emotional/shareable/quotable payoff; length = fits a Short cleanly with no mid-thought cut.\n"
+        "hook, standalone, quotability, and length must each be 0-25; score must be their sum as a 0-100 number.\n"
         "Keep reason short; explain selection in one sentence.\n"
     ),
 }
@@ -922,6 +928,31 @@ def _prune_overlapping_selected_clips(candidates: List[Dict[str, Any]]) -> List[
     return pruned
 
 
+def _parse_selector_score(row: Dict[str, Any]) -> Tuple[Optional[int], Dict[str, int]]:
+    def _parse_int(value: Any, minimum: int, maximum: int) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            parsed = int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
+        if parsed < minimum or parsed > maximum:
+            return None
+        return parsed
+
+    score = _parse_int(row.get("score"), 0, 100)
+    raw_breakdown = row.get("breakdown")
+    if not isinstance(raw_breakdown, dict):
+        return score, {}
+
+    breakdown: Dict[str, int] = {}
+    for key in ("hook", "standalone", "quotability", "length"):
+        parsed = _parse_int(raw_breakdown.get(key), 0, 25)
+        if parsed is not None:
+            breakdown[key] = parsed
+    return score, breakdown
+
+
 def _select_clips_globally_with_llm(
     client,
     model: str,
@@ -986,6 +1017,9 @@ def _select_clips_globally_with_llm(
         seen_ids.add(candidate_id)
         base = dict(candidates[candidate_id - 1])
         base["selector_reason"] = str(row.get("reason") or "").strip()
+        score, score_breakdown = _parse_selector_score(row)
+        base["score"] = score
+        base["score_breakdown"] = score_breakdown
         chosen.append(base)
         if len(chosen) >= target_clip_count:
             break

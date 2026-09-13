@@ -1615,6 +1615,25 @@
     text-transform: uppercase;
     white-space: nowrap;
   }
+  .clip-card-score-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    padding: 4px 9px;
+    background: rgba(20, 184, 166, 0.16);
+    border: 1px solid rgba(45, 212, 191, 0.32);
+    color: #d7fff8;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .clip-card-score-badge.is-missing {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: rgba(226, 232, 240, 0.72);
+  }
   .clip-rail-detail .clip-card.is-active {
     display: block;
   }
@@ -3615,7 +3634,14 @@
                 <div class="clip-card-meta-status">
                   <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
                     {% if row.is_ai_suggestion %}
+                      {% set clip_score = row.get('score') %}
+                      {% set score_breakdown = row.get('score_breakdown') or {} %}
+                      {% set score_missing = clip_score is none %}
+                      {% set score_tooltip = 'Hook: ' ~ (score_breakdown.get('hook', '—')) ~ '/25\nStandalone: ' ~ (score_breakdown.get('standalone', '—')) ~ '/25\nQuotability: ' ~ (score_breakdown.get('quotability', '—')) ~ '/25\nLength: ' ~ (score_breakdown.get('length', '—')) ~ '/25' %}
                       <span class="clip-card-suggestion-badge">AI · Suggested</span>
+                      <span class="clip-card-score-badge{% if score_missing %} is-missing{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ score_tooltip }}">
+                        Score {{ clip_score if not score_missing else '—' }}
+                      </span>
                     {% endif %}
                     {% if row.db_publish_display %}
                       {% if row.db_publish_status == "published" %}

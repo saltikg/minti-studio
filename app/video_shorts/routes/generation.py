@@ -16447,6 +16447,8 @@ def _generate_clip_plan_for_video(
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
         plan_entry["origin"] = "ai"
+        plan_entry["score"] = clip.get("score")
+        plan_entry["score_breakdown"] = clip.get("score_breakdown")
         plan_entry["focus_categories"] = list(focus_categories)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
