@@ -36,6 +36,13 @@
     .admin-leads-watch-url { max-width:210px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#8ff3d8; text-decoration:none; }
     .admin-leads-watch-note { color:rgba(255,255,255,.58); font-size:.82rem; margin-top:4px; }
     .admin-leads-watch-error { color:#fca5a5; font-size:.82rem; margin-top:6px; }
+    .admin-leads-outreach { display:grid; gap:7px; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.08); min-width:280px; }
+    .admin-leads-outreach-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .admin-leads-outreach-select, .admin-leads-outreach-schedule-input { border:1px solid rgba(255,255,255,.18); border-radius:8px; background:rgba(255,255,255,.08); color:rgba(255,255,255,.9); padding:4px 8px; font-size:.82rem; }
+    .admin-leads-outreach-schedule-input { width:176px; }
+    .admin-leads-outreach-state, .admin-leads-outreach-feedback { color:rgba(255,255,255,.58); font-size:.82rem; }
+    .admin-leads-outreach-feedback.is-success { color:#8ff3d8; }
+    .admin-leads-outreach-feedback.is-error { color:#fca5a5; }
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
@@ -230,6 +237,49 @@
                       {% endif %}
                     </div>
                     <div class="admin-leads-watch-error" data-watch-page-error="{{ lead.id }}" hidden></div>
+                    <div
+                      class="admin-leads-outreach"
+                      data-outreach-row="{{ lead.id }}"
+                      data-share-link-id="{{ lead.watch_share_link_id or '' }}"
+                      data-send-template="{{ url_for('video_shorts_bp.admin_share_link_send_email', share_link_id=0) }}"
+                      data-schedule-template="{{ url_for('video_shorts_bp.admin_share_link_schedule_email', share_link_id=0) }}"
+                      data-cancel-template="{{ url_for('video_shorts_bp.admin_share_link_cancel_scheduled_email', share_link_id=0, schedule_id=0) }}">
+                      <div class="admin-leads-outreach-state" data-outreach-state>
+                        {% if lead.watch_emailed %}
+                          Sent {{ lead.watch_emailed_at_pst }}
+                        {% elif not lead.watch_share_link_id %}
+                          Create watch page first
+                        {% else %}
+                          Ready to send
+                        {% endif %}
+                      </div>
+                      <div class="admin-leads-outreach-row">
+                        <select class="admin-leads-outreach-select" data-outreach-select aria-label="Email template" {% if not lead.watch_share_link_id %}disabled{% endif %}>
+                          <option value="first:EN">First · EN</option>
+                          <option value="first:TR">First · TR</option>
+                          <option value="followup:EN">Follow-up · EN</option>
+                          <option value="followup:TR">Follow-up · TR</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-info" data-outreach-send {% if not lead.watch_share_link_id %}disabled{% endif %}>Send email</button>
+                      </div>
+                      <div class="admin-leads-outreach-row">
+                        <input type="datetime-local" class="admin-leads-outreach-schedule-input" data-outreach-schedule-input aria-label="Schedule email date and time" {% if not lead.watch_share_link_id %}disabled{% endif %}>
+                        <button type="button" class="btn btn-sm btn-outline-light" data-outreach-schedule {% if not lead.watch_share_link_id %}disabled{% endif %}>Schedule email</button>
+                      </div>
+                      <div class="admin-leads-outreach-state" data-outreach-schedule-state>
+                        {% if lead.watch_schedule_id %}
+                          Scheduled ({{ lead.watch_schedule_language }}, {{ lead.watch_schedule_stage }}) for {{ lead.watch_scheduled_at_pst }}
+                          {% if lead.watch_schedule_status == 'scheduled' %}
+                            <button
+                              type="button"
+                              class="btn btn-sm btn-outline-warning"
+                              data-outreach-cancel
+                              data-schedule-id="{{ lead.watch_schedule_id }}">Cancel schedule</button>
+                          {% endif %}
+                        {% endif %}
+                      </div>
+                      <div class="admin-leads-outreach-feedback" data-outreach-feedback></div>
+                    </div>
                   </div>
                 {% elif not lead.has_owner and not lead.converted %}
                   <span class="admin-leads-muted">Discovery only</span>
@@ -340,6 +390,7 @@
             }
             result.hidden = false;
             button.hidden = true;
+            enableOutreachForLead(leadId, data.share_link_id);
           } catch (err) {
             if (error) {
               error.textContent = err?.message || "Could not create watch page.";
@@ -365,6 +416,171 @@
             window.prompt("Copy watch page URL", url);
           }
         });
+      });
+
+      function endpointFromTemplate(template, shareLinkId, scheduleId = null) {
+        let endpoint = String(template || "");
+        endpoint = endpoint.replace("/0/", `/${shareLinkId}/`);
+        if (scheduleId !== null && scheduleId !== undefined) {
+          endpoint = endpoint.replace("/0/cancel", `/${scheduleId}/cancel`);
+        }
+        return endpoint;
+      }
+
+      function parseOutreachSelection(row) {
+        const select = row?.querySelector("[data-outreach-select]");
+        const rawValue = String(select?.value || "first:EN");
+        const [stageRaw, languageRaw] = rawValue.split(":");
+        return {
+          stage: stageRaw === "followup" ? "followup" : "first",
+          language: String(languageRaw || "EN").trim().toUpperCase() === "TR" ? "TR" : "EN",
+        };
+      }
+
+      function setOutreachFeedback(row, message, kind = "") {
+        const feedback = row?.querySelector("[data-outreach-feedback]");
+        if (!feedback) return;
+        feedback.textContent = message || "";
+        feedback.classList.remove("is-success", "is-error");
+        if (kind) feedback.classList.add(kind);
+      }
+
+      function setOutreachScheduleState(row, schedule) {
+        const state = row?.querySelector("[data-outreach-schedule-state]");
+        if (!state) return;
+        if (!schedule) {
+          state.textContent = "";
+          return;
+        }
+        state.textContent = `Scheduled (${schedule.language}, ${schedule.stage}) for ${schedule.scheduled_at_pst || schedule.scheduled_at}`;
+        if (schedule.status === "scheduled" && schedule.id) {
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.className = "btn btn-sm btn-outline-warning";
+          cancel.dataset.outreachCancel = "";
+          cancel.dataset.scheduleId = schedule.id;
+          cancel.textContent = "Cancel schedule";
+          state.append(" ");
+          state.appendChild(cancel);
+        }
+      }
+
+      function enableOutreachForLead(leadId, shareLinkId) {
+        const row = document.querySelector(`[data-outreach-row="${leadId}"]`);
+        if (!row || !shareLinkId) return;
+        row.dataset.shareLinkId = shareLinkId;
+        row.querySelectorAll("[data-outreach-select], [data-outreach-send], [data-outreach-schedule-input], [data-outreach-schedule]").forEach((control) => {
+          control.disabled = false;
+        });
+        const state = row.querySelector("[data-outreach-state]");
+        if (state) state.textContent = "Ready to send";
+        setOutreachFeedback(row, "");
+      }
+
+      document.addEventListener("click", async (event) => {
+        const sendButton = event.target.closest("[data-outreach-send]");
+        if (sendButton) {
+          const row = sendButton.closest("[data-outreach-row]");
+          const shareLinkId = String(row?.dataset.shareLinkId || "").trim();
+          if (!row || !shareLinkId || sendButton.disabled) return;
+          const { stage, language } = parseOutreachSelection(row);
+          const endpoint = endpointFromTemplate(row.dataset.sendTemplate, shareLinkId);
+          const originalLabel = sendButton.textContent;
+          sendButton.disabled = true;
+          sendButton.textContent = "Sending...";
+          setOutreachFeedback(row, "");
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+              body: JSON.stringify({ stage, language, confirm_resend: false }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+            }
+            const state = row.querySelector("[data-outreach-state]");
+            if (state) state.textContent = payload.emailed_at ? `Sent ${payload.emailed_at}` : `Sent (${language}, ${stage})`;
+            setOutreachFeedback(row, `Email sent (${language}, ${stage}).`, "is-success");
+          } catch (err) {
+            setOutreachFeedback(row, err?.message || "Email could not be sent.", "is-error");
+          } finally {
+            sendButton.disabled = false;
+            sendButton.textContent = originalLabel;
+          }
+          return;
+        }
+
+        const scheduleButton = event.target.closest("[data-outreach-schedule]");
+        if (scheduleButton) {
+          const row = scheduleButton.closest("[data-outreach-row]");
+          const shareLinkId = String(row?.dataset.shareLinkId || "").trim();
+          const scheduleInput = row?.querySelector("[data-outreach-schedule-input]");
+          if (!row || !shareLinkId || !scheduleInput || scheduleButton.disabled) return;
+          const scheduledAt = String(scheduleInput.value || "").trim();
+          if (!scheduledAt) {
+            setOutreachFeedback(row, "Choose a schedule time.", "is-error");
+            return;
+          }
+          const { stage, language } = parseOutreachSelection(row);
+          const endpoint = endpointFromTemplate(row.dataset.scheduleTemplate, shareLinkId);
+          const originalLabel = scheduleButton.textContent;
+          scheduleButton.disabled = true;
+          scheduleButton.textContent = "Scheduling...";
+          setOutreachFeedback(row, "");
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+              body: JSON.stringify({ stage, language, scheduled_at: scheduledAt }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+            }
+            setOutreachScheduleState(row, payload.schedule);
+            setOutreachFeedback(row, `Scheduled (${language}, ${stage}) for ${payload.schedule.scheduled_at_pst}.`, "is-success");
+          } catch (err) {
+            setOutreachFeedback(row, err?.message || "Email could not be scheduled.", "is-error");
+          } finally {
+            scheduleButton.disabled = false;
+            scheduleButton.textContent = originalLabel;
+          }
+          return;
+        }
+
+        const cancelButton = event.target.closest("[data-outreach-cancel]");
+        if (cancelButton) {
+          const row = cancelButton.closest("[data-outreach-row]");
+          const shareLinkId = String(row?.dataset.shareLinkId || "").trim();
+          const scheduleId = String(cancelButton.dataset.scheduleId || "").trim();
+          if (!row || !shareLinkId || !scheduleId || cancelButton.disabled) return;
+          const endpoint = endpointFromTemplate(row.dataset.cancelTemplate, shareLinkId, scheduleId);
+          const originalLabel = cancelButton.textContent;
+          cancelButton.disabled = true;
+          cancelButton.textContent = "Cancelling...";
+          setOutreachFeedback(row, "");
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+              body: JSON.stringify({}),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
+            }
+            setOutreachScheduleState(row, null);
+            setOutreachFeedback(row, "Scheduled email cancelled.", "is-success");
+          } catch (err) {
+            cancelButton.disabled = false;
+            cancelButton.textContent = originalLabel;
+            setOutreachFeedback(row, err?.message || "Schedule could not be cancelled.", "is-error");
+          }
+        }
       });
     });
   </script>

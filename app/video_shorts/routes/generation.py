@@ -10693,9 +10693,78 @@ def _load_admin_lead_records(
     normalized_search = (search_query or "").strip().lower()
 
     share_link_columns = table_columns(conn, "short_share_links")
+    outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
     has_emailed_at = "emailed_at" in share_link_columns
     has_share_links = bool(share_link_columns) and "autopilot_lead_id" in share_link_columns
+    has_outreach_scheduled_emails = bool(outreach_scheduled_email_columns)
     share_link_active_clause = "AND COALESCE(sl.archived, false) = false" if "archived" in share_link_columns else ""
+    watch_schedule_fields_sql = (
+        f"""
+            (
+                SELECT ose.id
+                FROM short_share_links sl
+                JOIN outreach_scheduled_emails ose
+                  ON ose.share_link_id = sl.id
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                  AND ose.status IN ('scheduled', 'processing')
+                ORDER BY ose.scheduled_at ASC, ose.id DESC
+                LIMIT 1
+            ) AS watch_schedule_id,
+            (
+                SELECT ose.stage
+                FROM short_share_links sl
+                JOIN outreach_scheduled_emails ose
+                  ON ose.share_link_id = sl.id
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                  AND ose.status IN ('scheduled', 'processing')
+                ORDER BY ose.scheduled_at ASC, ose.id DESC
+                LIMIT 1
+            ) AS watch_schedule_stage,
+            (
+                SELECT ose.language
+                FROM short_share_links sl
+                JOIN outreach_scheduled_emails ose
+                  ON ose.share_link_id = sl.id
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                  AND ose.status IN ('scheduled', 'processing')
+                ORDER BY ose.scheduled_at ASC, ose.id DESC
+                LIMIT 1
+            ) AS watch_schedule_language,
+            (
+                SELECT ose.scheduled_at
+                FROM short_share_links sl
+                JOIN outreach_scheduled_emails ose
+                  ON ose.share_link_id = sl.id
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                  AND ose.status IN ('scheduled', 'processing')
+                ORDER BY ose.scheduled_at ASC, ose.id DESC
+                LIMIT 1
+            ) AS watch_scheduled_at,
+            (
+                SELECT ose.status
+                FROM short_share_links sl
+                JOIN outreach_scheduled_emails ose
+                  ON ose.share_link_id = sl.id
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                  AND ose.status IN ('scheduled', 'processing')
+                ORDER BY ose.scheduled_at ASC, ose.id DESC
+                LIMIT 1
+            ) AS watch_schedule_status
+        """
+        if has_outreach_scheduled_emails
+        else """
+            NULL AS watch_schedule_id,
+            NULL AS watch_schedule_stage,
+            NULL AS watch_schedule_language,
+            NULL AS watch_scheduled_at,
+            NULL AS watch_schedule_status
+        """
+    )
     watch_link_fields_sql = (
         f"""
             (
@@ -10731,14 +10800,29 @@ def _load_admin_lead_records(
                   {share_link_active_clause}
                 ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
                 LIMIT 1
-            ) AS watch_raw_plan_entry_json
+            ) AS watch_raw_plan_entry_json,
+            (
+                SELECT {("sl.emailed_at" if has_emailed_at else "NULL")}
+                FROM short_share_links sl
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                LIMIT 1
+            ) AS watch_emailed_at,
+            {watch_schedule_fields_sql}
         """
         if has_share_links
         else """
             NULL AS watch_share_link_id,
             NULL AS watch_share_token,
             NULL AS watch_generated_video_id,
-            NULL AS watch_raw_plan_entry_json
+            NULL AS watch_raw_plan_entry_json,
+            NULL AS watch_emailed_at,
+            NULL AS watch_schedule_id,
+            NULL AS watch_schedule_stage,
+            NULL AS watch_schedule_language,
+            NULL AS watch_scheduled_at,
+            NULL AS watch_schedule_status
         """
     )
     emailed_share_link_exists_sql = """
@@ -10886,6 +10970,15 @@ def _load_admin_lead_records(
                 "watch_share_url": _share_public_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
                 "watch_generated_video_id": str(row[21] or "").strip(),
                 "watch_entry_score": _score_from_generated_raw_plan_entry(row[22]),
+                "watch_emailed_at": row[23],
+                "watch_emailed_at_pst": _format_datetime_pst(row[23]),
+                "watch_emailed": bool(row[23]),
+                "watch_schedule_id": int(row[24]) if row[24] is not None else None,
+                "watch_schedule_stage": str(row[25] or "").strip(),
+                "watch_schedule_language": str(row[26] or "").strip().upper(),
+                "watch_scheduled_at": row[27],
+                "watch_scheduled_at_pst": _format_datetime_pst(row[27]),
+                "watch_schedule_status": str(row[28] or "").strip(),
             }
         )
     return items, total_count
