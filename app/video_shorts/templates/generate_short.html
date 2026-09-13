@@ -3501,8 +3501,6 @@
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
                   {% set rail_score = row.get('score') %}
-                  {% set rail_score_breakdown = row.get('score_breakdown') or {} %}
-                  {% set rail_score_tooltip = 'Hook: ' ~ (rail_score_breakdown.get('hook', '—')) ~ '/25\nStandalone: ' ~ (rail_score_breakdown.get('standalone', '—')) ~ '/25\nQuotability: ' ~ (rail_score_breakdown.get('quotability', '—')) ~ '/25\nLength: ' ~ (rail_score_breakdown.get('length', '—')) ~ '/25' %}
                   <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}">
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
@@ -3573,7 +3571,7 @@
                       </span>
                     </span>
                     {% if rail_score is not none %}
-                      <span class="clip-rail-score-badge" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ rail_score_tooltip }}">{{ rail_score }}</span>
+                      <span class="clip-rail-score-badge" data-bs-toggle="tooltip" data-bs-placement="top" title="Quality Score — how strong this clip is as a Short (0-100)">{{ rail_score }}</span>
                     {% endif %}
                   </button>
                 {% endfor %}
@@ -3661,11 +3659,9 @@
                   <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
                     {% if row.is_ai_suggestion %}
                       {% set clip_score = row.get('score') %}
-                      {% set score_breakdown = row.get('score_breakdown') or {} %}
                       {% set score_missing = clip_score is none %}
-                      {% set score_tooltip = 'Hook: ' ~ (score_breakdown.get('hook', '—')) ~ '/25\nStandalone: ' ~ (score_breakdown.get('standalone', '—')) ~ '/25\nQuotability: ' ~ (score_breakdown.get('quotability', '—')) ~ '/25\nLength: ' ~ (score_breakdown.get('length', '—')) ~ '/25' %}
                       <span class="clip-card-suggestion-badge">AI · Suggested</span>
-                      <span class="clip-card-score-badge{% if score_missing %} is-missing{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ score_tooltip }}">
+                      <span class="clip-card-score-badge{% if score_missing %} is-missing{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="Quality Score — how strong this clip is as a Short (0-100)">
                         Score {{ clip_score if not score_missing else '—' }}
                       </span>
                     {% endif %}
