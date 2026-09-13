@@ -3545,7 +3545,7 @@
                   </div>
                 </div>
               </div>
-              <div class="clip-score-batch-controls" id="clip-score-batch-controls">
+              <div class="clip-score-batch-controls{% if not clip_rows %} d-none{% endif %}" id="clip-score-batch-controls">
                 {% set schedule_all_ns = namespace(count=0) %}
                 {% for candidate in clip_rows %}
                   {% set candidate_publish_status = (candidate.publish_status or '')|lower %}
@@ -8191,8 +8191,19 @@ const applyScoreThresholdDimming = (threshold) => {
   });
 };
 
+const updateClipBatchControlsVisibility = () => {
+  const { wrapper } = getScoreBatchControls();
+  if (!wrapper) {
+    return false;
+  }
+  const hasClips = document.querySelectorAll(".clip-rail-item").length > 0;
+  wrapper.classList.toggle("d-none", !hasClips);
+  return hasClips;
+};
+
 const updateScoreBatchControls = () => {
   const { input, value, button, label, spinner } = getScoreBatchControls();
+  const hasClips = updateClipBatchControlsVisibility();
   if (!input || !button || !label) {
     return;
   }
@@ -8204,7 +8215,7 @@ const updateScoreBatchControls = () => {
   applyScoreThresholdDimming(threshold);
   const count = getQualifyingScoreClipTargets(threshold).length;
   label.textContent = `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
-  button.disabled = scoreBatchState.running || count === 0;
+  button.disabled = !hasClips || scoreBatchState.running || count === 0;
   spinner?.classList.toggle("d-none", !scoreBatchState.running);
 };
 
