@@ -4335,7 +4335,8 @@
               </button>
               <div class="style-template-carousel-viewport">
                 <div class="style-template-grid" data-style-template-carousel-track>
-                  {% for template in style_templates %}
+                  {% set selected_style_preset = selected_subtitle_preset|string %}
+                  {% for template in style_templates if template.enabled is not defined or template.enabled or template.subtitle_preset == selected_style_preset %}
                     {% set preview_variant = template.key|replace('_', '-') %}
                     <button
                       type="button"

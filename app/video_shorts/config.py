@@ -575,6 +575,7 @@ STYLE_TEMPLATES = [
     {
         "key": "green_pop",
         "label": "Green Pop",
+        "enabled": False,
         "subtitle_preset": "green_pop",
         "title_engine": "pillow",
         "title_uppercase": True,
@@ -678,6 +679,7 @@ STYLE_TEMPLATES = [
     {
         "key": "word_highlight_flame",
         "label": "Flame Highlight",
+        "enabled": False,
         "subtitle_preset": "word_highlight_flame",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -690,6 +692,7 @@ STYLE_TEMPLATES = [
     {
         "key": "word_highlight_ocean",
         "label": "Ocean Highlight",
+        "enabled": False,
         "subtitle_preset": "word_highlight_ocean",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -702,6 +705,7 @@ STYLE_TEMPLATES = [
     {
         "key": "classic",
         "label": "Classic",
+        "enabled": False,
         "subtitle_preset": "classic_yellow",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -714,6 +718,7 @@ STYLE_TEMPLATES = [
     {
         "key": "bold_green",
         "label": "Bold Green",
+        "enabled": False,
         "subtitle_preset": "pop_green",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -726,6 +731,7 @@ STYLE_TEMPLATES = [
     {
         "key": "vivid_pink",
         "label": "Vivid Pink",
+        "enabled": False,
         "subtitle_preset": "pop_pink",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -738,6 +744,7 @@ STYLE_TEMPLATES = [
     {
         "key": "minimal_white",
         "label": "Minimal White",
+        "enabled": False,
         "subtitle_preset": "minimal_white",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -750,6 +757,7 @@ STYLE_TEMPLATES = [
     {
         "key": "deep_blue",
         "label": "Deep Blue",
+        "enabled": False,
         "subtitle_preset": "deep_blue",
         "title_engine": "drawtext",
         "title_uppercase": False,
@@ -762,6 +770,7 @@ STYLE_TEMPLATES = [
     {
         "key": "clean_black",
         "label": "Clean Black",
+        "enabled": False,
         "subtitle_preset": "clean_black",
         "title_engine": "drawtext",
         "title_uppercase": False,
