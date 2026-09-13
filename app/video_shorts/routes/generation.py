@@ -7863,20 +7863,25 @@ def update_clip_coachmark_preference():
 @video_shorts_bp.route("/shorts/settings/save-default", methods=["POST"])
 def save_short_editor_defaults():
     current_user = getattr(g, "vs_current_user", None)
-    user_id = str((current_user or {}).get("id") or "").strip()
-    if not user_id:
+    current_user_id = str((current_user or {}).get("id") or "").strip()
+    if not current_user_id:
         return jsonify({"success": False, "message": "Authentication required."}), 401
+    editor_context = _active_editor_context()
+    owner_user_id = str(editor_context.get("owner_user_id") or "").strip()
+    if not owner_user_id:
+        current_app.logger.warning("Cannot save short editor defaults without an editor owner.")
+        return jsonify({"success": False, "message": "No editor owner found."}), 400
     source = request.get_json(silent=True) if request.is_json else request.form
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
         save_user_preference(
-            user_id,
+            owner_user_id,
             SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         )
     except Exception as exc:
-        current_app.logger.warning("Failed to save short editor defaults for %s: %s", user_id, exc)
+        current_app.logger.warning("Failed to save short editor defaults for %s: %s", owner_user_id, exc)
         return jsonify({"success": False, "message": "Defaults could not be saved."}), 500
     return jsonify({"success": True, "defaults": payload})
 
