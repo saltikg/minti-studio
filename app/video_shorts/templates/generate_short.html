@@ -4469,6 +4469,7 @@
           <label class="form-label fw-semibold" for="schedule-all-interval-input">Interval (hours)</label>
           <input type="number" class="form-control" id="schedule-all-interval-input" min="1" step="1" value="10">
         </div>
+        <div class="clip-schedule-all-feedback text-white-50 mb-2" id="schedule-all-eligibility" aria-live="polite"></div>
         <div class="clip-schedule-all-preview text-white-50" id="schedule-all-preview" aria-live="polite"></div>
         <div class="clip-schedule-all-feedback text-white-50 d-none mt-3" id="schedule-all-feedback" aria-live="polite"></div>
       </div>
@@ -8346,6 +8347,7 @@ const scheduleAllElements = () => ({
   modal: document.getElementById("scheduleAllClipsModal"),
   startInput: document.getElementById("schedule-all-start-input"),
   intervalInput: document.getElementById("schedule-all-interval-input"),
+  eligibility: document.getElementById("schedule-all-eligibility"),
   preview: document.getElementById("schedule-all-preview"),
   feedback: document.getElementById("schedule-all-feedback"),
   confirm: document.getElementById("schedule-all-confirm-btn"),
@@ -8381,6 +8383,10 @@ const formatDateInUserTimeZone = (date) => {
   }
   return `${date.getFullYear()}-${padSchedulePart(date.getMonth() + 1)}-${padSchedulePart(date.getDate())}T${padSchedulePart(date.getHours())}:${padSchedulePart(date.getMinutes())}`;
 };
+
+const getScheduleMinStartValue = () => formatDateInUserTimeZone(new Date(Date.now() + 60 * 60 * 1000));
+
+const getScheduleSubmitGuardValue = () => formatDateInUserTimeZone(new Date(Date.now() + 15 * 60 * 1000));
 
 const parseScheduleLocalValue = (value) => {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
@@ -8453,22 +8459,44 @@ const getScheduleAllEligibleClips = () => {
     ));
 };
 
+const getScheduleAllNotCreatedCount = () => {
+  return Array.from(document.querySelectorAll(".clip-rail-item"))
+    .filter((railItem) => String(railItem.dataset.status || "").trim().toLowerCase() !== "created")
+    .length;
+};
+
 const updateScheduleAllPreview = () => {
-  const { startInput, intervalInput, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
+  const { startInput, intervalInput, eligibility, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
   if (!startInput || !intervalInput || !preview || !confirm || !confirmLabel) {
     return;
   }
   const clips = getScheduleAllEligibleClips();
+  const notCreatedCount = getScheduleAllNotCreatedCount();
   const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
   intervalInput.value = intervalHours;
-  const nowValue = formatDateInUserTimeZone(new Date());
-  startInput.min = nowValue;
+  const minStartValue = getScheduleMinStartValue();
+  startInput.min = minStartValue;
   const startValue = String(startInput.value || "").trim();
-  const validStart = Boolean(parseScheduleLocalValue(startValue)) && startValue >= nowValue;
+  const validStart = Boolean(parseScheduleLocalValue(startValue)) && startValue >= minStartValue;
+  if (eligibility) {
+    if (!clips.length) {
+      eligibility.textContent = "No created clips to schedule yet — use Create clips first.";
+      eligibility.classList.remove("text-white-50");
+      eligibility.classList.add("text-warning");
+    } else {
+      const createdLabel = `${clips.length} created ${clips.length === 1 ? "clip" : "clips"}`;
+      const skippedLabel = notCreatedCount
+        ? ` ${notCreatedCount} ${notCreatedCount === 1 ? "clip is" : "clips are"} not yet created and will be skipped — create ${notCreatedCount === 1 ? "it" : "them"} first.`
+        : "";
+      eligibility.textContent = `Scheduling ${createdLabel}.${skippedLabel}`;
+      eligibility.classList.remove("text-warning");
+      eligibility.classList.add("text-white-50");
+    }
+  }
   if (!clips.length) {
-    preview.innerHTML = '<div class="text-warning">No created, unscheduled clips are eligible.</div>';
+    preview.innerHTML = '<div class="text-warning">No created clips to schedule yet — use Create clips first.</div>';
   } else if (!validStart) {
-    preview.innerHTML = '<div class="text-warning">Choose a future start time.</div>';
+    preview.innerHTML = '<div class="text-warning">Start time must be in the future.</div>';
   } else {
     preview.innerHTML = clips.map((clip, index) => {
       const scheduledAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
@@ -8538,9 +8566,21 @@ const runScheduleAllClips = async () => {
   const clips = getScheduleAllEligibleClips();
   const startValue = String(startInput.value || "").trim();
   const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
-  if (!clips.length || !parseScheduleLocalValue(startValue) || startValue < formatDateInUserTimeZone(new Date())) {
+  const guardValue = getScheduleSubmitGuardValue();
+  if (!clips.length || !parseScheduleLocalValue(startValue) || startValue < guardValue) {
+    if (startValue && startValue < guardValue) {
+      setScheduleAllFeedback("Start time must be in the future.", "text-warning");
+    }
     updateScheduleAllPreview();
     return;
+  }
+  for (let index = 0; index < clips.length; index += 1) {
+    const publishAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
+    if (!publishAt || publishAt < guardValue) {
+      setScheduleAllFeedback("Start time must be in the future.", "text-warning");
+      updateScheduleAllPreview();
+      return;
+    }
   }
   scheduleAllState.running = true;
   updateScheduleAllPreview();
@@ -8580,10 +8620,10 @@ const initScheduleAllClipsControls = () => {
       return;
     }
     setScheduleAllFeedback("");
-    const nowValue = formatDateInUserTimeZone(new Date());
-    startInput.min = nowValue;
-    if (!startInput.value || startInput.value < nowValue) {
-      startInput.value = nowValue;
+    const minStartValue = getScheduleMinStartValue();
+    startInput.min = minStartValue;
+    if (!startInput.value || startInput.value < minStartValue) {
+      startInput.value = minStartValue;
     }
     if (!intervalInput.value) {
       intervalInput.value = "10";
