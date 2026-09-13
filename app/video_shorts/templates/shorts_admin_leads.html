@@ -146,6 +146,15 @@
             <tr>
               <td>
                 <strong>{{ lead.creator_name }}</strong>
+                {% set effective_recipient_name = lead.recipient_name or lead.creator_name %}
+                <div class="admin-leads-muted admin-leads-email-row">
+                  <span>Email greeting: {{ effective_recipient_name }}</span>
+                  <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-recipient-name-edit="{{ lead.id }}" aria-label="Edit email greeting name" title="Edit email greeting name"><i class="bi bi-pencil" aria-hidden="true"></i></button>
+                </div>
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_update_lead_recipient_name', lead_id=lead.id) }}" class="admin-leads-email-form" data-recipient-name-form="{{ lead.id }}">
+                  <input type="text" name="recipient_name" class="form-control form-control-sm" value="{{ effective_recipient_name }}" placeholder="Email greeting name" aria-label="Email greeting name">
+                  <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                </form>
                 {% if not lead.has_owner and not lead.converted %}
                   <div class="admin-leads-muted admin-leads-email-row">
                     <span>No email — discovery</span>
@@ -251,6 +260,14 @@
           if (!form) return;
           form.classList.add("is-open");
           form.querySelector("input[name='creator_email']")?.focus();
+        });
+      });
+      document.querySelectorAll("[data-recipient-name-edit]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const form = document.querySelector(`[data-recipient-name-form="${button.dataset.recipientNameEdit}"]`);
+          if (!form) return;
+          form.classList.add("is-open");
+          form.querySelector("input[name='recipient_name']")?.focus();
         });
       });
     });

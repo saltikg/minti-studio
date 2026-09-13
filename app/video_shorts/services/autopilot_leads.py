@@ -37,6 +37,7 @@ def ensure_autopilot_leads_schema(conn) -> None:
             id VARCHAR PRIMARY KEY,
             creator_email VARCHAR,
             creator_name VARCHAR,
+            recipient_name VARCHAR,
             subscriber_count BIGINT,
             youtube_channel_id VARCHAR NOT NULL,
             channel_id BIGINT,
@@ -54,6 +55,12 @@ def ensure_autopilot_leads_schema(conn) -> None:
         ON {AUTOPILOT_LEADS_TABLE}(youtube_channel_id)
         """
     )
+    cols = table_columns(conn, AUTOPILOT_LEADS_TABLE)
+    if "recipient_name" not in cols:
+        try:
+            conn.execute(f"ALTER TABLE {AUTOPILOT_LEADS_TABLE} ADD COLUMN recipient_name VARCHAR")
+        except Exception:
+            pass
     conn.execute(
         f"""
         CREATE INDEX IF NOT EXISTS idx_{AUTOPILOT_LEADS_TABLE}_user_brand
@@ -69,6 +76,7 @@ def _require_autopilot_leads_table(conn) -> None:
         "id",
         "creator_email",
         "creator_name",
+        "recipient_name",
         "subscriber_count",
         "youtube_channel_id",
         "channel_id",

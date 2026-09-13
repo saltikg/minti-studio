@@ -7046,6 +7046,7 @@ def admin_operation_create_lead_share_link(video_pk: int):
         return jsonify({"success": False, "message": "Generated short id is required."}), 400
     if not lead["creator_email"]:
         return jsonify({"success": False, "message": "This lead needs an email before a share link can be created."}), 400
+    lead_recipient_name = str(lead.get("recipient_name") or "").strip() or lead["creator_name"]
 
     conn = get_db()
     try:
@@ -7135,7 +7136,7 @@ def admin_operation_create_lead_share_link(video_pk: int):
                     trial_days = ?
                 WHERE id = ?
                 """,
-                [lead["creator_name"], lead["creator_email"], lead["id"], trial_days, existing_row[0]],
+                [lead_recipient_name, lead["creator_email"], lead["id"], trial_days, existing_row[0]],
             )
             share_link_id = int(existing_row[0])
             share_token = str(existing_row[1] or "").strip()
@@ -7154,7 +7155,7 @@ def admin_operation_create_lead_share_link(video_pk: int):
                     )
                     VALUES (?, ?, ?, ?, ?, ?, now())
                     """,
-                    [str(generated_row[0]), candidate, lead["creator_name"], lead["creator_email"], lead["id"], trial_days],
+                    [str(generated_row[0]), candidate, lead_recipient_name, lead["creator_email"], lead["id"], trial_days],
                 )
                 share_token = candidate
                 break
@@ -10653,6 +10654,7 @@ def _load_admin_lead_records(
         SELECT
             l.id,
             l.creator_name,
+            l.recipient_name,
             l.creator_email,
             l.youtube_channel_id,
             l.subscriber_count,
@@ -10679,32 +10681,33 @@ def _load_admin_lead_records(
 
     items: List[Dict[str, Any]] = []
     for row in rows:
-        has_owner = bool(str(row[5] or "").strip() and str(row[6] or "").strip())
-        generated_count = int(row[15] or 0)
+        has_owner = bool(str(row[6] or "").strip() and str(row[7] or "").strip())
+        generated_count = int(row[16] or 0)
         items.append(
             {
                 "id": str(row[0] or ""),
                 "creator_name": str(row[1] or "").strip() or "Unknown creator",
-                "creator_email": str(row[2] or "").strip(),
-                "youtube_channel_id": str(row[3] or "").strip(),
-                "subscriber_count": int(row[4]) if row[4] is not None else None,
-                "subscriber_label": _format_compact_number(row[4]),
-                "owner_user_id": str(row[5] or "").strip(),
-                "brand_id": str(row[6] or "").strip(),
-                "first_video_id": int(row[7]) if row[7] is not None else None,
+                "recipient_name": str(row[2] or "").strip(),
+                "creator_email": str(row[3] or "").strip(),
+                "youtube_channel_id": str(row[4] or "").strip(),
+                "subscriber_count": int(row[5]) if row[5] is not None else None,
+                "subscriber_label": _format_compact_number(row[5]),
+                "owner_user_id": str(row[6] or "").strip(),
+                "brand_id": str(row[7] or "").strip(),
+                "first_video_id": int(row[8]) if row[8] is not None else None,
                 "has_owner": has_owner,
                 "lead_type_label": "Real lead" if has_owner else "Discovery",
-                "created_at_pst": _format_datetime_pst(row[8]),
-                "converted_at_pst": _format_datetime_pst(row[9]),
-                "channel_name": str(row[10] or "").strip() or "YouTube channel",
-                "video_title": str(row[11] or "").strip() or "Source video unavailable",
-                "youtube_video_id": str(row[12] or "").strip(),
-                "thumbnail_url": str(row[13] or "").strip(),
-                "download_status": str(row[14] or "").strip().lower() or "pending",
+                "created_at_pst": _format_datetime_pst(row[9]),
+                "converted_at_pst": _format_datetime_pst(row[10]),
+                "channel_name": str(row[11] or "").strip() or "YouTube channel",
+                "video_title": str(row[12] or "").strip() or "Source video unavailable",
+                "youtube_video_id": str(row[13] or "").strip(),
+                "thumbnail_url": str(row[14] or "").strip(),
+                "download_status": str(row[15] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "email_sent": bool(row[16]),
-                "converted": bool(row[9]) or str(row[17] or "").strip().lower() == "autopilot",
+                "email_sent": bool(row[17]),
+                "converted": bool(row[10]) or str(row[18] or "").strip().lower() == "autopilot",
             }
         )
     return items, total_count
@@ -12207,6 +12210,62 @@ def admin_provision_discovery_lead_email(lead_id: str):
     return redirect(url_for("video_shorts_bp.admin_leads"))
 
 
+@video_shorts_bp.route("/admin/leads/<lead_id>/recipient-name", methods=["POST"])
+@require_admin
+def admin_update_lead_recipient_name(lead_id: str):
+    """Save the greeting name used when future lead share links are created."""
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
+    recipient_name = str(payload.get("recipient_name") or "").strip()
+    stored_value = recipient_name or None
+    wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest" or request.is_json
+
+    conn = get_db()
+    try:
+        if "recipient_name" not in table_columns(conn, "autopilot_leads"):
+            if wants_json:
+                return jsonify({"ok": False, "error": "recipient_name_unavailable"}), 503
+            flash("Greeting-name storage is not available until the database migration is applied.", "error")
+            return redirect(url_for("video_shorts_bp.admin_leads"))
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM autopilot_leads
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [str(lead_id or "").strip()],
+        ).fetchone()
+        if not row:
+            if wants_json:
+                return jsonify({"ok": False, "error": "not_found"}), 404
+            abort(404)
+        conn.execute(
+            """
+            UPDATE autopilot_leads
+               SET recipient_name = ?
+             WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [stored_value, str(lead_id or "").strip()],
+        )
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to update recipient_name for autopilot lead %s", lead_id)
+        if wants_json:
+            return jsonify({"ok": False, "error": "update_failed"}), 500
+        flash("Greeting name could not be saved.", "error")
+    finally:
+        conn.close()
+
+    if wants_json:
+        return jsonify({"ok": True, "lead_id": str(lead_id or "").strip(), "recipient_name": recipient_name})
+    flash("Greeting name saved.", "success")
+    return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
 @video_shorts_bp.route("/admin/operation/select", methods=["POST"])
 @require_admin
 def admin_operation_select():
@@ -12270,7 +12329,7 @@ def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     try:
         row = conn.execute(
             """
-            SELECT l.id, l.creator_name, l.creator_email, b.name
+            SELECT l.id, l.creator_name, l.recipient_name, l.creator_email, b.name
             FROM autopilot_leads l
             JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
             WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
@@ -12288,8 +12347,9 @@ def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     return {
         "id": str(row[0]),
         "creator_name": str(row[1] or "").strip() or "Unknown creator",
-        "creator_email": str(row[2] or "").strip(),
-        "brand_name": str(row[3] or "").strip() or "Unnamed brand",
+        "recipient_name": str(row[2] or "").strip(),
+        "creator_email": str(row[3] or "").strip(),
+        "brand_name": str(row[4] or "").strip() or "Unnamed brand",
     }
 
 
