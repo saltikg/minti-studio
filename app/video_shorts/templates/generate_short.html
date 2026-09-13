@@ -3418,8 +3418,9 @@
                       class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
                       id="ai-generate-btn"
                       {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
+                      <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                       <i class="bi bi-stars" aria-hidden="true"></i>
-                      Suggest clips with AI
+                      <span class="btn-label">Suggest clips with AI</span>
                     </button>
                     <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
                   </div>
@@ -5354,6 +5355,9 @@ document.addEventListener("DOMContentLoaded", () => {
   let consecutivePollFailures = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 8;
   let activeButton = null;
+  let activeButtonLabel = null;
+  let activeButtonSpinner = null;
+  let activeButtonIcon = null;
 
   const syncFocusCategories = () => {
     if (!focusInput) {
@@ -5438,8 +5442,20 @@ document.addEventListener("DOMContentLoaded", () => {
     consecutivePollFailures = 0;
     if (activeButton) {
       activeButton.removeAttribute("disabled");
-      activeButton = null;
     }
+    if (activeButtonSpinner) {
+      activeButtonSpinner.classList.add("d-none");
+    }
+    if (activeButtonIcon) {
+      activeButtonIcon.classList.remove("d-none");
+    }
+    if (activeButtonLabel) {
+      activeButtonLabel.textContent = activeButtonLabel.dataset.defaultText || "Suggest clips with AI";
+    }
+    activeButton = null;
+    activeButtonLabel = null;
+    activeButtonSpinner = null;
+    activeButtonIcon = null;
   };
 
   if (initialBlockReason === "cap" && initialBlockMessage) {
@@ -5507,6 +5523,21 @@ document.addEventListener("DOMContentLoaded", () => {
     running = true;
     if (activeButton) {
       activeButton.setAttribute("disabled", "disabled");
+      activeButtonLabel = activeButton.querySelector(".btn-label");
+      activeButtonSpinner = activeButton.querySelector(".spinner-border");
+      activeButtonIcon = activeButton.querySelector(".bi");
+      if (activeButtonLabel && !activeButtonLabel.dataset.defaultText) {
+        activeButtonLabel.dataset.defaultText = activeButtonLabel.textContent || "Suggest clips with AI";
+      }
+      if (activeButtonSpinner) {
+        activeButtonSpinner.classList.remove("d-none");
+      }
+      if (activeButtonIcon) {
+        activeButtonIcon.classList.add("d-none");
+      }
+      if (activeButtonLabel) {
+        activeButtonLabel.textContent = submitter?.id === "ai-generate-btn" ? "Suggesting..." : "Starting...";
+      }
     }
 
     const formData = new FormData(form);
