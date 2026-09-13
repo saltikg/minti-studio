@@ -7068,7 +7068,17 @@ def admin_operation_create_lead_share_link(video_pk: int):
               AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND l.first_video_id = yv.id
-              AND (l.channel_id IS NULL OR l.channel_id = yv.channel_id)
+              AND (
+                    l.channel_id IS NULL
+                    OR l.channel_id = yv.channel_id
+                    OR yv.channel_id IN (
+                        SELECT c.channel_id
+                        FROM youtube_channels c
+                        WHERE CAST(c.owner_user_id AS VARCHAR) = CAST(yv.owner_user_id AS VARCHAR)
+                          AND CAST(c.brand_id AS VARCHAR) = CAST(yv.brand_id AS VARCHAR)
+                          AND lower(coalesce(c.channel_url, '')) = 'local://uploads'
+                    )
+                  )
               AND l.converted_at IS NULL
             LIMIT 1
             """,
