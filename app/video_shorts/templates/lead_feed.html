@@ -186,6 +186,17 @@
         font-size: 0.92rem;
         text-decoration: none;
       }
+      .lead-feed-consent {
+        margin: 10px 0 0;
+        color: rgba(226, 232, 240, 0.62);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
+      .lead-feed-consent a {
+        color: rgba(226, 232, 240, 0.82);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
       .lead-feed-error,
       .lead-feed-status {
         margin-top: 12px;
@@ -312,6 +323,7 @@
                   <h2 class="lead-feed-card-title">15 Shorts/mo — done for you</h2>
                   <p class="lead-feed-card-copy">You make long videos. We turn them into Shorts.</p>
                   <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start free →</button>
+                  <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
                   <div class="lead-feed-error d-none" data-checkout-error></div>
                 </div>
@@ -321,6 +333,7 @@
                 <div class="lead-feed-card-inner">
                   <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
                   <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
+                  <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
                   <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
                   <div class="lead-feed-error d-none" data-checkout-error></div>
@@ -332,6 +345,7 @@
             <div class="lead-feed-card-inner">
               <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
               <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
+              <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
               <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
               <div class="lead-feed-status d-none" data-checkout-status></div>
               <div class="lead-feed-error d-none" data-checkout-error></div>
