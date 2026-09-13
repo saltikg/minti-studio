@@ -1432,6 +1432,12 @@
     overflow: visible;
     padding-right: 2px;
   }
+  .clip-rail-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
   .clip-rail-item {
     position: relative;
     display: grid;
@@ -1445,6 +1451,10 @@
     background: rgba(255, 255, 255, 0.03);
     color: inherit;
     text-align: left;
+  }
+  .clip-rail-item.is-below-threshold {
+    opacity: 0.46;
+    filter: saturate(0.65);
   }
   .clip-rail-item.is-ai-suggestion {
     border: 1px dashed rgba(125, 211, 252, 0.64);
@@ -1547,6 +1557,25 @@
     line-height: 1;
     font-variant-numeric: tabular-nums;
     box-shadow: 0 12px 28px rgba(37, 99, 235, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  }
+  .clip-rail-delete-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid rgba(248, 113, 113, 0.36);
+    background: rgba(127, 29, 29, 0.2);
+    color: rgba(254, 202, 202, 0.95);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .clip-rail-delete-btn:hover:not(:disabled) {
+    background: rgba(220, 38, 38, 0.34);
+    color: #fff;
+  }
+  .clip-rail-delete-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.42;
   }
   .clip-rail-status {
     display: inline-flex;
@@ -3416,7 +3445,7 @@
           data-plan-status-url="{{ editor_url('create_clip_plan_status', video_pk=video.id) }}"
           data-plan-block-reason="{{ plan_generation_block_reason }}"
           data-plan-block-message="{{ plan_generation_block_message }}">
-      <input type="hidden" name="focus_categories" id="ai-focus-categories-input" value="{{ selected_focus_categories|join(',') }}">
+      <input type="hidden" name="focus_categories" id="ai-focus-categories-input" value="">
     </form>
   </div>
 
@@ -3514,24 +3543,6 @@
                     </button>
                     <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
                   </div>
-                  {% if ai_suggested_clip_count %}
-                    <form method="post" action="{{ editor_url('delete_ai_suggestions', video_pk=video.id) }}" onsubmit="return window.confirm('Remove all AI-suggested clips?');">
-                      <button
-                        type="submit"
-                        class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1">
-                        <i class="bi bi-trash3" aria-hidden="true"></i>
-                        Remove {{ ai_suggested_clip_count }} AI suggestions
-                      </button>
-                    </form>
-                  {% endif %}
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                    id="clip-schedule-all-btn"
-                    {% if not youtube_connected %}disabled title="Connect YouTube first"{% endif %}>
-                    <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
-                    Schedule all
-                  </button>
                 </div>
               </div>
               <div class="clip-score-batch-controls" id="clip-score-batch-controls">
@@ -3550,27 +3561,16 @@
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <span class="btn-label">Create 0 clips (score ≥ 70)</span>
                 </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                  id="clip-schedule-all-btn"
+                  data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
+                  {% if not youtube_connected %}disabled title="Connect YouTube first"{% endif %}>
+                  <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
+                  Schedule all
+                </button>
                 <div class="clip-score-batch-feedback text-white-50 d-none" id="clip-score-batch-feedback" aria-live="polite"></div>
-              </div>
-              <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-                {% set focus_category_label_map = {
-                  "tez": "Thesis",
-                  "ikaz": "Warning",
-                  "vecize": "Maxim",
-                  "hikaye": "Story",
-                  "cozum": "Solution",
-                  "duygu": "Emotion"
-                } %}
-                {% for item in focus_category_options %}
-                  <label class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-2 px-2 py-1">
-                    <input
-                      type="checkbox"
-                      class="form-check-input mt-0 ai-focus-category-checkbox"
-                      value="{{ item.key }}"
-                      {% if item.key in selected_focus_categories %}checked{% endif %}>
-                    <span>{{ focus_category_label_map.get(item.key, item.label) }}</span>
-                  </label>
-                {% endfor %}
               </div>
               <div class="clip-rail-list" id="clip-rail-list">
                 {% for row in clip_rows %}
@@ -3578,6 +3578,10 @@
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
                   {% set rail_score = row.get('score') %}
+                  {% set rail_publish_status = (row.publish_status or '')|lower %}
+                  {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
+                  {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
+                  <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
                   <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-filename="{{ row.video_filename or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
@@ -3651,6 +3655,18 @@
                       <span class="clip-rail-score-badge" data-bs-toggle="tooltip" data-bs-placement="top" title="Quality Score — how strong this clip is as a Short (0-100)">{{ rail_score }}</span>
                     {% endif %}
                   </button>
+                  <button
+                    type="button"
+                    class="clip-rail-delete-btn"
+                    data-delete-clip-btn
+                    data-plan-index="{{ row.plan_index }}"
+                    data-delete-url="{{ editor_url('delete_clip_plan_entry', video_pk=video.id, plan_index=row.plan_index) }}"
+                    aria-label="Delete clip"
+                    title="{{ 'Scheduled/published on YouTube — remove it there first.' if rail_delete_locked else 'Delete clip' }}"
+                    {% if rail_delete_locked %}disabled{% endif %}>
+                    <i class="bi bi-trash3" aria-hidden="true"></i>
+                  </button>
+                  </div>
                 {% endfor %}
               </div>
             </div>
@@ -7269,6 +7285,8 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       }
       initGenerateClipForms();
       initScoreThresholdBatchControls();
+      initScheduleAllClipsControls();
+      initClipDeleteButtons();
       initDeleteClipAjax();
       initRemovePlanEntryAjax();
       initClipTitleRowAjax();
@@ -8144,6 +8162,17 @@ const getQualifyingScoreClipTargets = (threshold) => {
     ));
 };
 
+const applyScoreThresholdDimming = (threshold) => {
+  document.querySelectorAll(".clip-rail-item").forEach((railItem) => {
+    if (railItem.dataset.aiSuggestion !== "1") {
+      railItem.classList.remove("is-below-threshold");
+      return;
+    }
+    const score = Number(railItem.dataset.score);
+    railItem.classList.toggle("is-below-threshold", !Number.isFinite(score) || score < threshold);
+  });
+};
+
 const updateScoreBatchControls = () => {
   const { input, value, button, label, spinner } = getScoreBatchControls();
   if (!input || !button || !label) {
@@ -8154,6 +8183,7 @@ const updateScoreBatchControls = () => {
   if (value) {
     value.textContent = threshold;
   }
+  applyScoreThresholdDimming(threshold);
   const count = getQualifyingScoreClipTargets(threshold).length;
   label.textContent = `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
   button.disabled = scoreBatchState.running || count === 0;
@@ -8465,12 +8495,30 @@ const getScheduleAllNotCreatedCount = () => {
     .length;
 };
 
+const updateScheduleAllButtonState = () => {
+  const { button } = scheduleAllElements();
+  if (!button) {
+    return;
+  }
+  const youtubeConnected = button.dataset.youtubeConnected === "1";
+  const eligibleCount = getScheduleAllEligibleClips().length;
+  button.disabled = scheduleAllState.running || !youtubeConnected || eligibleCount === 0;
+  if (!youtubeConnected) {
+    button.title = "Connect YouTube first";
+  } else if (!eligibleCount) {
+    button.title = "No created clips to schedule yet — use Create clips first.";
+  } else {
+    button.title = "";
+  }
+};
+
 const updateScheduleAllPreview = () => {
   const { startInput, intervalInput, eligibility, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
   if (!startInput || !intervalInput || !preview || !confirm || !confirmLabel) {
     return;
   }
   const clips = getScheduleAllEligibleClips();
+  updateScheduleAllButtonState();
   const notCreatedCount = getScheduleAllNotCreatedCount();
   const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
   intervalInput.value = intervalHours;
@@ -8494,7 +8542,7 @@ const updateScheduleAllPreview = () => {
     }
   }
   if (!clips.length) {
-    preview.innerHTML = '<div class="text-warning">No created clips to schedule yet — use Create clips first.</div>';
+    preview.innerHTML = "";
   } else if (!validStart) {
     preview.innerHTML = '<div class="text-warning">Start time must be in the future.</div>';
   } else {
@@ -8512,6 +8560,11 @@ const updateScheduleAllPreview = () => {
 const markClipAsScheduled = (clip, publishAt) => {
   clip.railItem.dataset.publishStatus = "scheduled";
   clip.railItem.dataset.publishAt = publishAt;
+  const deleteBtn = document.querySelector(`[data-delete-clip-btn][data-plan-index="${CSS.escape(String(clip.planIndex || ""))}"]`);
+  if (deleteBtn) {
+    deleteBtn.disabled = true;
+    deleteBtn.title = "Scheduled/published on YouTube — remove it there first.";
+  }
   const railStatus = clip.railItem.querySelector(".clip-rail-status");
   const railStatusText = clip.railItem.querySelector(".clip-rail-status-text");
   if (railStatus && railStatusText) {
@@ -8615,6 +8668,12 @@ const initScheduleAllClipsControls = () => {
     return;
   }
   const modalInstance = typeof bootstrap !== "undefined" ? bootstrap.Modal.getOrCreateInstance(modal) : null;
+  if (button.dataset.scheduleAllBound === "1") {
+    updateScheduleAllButtonState();
+    updateScheduleAllPreview();
+    return;
+  }
+  button.dataset.scheduleAllBound = "1";
   button.addEventListener("click", () => {
     if (button.disabled) {
       return;
@@ -8631,16 +8690,68 @@ const initScheduleAllClipsControls = () => {
     updateScheduleAllPreview();
     modalInstance?.show();
   });
-  startInput.addEventListener("input", () => {
-    setScheduleAllFeedback("");
-    updateScheduleAllPreview();
+  if (modal.dataset.scheduleAllModalBound !== "1") {
+    modal.dataset.scheduleAllModalBound = "1";
+    startInput.addEventListener("input", () => {
+      setScheduleAllFeedback("");
+      updateScheduleAllPreview();
+    });
+    intervalInput.addEventListener("input", () => {
+      setScheduleAllFeedback("");
+      updateScheduleAllPreview();
+    });
+    confirm.addEventListener("click", runScheduleAllClips);
+    modal.addEventListener("show.bs.modal", updateScheduleAllPreview);
+  }
+  updateScheduleAllButtonState();
+};
+
+const initClipDeleteButtons = () => {
+  document.querySelectorAll("[data-delete-clip-btn]").forEach((button) => {
+    if (button.dataset.deleteClipBound === "1") {
+      return;
+    }
+    button.dataset.deleteClipBound = "1";
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) {
+        return;
+      }
+      const planIndex = String(button.dataset.planIndex || "").trim();
+      const url = String(button.dataset.deleteUrl || "").trim();
+      if (!planIndex || !url) {
+        return;
+      }
+      if (!window.confirm("Delete this clip?")) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || "Clip could not be deleted.");
+        }
+        const row = button.closest(".clip-rail-row");
+        row?.remove();
+        const card = getClipCardByPlanIndex(planIndex);
+        card?.remove();
+        updateScoreBatchControls();
+        updateScheduleAllButtonState();
+        setScoreBatchFeedback(payload.message || "Clip deleted.", "text-success");
+      } catch (error) {
+        button.disabled = false;
+        setScoreBatchFeedback((error && error.message) ? error.message : "Clip could not be deleted.", "text-warning");
+      }
+    });
   });
-  intervalInput.addEventListener("input", () => {
-    setScheduleAllFeedback("");
-    updateScheduleAllPreview();
-  });
-  confirm.addEventListener("click", runScheduleAllClips);
-  modal.addEventListener("show.bs.modal", updateScheduleAllPreview);
 };
 
 const initGenerateClipForms = () => {
@@ -10004,6 +10115,7 @@ const initLongVideoDeleteButtons = () => {
 document.addEventListener("DOMContentLoaded", () => {
   initScoreThresholdBatchControls();
   initScheduleAllClipsControls();
+  initClipDeleteButtons();
   initGenerateClipForms();
   initClipTitleRowAjax();
   bindClipTimeInputFocus();

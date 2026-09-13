@@ -13567,20 +13567,7 @@ def remove_plan_entry(video_pk):
         flash(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
-    target_entry = None
-    if plan_index_raw:
-        for entry in plan_entries:
-            entry_index = entry.get("plan_index")
-            if entry_index is None:
-                continue
-            if str(entry_index) == plan_index_raw:
-                target_entry = entry
-                break
-    if not target_entry and filename:
-        for entry in plan_entries:
-            if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
-                target_entry = entry
-                break
+    target_entry = _find_plan_entry(plan_entries, plan_index_raw=plan_index_raw, filename=filename)
 
     if not target_entry:
         message = "Plan entry not found."
@@ -13589,6 +13576,62 @@ def remove_plan_entry(video_pk):
         flash(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
+    try:
+        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry)
+    except Exception as exc:
+        current_app.logger.warning("Failed to remove plan entry for %s: %s", video_id, exc)
+        message = "Unable to remove the plan section."
+        if ajax_request:
+            return jsonify(success=False, message=message), 500
+        flash(message, "danger")
+        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+    if ajax_request:
+        return jsonify(success=True, plan_index=removed_entry.get("plan_index"), message="Plan section removed.")
+    flash("Plan section removed.", "success")
+    return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+
+def _find_plan_entry(
+    plan_entries: List[Dict[str, Any]],
+    *,
+    plan_index_raw: str = "",
+    filename: str = "",
+) -> Optional[Dict[str, Any]]:
+    target_entry = None
+    if plan_index_raw:
+        for entry in plan_entries:
+            entry_index = entry.get("plan_index")
+            if entry_index is None:
+                continue
+            if str(entry_index) == str(plan_index_raw):
+                target_entry = entry
+                break
+    if not target_entry and filename:
+        for entry in plan_entries:
+            if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
+                target_entry = entry
+                break
+    return target_entry
+
+
+def _plan_entry_youtube_locked(entry: Dict[str, Any]) -> bool:
+    terminal_publish_statuses = {"scheduled", "uploaded", "published"}
+    publish_status = str(entry.get("publish_status") or "").strip().lower()
+    if publish_status in terminal_publish_statuses:
+        return True
+    if str(entry.get("yt_video_id") or entry.get("youtube_video_id") or "").strip():
+        return True
+    if str(entry.get("publish_at") or entry.get("publish_at_iso") or entry.get("planned_publish_at") or "").strip():
+        return True
+    return False
+
+
+def _remove_plan_entry_and_media(
+    video_id: str,
+    plan_entries: List[Dict[str, Any]],
+    target_entry: Dict[str, Any],
+) -> Dict[str, Any]:
     target_plan_index = None
     try:
         target_plan_index = int(target_entry.get("plan_index")) if target_entry.get("plan_index") is not None else None
@@ -13601,23 +13644,14 @@ def remove_plan_entry(video_pk):
         if isinstance(val, str) and val:
             clip_names.add(val)
 
-    try:
-        plan_entries.remove(target_entry)
-        _write_plan_entries(video_id, plan_entries)
-    except Exception as exc:
-        current_app.logger.warning("Failed to remove plan entry for %s: %s", video_id, exc)
-        message = "Unable to remove the plan section."
-        if ajax_request:
-            return jsonify(success=False, message=message), 500
-        flash(message, "danger")
-        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+    plan_entries.remove(target_entry)
+    _write_plan_entries(video_id, plan_entries)
 
-    if clip_names:
-        for clip_name in clip_names:
-            try:
-                _delete_short_media(clip_name)
-            except Exception as exc:
-                current_app.logger.warning("Failed to delete clip media %s for %s: %s", clip_name, video_id, exc)
+    for clip_name in clip_names:
+        try:
+            _delete_short_media(clip_name)
+        except Exception as exc:
+            current_app.logger.warning("Failed to delete clip media %s for %s: %s", clip_name, video_id, exc)
     try:
         if target_plan_index is not None:
             clear_done_job_cache_for_plan(
@@ -13627,11 +13661,36 @@ def remove_plan_entry(video_pk):
             )
     except Exception as exc:
         current_app.logger.warning("Failed to clear render cache after plan removal: %s", exc)
+    return target_entry
 
-    if ajax_request:
-        return jsonify(success=True, plan_index=target_entry.get("plan_index"), message="Plan section removed.")
-    flash("Plan section removed.", "success")
-    return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/delete", methods=["POST"])
+def delete_clip_plan_entry(video_pk, plan_index):
+    video_id = _resolve_video_id_from_pk(video_pk)
+    if not video_id:
+        return jsonify(success=False, message="Video not found."), 404
+
+    plan_entries = _load_plan_entries(video_id)
+    if not plan_entries:
+        return jsonify(success=False, message="Plan data not found."), 404
+
+    target_entry = _find_plan_entry(plan_entries, plan_index_raw=str(plan_index))
+    if not target_entry:
+        return jsonify(success=False, message="Plan entry not found."), 404
+
+    if _plan_entry_youtube_locked(target_entry):
+        return jsonify(
+            success=False,
+            message="Scheduled/published clips cannot be deleted here. Remove it on YouTube first.",
+        ), 409
+
+    try:
+        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry)
+    except Exception as exc:
+        current_app.logger.warning("Failed to delete clip plan entry for %s plan %s: %s", video_id, plan_index, exc)
+        return jsonify(success=False, message="Unable to delete the clip."), 500
+
+    return jsonify(success=True, plan_index=removed_entry.get("plan_index"), message="Clip deleted.")
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/delete_ai_suggestions", methods=["POST"])
