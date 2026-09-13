@@ -1544,6 +1544,17 @@ def _render_word_highlight_caption_frame(
                 "active" if is_active_word else "inactive"
             )
             if layer_entry:
+                if outline_width and int(outline_width) > 0:
+                    _draw_outlined_text(
+                        draw,
+                        int(word["x"]),
+                        int(word["y"]),
+                        str(word["word"]),
+                        font=active_font if is_active_word else font,
+                        fill=(0, 0, 0, 0),
+                        stroke_fill=outline_rgba,
+                        stroke_width=int(outline_width),
+                    )
                 image.alpha_composite(
                     layer_entry["image"],
                     (int(layer_entry["x"]), int(layer_entry["y"])),

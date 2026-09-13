@@ -2510,12 +2510,14 @@
     box-shadow: none;
   }
   .style-template-card-preview--amber-gold::after,
+  .style-template-card-preview--modern-pink::after,
   .style-template-card-preview--sky-cyan::after,
   .style-template-card-preview--electric-lime::after,
   .style-template-card-preview--serif-bordo::after {
     opacity: 0;
   }
   .style-template-card-preview--amber-gold .style-template-card-preview-title,
+  .style-template-card-preview--modern-pink .style-template-card-preview-title,
   .style-template-card-preview--sky-cyan .style-template-card-preview-title,
   .style-template-card-preview--electric-lime .style-template-card-preview-title,
   .style-template-card-preview--serif-bordo .style-template-card-preview-title {
@@ -2529,6 +2531,11 @@
   .style-template-card-preview--amber-gold .style-template-card-preview-word {
     font-family: "Fjalla One", sans-serif;
     letter-spacing: 0.04em;
+  }
+  .style-template-card-preview--modern-pink .style-template-card-preview-title,
+  .style-template-card-preview--modern-pink .style-template-card-preview-word {
+    font-family: "Montserrat", sans-serif;
+    font-weight: 900;
   }
   .style-template-card-preview--sky-cyan .style-template-card-preview-title,
   .style-template-card-preview--sky-cyan .style-template-card-preview-word {
@@ -2544,6 +2551,7 @@
     font-family: "Roboto Slab", serif;
   }
   .style-template-card-preview--amber-gold .style-template-card-preview-word,
+  .style-template-card-preview--modern-pink .style-template-card-preview-word,
   .style-template-card-preview--sky-cyan .style-template-card-preview-word,
   .style-template-card-preview--electric-lime .style-template-card-preview-word,
   .style-template-card-preview--serif-bordo .style-template-card-preview-word {
@@ -2553,6 +2561,7 @@
       0 8px 14px rgba(0, 0, 0, 0.48);
   }
   .style-template-card-preview--amber-gold .style-template-card-preview-word.is-active,
+  .style-template-card-preview--modern-pink .style-template-card-preview-word.is-active,
   .style-template-card-preview--sky-cyan .style-template-card-preview-word.is-active,
   .style-template-card-preview--electric-lime .style-template-card-preview-word.is-active,
   .style-template-card-preview--serif-bordo .style-template-card-preview-word.is-active {
@@ -2566,6 +2575,9 @@
   }
   .style-template-card-preview--amber-gold .style-template-card-preview-word.is-active {
     background: linear-gradient(180deg, #ffe07a 0%, #ffc233 52%, #e89400 100%);
+  }
+  .style-template-card-preview--modern-pink .style-template-card-preview-word.is-active {
+    background: linear-gradient(180deg, #ff8fcf 0%, #ff4faa 52%, #ff1f8f 100%);
   }
   .style-template-card-preview--sky-cyan .style-template-card-preview-word.is-active {
     background: linear-gradient(180deg, #9bf3f7 0%, #38d6e0 52%, #1aa6b5 100%);
@@ -11555,6 +11567,19 @@ document.addEventListener("DOMContentLoaded", function () {
       fontWeight: "400",
       fillMode: "active_gradient_only",
       activeBackground: "linear-gradient(180deg, #FFE07A 0%, #FFC233 52%, #E89400 100%)",
+    },
+    modern_pink: {
+      pillColor: "transparent",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
+      activePadding: "0",
+      activeRadius: "0",
+      fontFamily: "\"Montserrat\", sans-serif",
+      fontWeight: "900",
+      fillMode: "active_gradient_only",
+      activeBackground: "linear-gradient(180deg, #FF8FCF 0%, #FF4FAA 52%, #FF1F8F 100%)",
     },
     sky_cyan: {
       pillColor: "transparent",
