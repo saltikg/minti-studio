@@ -1397,6 +1397,24 @@
     min-height: 18px;
     font-size: 0.78rem;
   }
+  .clip-schedule-all-feedback,
+  .clip-schedule-all-preview {
+    font-size: 0.82rem;
+  }
+  .clip-schedule-all-preview {
+    max-height: 220px;
+    overflow: auto;
+  }
+  .clip-schedule-all-preview-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .clip-schedule-all-preview-row:last-child {
+    border-bottom: 0;
+  }
   .clip-pane-title {
     color: #fff;
     font-weight: 700;
@@ -3506,6 +3524,14 @@
                       </button>
                     </form>
                   {% endif %}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                    id="clip-schedule-all-btn"
+                    {% if not youtube_connected %}disabled title="Connect YouTube first"{% endif %}>
+                    <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
+                    Schedule all
+                  </button>
                 </div>
               </div>
               <div class="clip-score-batch-controls" id="clip-score-batch-controls">
@@ -3552,7 +3578,7 @@
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
                   {% set rail_score = row.get('score') %}
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-filename="{{ row.video_filename or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
                         <video muted playsinline preload="metadata">
@@ -4424,6 +4450,35 @@
           </p>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+<div class="modal fade" id="scheduleAllClipsModal" tabindex="-1" aria-labelledby="scheduleAllClipsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-white border border-secondary-subtle">
+      <div class="modal-header border-0">
+        <h5 class="modal-title" id="scheduleAllClipsModalLabel">Schedule all clips</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="schedule-all-start-input">Start date/time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+          <input type="datetime-local" class="form-control" id="schedule-all-start-input">
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold" for="schedule-all-interval-input">Interval (hours)</label>
+          <input type="number" class="form-control" id="schedule-all-interval-input" min="1" step="1" value="10">
+        </div>
+        <div class="clip-schedule-all-preview text-white-50" id="schedule-all-preview" aria-live="polite"></div>
+        <div class="clip-schedule-all-feedback text-white-50 d-none mt-3" id="schedule-all-feedback" aria-live="polite"></div>
+      </div>
+      <div class="modal-footer border-0">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary d-inline-flex align-items-center gap-2" id="schedule-all-confirm-btn" disabled>
+          <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+          <span class="btn-label">Schedule 0 clips</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -8282,6 +8337,272 @@ const initScoreThresholdBatchControls = () => {
   updateScoreBatchControls();
 };
 
+const scheduleAllState = {
+  running: false,
+};
+
+const scheduleAllElements = () => ({
+  button: document.getElementById("clip-schedule-all-btn"),
+  modal: document.getElementById("scheduleAllClipsModal"),
+  startInput: document.getElementById("schedule-all-start-input"),
+  intervalInput: document.getElementById("schedule-all-interval-input"),
+  preview: document.getElementById("schedule-all-preview"),
+  feedback: document.getElementById("schedule-all-feedback"),
+  confirm: document.getElementById("schedule-all-confirm-btn"),
+  confirmLabel: document.querySelector("#schedule-all-confirm-btn .btn-label"),
+  spinner: document.querySelector("#schedule-all-confirm-btn .spinner-border"),
+});
+
+const padSchedulePart = (value) => String(value).padStart(2, "0");
+
+const formatDateInUserTimeZone = (date) => {
+  const timeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(date).reduce((acc, part) => {
+      if (part.type !== "literal") {
+        acc[part.type] = part.value;
+      }
+      return acc;
+    }, {});
+    if (parts.year && parts.month && parts.day && parts.hour && parts.minute) {
+      return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+    }
+  } catch (error) {
+    // Fall back to browser-local formatting if Intl timezone formatting fails.
+  }
+  return `${date.getFullYear()}-${padSchedulePart(date.getMonth() + 1)}-${padSchedulePart(date.getDate())}T${padSchedulePart(date.getHours())}:${padSchedulePart(date.getMinutes())}`;
+};
+
+const parseScheduleLocalValue = (value) => {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+  };
+};
+
+const addHoursToScheduleLocalValue = (value, hours) => {
+  const parsed = parseScheduleLocalValue(value);
+  if (!parsed) {
+    return "";
+  }
+  const dt = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, parsed.hour + hours, parsed.minute));
+  return `${dt.getUTCFullYear()}-${padSchedulePart(dt.getUTCMonth() + 1)}-${padSchedulePart(dt.getUTCDate())}T${padSchedulePart(dt.getUTCHours())}:${padSchedulePart(dt.getUTCMinutes())}`;
+};
+
+const formatSchedulePreviewValue = (value) => {
+  return String(value || "").replace("T", " ");
+};
+
+const setScheduleAllFeedback = (message = "", tone = "text-white-50") => {
+  const { feedback } = scheduleAllElements();
+  if (!feedback) {
+    return;
+  }
+  const hasMessage = !!String(message || "").trim();
+  feedback.textContent = hasMessage ? message : "";
+  feedback.classList.toggle("d-none", !hasMessage);
+  feedback.classList.remove("text-success", "text-danger", "text-warning", "text-white-50");
+  feedback.classList.add(tone);
+};
+
+const getScheduleAllEligibleClips = () => {
+  const terminalPublishStatuses = new Set(["scheduled", "uploaded", "published"]);
+  return Array.from(document.querySelectorAll(".clip-rail-item"))
+    .map((railItem) => {
+      const planIndex = String(railItem.dataset.planIndex || "").trim();
+      const card = getClipCardByPlanIndex(planIndex);
+      const cardTitle = String(card?.querySelector(".clip-title-input")?.value || "").trim();
+      return {
+        railItem,
+        card,
+        planIndex,
+        filename: String(railItem.dataset.filename || "").trim(),
+        title: cardTitle || String(railItem.dataset.title || "").trim(),
+        description: youtubeModalContext?.decodeDescriptionValue?.(railItem.dataset.description || "") || "",
+        status: String(railItem.dataset.status || "").trim().toLowerCase(),
+        ytVideoId: String(railItem.dataset.ytVideoId || "").trim(),
+        publishStatus: String(railItem.dataset.publishStatus || "").trim().toLowerCase(),
+        dbPublishStatus: String(railItem.dataset.dbPublishStatus || "").trim().toLowerCase(),
+        publishAt: String(railItem.dataset.publishAt || "").trim(),
+      };
+    })
+    .filter((clip) => (
+      clip.status === "created" &&
+      clip.filename &&
+      clip.planIndex &&
+      !clip.ytVideoId &&
+      !clip.publishAt &&
+      !terminalPublishStatuses.has(clip.publishStatus) &&
+      !terminalPublishStatuses.has(clip.dbPublishStatus)
+    ));
+};
+
+const updateScheduleAllPreview = () => {
+  const { startInput, intervalInput, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
+  if (!startInput || !intervalInput || !preview || !confirm || !confirmLabel) {
+    return;
+  }
+  const clips = getScheduleAllEligibleClips();
+  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
+  intervalInput.value = intervalHours;
+  const nowValue = formatDateInUserTimeZone(new Date());
+  startInput.min = nowValue;
+  const startValue = String(startInput.value || "").trim();
+  const validStart = Boolean(parseScheduleLocalValue(startValue)) && startValue >= nowValue;
+  if (!clips.length) {
+    preview.innerHTML = '<div class="text-warning">No created, unscheduled clips are eligible.</div>';
+  } else if (!validStart) {
+    preview.innerHTML = '<div class="text-warning">Choose a future start time.</div>';
+  } else {
+    preview.innerHTML = clips.map((clip, index) => {
+      const scheduledAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
+      const title = clip.title || `Clip ${index + 1}`;
+      return `<div class="clip-schedule-all-preview-row"><span>Clip ${index + 1} · ${escapeHtml(title)}</span><strong>${escapeHtml(formatSchedulePreviewValue(scheduledAt))}</strong></div>`;
+    }).join("");
+  }
+  confirmLabel.textContent = `Schedule ${clips.length} ${clips.length === 1 ? "clip" : "clips"}`;
+  confirm.disabled = scheduleAllState.running || !clips.length || !validStart;
+  spinner?.classList.toggle("d-none", !scheduleAllState.running);
+};
+
+const markClipAsScheduled = (clip, publishAt) => {
+  clip.railItem.dataset.publishStatus = "scheduled";
+  clip.railItem.dataset.publishAt = publishAt;
+  const railStatus = clip.railItem.querySelector(".clip-rail-status");
+  const railStatusText = clip.railItem.querySelector(".clip-rail-status-text");
+  if (railStatus && railStatusText) {
+    railStatus.classList.remove("d-none");
+    railStatusText.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
+  }
+  if (clip.card) {
+    clip.card.dataset.publish = "scheduled";
+    const feedback = clip.card.querySelector(".clip-card-save-feedback");
+    if (feedback) {
+      feedback.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
+      feedback.classList.remove("d-none", "text-danger", "text-warning");
+      feedback.classList.add("text-success");
+    }
+  }
+};
+
+const scheduleOneClipToYoutube = async (clip, publishAt) => {
+  const uploadForm = document.getElementById("youtube-upload-form");
+  const uploadUrl = uploadForm?.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
+  const body = new URLSearchParams();
+  body.set("filename", clip.filename);
+  body.set("plan_index", clip.planIndex);
+  body.set("video_pk", "{{ video.id }}");
+  body.set("title", clip.title || "");
+  body.set("description", clip.description || "");
+  body.set("youtube_enabled", "on");
+  body.set("publish_at", publishAt);
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    body,
+    credentials: "same-origin",
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.success === false) {
+    const err = new Error(payload.message || "YouTube schedule failed.");
+    err.status = response.status;
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
+};
+
+const runScheduleAllClips = async () => {
+  const { startInput, intervalInput, confirm } = scheduleAllElements();
+  if (!startInput || !intervalInput || !confirm || scheduleAllState.running) {
+    return;
+  }
+  const clips = getScheduleAllEligibleClips();
+  const startValue = String(startInput.value || "").trim();
+  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
+  if (!clips.length || !parseScheduleLocalValue(startValue) || startValue < formatDateInUserTimeZone(new Date())) {
+    updateScheduleAllPreview();
+    return;
+  }
+  scheduleAllState.running = true;
+  updateScheduleAllPreview();
+  setScheduleAllFeedback(`Scheduled 0 of ${clips.length} clips…`, "text-white-50");
+  let scheduledCount = 0;
+  for (const [index, clip] of clips.entries()) {
+    const publishAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
+    try {
+      await scheduleOneClipToYoutube(clip, publishAt);
+      scheduledCount += 1;
+      markClipAsScheduled(clip, publishAt);
+      setScheduleAllFeedback(`Scheduled ${scheduledCount} of ${clips.length} clips…`, "text-white-50");
+    } catch (error) {
+      if (error.status === 403) {
+        setScheduleAllFeedback(`Scheduled ${scheduledCount} clips; YouTube connection failed — reconnect to continue.`, "text-warning");
+        break;
+      }
+      setScheduleAllFeedback(`Scheduled ${scheduledCount} clips; one clip could not be scheduled.`, "text-warning");
+      break;
+    }
+  }
+  if (scheduledCount === clips.length) {
+    setScheduleAllFeedback(`Scheduled ${scheduledCount} ${scheduledCount === 1 ? "clip" : "clips"}.`, "text-success");
+  }
+  scheduleAllState.running = false;
+  updateScheduleAllPreview();
+};
+
+const initScheduleAllClipsControls = () => {
+  const { button, modal, startInput, intervalInput, confirm } = scheduleAllElements();
+  if (!button || !modal || !startInput || !intervalInput || !confirm) {
+    return;
+  }
+  const modalInstance = typeof bootstrap !== "undefined" ? bootstrap.Modal.getOrCreateInstance(modal) : null;
+  button.addEventListener("click", () => {
+    if (button.disabled) {
+      return;
+    }
+    setScheduleAllFeedback("");
+    const nowValue = formatDateInUserTimeZone(new Date());
+    startInput.min = nowValue;
+    if (!startInput.value || startInput.value < nowValue) {
+      startInput.value = nowValue;
+    }
+    if (!intervalInput.value) {
+      intervalInput.value = "10";
+    }
+    updateScheduleAllPreview();
+    modalInstance?.show();
+  });
+  startInput.addEventListener("input", () => {
+    setScheduleAllFeedback("");
+    updateScheduleAllPreview();
+  });
+  intervalInput.addEventListener("input", () => {
+    setScheduleAllFeedback("");
+    updateScheduleAllPreview();
+  });
+  confirm.addEventListener("click", runScheduleAllClips);
+  modal.addEventListener("show.bs.modal", updateScheduleAllPreview);
+};
+
 const initGenerateClipForms = () => {
   document.querySelectorAll(".generate-clip-form").forEach((form) => {
     if (form.dataset.generateClipBound === "1") {
@@ -9642,6 +9963,7 @@ const initLongVideoDeleteButtons = () => {
 };
 document.addEventListener("DOMContentLoaded", () => {
   initScoreThresholdBatchControls();
+  initScheduleAllClipsControls();
   initGenerateClipForms();
   initClipTitleRowAjax();
   bindClipTimeInputFocus();
