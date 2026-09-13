@@ -11053,7 +11053,7 @@ document.addEventListener("DOMContentLoaded", () => {
     saveDefaultBtn.textContent = "Saving…";
     try {
       await saveShortEditorDefaults();
-      setSaveStatus("Varsayılan kaydedildi", "success");
+      setSaveStatus("Default saved", "success");
     } catch (err) {
       const message = err.message || "Defaults could not be saved.";
       updateInfo(message);
