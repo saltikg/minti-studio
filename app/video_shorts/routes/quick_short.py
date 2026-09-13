@@ -1100,7 +1100,7 @@ def quick_short_ingest_youtube():
         return _json_error("We couldn't read that YouTube video right now.")
     duration = meta.get("duration_seconds")
     if duration is not None and duration > MAX_QUICK_SHORT_SECONDS:
-        return _json_error("The YouTube video must be 25 minutes or shorter.")
+        return _json_error("The YouTube video must be 120 minutes or shorter.")
     conn = get_db()
     try:
         ensure_brand_schema(conn)
