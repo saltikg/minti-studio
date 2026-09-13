@@ -7031,6 +7031,235 @@ def create_generated_short_share_link():
         conn.close()
 
 
+def _score_from_generated_raw_plan_entry(raw_plan_entry: Any) -> Optional[int]:
+    if raw_plan_entry is None:
+        return None
+    parsed = raw_plan_entry
+    if isinstance(raw_plan_entry, str):
+        try:
+            parsed = json.loads(raw_plan_entry)
+        except Exception:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    try:
+        numeric = int(float(parsed.get("score")))
+    except (TypeError, ValueError):
+        return None
+    return numeric if 0 <= numeric <= 100 else None
+
+
+def _load_existing_lead_watch_page(conn, lead_id: str) -> Optional[Dict[str, Any]]:
+    share_link_columns = table_columns(conn, "short_share_links")
+    active_clause = "AND COALESCE(sl.archived, false) = false" if "archived" in share_link_columns else ""
+    row = conn.execute(
+        f"""
+        SELECT sl.id, sl.token, sl.generated_video_id, gv.raw_plan_entry_json
+        FROM short_share_links sl
+        LEFT JOIN shorts_generated_videos gv
+          ON CAST(gv.id AS VARCHAR) = CAST(sl.generated_video_id AS VARCHAR)
+        WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = ?
+          {active_clause}
+        ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+        LIMIT 1
+        """,
+        [str(lead_id or "").strip()],
+    ).fetchone()
+    if not row:
+        return None
+    token = str(row[1] or "").strip()
+    return {
+        "share_link_id": int(row[0]) if row[0] is not None else None,
+        "share_token": token,
+        "share_url": _share_public_url(token) if token else "",
+        "generated_video_id": str(row[2] or "").strip(),
+        "entry_score": _score_from_generated_raw_plan_entry(row[3]),
+    }
+
+
+def _create_or_update_lead_share_link_for_generated(
+    conn,
+    *,
+    scope: Dict[str, str],
+    lead: Dict[str, str],
+    video_pk: int,
+    generated_video_id: str,
+    trial_days: int,
+) -> Dict[str, Any]:
+    lead_recipient_name = str(lead.get("recipient_name") or "").strip() or lead["creator_name"]
+    generated_row = conn.execute(
+        """
+        SELECT gv.id, gv.clip_filename
+        FROM shorts_generated_videos gv
+        JOIN youtube_videos yv
+          ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+        JOIN autopilot_leads l
+          ON CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+        WHERE CAST(gv.id AS VARCHAR) = ?
+          AND CAST(gv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND yv.id = ?
+          AND CAST(yv.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(yv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND l.first_video_id = yv.id
+          AND (
+                l.channel_id IS NULL
+                OR l.channel_id = yv.channel_id
+                OR yv.channel_id IN (
+                    SELECT c.channel_id
+                    FROM youtube_channels c
+                    WHERE CAST(c.owner_user_id AS VARCHAR) = CAST(yv.owner_user_id AS VARCHAR)
+                      AND CAST(c.brand_id AS VARCHAR) = CAST(yv.brand_id AS VARCHAR)
+                      AND lower(coalesce(c.channel_url, '')) = 'local://uploads'
+                )
+              )
+          AND l.converted_at IS NULL
+        LIMIT 1
+        """,
+        [
+            lead["id"],
+            str(generated_video_id or "").strip(),
+            scope["brand_id"],
+            video_pk,
+            scope["owner_user_id"],
+            scope["brand_id"],
+            scope["owner_user_id"],
+            scope["brand_id"],
+        ],
+    ).fetchone()
+    if not generated_row:
+        abort(404)
+    clip_filename = str(generated_row[1] or "").strip()
+    if not clip_filename:
+        return {
+            "success": False,
+            "message": "Rendered short is not available for sharing yet.",
+            "status_code": 404,
+        }
+
+    existing_row = conn.execute(
+        """
+        SELECT id, token
+        FROM short_share_links
+        WHERE CAST(generated_video_id AS VARCHAR) = ?
+          AND CAST(autopilot_lead_id AS VARCHAR) = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        [str(generated_row[0]), lead["id"]],
+    ).fetchone()
+    if not existing_row:
+        # Bind a legacy unaddressed link for this exact recipient instead of creating a duplicate.
+        existing_row = conn.execute(
+            """
+            SELECT id, token
+            FROM short_share_links
+            WHERE CAST(generated_video_id AS VARCHAR) = ?
+              AND lower(coalesce(recipient_email, '')) = ?
+              AND autopilot_lead_id IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [str(generated_row[0]), lead["creator_email"].lower()],
+        ).fetchone()
+
+    if existing_row:
+        conn.execute(
+            """
+            UPDATE short_share_links
+            SET recipient_name = ?,
+                recipient_email = ?,
+                autopilot_lead_id = ?,
+                trial_days = ?
+            WHERE id = ?
+            """,
+            [lead_recipient_name, lead["creator_email"], lead["id"], trial_days, existing_row[0]],
+        )
+        share_link_id = int(existing_row[0])
+        share_token = str(existing_row[1] or "").strip()
+        reused = True
+    else:
+        share_token = ""
+        for _ in range(5):
+            candidate = secrets.token_urlsafe(16)
+            if conn.execute("SELECT 1 FROM short_share_links WHERE token = ? LIMIT 1", [candidate]).fetchone():
+                continue
+            conn.execute(
+                """
+                INSERT INTO short_share_links (
+                    generated_video_id, token, recipient_name, recipient_email,
+                    autopilot_lead_id, trial_days, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, now())
+                """,
+                [str(generated_row[0]), candidate, lead_recipient_name, lead["creator_email"], lead["id"], trial_days],
+            )
+            share_token = candidate
+            break
+        if not share_token:
+            return {"success": False, "message": "Share link could not be created.", "status_code": 500}
+        share_link_row = conn.execute("SELECT id FROM short_share_links WHERE token = ? LIMIT 1", [share_token]).fetchone()
+        share_link_id = int(share_link_row[0])
+        reused = False
+
+    _ensure_shared_short_poster(clip_filename)
+    return {
+        "success": True,
+        "share_link_id": share_link_id,
+        "generated_video_id": str(generated_row[0]),
+        "share_token": share_token,
+        "share_url": _share_public_url(share_token),
+        "trial_days": trial_days,
+        "reused": reused,
+    }
+
+
+def _load_lead_watch_page_entry_short(conn, *, lead: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT gv.id, gv.raw_plan_entry_json, gv.created_at
+        FROM shorts_generated_videos gv
+        JOIN youtube_videos yv
+          ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+        JOIN autopilot_leads l
+          ON CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+        WHERE CAST(gv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND yv.id = l.first_video_id
+          AND CAST(yv.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(yv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND l.converted_at IS NULL
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+          AND lower(coalesce(gv.generation_status, 'created')) NOT IN ('queued', 'pending', 'processing', 'rendering', 'failed', 'error')
+        ORDER BY gv.created_at DESC NULLS LAST, gv.id DESC
+        """,
+        [
+            lead["id"],
+            lead["brand_id"],
+            lead["owner_user_id"],
+            lead["brand_id"],
+            lead["owner_user_id"],
+            lead["brand_id"],
+        ],
+    ).fetchall()
+    best_scored: Optional[Dict[str, Any]] = None
+    newest: Optional[Dict[str, Any]] = None
+    for row in rows:
+        entry = {
+            "generated_video_id": str(row[0] or "").strip(),
+            "score": _score_from_generated_raw_plan_entry(row[1]),
+        }
+        if newest is None:
+            newest = entry
+        if entry["score"] is None:
+            continue
+        if best_scored is None or int(entry["score"]) > int(best_scored["score"]):
+            best_scored = entry
+    return best_scored or newest
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/lead-share-link", methods=["POST"])
 @require_admin
 def admin_operation_create_lead_share_link(video_pk: int):
@@ -7046,127 +7275,23 @@ def admin_operation_create_lead_share_link(video_pk: int):
         return jsonify({"success": False, "message": "Generated short id is required."}), 400
     if not lead["creator_email"]:
         return jsonify({"success": False, "message": "This lead needs an email before a share link can be created."}), 400
-    lead_recipient_name = str(lead.get("recipient_name") or "").strip() or lead["creator_name"]
 
     conn = get_db()
     try:
         if not _short_share_links_ready(conn) or "autopilot_lead_id" not in table_columns(conn, "short_share_links"):
             return jsonify({"success": False, "message": "Lead share links are not available until the database migration is applied."}), 503
 
-        generated_row = conn.execute(
-            """
-            SELECT gv.id, gv.clip_filename
-            FROM shorts_generated_videos gv
-            JOIN youtube_videos yv
-              ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
-            JOIN autopilot_leads l
-              ON CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
-            WHERE CAST(gv.id AS VARCHAR) = ?
-              AND CAST(gv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND yv.id = ?
-              AND CAST(yv.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND CAST(yv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND l.first_video_id = yv.id
-              AND (
-                    l.channel_id IS NULL
-                    OR l.channel_id = yv.channel_id
-                    OR yv.channel_id IN (
-                        SELECT c.channel_id
-                        FROM youtube_channels c
-                        WHERE CAST(c.owner_user_id AS VARCHAR) = CAST(yv.owner_user_id AS VARCHAR)
-                          AND CAST(c.brand_id AS VARCHAR) = CAST(yv.brand_id AS VARCHAR)
-                          AND lower(coalesce(c.channel_url, '')) = 'local://uploads'
-                    )
-                  )
-              AND l.converted_at IS NULL
-            LIMIT 1
-            """,
-            [
-                lead["id"],
-                generated_video_id,
-                scope["brand_id"],
-                video_pk,
-                scope["owner_user_id"],
-                scope["brand_id"],
-                scope["owner_user_id"],
-                scope["brand_id"],
-            ],
-        ).fetchone()
-        if not generated_row:
-            abort(404)
-        clip_filename = str(generated_row[1] or "").strip()
-        if not clip_filename:
-            return jsonify({"success": False, "message": "Rendered short is not available for sharing yet."}), 404
-
-        existing_row = conn.execute(
-            """
-            SELECT id, token
-            FROM short_share_links
-            WHERE CAST(generated_video_id AS VARCHAR) = ?
-              AND CAST(autopilot_lead_id AS VARCHAR) = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            [str(generated_row[0]), lead["id"]],
-        ).fetchone()
-        if not existing_row:
-            # Bind a legacy unaddressed link for this exact recipient instead of creating a duplicate.
-            existing_row = conn.execute(
-                """
-                SELECT id, token
-                FROM short_share_links
-                WHERE CAST(generated_video_id AS VARCHAR) = ?
-                  AND lower(coalesce(recipient_email, '')) = ?
-                  AND autopilot_lead_id IS NULL
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                [str(generated_row[0]), lead["creator_email"].lower()],
-            ).fetchone()
-
-        if existing_row:
-            conn.execute(
-                """
-                UPDATE short_share_links
-                SET recipient_name = ?,
-                    recipient_email = ?,
-                    autopilot_lead_id = ?,
-                    trial_days = ?
-                WHERE id = ?
-                """,
-                [lead_recipient_name, lead["creator_email"], lead["id"], trial_days, existing_row[0]],
-            )
-            share_link_id = int(existing_row[0])
-            share_token = str(existing_row[1] or "").strip()
-            reused = True
-        else:
-            share_token = ""
-            for _ in range(5):
-                candidate = secrets.token_urlsafe(16)
-                if conn.execute("SELECT 1 FROM short_share_links WHERE token = ? LIMIT 1", [candidate]).fetchone():
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO short_share_links (
-                        generated_video_id, token, recipient_name, recipient_email,
-                        autopilot_lead_id, trial_days, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, now())
-                    """,
-                    [str(generated_row[0]), candidate, lead_recipient_name, lead["creator_email"], lead["id"], trial_days],
-                )
-                share_token = candidate
-                break
-            if not share_token:
-                return jsonify({"success": False, "message": "Share link could not be created."}), 500
-            share_link_row = conn.execute("SELECT id FROM short_share_links WHERE token = ? LIMIT 1", [share_token]).fetchone()
-            share_link_id = int(share_link_row[0])
-            reused = False
-
+        result = _create_or_update_lead_share_link_for_generated(
+            conn,
+            scope=scope,
+            lead=lead,
+            video_pk=video_pk,
+            generated_video_id=generated_video_id,
+            trial_days=trial_days,
+        )
+        if not result.get("success"):
+            return jsonify({"success": False, "message": result.get("message") or "Share link could not be created."}), int(result.get("status_code") or 500)
         conn.commit()
-        _ensure_shared_short_poster(clip_filename)
     except Exception:
         conn.rollback()
         current_app.logger.exception("Failed to create lead share link for generated short %s", generated_video_id)
@@ -7178,24 +7303,24 @@ def admin_operation_create_lead_share_link(video_pk: int):
         scope["acting_admin_id"],
         "admin_operation_lead_share_link_created",
         video_id=str(video_pk),
-        short_id=str(generated_row[0]),
+        short_id=str(result["generated_video_id"]),
         metadata={
             "acting_admin_id": scope["acting_admin_id"],
             "target_owner_user_id": scope["owner_user_id"],
             "target_brand_id": scope["brand_id"],
             "autopilot_lead_id": lead["id"],
-            "share_link_id": share_link_id,
+            "share_link_id": result["share_link_id"],
         },
     )
     return jsonify(
         {
             "success": True,
-            "share_link_id": share_link_id,
-            "generated_video_id": str(generated_row[0]),
-            "share_token": share_token,
-            "share_url": _share_public_url(share_token),
-            "trial_days": trial_days,
-            "reused": reused,
+            "share_link_id": result["share_link_id"],
+            "generated_video_id": result["generated_video_id"],
+            "share_token": result["share_token"],
+            "share_url": result["share_url"],
+            "trial_days": result["trial_days"],
+            "reused": result["reused"],
         }
     )
 
@@ -10569,6 +10694,53 @@ def _load_admin_lead_records(
 
     share_link_columns = table_columns(conn, "short_share_links")
     has_emailed_at = "emailed_at" in share_link_columns
+    has_share_links = bool(share_link_columns) and "autopilot_lead_id" in share_link_columns
+    share_link_active_clause = "AND COALESCE(sl.archived, false) = false" if "archived" in share_link_columns else ""
+    watch_link_fields_sql = (
+        f"""
+            (
+                SELECT sl.id
+                FROM short_share_links sl
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                LIMIT 1
+            ) AS watch_share_link_id,
+            (
+                SELECT sl.token
+                FROM short_share_links sl
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                LIMIT 1
+            ) AS watch_share_token,
+            (
+                SELECT sl.generated_video_id
+                FROM short_share_links sl
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                LIMIT 1
+            ) AS watch_generated_video_id,
+            (
+                SELECT gv.raw_plan_entry_json
+                FROM short_share_links sl
+                LEFT JOIN shorts_generated_videos gv
+                  ON CAST(gv.id AS VARCHAR) = CAST(sl.generated_video_id AS VARCHAR)
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                  {share_link_active_clause}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                LIMIT 1
+            ) AS watch_raw_plan_entry_json
+        """
+        if has_share_links
+        else """
+            NULL AS watch_share_link_id,
+            NULL AS watch_share_token,
+            NULL AS watch_generated_video_id,
+            NULL AS watch_raw_plan_entry_json
+        """
+    )
     emailed_share_link_exists_sql = """
         EXISTS (
             SELECT 1
@@ -10670,7 +10842,8 @@ def _load_admin_lead_records(
             v.download_status,
             {generated_count_sql} AS generated_short_count,
             {emailed_share_link_exists_sql if has_emailed_at else 'FALSE'} AS email_sent,
-            COALESCE(u.service_mode, '') AS service_mode
+            COALESCE(u.service_mode, '') AS service_mode,
+            {watch_link_fields_sql}
         {from_sql}
         WHERE {where_sql}
         ORDER BY {order_column} {order_direction} NULLS LAST, l.created_at DESC, l.id DESC
@@ -10708,6 +10881,11 @@ def _load_admin_lead_records(
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
                 "email_sent": bool(row[17]),
                 "converted": bool(row[10]) or str(row[18] or "").strip().lower() == "autopilot",
+                "watch_share_link_id": int(row[19]) if row[19] is not None else None,
+                "watch_share_token": str(row[20] or "").strip(),
+                "watch_share_url": _share_public_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
+                "watch_generated_video_id": str(row[21] or "").strip(),
+                "watch_entry_score": _score_from_generated_raw_plan_entry(row[22]),
             }
         )
     return items, total_count
@@ -12264,6 +12442,130 @@ def admin_update_lead_recipient_name(lead_id: str):
         return jsonify({"ok": True, "lead_id": str(lead_id or "").strip(), "recipient_name": recipient_name})
     flash("Greeting name saved.", "success")
     return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/leads/<lead_id>/watch-page", methods=["POST"])
+@require_admin
+def admin_create_lead_watch_page(lead_id: str):
+    """Create or return the watch page link for one pre-conversion lead."""
+    normalized_lead_id = str(lead_id or "").strip()
+    if not normalized_lead_id:
+        return jsonify({"success": False, "message": "Lead is required."}), 400
+
+    conn = get_db()
+    try:
+        if not autopilot_leads_table_ready(conn):
+            return jsonify({"success": False, "message": "Lead storage is not available."}), 503
+        if not _short_share_links_ready(conn) or "autopilot_lead_id" not in table_columns(conn, "short_share_links"):
+            return jsonify({"success": False, "message": "Lead share links are not available until the database migration is applied."}), 503
+
+        lead_row = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                l.creator_name,
+                l.recipient_name,
+                l.creator_email,
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id
+            FROM autopilot_leads l
+            WHERE CAST(l.id AS VARCHAR) = ?
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND l.converted_at IS NULL
+            LIMIT 1
+            """,
+            [normalized_lead_id],
+        ).fetchone()
+        if not lead_row:
+            return jsonify({"success": False, "message": "Lead not found or already converted."}), 404
+
+        lead = {
+            "id": str(lead_row[0] or "").strip(),
+            "creator_name": str(lead_row[1] or "").strip() or "Unknown creator",
+            "recipient_name": str(lead_row[2] or "").strip(),
+            "creator_email": str(lead_row[3] or "").strip().lower(),
+            "owner_user_id": str(lead_row[4] or "").strip(),
+            "brand_id": str(lead_row[5] or "").strip(),
+            "first_video_id": int(lead_row[6]),
+        }
+        if not lead["creator_email"]:
+            return jsonify({"success": False, "message": "This lead needs an email before a watch page can be created."}), 400
+
+        existing = _load_existing_lead_watch_page(conn, lead["id"])
+        if existing and existing.get("share_token"):
+            return jsonify(
+                {
+                    "success": True,
+                    "existing": True,
+                    "share_link_id": existing["share_link_id"],
+                    "token": existing["share_token"],
+                    "url": existing["share_url"],
+                    "entry_generated_video_id": existing["generated_video_id"],
+                    "entry_score": existing["entry_score"],
+                }
+            )
+
+        selected_short = _load_lead_watch_page_entry_short(conn, lead=lead)
+        if not selected_short:
+            return jsonify({"success": False, "message": "No generated shorts yet."}), 404
+
+        current_user = getattr(g, "vs_current_user", None) or {}
+        scope = {
+            "acting_admin_id": str(current_user.get("id") or "").strip(),
+            "owner_user_id": lead["owner_user_id"],
+            "brand_id": lead["brand_id"],
+            "workspace_kind": "lead",
+        }
+        result = _create_or_update_lead_share_link_for_generated(
+            conn,
+            scope=scope,
+            lead=lead,
+            video_pk=lead["first_video_id"],
+            generated_video_id=selected_short["generated_video_id"],
+            trial_days=DEFAULT_SHARE_TRIAL_DAYS,
+        )
+        if not result.get("success"):
+            return jsonify({"success": False, "message": result.get("message") or "Share link could not be created."}), int(result.get("status_code") or 500)
+
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to create watch page for lead %s", normalized_lead_id)
+        return jsonify({"success": False, "message": "Watch page could not be created."}), 500
+    finally:
+        conn.close()
+
+    track_event(
+        scope["acting_admin_id"],
+        "admin_lead_watch_page_created",
+        video_id=str(lead["first_video_id"]),
+        short_id=str(result["generated_video_id"]),
+        metadata={
+            "acting_admin_id": scope["acting_admin_id"],
+            "target_owner_user_id": scope["owner_user_id"],
+            "target_brand_id": scope["brand_id"],
+            "autopilot_lead_id": lead["id"],
+            "share_link_id": result["share_link_id"],
+            "entry_score": selected_short["score"],
+        },
+    )
+    return jsonify(
+        {
+            "success": True,
+            "existing": False,
+            "share_link_id": result["share_link_id"],
+            "token": result["share_token"],
+            "url": result["share_url"],
+            "entry_generated_video_id": result["generated_video_id"],
+            "entry_score": selected_short["score"],
+        }
+    )
 
 
 @video_shorts_bp.route("/admin/operation/select", methods=["POST"])

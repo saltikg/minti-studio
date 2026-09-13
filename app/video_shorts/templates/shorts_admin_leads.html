@@ -31,6 +31,11 @@
     .admin-leads-email-form { display:none; gap:8px; min-width:245px; margin-top:8px; }
     .admin-leads-email-form.is-open { display:flex; }
     .admin-leads-email-form .form-control { min-width:0; }
+    .admin-leads-watch { min-width:220px; }
+    .admin-leads-watch-link { display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+    .admin-leads-watch-url { max-width:210px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#8ff3d8; text-decoration:none; }
+    .admin-leads-watch-note { color:rgba(255,255,255,.58); font-size:.82rem; margin-top:4px; }
+    .admin-leads-watch-error { color:#fca5a5; font-size:.82rem; margin-top:6px; }
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
@@ -197,7 +202,35 @@
               <td>{{ lead.created_at_pst or '—' }}</td>
               <td>
                 {% if lead.has_owner and not lead.converted %}
-                  <a class="btn btn-sm btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_lead_workspace', brand_id=lead.brand_id) }}">Open workspace</a>
+                  <div class="admin-leads-watch" data-watch-page-container="{{ lead.id }}">
+                    <a class="btn btn-sm btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_lead_workspace', brand_id=lead.brand_id) }}">Open workspace</a>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-info mt-2"
+                      data-watch-page-create="{{ lead.id }}"
+                      data-watch-page-url="{{ url_for('video_shorts_bp.admin_create_lead_watch_page', lead_id=lead.id) }}"
+                      {% if lead.watch_share_url %}hidden{% endif %}>
+                      Create watch page
+                    </button>
+                    <div class="admin-leads-watch-link" data-watch-page-result="{{ lead.id }}" {% if not lead.watch_share_url %}hidden{% endif %}>
+                      <span class="admin-leads-muted" data-watch-page-label>{{ 'Watch page (existing)' if lead.watch_share_url else 'Watch page' }}</span>
+                      <a
+                        class="admin-leads-watch-url"
+                        href="{{ lead.watch_share_url or '#' }}"
+                        target="_blank"
+                        rel="noopener"
+                        data-watch-page-anchor>{{ lead.watch_share_url or '' }}</a>
+                      <button type="button" class="btn btn-sm btn-outline-light" data-watch-page-copy="{{ lead.id }}">Copy</button>
+                    </div>
+                    <div class="admin-leads-watch-note" data-watch-page-note="{{ lead.id }}">
+                      {% if lead.watch_share_url and lead.watch_entry_score is not none %}
+                        entry: score {{ lead.watch_entry_score }}
+                      {% elif lead.watch_share_url %}
+                        entry: no score
+                      {% endif %}
+                    </div>
+                    <div class="admin-leads-watch-error" data-watch-page-error="{{ lead.id }}" hidden></div>
+                  </div>
                 {% elif not lead.has_owner and not lead.converted %}
                   <span class="admin-leads-muted">Discovery only</span>
                 {% else %}
@@ -268,6 +301,69 @@
           if (!form) return;
           form.classList.add("is-open");
           form.querySelector("input[name='recipient_name']")?.focus();
+        });
+      });
+      document.querySelectorAll("[data-watch-page-create]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const leadId = button.dataset.watchPageCreate;
+          const endpoint = button.dataset.watchPageUrl;
+          const result = document.querySelector(`[data-watch-page-result="${leadId}"]`);
+          const label = result?.querySelector("[data-watch-page-label]");
+          const anchor = result?.querySelector("[data-watch-page-anchor]");
+          const note = document.querySelector(`[data-watch-page-note="${leadId}"]`);
+          const error = document.querySelector(`[data-watch-page-error="${leadId}"]`);
+          if (!endpoint || !result || !anchor) return;
+          const originalText = button.textContent;
+          button.disabled = true;
+          button.textContent = "Creating...";
+          if (error) {
+            error.hidden = true;
+            error.textContent = "";
+          }
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+              credentials: "same-origin"
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.success) {
+              throw new Error(data.message || "Could not create watch page.");
+            }
+            anchor.href = data.url || "#";
+            anchor.textContent = data.url || "";
+            if (label) label.textContent = data.existing ? "Watch page (existing)" : "Watch page";
+            if (note) {
+              note.textContent = data.entry_score === null || data.entry_score === undefined
+                ? "entry: no score"
+                : `entry: score ${data.entry_score}`;
+            }
+            result.hidden = false;
+            button.hidden = true;
+          } catch (err) {
+            if (error) {
+              error.textContent = err?.message || "Could not create watch page.";
+              error.hidden = false;
+            }
+            button.disabled = false;
+            button.textContent = originalText;
+          }
+        });
+      });
+      document.querySelectorAll("[data-watch-page-copy]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const leadId = button.dataset.watchPageCopy;
+          const anchor = document.querySelector(`[data-watch-page-result="${leadId}"] [data-watch-page-anchor]`);
+          const url = anchor?.href || "";
+          if (!url) return;
+          try {
+            await navigator.clipboard.writeText(url);
+            const originalText = button.textContent;
+            button.textContent = "Copied";
+            setTimeout(() => { button.textContent = originalText; }, 1400);
+          } catch (err) {
+            window.prompt("Copy watch page URL", url);
+          }
         });
       });
     });
