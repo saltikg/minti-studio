@@ -4417,6 +4417,7 @@
             <div class="short-video-settings">
               <div class="short-video-body"
                data-save-url="{{ editor_url('save_short_settings', video_pk=video.id) }}"
+               data-default-save-url="{{ url_for('video_shorts_bp.save_short_editor_defaults') }}"
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
@@ -4969,6 +4970,9 @@
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-primary" id="crop-save-btn" disabled data-saving-text="Saving…">
             <i class="bi bi-check-lg me-1"></i>Save and continue
+          </button>
+          <button type="button" class="btn btn-outline-primary" id="crop-save-default-btn">
+            Save as default
           </button>
           <span id="crop-save-status" class="ms-2 small crop-save-status" aria-live="polite"></span>
         </div>
@@ -9253,6 +9257,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewLoader = modalEl.querySelector("#cropper-loader");
   const infoEl = modalEl.querySelector("#cropper-info");
   const saveBtn = modalEl.querySelector("#crop-save-btn");
+  const saveDefaultBtn = modalEl.querySelector("#crop-save-default-btn");
   const previewCanvas = modalEl.querySelector("#crop-preview");
   const previewCtx = previewCanvas?.getContext("2d");
   const previewConfig = JSON.parse('{{ PREVIEW_CONFIG | tojson | safe }}');
@@ -9359,6 +9364,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarTitle = modalEl.querySelector("#crop-preview-toolbar-title");
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
+  const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
   const subtitlePresetField = settingsContainer?.querySelector('[name="subtitle_preset"]');
   const subtitleStyleField = settingsContainer?.querySelector('[name="subtitle_style"]');
   const subtitlePresetCards = Array.from(settingsContainer?.querySelectorAll("[data-subtitle-preset-card]") || []);
@@ -10915,6 +10921,67 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout();
   });
 
+  const collectShortEditorDefaultParams = () => {
+    const params = new URLSearchParams();
+    [
+      "font",
+      "sub_font",
+      "title_font_size",
+      "sub_font_size",
+      "sub_margin",
+      "subtitle_style",
+      "subtitle_preset",
+      "title_margin",
+      "title_line_spacing",
+      "title_bg_color",
+      "title_bg_alpha",
+      "title_text_color",
+      "subtitle_text_color",
+      "subtitle_text_alpha",
+      "subtitle_bg_color",
+      "subtitle_bg_alpha",
+      "video_overlay_offset",
+    ].forEach((name) => {
+      const field = settingsContainer?.querySelector(`[name="${name}"]`);
+      if (field) {
+        params.set(name, getPersistedFieldValue(field));
+      }
+    });
+    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
+    if (subscribeToggle) {
+      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
+    }
+    const showTitleField = modalEl.querySelector(`[name="show_title"]`);
+    if (showTitleField) {
+      params.set("show_title", showTitleField.checked ? "1" : "0");
+    }
+    const showSubtitleField = modalEl.querySelector(`[name="show_subtitle"]`);
+    if (showSubtitleField) {
+      params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
+    }
+    params.set("visual_mode", activeVisualMode || "video");
+    return params;
+  };
+
+  const saveShortEditorDefaults = async () => {
+    if (!settingsDefaultSaveUrl || !settingsContainer) {
+      throw new Error("Default save endpoint not configured.");
+    }
+    const response = await fetch(settingsDefaultSaveUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: collectShortEditorDefaultParams(),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "Defaults could not be saved.");
+    }
+    return payload;
+  };
+
   const saveShortSettings = async () => {
     if (!settingsSaveUrl || !settingsContainer) {
       return;
@@ -10978,6 +11045,24 @@ document.addEventListener("DOMContentLoaded", () => {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
   };
+
+  saveDefaultBtn?.addEventListener("click", async () => {
+    setSaveStatus("", "");
+    const originalText = saveDefaultBtn.textContent;
+    saveDefaultBtn.disabled = true;
+    saveDefaultBtn.textContent = "Saving…";
+    try {
+      await saveShortEditorDefaults();
+      setSaveStatus("Varsayılan kaydedildi", "success");
+    } catch (err) {
+      const message = err.message || "Defaults could not be saved.";
+      updateInfo(message);
+      setSaveStatus(message, "danger");
+    } finally {
+      saveDefaultBtn.disabled = false;
+      saveDefaultBtn.textContent = originalText;
+    }
+  });
 
   saveBtn?.addEventListener("click", async () => {
     if (!cropperInstances.top || !naturalSize.width || !naturalSize.height) {

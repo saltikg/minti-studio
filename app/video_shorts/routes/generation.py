@@ -350,6 +350,30 @@ from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetc
 PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
 HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
+SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
+SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
+    "font",
+    "sub_font",
+    "title_font_size",
+    "sub_font_size",
+    "sub_margin",
+    "subtitle_style",
+    "subtitle_preset",
+    "title_margin",
+    "title_line_spacing",
+    "title_bg_color",
+    "title_bg_alpha",
+    "title_text_color",
+    "subtitle_text_color",
+    "subtitle_text_alpha",
+    "subtitle_bg_color",
+    "subtitle_bg_alpha",
+    "video_overlay_offset",
+    "enable_subscribe_overlay",
+    "show_title",
+    "show_subtitle",
+    "visual_mode",
+)
 
 _TRANSCRIBE_JOB_LOCK = threading.Lock()
 _TRANSCRIBE_JOB_STATE: Dict[int, Dict[str, Any]] = {}
@@ -753,6 +777,142 @@ def _normalize_optional_bool(value: Any, default: bool = True) -> bool:
     if text in {"1", "true", "yes", "on", "t"}:
         return True
     return bool(value)
+
+
+def _short_editor_config_defaults() -> Dict[str, Any]:
+    return {
+        "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
+        "sub_font": DEFAULT_SUB_FONT_KEY,
+        "title_font_size": DEFAULT_EDITOR_TITLE_FONT_SIZE,
+        "sub_font_size": DEFAULT_SUB_FONT_SIZE,
+        "sub_margin": SUB_MARGIN_DEFAULT,
+        "subtitle_style": "plain",
+        "subtitle_preset": DEFAULT_SUBTITLE_PRESET,
+        "title_margin": DEFAULT_TITLE_MARGIN,
+        "title_line_spacing": -4,
+        "title_bg_color": DEFAULT_EDITOR_TITLE_BG_COLOR,
+        "title_bg_alpha": DEFAULT_EDITOR_TITLE_BG_ALPHA,
+        "title_text_color": DEFAULT_EDITOR_TITLE_TEXT_COLOR,
+        "subtitle_text_color": DEFAULT_SUBTITLE_TEXT_COLOR,
+        "subtitle_text_alpha": DEFAULT_SUBTITLE_TEXT_ALPHA,
+        "subtitle_bg_color": DEFAULT_SUBTITLE_BG_COLOR,
+        "subtitle_bg_alpha": DEFAULT_SUBTITLE_BG_ALPHA,
+        "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
+        "enable_subscribe_overlay": True,
+        "show_title": True,
+        "show_subtitle": True,
+        "visual_mode": "video",
+    }
+
+
+def _is_blank_editor_default_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _values_equal_for_editor_default(value: Any, fallback: Any) -> bool:
+    if _is_blank_editor_default_value(value):
+        return True
+    if isinstance(fallback, bool):
+        return _normalize_optional_bool(value, default=fallback) == fallback
+    if isinstance(fallback, int):
+        try:
+            return int(float(value)) == int(fallback)
+        except Exception:
+            return False
+    if isinstance(fallback, str) and fallback.startswith("#"):
+        return _normalize_hex_color(value, fallback).lower() == fallback.lower()
+    return str(value).strip().lower() == str(fallback).strip().lower()
+
+
+def _load_short_editor_defaults(user_id: Optional[str]) -> Dict[str, Any]:
+    raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        current_app.logger.warning("Invalid short editor defaults JSON for user %s", user_id)
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {name: parsed.get(name) for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES if name in parsed}
+
+
+def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
+    defaults = _short_editor_config_defaults()
+    payload: Dict[str, Any] = {}
+
+    font_key = _resolve_title_font_key(source.get("font") or defaults["font"])
+    payload["font"] = font_key
+
+    sub_font_keys = {str(choice[0]) for choice in SUB_FONT_CHOICES}
+    sub_font_key = str(source.get("sub_font") or defaults["sub_font"]).strip()
+    payload["sub_font"] = sub_font_key if sub_font_key in sub_font_keys else DEFAULT_SUB_FONT_KEY
+
+    for name in (
+        "title_font_size",
+        "sub_font_size",
+        "sub_margin",
+        "title_margin",
+        "title_line_spacing",
+        "video_overlay_offset",
+    ):
+        try:
+            payload[name] = int(float(source.get(name)))
+        except Exception:
+            payload[name] = int(defaults[name])
+
+    subtitle_style = str(source.get("subtitle_style") or defaults["subtitle_style"]).strip().lower()
+    payload["subtitle_style"] = subtitle_style if subtitle_style in {"plain", "karaoke"} else "plain"
+
+    subtitle_preset = str(source.get("subtitle_preset") or defaults["subtitle_preset"]).strip() or DEFAULT_SUBTITLE_PRESET
+    payload["subtitle_preset"] = subtitle_preset if subtitle_preset in SUBTITLE_PRESETS else DEFAULT_SUBTITLE_PRESET
+
+    payload["title_bg_color"] = _normalize_hex_color(source.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR)
+    payload["title_text_color"] = _normalize_hex_color(source.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR)
+    payload["subtitle_text_color"] = _normalize_hex_color(source.get("subtitle_text_color"), DEFAULT_SUBTITLE_TEXT_COLOR)
+    payload["subtitle_bg_color"] = _normalize_hex_color(source.get("subtitle_bg_color"), DEFAULT_SUBTITLE_BG_COLOR)
+
+    payload["title_bg_alpha"] = _normalize_alpha_percent(source.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
+    payload["subtitle_text_alpha"] = _normalize_alpha_percent(source.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA)
+    payload["subtitle_bg_alpha"] = _normalize_alpha_percent(source.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA)
+
+    payload["enable_subscribe_overlay"] = _normalize_optional_bool(
+        source.get("enable_subscribe_overlay"),
+        default=True,
+    )
+    payload["show_title"] = _normalize_optional_bool(source.get("show_title"), default=True)
+    payload["show_subtitle"] = _normalize_optional_bool(source.get("show_subtitle"), default=True)
+
+    visual_mode = str(source.get("visual_mode") or defaults["visual_mode"]).strip().lower()
+    payload["visual_mode"] = visual_mode if visual_mode in {"video", "static", "created", "podcast"} else "video"
+    return payload
+
+
+def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict[str, Any]) -> Dict[str, Any]:
+    config_defaults = _short_editor_config_defaults()
+    if not user_defaults:
+        return {
+            name: raw_values.get(name) if not _is_blank_editor_default_value(raw_values.get(name)) else config_defaults[name]
+            for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
+        }
+    clean_user_defaults = _clean_short_editor_default_payload(user_defaults)
+    row_is_default_like = all(
+        _values_equal_for_editor_default(raw_values.get(name), config_defaults[name])
+        for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
+    )
+    resolved: Dict[str, Any] = {}
+    for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES:
+        raw_value = raw_values.get(name)
+        if row_is_default_like or _is_blank_editor_default_value(raw_value):
+            resolved[name] = clean_user_defaults.get(name, config_defaults[name])
+        else:
+            resolved[name] = raw_value
+    return resolved
 
 
 def _format_size_bytes(num: int) -> str:
@@ -5344,45 +5504,71 @@ def generate_short(video_pk):
     if not sub_fonts:
         sub_fonts.append({"key": "dejavu", "label": "DejaVu Sans", "path": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "fontname": "DejaVu Sans"})
 
-    video_font_key = video.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY
-    video_title_font_size = video.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
-    video_sub_font_key = video.get("subtitle_font_key") or DEFAULT_SUB_FONT_KEY
-    video_sub_font_size = video.get("subtitle_font_size") or DEFAULT_SUB_FONT_SIZE
-    video_sub_margin = video.get("subtitle_margin") or SUB_MARGIN_DEFAULT
-    video_subtitle_style = str(video.get("subtitle_style") or "plain").strip().lower()
+    short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id)
+    raw_style_values = {
+        "font": video.get("title_font_key"),
+        "sub_font": video.get("subtitle_font_key"),
+        "title_font_size": video.get("title_font_size"),
+        "sub_font_size": video.get("subtitle_font_size"),
+        "sub_margin": video.get("subtitle_margin"),
+        "subtitle_style": video.get("subtitle_style"),
+        "subtitle_preset": video.get("subtitle_preset"),
+        "title_margin": video.get("title_margin"),
+        "title_line_spacing": video.get("title_line_spacing"),
+        "title_bg_color": video.get("title_bg_color"),
+        "title_bg_alpha": video.get("title_bg_alpha"),
+        "title_text_color": video.get("title_text_color"),
+        "subtitle_text_color": video.get("subtitle_text_color"),
+        "subtitle_text_alpha": video.get("subtitle_text_alpha"),
+        "subtitle_bg_color": video.get("subtitle_bg_color"),
+        "subtitle_bg_alpha": video.get("subtitle_bg_alpha"),
+        "video_overlay_offset": video.get("video_overlay_offset"),
+        "enable_subscribe_overlay": video.get("subscribe_overlay_enabled"),
+        "show_title": video.get("show_title"),
+        "show_subtitle": video.get("show_subtitle"),
+        "visual_mode": video.get("visual_mode"),
+    }
+    resolved_style_values = _apply_short_editor_defaults(raw_style_values, short_editor_defaults)
+
+    video_font_key = resolved_style_values.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
+    video_title_font_size = resolved_style_values.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
+    video_sub_font_key = resolved_style_values.get("sub_font") or DEFAULT_SUB_FONT_KEY
+    video_sub_font_size = resolved_style_values.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE
+    video_sub_margin = resolved_style_values.get("sub_margin") or SUB_MARGIN_DEFAULT
+    video_subtitle_style = str(resolved_style_values.get("subtitle_style") or "plain").strip().lower()
     if video_subtitle_style not in {"plain", "karaoke"}:
         video_subtitle_style = "plain"
-    video_subtitle_preset = str(video.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
+    video_subtitle_preset = str(resolved_style_values.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     if video_subtitle_preset not in SUBTITLE_PRESETS:
         video_subtitle_preset = DEFAULT_SUBTITLE_PRESET
-    video_title_margin = video.get("title_margin") or DEFAULT_TITLE_MARGIN
-    video_title_line_spacing = video.get("title_line_spacing")
+    video_title_margin = resolved_style_values.get("title_margin") or DEFAULT_TITLE_MARGIN
+    video_title_line_spacing = resolved_style_values.get("title_line_spacing")
     try:
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
         video_title_line_spacing = -4
-    video_title_bg_color = video.get("title_bg_color") or DEFAULT_EDITOR_TITLE_BG_COLOR
-    video_title_bg_alpha = _normalize_alpha_percent(video.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
-    video_title_text_color = video.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR
-    video_subtitle_text_color = video.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR
-    video_subtitle_bg_color = video.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR
-    video_subtitle_bg_alpha = _normalize_alpha_percent(video.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA)
-    video_subtitle_text_alpha = _normalize_alpha_percent(video.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA)
+    video_title_bg_color = resolved_style_values.get("title_bg_color") or DEFAULT_EDITOR_TITLE_BG_COLOR
+    video_title_bg_alpha = _normalize_alpha_percent(resolved_style_values.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
+    video_title_text_color = resolved_style_values.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR
+    video_subtitle_text_color = resolved_style_values.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR
+    video_subtitle_bg_color = resolved_style_values.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR
+    video_subtitle_bg_alpha = _normalize_alpha_percent(resolved_style_values.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA)
+    video_subtitle_text_alpha = _normalize_alpha_percent(resolved_style_values.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA)
     video_date_text = video.get("video_date_text") or ""
     try:
         video_date_top = int(video.get("video_date_top") or DEFAULT_VIDEO_DATE_TOP)
     except Exception:
         video_date_top = DEFAULT_VIDEO_DATE_TOP
-    raw_subscribe = video.get("subscribe_overlay_enabled")
+    raw_subscribe = resolved_style_values.get("enable_subscribe_overlay")
     video_subscribe_overlay = _normalize_optional_bool(raw_subscribe, default=True)
-    raw_show_title = video.get("show_title")
+    raw_show_title = resolved_style_values.get("show_title")
     video_show_title = _normalize_optional_bool(raw_show_title, default=True)
-    raw_show_subtitle = video.get("show_subtitle")
+    raw_show_subtitle = resolved_style_values.get("show_subtitle")
     video_show_subtitle = _normalize_optional_bool(raw_show_subtitle, default=True)
     raw_is_music_only = video.get("is_music_only")
     video_is_music_only = bool(raw_is_music_only) if raw_is_music_only is not None else False
     selected_podcast_audio_filename = (video.get("podcast_audio_filename") or "").strip()
-    selected_visual_mode = (video.get("visual_mode") or "video").strip().lower()
+    selected_visual_mode = str(resolved_style_values.get("visual_mode") or "video").strip().lower()
     if selected_visual_mode not in {"video", "static", "created", "podcast"}:
         selected_visual_mode = "video"
     selected_podcast_overlay_short_ids: List[str] = []
@@ -5399,7 +5585,7 @@ def generate_short(video_pk):
     except Exception:
         selected_podcast_overlay_short_ids = []
     try:
-        video_overlay_offset = int(video.get("video_overlay_offset") or DEFAULT_VIDEO_OVERLAY_OFFSET)
+        video_overlay_offset = int(resolved_style_values.get("video_overlay_offset") or DEFAULT_VIDEO_OVERLAY_OFFSET)
     except Exception:
         video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
 
@@ -7670,6 +7856,27 @@ def update_clip_coachmark_preference():
         current_app.logger.warning("Failed to save clip coachmark preference for %s: %s", user_id, exc)
         return jsonify({"success": False, "message": "Preference could not be saved."}), 500
     return jsonify({"success": True, "hide": hide_value})
+
+
+@video_shorts_bp.route("/shorts/settings/save-default", methods=["POST"])
+def save_short_editor_defaults():
+    current_user = getattr(g, "vs_current_user", None)
+    user_id = str((current_user or {}).get("id") or "").strip()
+    if not user_id:
+        return jsonify({"success": False, "message": "Authentication required."}), 401
+    source = request.get_json(silent=True) if request.is_json else request.form
+    source = source or {}
+    try:
+        payload = _clean_short_editor_default_payload(source)
+        save_user_preference(
+            user_id,
+            SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        )
+    except Exception as exc:
+        current_app.logger.warning("Failed to save short editor defaults for %s: %s", user_id, exc)
+        return jsonify({"success": False, "message": "Defaults could not be saved."}), 500
+    return jsonify({"success": True, "defaults": payload})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_long_from_shorts", methods=["POST"])
