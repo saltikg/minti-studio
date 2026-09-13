@@ -6310,6 +6310,8 @@ def generate_short(video_pk):
             "plan_index": pi,
             "origin": origin,
             "is_ai_suggestion": is_ai_suggestion,
+            "score": entry.get("score"),
+            "score_breakdown": entry.get("score_breakdown"),
             "generated_video_id": generated_record.get("id"),
             "share_token": generated_record.get("share_token"),
             "recipient_name": str(generated_record.get("recipient_name") or "").strip(),
