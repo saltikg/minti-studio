@@ -3546,6 +3546,20 @@
                 </div>
               </div>
               <div class="clip-score-batch-controls" id="clip-score-batch-controls">
+                {% set schedule_all_ns = namespace(count=0) %}
+                {% for candidate in clip_rows %}
+                  {% set candidate_publish_status = (candidate.publish_status or '')|lower %}
+                  {% set candidate_db_publish_status = (candidate.db_publish_status or '')|lower %}
+                  {% if candidate.status == 'created'
+                    and candidate.video_filename
+                    and not candidate.yt_video_id
+                    and not candidate.publish_at
+                    and not candidate.publish_at_iso
+                    and candidate_publish_status not in ['scheduled', 'uploaded', 'published']
+                    and candidate_db_publish_status not in ['scheduled', 'uploaded', 'published'] %}
+                    {% set schedule_all_ns.count = schedule_all_ns.count + 1 %}
+                  {% endif %}
+                {% endfor %}
                 <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
                   Auto-create clips scoring ≥ <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
                 </label>
@@ -3566,7 +3580,11 @@
                   class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
                   id="clip-schedule-all-btn"
                   data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
-                  {% if not youtube_connected %}disabled title="Connect YouTube first"{% endif %}>
+                  {% if not youtube_connected %}
+                    disabled title="Connect YouTube first"
+                  {% elif schedule_all_ns.count == 0 %}
+                    disabled title="No created clips to schedule yet — use Create clips first."
+                  {% endif %}>
                   <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
                   Schedule all
                 </button>
