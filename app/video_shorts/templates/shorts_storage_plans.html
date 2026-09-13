@@ -898,9 +898,11 @@
       }
 
       const exportsUsed = Number(payload?.exports?.used || 0);
-      const exportsLimit = Number(payload?.exports?.limit || 0);
-      const exportsRemaining = Math.max(0, exportsLimit - exportsUsed);
-      const exportsPercent = percentOf(exportsUsed, exportsLimit);
+      const exportsLimitRaw = payload?.exports?.limit;
+      const hasExportLimit = exportsLimitRaw !== null && exportsLimitRaw !== undefined;
+      const exportsLimit = hasExportLimit ? Number(exportsLimitRaw) : null;
+      const exportsRemaining = hasExportLimit ? Math.max(0, exportsLimit - exportsUsed) : null;
+      const exportsPercent = hasExportLimit ? percentOf(exportsUsed, exportsLimit) : 0;
       const exportsState = usageState(exportsPercent);
 
       const storageUsed = Number(payload?.storage?.used_bytes || 0);
@@ -920,8 +922,8 @@
       usageMeters.appendChild(createMeter({
         label: "Monthly Exports",
         usedLabel: `${exportsUsed}`,
-        limitLabel: `${exportsLimit}`,
-        helper: exportsRemaining === 1 ? "1 left" : `${exportsRemaining} left`,
+        limitLabel: hasExportLimit ? `${exportsLimit}` : "Unlimited",
+        helper: hasExportLimit ? (exportsRemaining === 1 ? "1 left" : `${exportsRemaining} left`) : "Unlimited",
         percent: exportsPercent,
         state: exportsState,
       }));

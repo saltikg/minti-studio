@@ -1049,14 +1049,16 @@
           return;
         }
         const exportsUsed = Number(payload?.exports?.used || 0);
-        const exportsLimit = Number(payload?.exports?.limit || 0);
+        const exportsLimitRaw = payload?.exports?.limit;
+        const hasExportLimit = exportsLimitRaw !== null && exportsLimitRaw !== undefined;
+        const exportsLimit = hasExportLimit ? Number(exportsLimitRaw) : null;
         const storageUsed = Number(payload?.storage?.used_bytes || 0);
         const storageQuota = Number(payload?.storage?.quota_bytes || 0);
         const transcriptionUsed = Number(payload?.transcription?.used_minutes || 0);
         const transcriptionLimitRaw = payload?.transcription?.limit_minutes;
         const storagePercent = storageQuota > 0 ? Math.round((storageUsed / storageQuota) * 100) : 0;
         const parts = [
-          `Exports ${exportsUsed}/${exportsLimit || 0}`,
+          `Exports ${exportsUsed}/${hasExportLimit ? exportsLimit : "∞"}`,
           `Storage ${storagePercent}%`,
         ];
         if (transcriptionLimitRaw !== null && transcriptionLimitRaw !== undefined) {

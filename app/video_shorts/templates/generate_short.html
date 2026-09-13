@@ -7975,9 +7975,15 @@ const renderGenerateUsageSummary = (payload) => {
     return;
   }
   const used = Number(payload.exports.used || 0);
-  const limit = Number(payload.exports.limit || 0);
-  const remaining = Math.max(0, limit - used);
+  const limitRaw = payload.exports.limit;
+  const hasExportLimit = limitRaw !== null && limitRaw !== undefined;
   const resetCopy = payload?.period?.reset_at ? usageResetCopy(payload.period.reset_at) : "";
+  if (!hasExportLimit) {
+    usageEl.textContent = `${used} ${used === 1 ? "export" : "exports"} used · Unlimited${resetCopy ? ` · Resets ${resetCopy}` : ""}`;
+    return;
+  }
+  const limit = Number(limitRaw);
+  const remaining = Math.max(0, limit - used);
   usageEl.textContent = `${remaining} ${remaining === 1 ? "export" : "exports"} left this month${resetCopy ? ` · Resets ${resetCopy}` : ""}`;
 };
 
@@ -8023,12 +8029,19 @@ const getScoreBatchControls = () => ({
 const getRemainingExportsFromUsage = () => {
   if (latestUsageSnapshot?.exports) {
     const used = Number(latestUsageSnapshot.exports.used || 0);
-    const limit = Number(latestUsageSnapshot.exports.limit || 0);
+    const limitRaw = latestUsageSnapshot.exports.limit;
+    if (limitRaw === null || limitRaw === undefined) {
+      return Infinity;
+    }
+    const limit = Number(limitRaw);
     if (Number.isFinite(used) && Number.isFinite(limit)) {
       return Math.max(0, limit - used);
     }
   }
   const usageText = document.getElementById("generate-usage-summary")?.textContent || "";
+  if (usageText.toLowerCase().includes("unlimited")) {
+    return Infinity;
+  }
   const match = usageText.match(/(\d+)\s+exports?\s+left/i);
   if (match) {
     return Number(match[1]);
