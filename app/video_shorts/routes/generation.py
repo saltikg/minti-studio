@@ -11054,6 +11054,7 @@ def _load_admin_lead_records(
                 "watch_share_link_id": int(row[19]) if row[19] is not None else None,
                 "watch_share_token": str(row[20] or "").strip(),
                 "watch_share_url": _share_public_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
+                "watch_preview_url": _share_preview_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
                 "watch_generated_video_id": str(row[21] or "").strip(),
                 "watch_entry_score": _score_from_generated_raw_plan_entry(row[22]),
                 "watch_emailed_at": row[23],
@@ -12682,6 +12683,7 @@ def admin_create_lead_watch_page(lead_id: str):
                     "share_link_id": existing["share_link_id"],
                     "token": existing["share_token"],
                     "url": existing["share_url"],
+                    "preview_url": _share_preview_url(existing["share_token"]),
                     "entry_generated_video_id": existing["generated_video_id"],
                     "entry_score": existing["entry_score"],
                 }
@@ -12741,6 +12743,7 @@ def admin_create_lead_watch_page(lead_id: str):
             "share_link_id": result["share_link_id"],
             "token": result["share_token"],
             "url": result["share_url"],
+            "preview_url": _share_preview_url(result["share_token"]),
             "entry_generated_video_id": result["generated_video_id"],
             "entry_score": selected_short["score"],
         }

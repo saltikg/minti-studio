@@ -229,6 +229,13 @@
                         target="_blank"
                         rel="noopener"
                         data-watch-page-anchor>{{ lead.watch_share_url or '' }}</a>
+                      <a
+                        class="admin-leads-watch-url"
+                        href="{{ lead.watch_preview_url or '#' }}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-watch-page-preview-anchor
+                        {% if not lead.watch_preview_url %}hidden{% endif %}>Test (no tracking)</a>
                       <button type="button" class="btn btn-sm btn-outline-light" data-watch-page-copy="{{ lead.id }}">Copy</button>
                     </div>
                     <div class="admin-leads-watch-note" data-watch-page-note="{{ lead.id }}">
@@ -422,6 +429,7 @@
           const result = document.querySelector(`[data-watch-page-result="${leadId}"]`);
           const label = result?.querySelector("[data-watch-page-label]");
           const anchor = result?.querySelector("[data-watch-page-anchor]");
+          const previewAnchor = result?.querySelector("[data-watch-page-preview-anchor]");
           const note = document.querySelector(`[data-watch-page-note="${leadId}"]`);
           const error = document.querySelector(`[data-watch-page-error="${leadId}"]`);
           if (!endpoint || !result || !anchor) return;
@@ -444,6 +452,10 @@
             }
             anchor.href = data.url || "#";
             anchor.textContent = data.url || "";
+            if (previewAnchor) {
+              previewAnchor.href = data.preview_url || "#";
+              previewAnchor.hidden = !data.preview_url;
+            }
             if (label) label.textContent = data.existing ? "Watch page (existing)" : "Watch page";
             if (note) {
               note.textContent = data.entry_score === null || data.entry_score === undefined
