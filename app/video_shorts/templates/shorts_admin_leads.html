@@ -121,7 +121,6 @@
       <table class="admin-leads-table">
         <thead>
           <tr>
-            <th>Creator</th>
             <th>Channel</th>
             <th>First source video</th>
             <th>Lead type</th>
@@ -159,7 +158,16 @@
             {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
             <tr>
               <td>
-                <strong>{{ lead.creator_name }}</strong>
+                <strong>
+                  {% if lead.youtube_channel_id %}
+                    <a href="https://youtube.com/channel/{{ lead.youtube_channel_id }}" target="_blank" rel="noopener" class="text-decoration-none text-white">{{ lead.channel_name }}</a>
+                  {% else %}
+                    {{ lead.channel_name }}
+                  {% endif %}
+                  {% if lead.subscriber_label and lead.subscriber_label != '—' %}
+                    <span class="admin-leads-muted">({{ lead.subscriber_label }} subs)</span>
+                  {% endif %}
+                </strong>
                 {% set effective_recipient_name = lead.recipient_name or lead.creator_name %}
                 <div class="admin-leads-muted admin-leads-email-row">
                   <span>Email greeting: {{ effective_recipient_name }}</span>
@@ -179,16 +187,8 @@
                     <button type="submit" class="btn btn-sm btn-primary">Save</button>
                   </form>
                 {% else %}
-                  <div class="admin-leads-muted">{{ lead.creator_email }}</div>
+                  <div class="admin-leads-muted">Email: {{ lead.creator_email }}</div>
                 {% endif %}
-              </td>
-              <td>
-                {% if lead.youtube_channel_id %}
-                  <a href="https://youtube.com/channel/{{ lead.youtube_channel_id }}" target="_blank" rel="noopener" class="text-decoration-none text-white">{{ lead.channel_name }}</a>
-                {% else %}
-                  {{ lead.channel_name }}
-                {% endif %}
-                <div class="admin-leads-muted">Subscribers: {{ lead.subscriber_label }}</div>
               </td>
               <td>
                 <div class="admin-leads-video">

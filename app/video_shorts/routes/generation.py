@@ -5314,6 +5314,30 @@ def generate_short(video_pk):
     if "creator_email" in video_columns:
         cols.append("creator_email")
     video = dict(zip(cols, row))
+    lead_channel_name_row = None
+    if autopilot_leads_table_ready(conn):
+        lead_channel_where = ["CAST(l.first_video_id AS VARCHAR) = CAST(? AS VARCHAR)"]
+        lead_channel_params: List[Any] = [video.get("id")]
+        if editor_owner_user_id:
+            lead_channel_where.append("CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)")
+            lead_channel_params.append(editor_owner_user_id)
+        if brand_id:
+            lead_channel_where.append("CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)")
+            lead_channel_params.append(brand_id)
+        try:
+            lead_channel_name_row = conn.execute(
+                f"""
+                SELECT COALESCE(NULLIF(c.channel_name, ''), NULLIF(l.creator_name, ''))
+                FROM autopilot_leads l
+                LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+                WHERE {' AND '.join(lead_channel_where)}
+                ORDER BY l.created_at DESC NULLS LAST, l.id DESC
+                LIMIT 1
+                """,
+                lead_channel_params,
+            ).fetchone()
+        except Exception:
+            lead_channel_name_row = None
     channel_name_row = None
     if video.get("channel_id"):
         try:
@@ -5333,7 +5357,8 @@ def generate_short(video_pk):
         except Exception:
             brand_name_row = None
     video["channel_name"] = (
-        (channel_name_row[0] if channel_name_row else None)
+        (lead_channel_name_row[0] if lead_channel_name_row else None)
+        or (channel_name_row[0] if channel_name_row else None)
         or video.get("creator_name")
         or (brand_name_row[0] if brand_name_row else None)
         or ""
