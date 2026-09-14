@@ -5314,7 +5314,16 @@ def generate_short(video_pk):
     if "creator_email" in video_columns:
         cols.append("creator_email")
     video = dict(zip(cols, row))
-    lead_channel_name_row = None
+    def _youtube_channel_url_from_parts(channel_url: Any, youtube_channel_id: Any) -> str:
+        clean_url = str(channel_url or "").strip()
+        if clean_url.startswith(("http://", "https://")):
+            return clean_url
+        clean_youtube_channel_id = str(youtube_channel_id or "").strip()
+        if clean_youtube_channel_id:
+            return f"https://youtube.com/channel/{clean_youtube_channel_id}"
+        return ""
+
+    lead_channel_row = None
     if autopilot_leads_table_ready(conn):
         lead_channel_where = ["CAST(l.first_video_id AS VARCHAR) = CAST(? AS VARCHAR)"]
         lead_channel_params: List[Any] = [video.get("id")]
@@ -5325,9 +5334,12 @@ def generate_short(video_pk):
             lead_channel_where.append("CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)")
             lead_channel_params.append(brand_id)
         try:
-            lead_channel_name_row = conn.execute(
+            lead_channel_row = conn.execute(
                 f"""
-                SELECT COALESCE(NULLIF(c.channel_name, ''), NULLIF(l.creator_name, ''))
+                SELECT
+                    COALESCE(NULLIF(c.channel_name, ''), NULLIF(l.creator_name, '')) AS channel_name,
+                    c.channel_url,
+                    c.youtube_channel_id
                 FROM autopilot_leads l
                 LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
                 WHERE {' AND '.join(lead_channel_where)}
@@ -5337,18 +5349,23 @@ def generate_short(video_pk):
                 lead_channel_params,
             ).fetchone()
         except Exception:
-            lead_channel_name_row = None
-    channel_name_row = None
+            lead_channel_row = None
+    channel_row = None
     if video.get("channel_id"):
         try:
-            channel_name_row = conn.execute(
-                "SELECT channel_name FROM youtube_channels WHERE channel_id = ? LIMIT 1",
+            channel_row = conn.execute(
+                """
+                SELECT channel_name, channel_url, youtube_channel_id
+                FROM youtube_channels
+                WHERE channel_id = ?
+                LIMIT 1
+                """,
                 [video.get("channel_id")],
             ).fetchone()
         except Exception:
-            channel_name_row = None
+            channel_row = None
     brand_name_row = None
-    if not channel_name_row and brand_id:
+    if not channel_row and brand_id:
         try:
             brand_name_row = conn.execute(
                 "SELECT name FROM shorts_brands WHERE id = ? LIMIT 1",
@@ -5357,12 +5374,32 @@ def generate_short(video_pk):
         except Exception:
             brand_name_row = None
     video["channel_name"] = (
-        (lead_channel_name_row[0] if lead_channel_name_row else None)
-        or (channel_name_row[0] if channel_name_row else None)
+        (lead_channel_row[0] if lead_channel_row else None)
+        or (channel_row[0] if channel_row else None)
         or video.get("creator_name")
         or (brand_name_row[0] if brand_name_row else None)
         or ""
     )
+    video["channel_url"] = (
+        _youtube_channel_url_from_parts(
+            lead_channel_row[1] if lead_channel_row else None,
+            lead_channel_row[2] if lead_channel_row else None,
+        )
+        or _youtube_channel_url_from_parts(
+            channel_row[1] if channel_row else None,
+            channel_row[2] if channel_row else None,
+        )
+    )
+    clean_video_url = str(video.get("video_url") or "").strip()
+    clean_video_id = str(video.get("video_id") or "").strip()
+    if clean_video_url.startswith(("http://", "https://")) and (
+        "youtube.com/" in clean_video_url or "youtu.be/" in clean_video_url
+    ):
+        video["youtube_watch_url"] = clean_video_url
+    elif clean_video_id and not clean_video_id.startswith("local_"):
+        video["youtube_watch_url"] = f"https://www.youtube.com/watch?v={clean_video_id}"
+    else:
+        video["youtube_watch_url"] = ""
     video_duration_label = _format_time_label(video["duration_seconds"]) if video.get("duration_seconds") else None
     if video_duration_label and video_duration_label.endswith(".000"):
         video_duration_label = video_duration_label[:-4]

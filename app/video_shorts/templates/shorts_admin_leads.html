@@ -170,10 +170,10 @@
                 </strong>
                 {% set effective_recipient_name = lead.recipient_name or lead.creator_name %}
                 <div class="admin-leads-muted admin-leads-email-row">
-                  <span>Email greeting: {{ effective_recipient_name }}</span>
+                  <span data-recipient-name-label="{{ lead.id }}">Email greeting: {{ effective_recipient_name }}</span>
                   <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-recipient-name-edit="{{ lead.id }}" aria-label="Edit email greeting name" title="Edit email greeting name"><i class="bi bi-pencil" aria-hidden="true"></i></button>
                 </div>
-                <form method="post" action="{{ url_for('video_shorts_bp.admin_update_lead_recipient_name', lead_id=lead.id) }}" class="admin-leads-email-form" data-recipient-name-form="{{ lead.id }}">
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_update_lead_recipient_name', lead_id=lead.id) }}" class="admin-leads-email-form" data-recipient-name-form="{{ lead.id }}" data-recipient-name-fallback="{{ lead.creator_name }}">
                   <input type="text" name="recipient_name" class="form-control form-control-sm" value="{{ effective_recipient_name }}" placeholder="Email greeting name" aria-label="Email greeting name">
                   <button type="submit" class="btn btn-sm btn-primary">Save</button>
                 </form>
@@ -373,6 +373,46 @@
           if (!form) return;
           form.classList.add("is-open");
           form.querySelector("input[name='recipient_name']")?.focus();
+        });
+      });
+      document.querySelectorAll("[data-recipient-name-form]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const leadId = form.dataset.recipientNameForm;
+          const input = form.querySelector("input[name='recipient_name']");
+          const button = form.querySelector("button[type='submit']");
+          const label = document.querySelector(`[data-recipient-name-label="${leadId}"]`);
+          const fallbackName = form.dataset.recipientNameFallback || "";
+          const originalText = button?.textContent || "Save";
+          if (button) {
+            button.disabled = true;
+            button.textContent = "Saving...";
+          }
+          try {
+            const formData = new FormData(form);
+            const response = await fetch(form.action, {
+              method: "POST",
+              headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+              body: formData,
+              credentials: "same-origin"
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.ok) {
+              throw new Error(data.error || "Greeting name could not be saved.");
+            }
+            const savedName = (data.recipient_name || "").trim();
+            const effectiveName = savedName || fallbackName;
+            if (label) label.textContent = `Email greeting: ${effectiveName}`;
+            if (input) input.value = effectiveName;
+            form.classList.remove("is-open");
+          } catch (error) {
+            alert(error.message || "Greeting name could not be saved.");
+          } finally {
+            if (button) {
+              button.disabled = false;
+              button.textContent = originalText;
+            }
+          }
         });
       });
       document.querySelectorAll("[data-watch-page-create]").forEach((button) => {
