@@ -8,7 +8,7 @@
 
 {% block extra_styles %}
   <style>
-    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(6,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
+    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(7,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
     .admin-leads-toolbar-actions { display:flex; gap:8px; align-items:end; }
     .admin-leads-modal .modal-content { border:1px solid rgba(45,212,191,.24); border-radius:18px; background:#0b131c; color:rgba(255,255,255,.92); }
     .admin-leads-modal .modal-header, .admin-leads-modal .modal-footer { border-color:rgba(255,255,255,.09); }
@@ -93,6 +93,14 @@
         </select>
       </div>
       <div>
+        <label for="admin-leads-scheduled" class="form-label mb-2">Scheduled</label>
+        <select id="admin-leads-scheduled" name="scheduled" class="form-select">
+          <option value="" {% if not scheduled_filter %}selected{% endif %}>All statuses</option>
+          <option value="scheduled" {% if scheduled_filter == 'scheduled' %}selected{% endif %}>Scheduled</option>
+          <option value="not_scheduled" {% if scheduled_filter == 'not_scheduled' %}selected{% endif %}>Not scheduled</option>
+        </select>
+      </div>
+      <div>
         <label for="admin-leads-generated" class="form-label mb-2">Generated Shorts</label>
         <select id="admin-leads-generated" name="generated" class="form-select">
           <option value="" {% if not generated_filter %}selected{% endif %}>All counts</option>
@@ -128,7 +136,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='generation', dir=next_generation_dir, page=1) }}">
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='generation', dir=next_generation_dir, page=1) }}">
                 <span>Generation</span>
                 {% if sort_key == 'generation' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -136,7 +144,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='email_sent', dir=next_email_sent_dir, page=1) }}">
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='email_sent', dir=next_email_sent_dir, page=1) }}">
                 <span>Email sent</span>
                 {% if sort_key == 'email_sent' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -145,7 +153,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='created', dir=next_created_dir, page=1) }}">
+                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='created', dir=next_created_dir, page=1) }}">
                 <span>Created</span>
                 {% if sort_key == 'created' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -310,10 +318,10 @@
       <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-leads-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>

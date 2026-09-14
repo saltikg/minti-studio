@@ -10745,6 +10745,7 @@ def _load_admin_lead_records(
     lead_type: str = "",
     download_filter: str = "",
     email_sent_filter: str = "",
+    scheduled_filter: str = "",
     generated_filter: str = "",
     sort_key: str = "created",
     sort_dir: str = "desc",
@@ -10767,6 +10768,9 @@ def _load_admin_lead_records(
     normalized_email_sent_filter = (email_sent_filter or "").strip().lower()
     if normalized_email_sent_filter not in {"sent", "not_sent"}:
         normalized_email_sent_filter = ""
+    normalized_scheduled_filter = (scheduled_filter or "").strip().lower()
+    if normalized_scheduled_filter not in {"scheduled", "not_scheduled"}:
+        normalized_scheduled_filter = ""
     normalized_generated_filter = (generated_filter or "").strip().lower()
     if normalized_generated_filter not in {"0", "1-5", "5+"}:
         normalized_generated_filter = ""
@@ -10922,6 +10926,21 @@ def _load_admin_lead_records(
               AND sl.emailed_at IS NOT NULL
         )
     """
+    scheduled_share_link_exists_sql = (
+        f"""
+        EXISTS (
+            SELECT 1
+            FROM short_share_links sl
+            JOIN outreach_scheduled_emails ose
+              ON ose.share_link_id = sl.id
+            WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+              {share_link_active_clause}
+              AND ose.status IN ('scheduled', 'processing')
+        )
+        """
+        if has_share_links and has_outreach_scheduled_emails
+        else "FALSE"
+    )
     generated_count_sql = """
         COALESCE(
             (
@@ -10949,6 +10968,10 @@ def _load_admin_lead_records(
         where_parts.append(emailed_share_link_exists_sql if has_emailed_at else "1 = 0")
     elif normalized_email_sent_filter == "not_sent" and has_emailed_at:
         where_parts.append(f"NOT {emailed_share_link_exists_sql}")
+    if normalized_scheduled_filter == "scheduled":
+        where_parts.append(scheduled_share_link_exists_sql)
+    elif normalized_scheduled_filter == "not_scheduled":
+        where_parts.append(f"NOT {scheduled_share_link_exists_sql}")
     if normalized_generated_filter == "0":
         where_parts.append(f"{generated_count_sql} = 0")
     elif normalized_generated_filter == "1-5":
@@ -12472,6 +12495,7 @@ def admin_leads():
     lead_type = (request.args.get("lead_type") or "").strip().lower()
     download_filter = (request.args.get("download") or "").strip().lower()
     email_sent_filter = (request.args.get("email_sent") or "").strip().lower()
+    scheduled_filter = (request.args.get("scheduled") or "").strip().lower()
     generated_filter = (request.args.get("generated") or "").strip().lower()
     sort_key = (request.args.get("sort") or "created").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
@@ -12491,6 +12515,7 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             email_sent_filter=email_sent_filter,
+            scheduled_filter=scheduled_filter,
             generated_filter=generated_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
@@ -12507,6 +12532,7 @@ def admin_leads():
             lead_type=lead_type,
             download_filter=download_filter,
             email_sent_filter=email_sent_filter,
+            scheduled_filter=scheduled_filter,
             generated_filter=generated_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
@@ -12525,6 +12551,7 @@ def admin_leads():
         lead_type=lead_type if lead_type in {"real", "discovery"} else "",
         download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
         email_sent_filter=email_sent_filter if email_sent_filter in {"sent", "not_sent"} else "",
+        scheduled_filter=scheduled_filter if scheduled_filter in {"scheduled", "not_scheduled"} else "",
         generated_filter=generated_filter if generated_filter in {"0", "1-5", "5+"} else "",
         sort_key=sort_key if sort_key in {"generation", "email_sent", "created"} else "created",
         sort_dir=sort_dir if sort_dir in {"asc", "desc"} else "desc",
