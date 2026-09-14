@@ -3282,7 +3282,7 @@
          href="{{ url_for('video_shorts_bp.my_videos_page') }}">
         ← Back
       </a>
-      <h3>Generate short – {{ video.title }}</h3>
+      <h3>{{ video.title }}</h3>
     </div>
     <div class="editor-header-meta">
       <span class="editor-header-meta-item" title="Duration">
@@ -3293,7 +3293,7 @@
         <span class="material-symbols-outlined" aria-hidden="true" style="font-size:15px;">visibility</span>
         {{ '{:,}'.format(video.view_count|int) if video.view_count is not none else '-' }}
       </span>
-      <span class="editor-header-meta-item" title="Video ID">ID {{ video.video_id }}</span>
+      <span class="editor-header-meta-item" title="Channel">Kanal {{ video.channel_name or '-' }}</span>
       {% if video.video_url %}
         <a class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-2"
            href="{{ video.video_url }}" target="_blank" aria-label="YouTube">

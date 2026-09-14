@@ -5314,6 +5314,20 @@ def generate_short(video_pk):
     if "creator_email" in video_columns:
         cols.append("creator_email")
     video = dict(zip(cols, row))
+    channel_name_row = None
+    if video.get("channel_id"):
+        try:
+            channel_name_row = conn.execute(
+                "SELECT channel_name FROM youtube_channels WHERE channel_id = ? LIMIT 1",
+                [video.get("channel_id")],
+            ).fetchone()
+        except Exception:
+            channel_name_row = None
+    video["channel_name"] = (
+        (channel_name_row[0] if channel_name_row else None)
+        or video.get("creator_name")
+        or ""
+    )
     video_duration_label = _format_time_label(video["duration_seconds"]) if video.get("duration_seconds") else None
     if video_duration_label and video_duration_label.endswith(".000"):
         video_duration_label = video_duration_label[:-4]
