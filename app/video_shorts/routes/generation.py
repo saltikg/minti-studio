@@ -5323,9 +5323,19 @@ def generate_short(video_pk):
             ).fetchone()
         except Exception:
             channel_name_row = None
+    brand_name_row = None
+    if not channel_name_row and brand_id:
+        try:
+            brand_name_row = conn.execute(
+                "SELECT name FROM shorts_brands WHERE id = ? LIMIT 1",
+                [brand_id],
+            ).fetchone()
+        except Exception:
+            brand_name_row = None
     video["channel_name"] = (
         (channel_name_row[0] if channel_name_row else None)
         or video.get("creator_name")
+        or (brand_name_row[0] if brand_name_row else None)
         or ""
     )
     video_duration_label = _format_time_label(video["duration_seconds"]) if video.get("duration_seconds") else None
