@@ -10527,6 +10527,8 @@ def _load_admin_outreach_emails(
     bucket_filter: str = "all",
     visited_filter: str = "all",
     converted_filter: str = "all",
+    period_filter: str = "",
+    metric_filter: str = "",
     email_query: str = "",
     date_from: str = "",
     date_to: str = "",
@@ -10534,7 +10536,7 @@ def _load_admin_outreach_emails(
     sort_dir: str = "asc",
     limit: int = 200,
     offset: int = 0,
-) -> tuple[list[dict[str, Any]], int, dict[str, Any], str, str, str, str, str, str, str, str, str]:
+) -> tuple[list[dict[str, Any]], int, dict[str, Any], str, str, str, str, str, str, str, str, str, str, str]:
     outreach_columns = table_columns(conn, "outreach_scheduled_emails")
     share_link_columns = table_columns(conn, "short_share_links")
     user_event_columns = table_columns(conn, "user_events")
@@ -10544,7 +10546,7 @@ def _load_admin_outreach_emails(
             "week": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
             "month": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
         }
-        return [], 0, empty_summary, "all", [], "all", "all", "", "", "", "bucket", "asc"
+        return [], 0, empty_summary, "all", [], "all", "all", "", "", "", "", "", "bucket", "asc"
 
     normalized_status = str(status_filter or "all").strip().lower()
     if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled"}:
@@ -10564,6 +10566,15 @@ def _load_admin_outreach_emails(
     normalized_converted = str(converted_filter or "all").strip().lower()
     if normalized_converted not in {"all", "yes", "no"}:
         normalized_converted = "all"
+    normalized_period = str(period_filter or "").strip().lower()
+    if normalized_period not in {"today", "week", "month"}:
+        normalized_period = ""
+    normalized_metric = str(metric_filter or "").strip().lower()
+    if normalized_metric not in {"sent", "scheduled", "visited", "repeat", "converted", "failed"}:
+        normalized_metric = ""
+    if not normalized_period or not normalized_metric:
+        normalized_period = ""
+        normalized_metric = ""
     normalized_sort_key = str(sort_key or "bucket").strip().lower()
     if normalized_sort_key not in {"bucket", "last_visit", "visit_count", "send_date", "max_watched", "days_since_first_email", "status"}:
         normalized_sort_key = "bucket"
@@ -11056,6 +11067,7 @@ def _load_admin_outreach_emails(
                 "error_short": (error_text[:120] + "...") if len(error_text) > 120 else error_text,
                 "latest_sent_at_for_row": row[26],
                 "latest_sent_at_for_row_pst": _format_datetime_pst(row[26]),
+                "period_send_date": send_date,
                 "visit_count": visit_count,
                 "repeat_visited": repeat_visited,
                 "first_visit": row[31],
@@ -11085,6 +11097,20 @@ def _load_admin_outreach_emails(
         )
 
     def _passes_filters(item: dict[str, Any]) -> bool:
+        if normalized_period and normalized_metric:
+            period_start = periods[normalized_period]
+            if normalized_metric == "sent" and not _in_period(item["latest_sent_at"], period_start):
+                return False
+            if normalized_metric == "scheduled" and not _in_period(item["latest_pending_scheduled_at"], period_start):
+                return False
+            if normalized_metric == "visited" and not _in_period(item["last_visit"], period_start):
+                return False
+            if normalized_metric == "repeat" and not (item["repeat_visited"] and _in_period(item["last_visit"], period_start)):
+                return False
+            if normalized_metric == "converted" and not _in_period(item["converted_at"], period_start):
+                return False
+            if normalized_metric == "failed" and not (item["any_failed"] and _in_period(item["period_send_date"], period_start)):
+                return False
         if normalized_status != "all" and item["effective_status"] != normalized_status:
             return False
         if normalized_buckets and item["bucket"] not in normalized_buckets:
@@ -11144,6 +11170,8 @@ def _load_admin_outreach_emails(
         normalized_email,
         date_from if sent_from else "",
         date_to if sent_to else "",
+        normalized_period,
+        normalized_metric,
         normalized_sort_key,
         normalized_sort_dir,
     )
@@ -12883,6 +12911,8 @@ def admin_outreach_emails():
     bucket_filter = bucket_values if bucket_values else (request.args.get("bucket") or "all").strip().lower()
     visited_filter = (request.args.get("visited") or "all").strip().lower()
     converted_filter = (request.args.get("converted") or "all").strip().lower()
+    period_filter = (request.args.get("period") or "").strip().lower()
+    metric_filter = (request.args.get("metric") or "").strip().lower()
     email_query = (request.args.get("email") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
     date_to = (request.args.get("date_to") or "").strip()
@@ -12908,6 +12938,8 @@ def admin_outreach_emails():
             normalized_email,
             normalized_date_from,
             normalized_date_to,
+            normalized_period,
+            normalized_metric,
             normalized_sort_key,
             normalized_sort_dir,
         ) = _load_admin_outreach_emails(
@@ -12916,6 +12948,8 @@ def admin_outreach_emails():
             bucket_filter=bucket_filter,
             visited_filter=visited_filter,
             converted_filter=converted_filter,
+            period_filter=period_filter,
+            metric_filter=metric_filter,
             email_query=email_query,
             date_from=date_from,
             date_to=date_to,
@@ -12940,6 +12974,8 @@ def admin_outreach_emails():
         email_query=normalized_email,
         date_from=normalized_date_from,
         date_to=normalized_date_to,
+        selected_period=normalized_period,
+        selected_metric=normalized_metric,
         sort_key=normalized_sort_key,
         sort_dir=normalized_sort_dir,
         page=page,

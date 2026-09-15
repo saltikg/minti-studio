@@ -18,13 +18,22 @@
 {% set next_dir = 'asc' if sort_dir == 'desc' else 'desc' %}
 
 {% macro sort_link(key, label) -%}
-  <a
-    class="admin-outreach-sort-link"
-    href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=key, dir=('asc' if sort_key != key or sort_dir == 'desc' else 'desc'), page=1) }}">
-    <span>{{ label }}</span>
-    {% if sort_key == key %}<span class="admin-outreach-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
-  </a>
-{%- endmacro %}
+	  <a
+	    class="admin-outreach-sort-link"
+	    href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=key, dir=('asc' if sort_key != key or sort_dir == 'desc' else 'desc'), page=1) }}">
+	    <span>{{ label }}</span>
+	    {% if sort_key == key %}<span class="admin-outreach-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
+	  </a>
+	{%- endmacro %}
+	{% macro kpi_link(period_key, metric_key, label, value) -%}
+	  <a
+	    class="admin-outreach-kpi{% if selected_period == period_key and selected_metric == metric_key %} is-active{% endif %}"
+	    href="{{ url_for('video_shorts_bp.admin_outreach_emails', period=period_key, metric=metric_key, sort=sort_key, dir=sort_dir, page=1) }}"
+	    aria-label="Filter to {{ label }} for {{ period_key }}">
+	    <div class="admin-outreach-kpi-label">{{ label }}</div>
+	    <div class="admin-outreach-kpi-value">{{ value }}</div>
+	  </a>
+	{%- endmacro %}
 
 {% block extra_styles %}
   <style>
@@ -61,11 +70,27 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
     }
-    .admin-outreach-kpi {
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.055);
-      padding: 9px;
-    }
+	    .admin-outreach-kpi {
+	      display: block;
+	      border-radius: 10px;
+	      background: rgba(255, 255, 255, 0.055);
+	      padding: 9px;
+	      color: inherit;
+	      text-decoration: none;
+	      transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+	    }
+	    .admin-outreach-kpi:hover,
+	    .admin-outreach-kpi:focus {
+	      background: rgba(45, 212, 191, 0.12);
+	      box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.24);
+	      color: inherit;
+	      text-decoration: none;
+	      transform: translateY(-1px);
+	    }
+	    .admin-outreach-kpi.is-active {
+	      background: rgba(45, 212, 191, 0.18);
+	      box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.42);
+	    }
     .admin-outreach-kpi-label {
       color: rgba(255, 255, 255, 0.58);
       font-size: 0.72rem;
@@ -204,32 +229,44 @@
         <input id="outreach-date-to" type="date" name="date_to" value="{{ date_to }}" class="form-control">
       </div>
       <div>
-        <input type="hidden" name="sort" value="{{ sort_key }}">
-        <input type="hidden" name="dir" value="{{ sort_dir }}">
-        <button type="submit" class="btn btn-primary">Filter</button>
-        <a href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}" class="btn btn-outline-light ms-2">Reset</a>
-      </div>
+	        <input type="hidden" name="sort" value="{{ sort_key }}">
+	        <input type="hidden" name="dir" value="{{ sort_dir }}">
+	        {% if selected_period and selected_metric %}
+	          <input type="hidden" name="period" value="{{ selected_period }}">
+	          <input type="hidden" name="metric" value="{{ selected_metric }}">
+	        {% endif %}
+	        <button type="submit" class="btn btn-primary">Filter</button>
+	        <a href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}" class="btn btn-outline-light ms-2">Reset</a>
+	      </div>
     </form>
 
     <div class="admin-outreach-periods" aria-label="Outreach period summary">
       {% for key, label in [('today', 'Today'), ('week', 'This week'), ('month', 'This month')] %}
         {% set period = summary_counts[key] %}
-        <div class="admin-outreach-period-card">
-          <div class="admin-outreach-period-title">{{ label }}</div>
-          <div class="admin-outreach-period-grid">
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Sent</div><div class="admin-outreach-kpi-value">{{ period.sent }}</div></div>
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Scheduled</div><div class="admin-outreach-kpi-value">{{ period.scheduled }}</div></div>
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Visited</div><div class="admin-outreach-kpi-value">{{ period.visited }}</div></div>
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Repeat</div><div class="admin-outreach-kpi-value">{{ period.repeat_visited }}</div></div>
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Converted</div><div class="admin-outreach-kpi-value">{{ period.converted }}</div></div>
-            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Failed</div><div class="admin-outreach-kpi-value">{{ period.failed }}</div></div>
-          </div>
-        </div>
-      {% endfor %}
-    </div>
+	        <div class="admin-outreach-period-card">
+	          <div class="admin-outreach-period-title">{{ label }}</div>
+	          <div class="admin-outreach-period-grid">
+	            {{ kpi_link(key, 'sent', 'Sent', period.sent) }}
+	            {{ kpi_link(key, 'scheduled', 'Scheduled', period.scheduled) }}
+	            {{ kpi_link(key, 'visited', 'Visited', period.visited) }}
+	            {{ kpi_link(key, 'repeat', 'Repeat', period.repeat_visited) }}
+	            {{ kpi_link(key, 'converted', 'Converted', period.converted) }}
+	            {{ kpi_link(key, 'failed', 'Failed', period.failed) }}
+	          </div>
+	        </div>
+	      {% endfor %}
+	    </div>
 
-    <div class="admin-outreach-feedback" data-outreach-feedback></div>
-    <div class="admin-outreach-muted mb-3">{{ total_items }} recipient{{ '' if total_items == 1 else 's' }} · {{ per_page }} per page · visit sessions use a 30-minute gap rule</div>
+	    <div class="admin-outreach-feedback" data-outreach-feedback></div>
+	    {% if selected_period and selected_metric %}
+	      <div class="admin-outreach-muted mb-2">
+	        Shortcut filter:
+	        {{ {'today': 'Today', 'week': 'This week', 'month': 'This month'}.get(selected_period, selected_period) }}
+	        ·
+	        {{ {'sent': 'Sent', 'scheduled': 'Scheduled', 'visited': 'Visited', 'repeat': 'Repeat', 'converted': 'Converted', 'failed': 'Failed'}.get(selected_metric, selected_metric) }}
+	      </div>
+	    {% endif %}
+	    <div class="admin-outreach-muted mb-3">{{ total_items }} recipient{{ '' if total_items == 1 else 's' }} · {{ per_page }} per page · visit sessions use a 30-minute gap rule</div>
 
     <div class="admin-outreach-table-wrap">
       <table class="admin-outreach-table">
@@ -309,12 +346,12 @@
     <div class="admin-outreach-pagination">
       <div class="admin-outreach-muted">Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2 flex-wrap">
-        {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
-        {% endif %}
-        {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
-        {% endif %}
+	        {% if page > 1 %}
+	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+	        {% endif %}
+	        {% if page < total_pages %}
+	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+	        {% endif %}
       </div>
     </div>
   </section>
