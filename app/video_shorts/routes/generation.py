@@ -2668,9 +2668,20 @@ def _preview_face_track_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track.json"
 
 
+def _preview_face_track_smooth_path(video_id: str) -> Path:
+    preview_dir = SHORTS_DIR / "preview_frames"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track_smooth.json"
+
+
 _PREVIEW_FACE_MIN_H_RATIO = 0.18
 _YUNET_FACE_SCORE_THRESHOLD = 0.6
 _YUNET_FACE_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "face_detection_yunet_2023mar.onnx"
+_FACE_TRACK_INTERPOLATE_GAP_SECONDS = 4.0
+_FACE_TRACK_OUTLIER_DELTA = 0.09
+_FACE_TRACK_OUTLIER_NEIGHBOR_DELTA = 0.06
+_FACE_TRACK_SMOOTH_WINDOW = 5
+_FACE_TRACK_DEADZONE = 0.02
 
 
 def _preview_face_ratios_from_box(
@@ -2816,6 +2827,193 @@ def _face_track_candidate_timestamps(
     return timestamps
 
 
+def _track_row_values(row: dict[str, Any]) -> dict[str, float] | None:
+    try:
+        return {
+            "cx_ratio": float(row["cx_ratio"]),
+            "cy_ratio": float(row["cy_ratio"]),
+            "w_ratio": float(row["w_ratio"]),
+            "h_ratio": float(row["h_ratio"]),
+        }
+    except Exception:
+        return None
+
+
+def _interpolate_track_values(
+    before: dict[str, float],
+    after: dict[str, float],
+    fraction: float,
+) -> dict[str, float]:
+    return {
+        key: before[key] + ((after[key] - before[key]) * fraction)
+        for key in ("cx_ratio", "cy_ratio", "w_ratio", "h_ratio")
+    }
+
+
+def _fill_preview_face_track(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filled: list[dict[str, Any]] = []
+    found_indexes = [index for index, row in enumerate(rows) if row.get("found") and _track_row_values(row)]
+    if not found_indexes:
+        return [
+            {
+                "t": row.get("t"),
+                "cx_ratio": None,
+                "cy_ratio": None,
+                "w_ratio": None,
+                "h_ratio": None,
+                "found": False,
+                "source": "missing",
+            }
+            for row in rows
+        ]
+
+    first_found = found_indexes[0]
+    last_safe = _track_row_values(rows[first_found])
+    for index, row in enumerate(rows):
+        values = _track_row_values(row) if row.get("found") else None
+        source = "detected" if values else "held"
+        if values:
+            last_safe = values
+        elif index < first_found:
+            values = _track_row_values(rows[first_found])
+            source = "held"
+        else:
+            previous_candidates = [found_index for found_index in found_indexes if found_index < index]
+            next_candidates = [found_index for found_index in found_indexes if found_index > index]
+            previous_index = previous_candidates[-1] if previous_candidates else None
+            next_index = next_candidates[0] if next_candidates else None
+            if previous_index is not None and next_index is not None:
+                previous_row = rows[previous_index]
+                next_row = rows[next_index]
+                previous_values = _track_row_values(previous_row)
+                next_values = _track_row_values(next_row)
+                try:
+                    gap_seconds = float(next_row.get("t")) - float(previous_row.get("t"))
+                    fraction = (float(row.get("t")) - float(previous_row.get("t"))) / gap_seconds
+                except Exception:
+                    gap_seconds = _FACE_TRACK_INTERPOLATE_GAP_SECONDS + 1.0
+                    fraction = 0.0
+                if (
+                    previous_values
+                    and next_values
+                    and gap_seconds <= _FACE_TRACK_INTERPOLATE_GAP_SECONDS
+                    and gap_seconds > 0
+                ):
+                    values = _interpolate_track_values(previous_values, next_values, max(0.0, min(1.0, fraction)))
+                    source = "interpolated"
+                    last_safe = values
+                else:
+                    values = last_safe
+                    source = "held"
+            else:
+                values = last_safe
+                source = "held"
+        filled.append(
+            {
+                "t": row.get("t"),
+                **(values or {}),
+                "found": values is not None,
+                "source": source,
+            }
+        )
+    return filled
+
+
+def _remove_preview_face_track_outliers(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(rows) < 3:
+        return rows
+    adjusted = [dict(row) for row in rows]
+    for index in range(1, len(rows) - 1):
+        previous_values = _track_row_values(adjusted[index - 1])
+        current_values = _track_row_values(adjusted[index])
+        next_values = _track_row_values(adjusted[index + 1])
+        if not previous_values or not current_values or not next_values:
+            continue
+        neighbor_cx_delta = abs(previous_values["cx_ratio"] - next_values["cx_ratio"])
+        neighbor_cy_delta = abs(previous_values["cy_ratio"] - next_values["cy_ratio"])
+        cx_midpoint = (previous_values["cx_ratio"] + next_values["cx_ratio"]) / 2.0
+        cy_midpoint = (previous_values["cy_ratio"] + next_values["cy_ratio"]) / 2.0
+        cx_spike = abs(current_values["cx_ratio"] - cx_midpoint)
+        cy_spike = abs(current_values["cy_ratio"] - cy_midpoint)
+        if (
+            max(cx_spike, cy_spike) >= _FACE_TRACK_OUTLIER_DELTA
+            and max(neighbor_cx_delta, neighbor_cy_delta) <= _FACE_TRACK_OUTLIER_NEIGHBOR_DELTA
+        ):
+            replacement = _interpolate_track_values(previous_values, next_values, 0.5)
+            adjusted[index].update(replacement)
+            adjusted[index]["source"] = f"{adjusted[index].get('source')}:outlier_replaced"
+    return adjusted
+
+
+def _moving_average_track_values(rows: list[dict[str, Any]], index: int) -> dict[str, float] | None:
+    radius = max(0, _FACE_TRACK_SMOOTH_WINDOW // 2)
+    start = max(0, index - radius)
+    end = min(len(rows), index + radius + 1)
+    values = [_track_row_values(row) for row in rows[start:end]]
+    values = [value for value in values if value]
+    if not values:
+        return None
+    return {
+        key: sum(value[key] for value in values) / float(len(values))
+        for key in ("cx_ratio", "cy_ratio", "w_ratio", "h_ratio")
+    }
+
+
+def _smooth_preview_face_track_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filled = _remove_preview_face_track_outliers(_fill_preview_face_track(rows))
+    smoothed: list[dict[str, Any]] = []
+    previous_output: dict[str, float] | None = None
+    for index, row in enumerate(filled):
+        averaged = _moving_average_track_values(filled, index)
+        if not averaged:
+            smoothed.append(
+                {
+                    "t": row.get("t"),
+                    "cx_ratio": None,
+                    "cy_ratio": None,
+                    "w_ratio": None,
+                    "h_ratio": None,
+                    "found": False,
+                    "source": f"{row.get('source')}:missing",
+                }
+            )
+            continue
+        source = f"{row.get('source')}:smoothed"
+        if previous_output:
+            if (
+                abs(averaged["cx_ratio"] - previous_output["cx_ratio"]) < _FACE_TRACK_DEADZONE
+                and abs(averaged["cy_ratio"] - previous_output["cy_ratio"]) < _FACE_TRACK_DEADZONE
+            ):
+                averaged["cx_ratio"] = previous_output["cx_ratio"]
+                averaged["cy_ratio"] = previous_output["cy_ratio"]
+                source = f"{source}:deadzone"
+        smoothed_row = {
+            "t": row.get("t"),
+            "cx_ratio": averaged["cx_ratio"],
+            "cy_ratio": averaged["cy_ratio"],
+            "w_ratio": averaged["w_ratio"],
+            "h_ratio": averaged["h_ratio"],
+            "found": True,
+            "source": source,
+        }
+        previous_output = averaged
+        smoothed.append(smoothed_row)
+    return smoothed
+
+
+def _write_preview_face_track_smooth(video_id: str, rows: list[dict[str, Any]]) -> Optional[Path]:
+    smooth_path = _preview_face_track_smooth_path(video_id)
+    smoothed_rows = _smooth_preview_face_track_rows(rows)
+    smooth_path.write_text(json.dumps(smoothed_rows, ensure_ascii=True), encoding="utf-8")
+    current_app.logger.info(
+        "Preview face track smooth written video_id=%s samples=%s output=%s",
+        video_id,
+        len(smoothed_rows),
+        smooth_path.name,
+    )
+    return smooth_path
+
+
 def _ensure_preview_face_track(
     video_id: str,
     source_path: Optional[Path],
@@ -2896,6 +3094,10 @@ def _ensure_preview_face_track(
             sum(1 for row in rows if row.get("found")),
             track_path.name,
         )
+        try:
+            _write_preview_face_track_smooth(video_id, rows)
+        except Exception:
+            current_app.logger.exception("Preview face track smooth failed for %s", video_id)
     except Exception:
         current_app.logger.exception("Preview face track failed for %s", video_id)
         try:

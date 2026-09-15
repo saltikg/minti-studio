@@ -1018,6 +1018,11 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             "preview_path": str(preview_path),
             "metadata_path": str(generation._preview_frame_metadata_path(video_id)),
             "track_path": str(track_path) if track_path else None,
+            "track_smooth_path": (
+                str(generation._preview_face_track_smooth_path(video_id))
+                if track_path and generation._preview_face_track_smooth_path(video_id).exists()
+                else None
+            ),
             "crop_applied": bool(applied_crop),
         }
     finally:
