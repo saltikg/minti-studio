@@ -27,6 +27,7 @@ DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
 PODCAST_CHANNEL_NAME = "Podcast channel"
 HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY = "hide_my_videos_coachmark"
+RECENT_SHORTS_PAGE_SIZE = 20
 SOURCES_OWNER_EMAILS = {
     "gokhansaltik@gmail.com",
 }
@@ -285,6 +286,100 @@ def _short_card_media_urls(filename: str) -> tuple[str, str]:
     except Exception:
         current_app.logger.warning("Could not resolve generated short poster filename=%s", safe_name)
     return video_url, poster_url
+
+
+def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:
+    if not brand_id:
+        return [], False
+    try:
+        safe_limit = max(1, min(int(limit or RECENT_SHORTS_PAGE_SIZE), RECENT_SHORTS_PAGE_SIZE))
+    except Exception:
+        safe_limit = RECENT_SHORTS_PAGE_SIZE
+    try:
+        safe_offset = max(0, int(offset or 0))
+    except Exception:
+        safe_offset = 0
+    rows = conn.execute(
+        """
+        SELECT
+            gv.clip_filename,
+            gv.generated_title,
+            gv.generation_status,
+            gv.publish_status,
+            gv.youtube_video_id,
+            gv.created_at,
+            COALESCE(gv.youtube_published_at, gv.published_at),
+            published_video.view_count,
+            published_video.like_count,
+            published_video.comment_count,
+            source_video.id,
+            source_video.thumbnail_url
+        FROM shorts_generated_videos gv
+        LEFT JOIN youtube_videos published_video
+          ON published_video.video_id = gv.youtube_video_id
+         AND published_video.owner_user_id = gv.user_id
+         AND published_video.brand_id = gv.brand_id
+        LEFT JOIN youtube_videos source_video
+          ON source_video.video_id = gv.source_video_id
+         AND source_video.owner_user_id = gv.user_id
+         AND source_video.brand_id = gv.brand_id
+        WHERE gv.user_id = ?
+          AND gv.brand_id = ?
+        ORDER BY gv.created_at DESC
+        LIMIT ?
+        OFFSET ?
+        """,
+        [user_id, brand_id, safe_limit + 1, safe_offset],
+    ).fetchall()
+    has_more = len(rows) > safe_limit
+    cards = []
+    for row in rows[:safe_limit]:
+        clip_filename = str(row[0] or "").strip()
+        generation_status = str(row[2] or "").strip().lower()
+        publish_status = str(row[3] or "").strip().lower()
+        youtube_video_id = str(row[4] or "").strip()
+        published_at = row[6]
+        is_published = publish_status == "published" or bool(published_at)
+        is_preparing = not is_published and (
+            not clip_filename or generation_status in {"queued", "pending", "processing", "rendering"}
+        )
+        if is_published:
+            status_label, status_class = "Published", "published"
+        elif is_preparing:
+            status_label, status_class = "Preparing", "preparing"
+        else:
+            status_label, status_class = "Ready", "ready"
+
+        metric_values = [row[7], row[8], row[9]]
+        has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
+        video_url, poster_url = _short_card_media_urls(clip_filename)
+        if has_real_metrics:
+            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
+        elif is_preparing:
+            meta_label = "Being prepared..."
+        elif is_published:
+            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
+        else:
+            meta_label = "Prepared " + _format_video_timestamp(row[5], user_tz)
+        source_video_pk = int(row[10]) if row[10] is not None else None
+        cards.append(
+            {
+                "title": str(row[1] or "").strip() or "Untitled short",
+                "status_label": status_label,
+                "status_class": status_class,
+                "video_url": video_url,
+                "poster_url": poster_url,
+                "meta_label": meta_label,
+                "has_real_metrics": has_real_metrics,
+                "view_count": int(row[7] or 0),
+                "like_count": int(row[8] or 0),
+                "comment_count": int(row[9] or 0),
+                "source_video_pk": source_video_pk,
+                "editor_url": url_for("video_shorts_bp.generate_short", video_pk=source_video_pk) if source_video_pk else "",
+                "thumbnail_url": str(row[11] or "").strip(),
+            }
+        )
+    return cards, has_more
 
 
 def _delete_source_video_media(video_id: str) -> None:
@@ -775,7 +870,8 @@ def my_videos_page():
     )
     show_autopilot_framing = is_autopilot or is_pending_autopilot_lead
     is_new_autopilot_customer = False
-    recent_short_rows = []
+    recent_shorts = []
+    recent_shorts_has_more = False
     prepared_short_count = 0
     if show_autopilot_framing and brand_id:
         new_autopilot_row = conn.execute(
@@ -799,38 +895,13 @@ def my_videos_page():
             [current_user["id"], brand_id],
         ).fetchone()
         prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
-    if brand_id:
-        recent_short_rows = conn.execute(
-            """
-            SELECT
-                gv.clip_filename,
-                gv.generated_title,
-                gv.generation_status,
-                gv.publish_status,
-                gv.youtube_video_id,
-                gv.created_at,
-                COALESCE(gv.youtube_published_at, gv.published_at),
-                published_video.view_count,
-                published_video.like_count,
-                published_video.comment_count,
-                source_video.id,
-                source_video.thumbnail_url
-            FROM shorts_generated_videos gv
-            LEFT JOIN youtube_videos published_video
-              ON published_video.video_id = gv.youtube_video_id
-             AND published_video.owner_user_id = gv.user_id
-             AND published_video.brand_id = gv.brand_id
-            LEFT JOIN youtube_videos source_video
-              ON source_video.video_id = gv.source_video_id
-             AND source_video.owner_user_id = gv.user_id
-             AND source_video.brand_id = gv.brand_id
-            WHERE gv.user_id = ?
-              AND gv.brand_id = ?
-            ORDER BY gv.created_at DESC
-            LIMIT 20
-            """,
-            [current_user["id"], brand_id],
-        ).fetchall()
+    recent_shorts, recent_shorts_has_more = _load_recent_short_cards(
+        conn,
+        current_user["id"],
+        brand_id,
+        user_tz,
+        limit=RECENT_SHORTS_PAGE_SIZE,
+    )
     conn.close()
 
     videos = []
@@ -905,52 +976,6 @@ def my_videos_page():
         item["thumb_fallback"] = (item["title"][:1] or "V").upper()
         videos.append(item)
 
-    recent_shorts = []
-    for row in recent_short_rows:
-        clip_filename = str(row[0] or "").strip()
-        generation_status = str(row[2] or "").strip().lower()
-        publish_status = str(row[3] or "").strip().lower()
-        youtube_video_id = str(row[4] or "").strip()
-        published_at = row[6]
-        is_published = publish_status == "published" or bool(published_at)
-        is_preparing = not is_published and (
-            not clip_filename or generation_status in {"queued", "pending", "processing", "rendering"}
-        )
-        if is_published:
-            status_label, status_class = "Published", "published"
-        elif is_preparing:
-            status_label, status_class = "Preparing", "preparing"
-        else:
-            status_label, status_class = "Ready", "ready"
-
-        metric_values = [row[7], row[8], row[9]]
-        has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        video_url, poster_url = _short_card_media_urls(clip_filename)
-        if has_real_metrics:
-            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
-        elif is_preparing:
-            meta_label = "Being prepared..."
-        elif is_published:
-            meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
-        else:
-            meta_label = "Prepared " + _format_video_timestamp(row[5], user_tz)
-        recent_shorts.append(
-            {
-                "title": str(row[1] or "").strip() or "Untitled short",
-                "status_label": status_label,
-                "status_class": status_class,
-                "video_url": video_url,
-                "poster_url": poster_url,
-                "meta_label": meta_label,
-                "has_real_metrics": has_real_metrics,
-                "view_count": int(row[7] or 0),
-                "like_count": int(row[8] or 0),
-                "comment_count": int(row[9] or 0),
-                "source_video_pk": int(row[10]) if row[10] is not None else None,
-                "thumbnail_url": str(row[11] or "").strip(),
-            }
-        )
-
     return render_template(
         "my_videos.html",
         videos=videos,
@@ -960,6 +985,8 @@ def my_videos_page():
         show_autopilot_framing=show_autopilot_framing,
         is_new_autopilot_customer=is_new_autopilot_customer,
         recent_shorts=recent_shorts,
+        recent_shorts_has_more=recent_shorts_has_more,
+        recent_shorts_page_size=RECENT_SHORTS_PAGE_SIZE,
         prepared_short_count=prepared_short_count,
         autopilot_service_tier=int(current_user.get("service_tier") or current_user.get("pending_service_tier") or 15),
         stripe_ready=stripe_is_configured(),
@@ -969,6 +996,40 @@ def my_videos_page():
         hide_my_videos_coachmark=load_user_bool_preference(
             current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
         ),
+    )
+
+
+@video_shorts_bp.route("/my-videos/recent-shorts", methods=["GET"])
+def my_videos_recent_shorts():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"ok": False, "error": "Authentication required."}), 401
+
+    brand_id = current_brand_id()
+    user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
+    try:
+        offset = max(0, int(request.args.get("offset") or 0))
+    except Exception:
+        offset = 0
+    conn = get_db_readonly()
+    try:
+        shorts, has_more = _load_recent_short_cards(
+            conn,
+            current_user["id"],
+            brand_id,
+            user_tz,
+            limit=RECENT_SHORTS_PAGE_SIZE,
+            offset=offset,
+        )
+    finally:
+        conn.close()
+    return jsonify(
+        {
+            "ok": True,
+            "shorts": shorts,
+            "has_more": has_more,
+            "next_offset": offset + len(shorts),
+        }
     )
 
 

@@ -88,12 +88,14 @@
     color: rgba(226, 232, 240, 0.72);
     font-size: 0.92rem;
   }
-  .mv-recent-shorts {
-    padding: 22px 0 0;
-  }
-  .mv-recent-shorts-head {
-    display: flex;
-    align-items: baseline;
+	  .mv-recent-shorts {
+	    padding: 22px 0 0;
+	    min-width: 0;
+	    overflow: hidden;
+	  }
+	  .mv-recent-shorts-head {
+	    display: flex;
+	    align-items: baseline;
     justify-content: space-between;
     gap: 16px;
     margin-bottom: 14px;
@@ -104,19 +106,54 @@
     font-size: 1.05rem;
     font-weight: 700;
   }
-  .mv-section-note {
-    color: rgba(226, 232, 240, 0.62);
-    font-size: 0.84rem;
-    white-space: nowrap;
-  }
-  .mv-shorts-strip {
-    display: flex;
-    gap: 14px;
-    overflow-x: auto;
-    padding: 2px 2px 10px;
-    scrollbar-width: thin;
-    scroll-snap-type: x proximity;
-  }
+	  .mv-section-note {
+	    color: rgba(226, 232, 240, 0.62);
+	    font-size: 0.84rem;
+	    white-space: nowrap;
+	  }
+	  .mv-shorts-carousel {
+	    display: grid;
+	    grid-template-columns: 38px minmax(0, 1fr) 38px;
+	    align-items: center;
+	    gap: 10px;
+	    min-width: 0;
+	  }
+	  .mv-shorts-viewport {
+	    min-width: 0;
+	    overflow: hidden;
+	  }
+	  .mv-shorts-nav {
+	    display: inline-flex;
+	    align-items: center;
+	    justify-content: center;
+	    width: 38px;
+	    height: 38px;
+	    border: 1px solid rgba(148, 163, 184, 0.22);
+	    border-radius: 999px;
+	    background: rgba(15, 23, 42, 0.86);
+	    color: #e2e8f0;
+	    box-shadow: 0 12px 24px rgba(2, 6, 23, 0.24);
+	    transition: transform 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+	  }
+	  .mv-shorts-nav:hover:not(:disabled) {
+	    transform: translateY(-1px);
+	    border-color: rgba(94, 234, 212, 0.46);
+	    color: #99f6e4;
+	  }
+	  .mv-shorts-nav:disabled {
+	    cursor: default;
+	    opacity: 0.36;
+	  }
+	  .mv-shorts-strip {
+	    display: flex;
+	    gap: 14px;
+	    overflow-x: auto;
+	    padding: 2px 2px 10px;
+	    scrollbar-width: thin;
+	    scroll-snap-type: x proximity;
+	    min-width: 0;
+	    max-width: 100%;
+	  }
   .mv-short-card {
     flex: 0 0 150px;
     min-width: 150px;
@@ -134,10 +171,20 @@
     color: rgba(226, 232, 240, 0.78);
     font-size: 0.9rem;
   }
-  .mv-shorts-empty-state i {
-    color: #5eead4;
-    font-size: 1.2rem;
-  }
+	  .mv-shorts-empty-state i {
+	    color: #5eead4;
+	    font-size: 1.2rem;
+	  }
+	  @media (max-width: 640px) {
+	    .mv-shorts-carousel {
+	      grid-template-columns: 32px minmax(0, 1fr) 32px;
+	      gap: 7px;
+	    }
+	    .mv-shorts-nav {
+	      width: 32px;
+	      height: 32px;
+	    }
+	  }
   .mv-short-frame {
     position: relative;
     width: 150px;
@@ -1147,46 +1194,63 @@
     {% endif %}
   </section>
 
-  <section class="mv-recent-shorts" aria-labelledby="mv-recent-shorts-heading">
-    <div class="mv-recent-shorts-head">
-      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if show_autopilot_framing %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
-      {% if show_autopilot_framing %}
-        <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
-      {% endif %}
-    </div>
-    <div class="mv-shorts-strip">
-      {% if recent_shorts %}
-        {% for short in recent_shorts %}
-        <article class="mv-short-card">
-          <div class="mv-short-frame">
-            <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
-            {% if short.video_url %}
-              <video src="{{ short.video_url }}#t=1" data-short-preview-video data-short-index="{{ loop.index0 }}" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
-            {% elif short.poster_url %}
-              <img src="{{ short.poster_url }}" alt="{{ short.title }}">
-            {% elif short.thumbnail_url %}
-              <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
-            {% else %}
-              <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
-            {% endif %}
-            <div class="mv-short-title">{{ short.title }}</div>
-          </div>
-          <div class="mv-short-meta">
-            {% if short.has_real_metrics %}
-              <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
-            {% endif %}
-            <div>{{ short.meta_label }}</div>
-            {% if short.source_video_pk %}
-              <a class="mv-short-editor-link" href="{{ url_for('video_shorts_bp.generate_short', video_pk=short.source_video_pk) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor</a>
-            {% endif %}
-          </div>
-        </article>
-        {% endfor %}
-      {% else %}
-        <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
-      {% endif %}
-    </div>
-  </section>
+	  <section
+	    class="mv-recent-shorts"
+	    aria-labelledby="mv-recent-shorts-heading"
+	    data-recent-shorts
+	    data-shorts-endpoint="{{ url_for('video_shorts_bp.my_videos_recent_shorts') }}"
+	    data-shorts-next-offset="{{ recent_shorts|length }}"
+	    data-shorts-has-more="{{ 'true' if recent_shorts_has_more else 'false' }}"
+	  >
+	    <div class="mv-recent-shorts-head">
+	      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if show_autopilot_framing %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
+	      {% if show_autopilot_framing %}
+	        <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
+	      {% endif %}
+	    </div>
+	    <div class="mv-shorts-carousel">
+	      <button type="button" class="mv-shorts-nav" data-shorts-nav="prev" aria-label="Previous shorts" {% if not recent_shorts %}disabled{% endif %}>
+	        <i class="bi bi-chevron-left" aria-hidden="true"></i>
+	      </button>
+	      <div class="mv-shorts-viewport">
+	        <div class="mv-shorts-strip" data-shorts-strip>
+	          {% if recent_shorts %}
+	            {% for short in recent_shorts %}
+	            <article class="mv-short-card">
+	              <div class="mv-short-frame">
+	                <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
+	                {% if short.video_url %}
+	                  <video src="{{ short.video_url }}#t=1" data-short-preview-video data-short-index="{{ loop.index0 }}" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
+	                {% elif short.poster_url %}
+	                  <img src="{{ short.poster_url }}" alt="{{ short.title }}">
+	                {% elif short.thumbnail_url %}
+	                  <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
+	                {% else %}
+	                  <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
+	                {% endif %}
+	                <div class="mv-short-title">{{ short.title }}</div>
+	              </div>
+	              <div class="mv-short-meta">
+	                {% if short.has_real_metrics %}
+	                  <div class="mv-short-metrics"><span>👁 {{ short.view_count }}</span><span>👍 {{ short.like_count }}</span><span>💬 {{ short.comment_count }}</span></div>
+	                {% endif %}
+	                <div>{{ short.meta_label }}</div>
+	                {% if short.source_video_pk %}
+	                  <a class="mv-short-editor-link" href="{{ url_for('video_shorts_bp.generate_short', video_pk=short.source_video_pk) }}"><i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor</a>
+	                {% endif %}
+	              </div>
+	            </article>
+	            {% endfor %}
+	          {% else %}
+	            <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
+	          {% endif %}
+	        </div>
+	      </div>
+	      <button type="button" class="mv-shorts-nav" data-shorts-nav="next" aria-label="Next shorts" {% if not recent_shorts %}disabled{% endif %}>
+	        <i class="bi bi-chevron-right" aria-hidden="true"></i>
+	      </button>
+	    </div>
+	  </section>
 
   <form method="get" class="mv-toolbar">
       <div class="mv-toolbar-grid">
@@ -1389,8 +1453,150 @@
   const conversionCheckoutStatus = document.getElementById('mvAutopilotCheckoutStatus');
   const conversionCheckoutError = document.getElementById('mvAutopilotCheckoutError');
   const conversionModal = conversionModalEl && window.bootstrap ? new bootstrap.Modal(conversionModalEl) : null;
-  const autopilotActivationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
-  let firstPlayedShortIndex = null;
+	  const autopilotActivationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
+	  let firstPlayedShortIndex = null;
+	  const recentShortsSection = document.querySelector('[data-recent-shorts]');
+	  const shortsStrip = recentShortsSection?.querySelector('[data-shorts-strip]');
+	  const shortsPrevButton = recentShortsSection?.querySelector('[data-shorts-nav="prev"]');
+	  const shortsNextButton = recentShortsSection?.querySelector('[data-shorts-nav="next"]');
+	  let recentShortsOffset = Number(recentShortsSection?.dataset.shortsNextOffset || 0);
+	  let recentShortsHasMore = recentShortsSection?.dataset.shortsHasMore === 'true';
+	  let recentShortsLoading = false;
+
+	  const createElement = (tagName, className, textContent = '') => {
+	    const element = document.createElement(tagName);
+	    if (className) element.className = className;
+	    if (textContent) element.textContent = textContent;
+	    return element;
+	  };
+
+	  const bindShortPreviewCard = (card) => {
+	    if (!card || card.dataset.previewBound === 'true') return;
+	    card.dataset.previewBound = 'true';
+	    const preview = card.querySelector('video[data-preview-src]');
+	    if (!preview) return;
+	    preview.addEventListener('ended', showAutopilotConversionModal, { passive: true });
+	    preview.addEventListener('play', () => {
+	      const currentIndex = String(preview.dataset.shortIndex || '');
+	      if (firstPlayedShortIndex === null) {
+	        firstPlayedShortIndex = currentIndex;
+	        return;
+	      }
+	      if (currentIndex && currentIndex !== firstPlayedShortIndex) {
+	        showAutopilotConversionModal();
+	      }
+	    }, { passive: true });
+	    if (!canHoverShortPreviews) return;
+	    const seekToStartFrame = () => {
+	      try { preview.currentTime = 1; } catch (_) {}
+	    };
+	    const resetPreview = () => {
+	      preview.pause();
+	      seekToStartFrame();
+	      card.classList.remove('is-previewing');
+	    };
+	    preview.addEventListener('loadedmetadata', seekToStartFrame, { once: true });
+	    card.addEventListener('mouseenter', () => {
+	      if (!preview.getAttribute('src')) preview.src = `${preview.dataset.previewSrc || ''}#t=1`;
+	      if (!preview.src) return;
+	      preview.play().then(() => card.classList.add('is-previewing')).catch(() => {});
+	    });
+	    card.addEventListener('mouseleave', resetPreview);
+	  };
+
+	  const buildShortCard = (shortData, index) => {
+	    const short = shortData || {};
+	    const card = createElement('article', 'mv-short-card');
+	    const frame = createElement('div', 'mv-short-frame');
+	    const badge = createElement('span', `mv-short-badge ${short.status_class || ''}`.trim(), short.status_label || '');
+	    frame.appendChild(badge);
+	    if (short.video_url) {
+	      const video = document.createElement('video');
+	      video.src = `${short.video_url}#t=1`;
+	      video.dataset.shortPreviewVideo = '';
+	      video.dataset.shortIndex = String(index);
+	      video.dataset.previewSrc = short.video_url;
+	      video.muted = true;
+	      video.playsInline = true;
+	      video.preload = 'metadata';
+	      video.setAttribute('aria-label', `Preview: ${short.title || 'Untitled short'}`);
+	      frame.appendChild(video);
+	    } else if (short.poster_url || short.thumbnail_url) {
+	      const image = document.createElement('img');
+	      image.src = short.poster_url || short.thumbnail_url;
+	      image.alt = short.title || 'Untitled short';
+	      frame.appendChild(image);
+	    } else {
+	      const empty = createElement('div', 'mv-short-empty');
+	      empty.setAttribute('aria-hidden', 'true');
+	      empty.innerHTML = '<i class="bi bi-film"></i>';
+	      frame.appendChild(empty);
+	    }
+	    frame.appendChild(createElement('div', 'mv-short-title', short.title || 'Untitled short'));
+	    card.appendChild(frame);
+
+	    const meta = createElement('div', 'mv-short-meta');
+	    if (short.has_real_metrics) {
+	      const metrics = createElement('div', 'mv-short-metrics');
+	      metrics.appendChild(createElement('span', '', `👁 ${Number(short.view_count || 0)}`));
+	      metrics.appendChild(createElement('span', '', `👍 ${Number(short.like_count || 0)}`));
+	      metrics.appendChild(createElement('span', '', `💬 ${Number(short.comment_count || 0)}`));
+	      meta.appendChild(metrics);
+	    }
+	    meta.appendChild(createElement('div', '', short.meta_label || ''));
+	    if (short.editor_url) {
+	      const link = createElement('a', 'mv-short-editor-link');
+	      link.href = short.editor_url;
+	      link.innerHTML = '<i class="bi bi-pencil-square" aria-hidden="true"></i>Open editor';
+	      meta.appendChild(link);
+	    }
+	    card.appendChild(meta);
+	    bindShortPreviewCard(card);
+	    return card;
+	  };
+
+	  const updateShortNavState = () => {
+	    if (!shortsStrip || !shortsPrevButton || !shortsNextButton) return;
+	    const hasCards = Boolean(shortsStrip.querySelector('.mv-short-card'));
+	    const maxScrollLeft = Math.max(0, shortsStrip.scrollWidth - shortsStrip.clientWidth);
+	    shortsPrevButton.disabled = !hasCards || shortsStrip.scrollLeft <= 4;
+	    shortsNextButton.disabled = !hasCards || (!recentShortsHasMore && shortsStrip.scrollLeft >= maxScrollLeft - 4);
+	  };
+
+	  const loadMoreRecentShorts = async () => {
+	    if (!recentShortsSection || !shortsStrip || recentShortsLoading || !recentShortsHasMore) return false;
+	    recentShortsLoading = true;
+	    updateShortNavState();
+	    try {
+	      const endpoint = new URL(recentShortsSection.dataset.shortsEndpoint || '', window.location.origin);
+	      endpoint.searchParams.set('offset', String(recentShortsOffset));
+	      const response = await fetch(endpoint.toString(), {
+	        credentials: 'same-origin',
+	        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+	      });
+	      const payload = await response.json().catch(() => null);
+	      if (!response.ok || !payload || !payload.ok) {
+	        throw new Error((payload && payload.error) || 'Could not load shorts.');
+	      }
+	      const shorts = Array.isArray(payload.shorts) ? payload.shorts : [];
+	      const emptyState = shortsStrip.querySelector('.mv-shorts-empty-state');
+	      if (emptyState && shorts.length) emptyState.remove();
+	      shorts.forEach((short) => {
+	        shortsStrip.appendChild(buildShortCard(short, recentShortsOffset));
+	        recentShortsOffset += 1;
+	      });
+	      recentShortsHasMore = Boolean(payload.has_more);
+	      recentShortsSection.dataset.shortsNextOffset = String(recentShortsOffset);
+	      recentShortsSection.dataset.shortsHasMore = recentShortsHasMore ? 'true' : 'false';
+	      return shorts.length > 0;
+	    } catch (error) {
+	      console.warn(error?.message || error);
+	      return false;
+	    } finally {
+	      recentShortsLoading = false;
+	      updateShortNavState();
+	    }
+	  };
 
   const markConversionShown = () => {
     try {
@@ -1475,41 +1681,22 @@
     });
   });
 
-  document.querySelectorAll('[data-short-preview-video]').forEach((preview) => {
-    preview.addEventListener('ended', showAutopilotConversionModal, { passive: true });
-    preview.addEventListener('play', () => {
-      const currentIndex = String(preview.dataset.shortIndex || '');
-      if (firstPlayedShortIndex === null) {
-        firstPlayedShortIndex = currentIndex;
-        return;
-      }
-      if (currentIndex && currentIndex !== firstPlayedShortIndex) {
-        showAutopilotConversionModal();
-      }
-    }, { passive: true });
-  });
-
-  if (canHoverShortPreviews) {
-    document.querySelectorAll('.mv-short-card').forEach((card) => {
-      const preview = card.querySelector('video[data-preview-src]');
-      if (!preview) return;
-      const seekToStartFrame = () => {
-        try { preview.currentTime = 1; } catch (_) {}
-      };
-      const resetPreview = () => {
-        preview.pause();
-        seekToStartFrame();
-        card.classList.remove('is-previewing');
-      };
-      preview.addEventListener('loadedmetadata', seekToStartFrame, { once: true });
-      card.addEventListener('mouseenter', () => {
-        if (!preview.getAttribute('src')) preview.src = `${preview.dataset.previewSrc || ''}#t=1`;
-        if (!preview.src) return;
-        preview.play().then(() => card.classList.add('is-previewing')).catch(() => {});
-      });
-      card.addEventListener('mouseleave', resetPreview);
-    });
-  }
+	  document.querySelectorAll('.mv-short-card').forEach(bindShortPreviewCard);
+	  shortsStrip?.addEventListener('scroll', updateShortNavState, { passive: true });
+	  window.addEventListener('resize', updateShortNavState, { passive: true });
+	  shortsPrevButton?.addEventListener('click', () => {
+	    if (!shortsStrip) return;
+	    shortsStrip.scrollBy({ left: -Math.max(220, shortsStrip.clientWidth * 0.85), behavior: 'smooth' });
+	  });
+	  shortsNextButton?.addEventListener('click', async () => {
+	    if (!shortsStrip) return;
+	    const maxScrollLeft = Math.max(0, shortsStrip.scrollWidth - shortsStrip.clientWidth);
+	    if (recentShortsHasMore && shortsStrip.scrollLeft >= maxScrollLeft - 180) {
+	      await loadMoreRecentShorts();
+	    }
+	    shortsStrip.scrollBy({ left: Math.max(220, shortsStrip.clientWidth * 0.85), behavior: 'smooth' });
+	  });
+	  updateShortNavState();
 
   const coachmarkSteps = {
     1: {
