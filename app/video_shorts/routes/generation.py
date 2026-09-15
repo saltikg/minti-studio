@@ -2663,16 +2663,49 @@ def _preview_frame_metadata_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.json"
 
 
-def _preview_face_track_path(video_id: str) -> Path:
-    preview_dir = SHORTS_DIR / "preview_frames"
-    preview_dir.mkdir(parents=True, exist_ok=True)
-    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track.json"
+def _preview_face_track_time_key(start_seconds: Optional[float], end_seconds: Optional[float]) -> str:
+    def _part(value: Optional[float]) -> str:
+        try:
+            millis = int(round(float(value) * 1000.0))
+        except Exception:
+            millis = 0
+        prefix = "n" if millis < 0 else ""
+        return f"{prefix}{abs(millis)}ms"
+
+    return f"{_part(start_seconds)}_{_part(end_seconds)}"
 
 
-def _preview_face_track_smooth_path(video_id: str) -> Path:
+def _preview_face_track_paths(
+    video_id: str,
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+) -> tuple[Path, Path]:
     preview_dir = SHORTS_DIR / "preview_frames"
     preview_dir.mkdir(parents=True, exist_ok=True)
-    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track_smooth.json"
+    range_key = _preview_face_track_time_key(start_seconds, end_seconds)
+    base_name = f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_{range_key}"
+    return (
+        preview_dir / f"{base_name}_track.json",
+        preview_dir / f"{base_name}_track_smooth.json",
+    )
+
+
+def _preview_face_track_path(
+    video_id: str,
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+) -> Path:
+    track_path, _ = _preview_face_track_paths(video_id, start_seconds, end_seconds)
+    return track_path
+
+
+def _preview_face_track_smooth_path(
+    video_id: str,
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+) -> Path:
+    _, smooth_path = _preview_face_track_paths(video_id, start_seconds, end_seconds)
+    return smooth_path
 
 
 _PREVIEW_FACE_MIN_H_RATIO = 0.18
@@ -3023,8 +3056,13 @@ def _smooth_preview_face_track_rows(rows: list[dict[str, Any]]) -> list[dict[str
     return smoothed
 
 
-def _write_preview_face_track_smooth(video_id: str, rows: list[dict[str, Any]]) -> Optional[Path]:
-    smooth_path = _preview_face_track_smooth_path(video_id)
+def _write_preview_face_track_smooth(
+    video_id: str,
+    rows: list[dict[str, Any]],
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+) -> Optional[Path]:
+    smooth_path = _preview_face_track_smooth_path(video_id, start_seconds, end_seconds)
     smoothed_rows = _smooth_preview_face_track_rows(rows)
     smooth_path.write_text(json.dumps(smoothed_rows, ensure_ascii=True), encoding="utf-8")
     current_app.logger.info(
@@ -3047,10 +3085,19 @@ def _ensure_preview_face_track(
         return None
     if start_seconds is None or end_seconds is None:
         return None
+    track_path, smooth_path = _preview_face_track_paths(video_id, start_seconds, end_seconds)
+    if smooth_path.exists():
+        current_app.logger.info(
+            "Preview face track cache hit video_id=%s start=%s end=%s output=%s",
+            video_id,
+            start_seconds,
+            end_seconds,
+            smooth_path.name,
+        )
+        return track_path if track_path.exists() else smooth_path
     timestamps = _face_track_candidate_timestamps(start_seconds, end_seconds, duration_seconds)
     if not timestamps:
         return None
-    track_path = _preview_face_track_path(video_id)
     ffmpeg_bin = _resolve_ffmpeg()
     rows: list[dict[str, Any]] = []
     try:
@@ -3117,7 +3164,7 @@ def _ensure_preview_face_track(
             track_path.name,
         )
         try:
-            _write_preview_face_track_smooth(video_id, rows)
+            _write_preview_face_track_smooth(video_id, rows, start_seconds, end_seconds)
         except Exception:
             current_app.logger.exception("Preview face track smooth failed for %s", video_id)
     except Exception:
@@ -20343,7 +20390,7 @@ def autoclip_video(video_pk):
             if not video_static_visual_key:
                 override_source = None
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
-            face_track_smooth_path = _preview_face_track_smooth_path(str(vid))
+            face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
             if not face_track_smooth_path.exists():
                 face_track_smooth_path = None
             _compose_trimmed_with_background(

@@ -1019,8 +1019,8 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             "metadata_path": str(generation._preview_frame_metadata_path(video_id)),
             "track_path": str(track_path) if track_path else None,
             "track_smooth_path": (
-                str(generation._preview_face_track_smooth_path(video_id))
-                if track_path and generation._preview_face_track_smooth_path(video_id).exists()
+                str(generation._preview_face_track_smooth_path(video_id, clip_start_seconds, clip_end_seconds))
+                if track_path and generation._preview_face_track_smooth_path(video_id, clip_start_seconds, clip_end_seconds).exists()
                 else None
             ),
             "crop_applied": bool(applied_crop),
@@ -1032,6 +1032,86 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         )
 
 
+def _ensure_render_face_track_cache(app, payload: Dict[str, Any]) -> None:
+    video_id = str(payload.get("source_video_id") or "").strip()
+    start_seconds = payload.get("start")
+    end_seconds = payload.get("end")
+    if not video_id or start_seconds is None or end_seconds is None:
+        return
+    try:
+        smooth_path = generation._preview_face_track_smooth_path(video_id, start_seconds, end_seconds)
+        if smooth_path.exists():
+            app.logger.info(
+                "Render face track cache hit video_id=%s start=%s end=%s path=%s",
+                video_id,
+                start_seconds,
+                end_seconds,
+                smooth_path.name,
+            )
+            return
+    except Exception as exc:
+        app.logger.warning(
+            "Render face track cache check skipped video_id=%s start=%s end=%s error=%s",
+            video_id,
+            start_seconds,
+            end_seconds,
+            exc,
+        )
+        return
+
+    source_path = None
+    source_is_temp = False
+    try:
+        source_path, source_is_temp = _resolve_source_video(video_id)
+        if not source_path or not Path(source_path).exists():
+            app.logger.warning(
+                "Render face track skipped source missing video_id=%s start=%s end=%s",
+                video_id,
+                start_seconds,
+                end_seconds,
+            )
+            return
+        track_path = generation._ensure_preview_face_track(
+            video_id,
+            Path(source_path),
+            start_seconds,
+            end_seconds,
+            None,
+        )
+        smooth_path = generation._preview_face_track_smooth_path(video_id, start_seconds, end_seconds)
+        if track_path and smooth_path.exists():
+            app.logger.info(
+                "Render face track ready video_id=%s start=%s end=%s track=%s smooth=%s",
+                video_id,
+                start_seconds,
+                end_seconds,
+                Path(track_path).name,
+                smooth_path.name,
+            )
+        else:
+            app.logger.info(
+                "Render face track unavailable video_id=%s start=%s end=%s track=%s smooth_exists=%s",
+                video_id,
+                start_seconds,
+                end_seconds,
+                Path(track_path).name if track_path else None,
+                smooth_path.exists(),
+            )
+    except Exception as exc:
+        app.logger.warning(
+            "Render face track failed; continuing with static fallback video_id=%s start=%s end=%s error=%s",
+            video_id,
+            start_seconds,
+            end_seconds,
+            exc,
+        )
+    finally:
+        _cleanup_resolved_source_video(
+            Path(source_path) if source_path else None,
+            bool(source_path) and source_is_temp,
+        )
+
+
 def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     video_pk = int(payload.get("video_pk"))
@@ -1039,6 +1119,7 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     title = str(payload.get("title") or "").strip()
     user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
     with app.app_context():
+        _ensure_render_face_track_cache(app, payload)
         with app.test_request_context(
             f"/video_shorts/generate/{video_pk}/autoclip",
             method="POST",
