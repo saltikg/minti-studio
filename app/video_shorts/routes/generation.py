@@ -2668,6 +2668,46 @@ def _preview_face_track_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track.json"
 
 
+_PREVIEW_FACE_MIN_H_RATIO = 0.18
+
+
+def _preview_face_ratios(
+    face: Any,
+    frame_width: int,
+    frame_height: int,
+) -> dict[str, float | int] | None:
+    if frame_width <= 0 or frame_height <= 0:
+        return None
+    x, y, w, h = (int(value) for value in face)
+    if w <= 0 or h <= 0:
+        return None
+    return {
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "cx_ratio": (x + (w / 2.0)) / float(frame_width),
+        "cy_ratio": (y + (h / 2.0)) / float(frame_height),
+        "w_ratio": w / float(frame_width),
+        "h_ratio": h / float(frame_height),
+    }
+
+
+def _filter_preview_faces_by_size(
+    faces: Any,
+    frame_width: int,
+    frame_height: int,
+) -> list[dict[str, float | int]]:
+    filtered: list[dict[str, float | int]] = []
+    for face in faces:
+        ratios = _preview_face_ratios(face, frame_width, frame_height)
+        if not ratios:
+            continue
+        if float(ratios["h_ratio"]) >= _PREVIEW_FACE_MIN_H_RATIO:
+            filtered.append(ratios)
+    return filtered
+
+
 def _load_preview_frame_metadata(video_id: str) -> dict[str, Any] | None:
     metadata_path = _preview_frame_metadata_path(video_id)
     if not metadata_path.exists():
@@ -2798,14 +2838,15 @@ def _ensure_preview_face_track(
                         minNeighbors=4,
                         minSize=(32, 32),
                     )
-                    if len(faces) == 1 and frame_width > 0 and frame_height > 0:
-                        x, y, w, h = (int(value) for value in faces[0])
+                    filtered_faces = _filter_preview_faces_by_size(faces, frame_width, frame_height)
+                    if len(filtered_faces) == 1:
+                        face = filtered_faces[0]
                         row.update(
                             {
-                                "cx_ratio": (x + (w / 2.0)) / float(frame_width),
-                                "cy_ratio": (y + (h / 2.0)) / float(frame_height),
-                                "w_ratio": w / float(frame_width),
-                                "h_ratio": h / float(frame_height),
+                                "cx_ratio": face["cx_ratio"],
+                                "cy_ratio": face["cy_ratio"],
+                                "w_ratio": face["w_ratio"],
+                                "h_ratio": face["h_ratio"],
                                 "found": True,
                             }
                         )
@@ -2889,12 +2930,21 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
                     minNeighbors=4,
                     minSize=(32, 32),
                 )
-                if len(faces):
-                    largest_face = max(faces, key=lambda item: int(item[2] * item[3]))
-                    largest_face_area = int(largest_face[2] * largest_face[3])
+                filtered_faces = _filter_preview_faces_by_size(faces, frame_width, frame_height)
+                if filtered_faces:
+                    largest_face = max(
+                        filtered_faces,
+                        key=lambda item: int(item["w"]) * int(item["h"]),
+                    )
+                    largest_face_area = int(largest_face["w"]) * int(largest_face["h"])
                     if best_face is None or largest_face_area > best_face[0]:
                         best_face = (largest_face_area, candidate_path, timestamp)
-                        best_face_bbox = tuple(int(value) for value in largest_face)
+                        best_face_bbox = (
+                            int(largest_face["x"]),
+                            int(largest_face["y"]),
+                            int(largest_face["w"]),
+                            int(largest_face["h"]),
+                        )
                 laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
                 if best_detail is None or laplacian_variance > best_detail[0]:
                     best_detail = (laplacian_variance, candidate_path, timestamp)
