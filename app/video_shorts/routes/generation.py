@@ -1,6 +1,7 @@
 import json
 import errno
 import math
+import os
 import re
 import shutil
 import string
@@ -2684,6 +2685,26 @@ _FACE_TRACK_SMOOTH_WINDOW = 5
 _FACE_TRACK_DEADZONE = 0.02
 
 
+def _face_track_smooth_window() -> int:
+    try:
+        value = int(os.getenv("VIDEO_SHORTS_FACE_TRACK_SMOOTH_WINDOW", str(_FACE_TRACK_SMOOTH_WINDOW)))
+    except Exception:
+        value = _FACE_TRACK_SMOOTH_WINDOW
+    if value < 1:
+        value = _FACE_TRACK_SMOOTH_WINDOW
+    if value % 2 == 0:
+        value += 1
+    return max(1, min(15, value))
+
+
+def _face_track_deadzone() -> float:
+    try:
+        value = float(os.getenv("VIDEO_SHORTS_FACE_TRACK_DEADZONE", str(_FACE_TRACK_DEADZONE)))
+    except Exception:
+        value = _FACE_TRACK_DEADZONE
+    return max(0.0, min(0.25, value))
+
+
 def _preview_face_ratios_from_box(
     x: float,
     y: float,
@@ -2946,7 +2967,7 @@ def _remove_preview_face_track_outliers(rows: list[dict[str, Any]]) -> list[dict
 
 
 def _moving_average_track_values(rows: list[dict[str, Any]], index: int) -> dict[str, float] | None:
-    radius = max(0, _FACE_TRACK_SMOOTH_WINDOW // 2)
+    radius = max(0, _face_track_smooth_window() // 2)
     start = max(0, index - radius)
     end = min(len(rows), index + radius + 1)
     values = [_track_row_values(row) for row in rows[start:end]]
@@ -2979,10 +3000,11 @@ def _smooth_preview_face_track_rows(rows: list[dict[str, Any]]) -> list[dict[str
             )
             continue
         source = f"{row.get('source')}:smoothed"
+        deadzone = _face_track_deadzone()
         if previous_output:
             if (
-                abs(averaged["cx_ratio"] - previous_output["cx_ratio"]) < _FACE_TRACK_DEADZONE
-                and abs(averaged["cy_ratio"] - previous_output["cy_ratio"]) < _FACE_TRACK_DEADZONE
+                abs(averaged["cx_ratio"] - previous_output["cx_ratio"]) < deadzone
+                and abs(averaged["cy_ratio"] - previous_output["cy_ratio"]) < deadzone
             ):
                 averaged["cx_ratio"] = previous_output["cx_ratio"]
                 averaged["cy_ratio"] = previous_output["cy_ratio"]
@@ -20321,6 +20343,9 @@ def autoclip_video(video_pk):
             if not video_static_visual_key:
                 override_source = None
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
+            face_track_smooth_path = _preview_face_track_smooth_path(str(vid))
+            if not face_track_smooth_path.exists():
+                face_track_smooth_path = None
             _compose_trimmed_with_background(
                 bg_path,
                 src_path,
@@ -20366,6 +20391,7 @@ def autoclip_video(video_pk):
                 video_overlay_offset=overlay_offset,
                 crop_aspect=video_crop_aspect,
                 music_only=video_is_music_only,
+                face_track_smooth_path=face_track_smooth_path,
             )
             final_file = bg_out
         else:

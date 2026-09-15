@@ -1,3 +1,4 @@
+import json
 import secrets
 import shutil
 import subprocess
@@ -67,6 +68,83 @@ def _ffmpeg_escape(text: str) -> str:
         .replace("'", "\\'")
         .replace("\"", "\\\"")
     )
+
+
+def _ffmpeg_filter_expr(expr: str) -> str:
+    return str(expr or "").replace("\\", "\\\\").replace(",", "\\,")
+
+
+def _load_face_track_points(
+    face_track_smooth_path: Optional[Path],
+    *,
+    clip_start: float,
+    crop_w: float,
+    crop_h: float,
+) -> list[dict[str, float]]:
+    if not face_track_smooth_path:
+        return []
+    path = Path(face_track_smooth_path)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        current_app.logger.warning("Could not load face track smooth path=%s", path)
+        return []
+    if not isinstance(payload, list):
+        return []
+    max_x = max(0.0, 1.0 - float(crop_w))
+    max_y = max(0.0, 1.0 - float(crop_h))
+    points: list[dict[str, float]] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        try:
+            t_abs = float(row.get("t"))
+            cx = float(row.get("cx_ratio"))
+            cy = float(row.get("cy_ratio"))
+        except Exception:
+            continue
+        if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+            continue
+        points.append(
+            {
+                "t": max(0.0, t_abs - float(clip_start)),
+                "x": max(0.0, min(max_x, cx - (float(crop_w) / 2.0))),
+                "y": max(0.0, min(max_y, cy - (float(crop_h) / 2.0))),
+            }
+        )
+    deduped: list[dict[str, float]] = []
+    for point in sorted(points, key=lambda item: item["t"]):
+        if deduped and abs(deduped[-1]["t"] - point["t"]) < 1e-3:
+            deduped[-1] = point
+        else:
+            deduped.append(point)
+    return deduped
+
+
+def _piecewise_linear_ratio_expr(points: list[dict[str, float]], key: str) -> Optional[str]:
+    if not points:
+        return None
+    if len(points) == 1:
+        return f"{points[0][key]:.6f}"
+    expr = f"{points[-1][key]:.6f}"
+    for index in range(len(points) - 2, -1, -1):
+        current = points[index]
+        nxt = points[index + 1]
+        t0 = float(current["t"])
+        t1 = float(nxt["t"])
+        v0 = float(current[key])
+        v1 = float(nxt[key])
+        if t1 <= t0:
+            segment_expr = f"{v0:.6f}"
+        else:
+            segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*(t-{t0:.6f})/{t1 - t0:.6f})"
+        expr = f"if(lt(t,{t1:.6f}),{segment_expr},{expr})"
+    first = points[0]
+    if float(first["t"]) > 0:
+        expr = f"if(lt(t,{float(first['t']):.6f}),{float(first[key]):.6f},{expr})"
+    return expr
 
 
 def _sanitize_text_for_overlay(text: str, max_len: int = 160) -> str:
@@ -1089,6 +1167,7 @@ def _compose_trimmed_with_background(
     video_overlay_offset: Optional[int] = None,
     crop_aspect: Optional[str] = None,
     music_only: bool = False,
+    face_track_smooth_path: Optional[Path] = None,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -1894,8 +1973,47 @@ def _compose_trimmed_with_background(
             ]
         )
     else:
+        face_track_points = []
+        if (
+            not is_default_crop
+            and face_track_smooth_path
+            and not podcast_mode
+            and not video_override_source
+        ):
+            face_track_points = _load_face_track_points(
+                face_track_smooth_path,
+                clip_start=start,
+                crop_w=crop_w,
+                crop_h=crop_h,
+            )
+        dynamic_crop_enabled = len(face_track_points) >= 2
+        if dynamic_crop_enabled:
+            x_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "x") or _fmt(crop_x)
+            y_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "y") or _fmt(crop_y)
+            crop_x_expr = f"iw*({_ffmpeg_filter_expr(x_ratio_expr)})"
+            crop_y_expr = f"ih*({_ffmpeg_filter_expr(y_ratio_expr)})"
+            current_app.logger.info(
+                "Dynamic face-track crop enabled path=%s points=%s crop_w=%.6f crop_h=%.6f x_expr=%s y_expr=%s",
+                face_track_smooth_path,
+                len(face_track_points),
+                crop_w,
+                crop_h,
+                crop_x_expr,
+                crop_y_expr,
+            )
+        else:
+            crop_x_expr = f"iw*{_fmt(crop_x)}"
+            crop_y_expr = f"ih*{_fmt(crop_y)}"
+            if face_track_smooth_path and not split_stack_enabled:
+                current_app.logger.info(
+                    "Dynamic face-track crop fallback static path=%s points=%s default_crop=%s podcast=%s",
+                    face_track_smooth_path,
+                    len(face_track_points),
+                    is_default_crop,
+                    podcast_mode,
+                )
         crop_filter = (
-            f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
+            f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
             f"{scale_stage}"
             "setsar=1,"
             "setpts=PTS-STARTPTS[clip_scaled]"
