@@ -507,26 +507,87 @@ def send_autopilot_customer_confirmation_email(
     *,
     to_email: str,
     recipient_name: str = "",
+    language: str = "EN",
+    set_password_url: str = "",
 ) -> dict[str, object]:
+    normalized_language = (language or "").strip().upper()
     greeting = recipient_name.strip() or "there"
-    subject = "Your Shorts are on the way 🎬"
-    html_body = f"""
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
-      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
-        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
-        <p style="margin:0 0 12px;">Hi {html.escape(greeting)},</p>
-        <p style="margin:0 0 16px;">You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.</p>
-        <p style="margin:0 0 16px;">In the meantime, just keep making your long videos — we'll take care of the rest.</p>
-        <p style="margin:0;">Best,<br>Gokhan<br>Minti Studio</p>
-      </div>
-    </div>
-    """.strip()
-    text_body = (
-        f"Hi {greeting},\n\n"
-        "You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.\n\n"
-        "In the meantime, just keep making your long videos — we'll take care of the rest.\n\n"
-        "Best,\nGokhan\nMinti Studio"
-    )
+    escaped_greeting = html.escape(greeting)
+    escaped_password_url = html.escape(set_password_url.strip())
+    if normalized_language == "TR":
+        subject = "Shorts videolarınız hazırlanıyor 🎬"
+        password_html = (
+            f"""
+            <p style="margin:0 0 12px;">Bu cihazda zaten giriş yapmış durumdasınız. İleride şifreyle giriş yapmak için şifrenizi buradan belirleyebilirsiniz:</p>
+            <p style="margin:0 0 20px;">
+              <a href="{escaped_password_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Şifre belirle</a>
+            </p>
+            """
+            if escaped_password_url
+            else ""
+        )
+        password_text = (
+            "İleride şifreyle giriş yapmak için şifrenizi buradan belirleyebilirsiniz:\n"
+            f"{set_password_url.strip()}\n\n"
+            if set_password_url.strip()
+            else ""
+        )
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+          <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+            <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+            <p style="margin:0 0 12px;">Merhaba {escaped_greeting},</p>
+            <p style="margin:0 0 16px;">Minti Autopilot için hazırsınız! İlk Shorts videolarınızı hazırlıyoruz; izlemeye hazır olduklarında 1–2 gün içinde size e-posta göndereceğiz.</p>
+            <p style="margin:0 0 16px;">Bu arada siz uzun videolarınızı üretmeye devam edin — gerisini biz halledeceğiz.</p>
+            {password_html}
+            <p style="margin:0;">Selamlar,<br>Gokhan<br>Minti Studio</p>
+          </div>
+        </div>
+        """.strip()
+        text_body = (
+            f"Merhaba {greeting},\n\n"
+            "Minti Autopilot için hazırsınız! İlk Shorts videolarınızı hazırlıyoruz; izlemeye hazır olduklarında 1–2 gün içinde size e-posta göndereceğiz.\n\n"
+            "Bu arada siz uzun videolarınızı üretmeye devam edin — gerisini biz halledeceğiz.\n\n"
+            f"{password_text}"
+            "Selamlar,\nGokhan\nMinti Studio"
+        )
+    else:
+        subject = "Your Shorts are on the way 🎬"
+        password_html = (
+            f"""
+            <p style="margin:0 0 12px;">You're already signed in on this device. To set a password for future logins, use this link:</p>
+            <p style="margin:0 0 20px;">
+              <a href="{escaped_password_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Set your password</a>
+            </p>
+            """
+            if escaped_password_url
+            else ""
+        )
+        password_text = (
+            "To set a password for future logins, use this link:\n"
+            f"{set_password_url.strip()}\n\n"
+            if set_password_url.strip()
+            else ""
+        )
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+          <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+            <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+            <p style="margin:0 0 12px;">Hi {escaped_greeting},</p>
+            <p style="margin:0 0 16px;">You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.</p>
+            <p style="margin:0 0 16px;">In the meantime, just keep making your long videos — we'll take care of the rest.</p>
+            {password_html}
+            <p style="margin:0;">Best,<br>Gokhan<br>Minti Studio</p>
+          </div>
+        </div>
+        """.strip()
+        text_body = (
+            f"Hi {greeting},\n\n"
+            "You're all set with Minti Autopilot! We're preparing your first Shorts and will email you in 1–2 days when they're ready to view.\n\n"
+            "In the meantime, just keep making your long videos — we'll take care of the rest.\n\n"
+            f"{password_text}"
+            "Best,\nGokhan\nMinti Studio"
+        )
     return send_resend_email(
         to_email=to_email,
         subject=subject,

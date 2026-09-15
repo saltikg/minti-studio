@@ -12051,32 +12051,49 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
 
     latest_trial_days = None
     latest_trial_days_label = ""
-    latest_trial_used_at = None
+    latest_trial_anchor_at = None
     trial_expires_at = None
     trial_status_label = ""
     trial_status_tone = ""
     if onboarding_magic_link_columns and "user_id" in onboarding_magic_link_columns:
         trial_days_sql = "COALESCE(trial_days, ?)" if "trial_days" in onboarding_magic_link_columns else "?"
-        used_at_sql = "used_at" if "used_at" in onboarding_magic_link_columns else "NULL"
         trial_row = conn.execute(
             f"""
             SELECT
-              {trial_days_sql} AS trial_days,
-              {used_at_sql} AS used_at
-            FROM onboarding_magic_links
-            WHERE CAST(user_id AS VARCHAR) = ?
-              AND used_at IS NOT NULL
-            ORDER BY used_at ASC, created_at ASC, id ASC
+              COALESCE(oml.trial_days, ?) AS trial_days,
+              COALESCE(al.converted_at, u.service_mode_chosen_at) AS trial_anchor_at
+            FROM shorts_users u
+            LEFT JOIN LATERAL (
+                SELECT {trial_days_sql} AS trial_days
+                FROM onboarding_magic_links
+                WHERE CAST(user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                ORDER BY used_at ASC NULLS LAST, created_at ASC NULLS LAST, id ASC
+                LIMIT 1
+            ) oml ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT converted_at
+                FROM autopilot_leads
+                WHERE CAST(user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                  AND converted_at IS NOT NULL
+                ORDER BY converted_at ASC, created_at ASC, id ASC
+                LIMIT 1
+            ) al ON TRUE
+            WHERE CAST(u.id AS VARCHAR) = ?
+              AND (
+                al.converted_at IS NOT NULL
+                OR lower(coalesce(u.service_mode, '')) = 'autopilot'
+              )
+              AND COALESCE(al.converted_at, u.service_mode_chosen_at) IS NOT NULL
             LIMIT 1
             """,
-            [LEGACY_SHARE_TRIAL_DAYS, user_id],
+            [DEFAULT_SHARE_TRIAL_DAYS, DEFAULT_SHARE_TRIAL_DAYS, user_id],
         ).fetchone()
         if trial_row:
-            latest_trial_days = normalize_trial_days(trial_row[0], default=LEGACY_SHARE_TRIAL_DAYS)
+            latest_trial_days = normalize_trial_days(trial_row[0], default=DEFAULT_SHARE_TRIAL_DAYS)
             latest_trial_days_label = _trial_duration_label(latest_trial_days, "EN")
-            latest_trial_used_at = trial_row[1]
-            if isinstance(latest_trial_used_at, datetime) and latest_trial_days:
-                trial_expires_at = latest_trial_used_at + timedelta(days=latest_trial_days)
+            latest_trial_anchor_at = trial_row[1]
+            if isinstance(latest_trial_anchor_at, datetime) and latest_trial_days:
+                trial_expires_at = latest_trial_anchor_at + timedelta(days=latest_trial_days)
                 now_value = datetime.now(trial_expires_at.tzinfo) if trial_expires_at.tzinfo else datetime.now()
                 days_left = math.ceil((trial_expires_at - now_value).total_seconds() / 86400.0)
                 if days_left > 1:
@@ -12109,7 +12126,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "google_sub_present": bool((row[10] or "").strip()),
         "trial_days": latest_trial_days,
         "trial_days_label": latest_trial_days_label,
-        "trial_used_at": latest_trial_used_at,
+        "trial_used_at": latest_trial_anchor_at,
+        "trial_anchor_at": latest_trial_anchor_at,
         "trial_expires_at": trial_expires_at,
         "trial_status_label": trial_status_label,
         "trial_status_tone": trial_status_tone,

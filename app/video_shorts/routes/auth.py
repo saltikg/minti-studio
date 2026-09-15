@@ -58,7 +58,6 @@ from app.video_shorts.services.email_verification import (
     send_autopilot_customer_confirmation_email,
     password_reset_token_expiry,
     send_membership_activated_emails,
-    send_onboarding_magic_link_welcome_email,
     send_verification_email,
     send_password_reset_email,
     send_contact_email,
@@ -79,10 +78,6 @@ from app.video_shorts.services.onboarding_magic_links import (
     ONBOARDING_MAGIC_LINK_PLAN_ID,
     hash_onboarding_magic_token,
     normalize_outreach_language,
-)
-from app.video_shorts.services.trial_copy import (
-    DEFAULT_SHARE_TRIAL_DAYS,
-    normalize_trial_days,
 )
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
@@ -1646,9 +1641,6 @@ def redeem_onboarding_magic_link(token: str):
     token_hash = hash_onboarding_magic_token(normalized_token)
     conn = get_db()
     needs_password_setup = False
-    outreach_language = "EN"
-    welcome_trial_days = DEFAULT_SHARE_TRIAL_DAYS
-    welcome_email_context: tuple[str, str, str] | None = None
     onboarding_autopilot_lead_id = ""
     try:
         ensure_storage_user_schema(conn)
@@ -1686,13 +1678,11 @@ def redeem_onboarding_magic_link(token: str):
 
         recipient_email = _normalize_auth_email(row[1] or "")
         recipient_name = str(row[2] or "").strip()
-        outreach_language = normalize_outreach_language(row[3], default="EN")
-        welcome_trial_days = normalize_trial_days(row[4], default=DEFAULT_SHARE_TRIAL_DAYS)
         if not recipient_email:
             return _render_onboarding_magic_link_status_page(status="invalid", status_code=400)
         existing_user = _lookup_user_by_email(recipient_email)
         # Pre-provisioned autopilot leads already have a user row but deliberately
-        # have no password. They need the same setup email as a newly created user.
+        # have no password. They get a set-password link only after conversion.
         needs_password_setup = not bool(existing_user[4] if existing_user else None)
 
         user_id, brand_id = _create_or_grant_magic_link_user(
@@ -1731,12 +1721,7 @@ def redeem_onboarding_magic_link(token: str):
                     onboarding_autopilot_lead_id = str(lead_row[0] or "").strip()
                     brand_id = str(lead_row[1] or "").strip() or brand_id
         if needs_password_setup:
-            reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=user_id)
-            welcome_email_context = (
-                recipient_email,
-                recipient_name,
-                build_password_reset_url(reset_token),
-            )
+            _create_password_reset_token_for_user(conn, user_id=user_id)
         updated = conn.execute(
             """
             UPDATE onboarding_magic_links
@@ -1771,31 +1756,6 @@ def redeem_onboarding_magic_link(token: str):
             session["vs_onboarding_autopilot_lead_id"] = onboarding_autopilot_lead_id
         else:
             session.pop("vs_onboarding_autopilot_lead_id", None)
-    if needs_password_setup and welcome_email_context:
-        welcome_email, welcome_name, set_password_url = welcome_email_context
-        try:
-            result = send_onboarding_magic_link_welcome_email(
-                to_email=welcome_email,
-                set_password_url=set_password_url,
-                recipient_name=welcome_name,
-                language=outreach_language,
-                trial_days=welcome_trial_days,
-            )
-            current_app.logger.info(
-                "Onboarding welcome email sent: user_id=%s to=%s status=%s request_id=%s language=%s",
-                user_id,
-                welcome_email,
-                result.get("status_code"),
-                result.get("request_id") or "(missing)",
-                outreach_language,
-            )
-        except Exception:
-            current_app.logger.exception(
-                "Onboarding welcome email failed: user_id=%s to=%s language=%s",
-                user_id,
-                welcome_email,
-                outreach_language,
-            )
     if autopilot_requested and onboarding_autopilot_lead_id:
         return redirect(url_for("video_shorts_bp.lead_feed_page"))
     if autopilot_requested and requested_landing != "my_videos":
@@ -2305,9 +2265,32 @@ def save_service_mode_choice():
     )
     conn = get_db()
     chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    confirmation_language = "EN"
+    confirmation_set_password_url = ""
     try:
         ensure_storage_user_schema(conn)
         ensure_auth_user_schema(conn)
+        ensure_onboarding_magic_links_schema(conn)
+        account_row = conn.execute(
+            """
+            SELECT
+              password_hash,
+              COALESCE(oml.language, 'EN') AS onboarding_language
+            FROM shorts_users u
+            LEFT JOIN LATERAL (
+                SELECT language
+                FROM onboarding_magic_links
+                WHERE CAST(user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                ORDER BY used_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) oml ON TRUE
+            WHERE CAST(u.id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [current_user["id"]],
+        ).fetchone()
+        is_passwordless_user = not bool(account_row[0] if account_row else None)
+        confirmation_language = normalize_outreach_language(account_row[1] if account_row else "EN", default="EN")
         conn.execute(
             """
             UPDATE shorts_users
@@ -2342,6 +2325,9 @@ def save_service_mode_choice():
                     """,
                     [current_user["id"]],
                 )
+            if is_passwordless_user:
+                reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=current_user["id"])
+                confirmation_set_password_url = build_password_reset_url(reset_token)
         conn.commit()
     finally:
         conn.close()
@@ -2372,6 +2358,8 @@ def save_service_mode_choice():
                 send_autopilot_customer_confirmation_email(
                     to_email=user_email,
                     recipient_name=user_name,
+                    language=confirmation_language,
+                    set_password_url=confirmation_set_password_url,
                 )
             except Exception:
                 logger.exception(
