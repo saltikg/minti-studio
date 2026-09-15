@@ -581,6 +581,8 @@ def enqueue_preview_frame_job(
     video_pk: int,
     source_key: str,
     duration_seconds: Any = None,
+    clip_start_seconds: Any = None,
+    clip_end_seconds: Any = None,
     priority: int = 90,
 ) -> Dict[str, Any]:
     """Resolve a preview source inside its tenant scope, then enqueue it idempotently."""
@@ -613,8 +615,17 @@ def enqueue_preview_frame_job(
     finally:
         conn.close()
 
+    def _hash_time(value: Any) -> str:
+        try:
+            return f"{float(value):.3f}"
+        except Exception:
+            return ""
+
     input_hash = hashlib.sha256(
-        f"preview-frame:{owner_user_id}:{brand_id}:{int(video_pk)}:{video_id}:{source_key}".encode("utf-8")
+        (
+            f"preview-frame:{owner_user_id}:{brand_id}:{int(video_pk)}:{video_id}:{source_key}:"
+            f"{_hash_time(clip_start_seconds)}:{_hash_time(clip_end_seconds)}"
+        ).encode("utf-8")
     ).hexdigest()
     return enqueue_worker_job(
         user_id=owner_user_id,
@@ -626,6 +637,8 @@ def enqueue_preview_frame_job(
             "owner_user_id": owner_user_id,
             "brand_id": brand_id,
             "duration_seconds": resolved_duration,
+            "clip_start_seconds": clip_start_seconds,
+            "clip_end_seconds": clip_end_seconds,
         },
         input_hash=input_hash,
         priority=priority,

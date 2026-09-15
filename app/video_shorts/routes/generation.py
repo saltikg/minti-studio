@@ -2662,6 +2662,12 @@ def _preview_frame_metadata_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.json"
 
 
+def _preview_face_track_path(video_id: str) -> Path:
+    preview_dir = SHORTS_DIR / "preview_frames"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}_track.json"
+
+
 def _load_preview_frame_metadata(video_id: str) -> dict[str, Any] | None:
     metadata_path = _preview_frame_metadata_path(video_id)
     if not metadata_path.exists():
@@ -2686,6 +2692,140 @@ def _preview_candidate_timestamps(duration_seconds: Optional[float]) -> list[flo
         if not deduped or abs(deduped[-1] - rounded) > 1e-3:
             deduped.append(rounded)
     return deduped or [max(0.0, min(safe_end, dur_val / 2 if dur_val > 0 else 0.5))]
+
+
+def _face_track_candidate_timestamps(
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+    duration_seconds: Optional[float],
+    *,
+    interval_seconds: float = 1.5,
+) -> list[float]:
+    start_val = _to_float(start_seconds)
+    end_val = _to_float(end_seconds)
+    duration_val = _to_float(duration_seconds)
+    if start_val is None:
+        start_val = 0.0
+    start_val = max(0.0, start_val)
+    if end_val is None or end_val <= start_val:
+        end_val = duration_val if duration_val is not None and duration_val > start_val else start_val
+    if duration_val is not None and duration_val > 0:
+        end_val = min(end_val, max(0.0, duration_val - 0.1))
+    if end_val < start_val:
+        end_val = start_val
+
+    step = max(0.25, float(interval_seconds or 1.5))
+    timestamps: list[float] = []
+    current = start_val
+    while current <= end_val + 1e-6:
+        rounded = round(current, 3)
+        if not timestamps or abs(timestamps[-1] - rounded) > 1e-3:
+            timestamps.append(rounded)
+        current += step
+    final_ts = round(end_val, 3)
+    if final_ts >= start_val and (not timestamps or abs(timestamps[-1] - final_ts) > 0.25):
+        timestamps.append(final_ts)
+    return timestamps
+
+
+def _ensure_preview_face_track(
+    video_id: str,
+    source_path: Optional[Path],
+    start_seconds: Optional[float],
+    end_seconds: Optional[float],
+    duration_seconds: Optional[float],
+) -> Optional[Path]:
+    if not source_path or not source_path.exists():
+        return None
+    if start_seconds is None or end_seconds is None:
+        return None
+    timestamps = _face_track_candidate_timestamps(start_seconds, end_seconds, duration_seconds)
+    if not timestamps:
+        return None
+    track_path = _preview_face_track_path(video_id)
+    ffmpeg_bin = _resolve_ffmpeg()
+    rows: list[dict[str, Any]] = []
+    try:
+        import cv2
+
+        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+        detector = cv2.CascadeClassifier(str(cascade_path))
+        if detector.empty():
+            raise RuntimeError(f"Face cascade could not be loaded from {cascade_path}")
+
+        with tempfile.TemporaryDirectory(prefix=f"track_{video_id}_") as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            for index, timestamp in enumerate(timestamps):
+                candidate_path = temp_dir_path / f"{video_id}_track_{index}.jpg"
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(source_path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale=720:-1",
+                    "-q:v",
+                    "2",
+                    str(candidate_path),
+                ]
+                row: dict[str, Any] = {
+                    "t": timestamp,
+                    "cx_ratio": None,
+                    "cy_ratio": None,
+                    "w_ratio": None,
+                    "h_ratio": None,
+                    "found": False,
+                }
+                run_media_subprocess(
+                    cmd,
+                    operation="generate_preview_face_track",
+                    context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
+                    output_paths=[candidate_path],
+                    check=True,
+                    timeout=FFMPEG_SHORT_TIMEOUT,
+                )
+                image = cv2.imread(str(candidate_path))
+                if image is not None:
+                    frame_height, frame_width = image.shape[:2]
+                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                    faces = detector.detectMultiScale(
+                        gray,
+                        scaleFactor=1.1,
+                        minNeighbors=4,
+                        minSize=(32, 32),
+                    )
+                    if len(faces) == 1 and frame_width > 0 and frame_height > 0:
+                        x, y, w, h = (int(value) for value in faces[0])
+                        row.update(
+                            {
+                                "cx_ratio": (x + (w / 2.0)) / float(frame_width),
+                                "cy_ratio": (y + (h / 2.0)) / float(frame_height),
+                                "w_ratio": w / float(frame_width),
+                                "h_ratio": h / float(frame_height),
+                                "found": True,
+                            }
+                        )
+                rows.append(row)
+        track_path.write_text(json.dumps(rows, ensure_ascii=True), encoding="utf-8")
+        current_app.logger.info(
+            "Preview face track written video_id=%s samples=%s found=%s output=%s",
+            video_id,
+            len(rows),
+            sum(1 for row in rows if row.get("found")),
+            track_path.name,
+        )
+    except Exception:
+        current_app.logger.exception("Preview face track failed for %s", video_id)
+        try:
+            track_path.unlink()
+        except Exception:
+            pass
+        return None
+    return track_path if track_path.exists() else None
 
 
 def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_seconds: Optional[float]) -> Optional[Path]:

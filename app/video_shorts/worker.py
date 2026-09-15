@@ -684,6 +684,15 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         transcript_text, segments = _transcribe_with_whisper(local_path)
         _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
+        enqueue_preview_frame_job(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            source_key=source_key,
+            duration_seconds=duration_seconds,
+            clip_start_seconds=clip_start,
+            clip_end_seconds=clip_end,
+        )
         result = {
             "stage": "ready",
             "message": "Ready to review.",
@@ -718,8 +727,10 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     session_id = str(payload.get("quick_session_id") or "").strip()
     video_id = str(payload.get("video_id") or "").strip()
+    source_key = str(payload.get("source_key") or "").strip()
     video_pk = int(payload.get("video_pk"))
     owner_user_id = str(job["user_id"])
+    brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
     needed_minutes = _duration_minutes(duration_seconds)
     if needed_minutes > 0:
@@ -758,6 +769,16 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             conn.commit()
         finally:
             conn.close()
+        if source_key and brand_id:
+            enqueue_preview_frame_job(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                source_key=source_key,
+                duration_seconds=duration_seconds,
+                clip_start_seconds=clip_start,
+                clip_end_seconds=clip_end,
+            )
         result = {
             "stage": "ready",
             "message": "Ready to review.",
@@ -934,6 +955,8 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     owner_user_id = str(payload.get("owner_user_id") or "").strip()
     brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
+    clip_start_seconds = payload.get("clip_start_seconds")
+    clip_end_seconds = payload.get("clip_end_seconds")
     if not video_pk or not video_id or not source_key or not owner_user_id or not brand_id:
         raise PermanentRenderJobError("Preview frame job is missing its scoped source.")
     if str(job.get("user_id") or "").strip() != owner_user_id:
@@ -970,22 +993,31 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     source_path = None
     try:
         source_path = storage.download_to_temp(source_key)
-        preview_path = generation._ensure_preview_frame(video_id, Path(source_path), duration_seconds)
-        if not preview_path:
-            raise RuntimeError("Preview frame was not created.")
-        applied_crop = generation._maybe_apply_face_centered_default_crop(
-            video_row_id=video_pk,
-            video_id=video_id,
-            owner_user_id=owner_user_id,
-            brand_id=brand_id,
-            preview_metadata=generation._load_preview_frame_metadata(video_id),
-        )
+        with app.app_context():
+            preview_path = generation._ensure_preview_frame(video_id, Path(source_path), duration_seconds)
+            if not preview_path:
+                raise RuntimeError("Preview frame was not created.")
+            track_path = generation._ensure_preview_face_track(
+                video_id,
+                Path(source_path),
+                clip_start_seconds,
+                clip_end_seconds,
+                duration_seconds,
+            )
+            applied_crop = generation._maybe_apply_face_centered_default_crop(
+                video_row_id=video_pk,
+                video_id=video_id,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                preview_metadata=generation._load_preview_frame_metadata(video_id),
+            )
         return {
             "video_pk": video_pk,
             "video_id": video_id,
             "source_key": source_key,
             "preview_path": str(preview_path),
             "metadata_path": str(generation._preview_frame_metadata_path(video_id)),
+            "track_path": str(track_path) if track_path else None,
             "crop_applied": bool(applied_crop),
         }
     finally:
