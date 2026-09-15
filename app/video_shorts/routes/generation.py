@@ -2669,73 +2669,75 @@ def _preview_face_track_path(video_id: str) -> Path:
 
 
 _PREVIEW_FACE_MIN_H_RATIO = 0.18
+_YUNET_FACE_SCORE_THRESHOLD = 0.6
+_YUNET_FACE_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "face_detection_yunet_2023mar.onnx"
 
 
-def _preview_face_ratios(
-    face: Any,
+def _preview_face_ratios_from_box(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
     frame_width: int,
     frame_height: int,
 ) -> dict[str, float | int] | None:
     if frame_width <= 0 or frame_height <= 0:
         return None
-    x, y, w, h = (int(value) for value in face)
+    if w <= 0 or h <= 0:
+        return None
+    x1 = max(0.0, min(float(frame_width), float(x)))
+    y1 = max(0.0, min(float(frame_height), float(y)))
+    x2 = max(0.0, min(float(frame_width), float(x) + float(w)))
+    y2 = max(0.0, min(float(frame_height), float(y) + float(h)))
+    w = x2 - x1
+    h = y2 - y1
     if w <= 0 or h <= 0:
         return None
     return {
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "cx_ratio": (x + (w / 2.0)) / float(frame_width),
-        "cy_ratio": (y + (h / 2.0)) / float(frame_height),
+        "x": int(round(x1)),
+        "y": int(round(y1)),
+        "w": int(round(w)),
+        "h": int(round(h)),
+        "cx_ratio": (x1 + (w / 2.0)) / float(frame_width),
+        "cy_ratio": (y1 + (h / 2.0)) / float(frame_height),
         "w_ratio": w / float(frame_width),
         "h_ratio": h / float(frame_height),
     }
 
 
-def _preview_face_ratios_from_relative_box(
-    *,
-    xmin: float,
-    ymin: float,
-    width: float,
-    height: float,
-    frame_width: int,
-    frame_height: int,
-) -> dict[str, float | int] | None:
-    if frame_width <= 0 or frame_height <= 0 or width <= 0 or height <= 0:
-        return None
-    x = int(round(xmin * frame_width))
-    y = int(round(ymin * frame_height))
-    w = int(round(width * frame_width))
-    h = int(round(height * frame_height))
-    return {
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "cx_ratio": xmin + (width / 2.0),
-        "cy_ratio": ymin + (height / 2.0),
-        "w_ratio": width,
-        "h_ratio": height,
-    }
-
-
-def _mediapipe_face_detection_ratios(
-    detections: Any,
+def _yunet_face_detection_ratios(
+    cv2: Any,
+    image: Any,
     frame_width: int,
     frame_height: int,
 ) -> list[dict[str, float | int]]:
+    if frame_width <= 0 or frame_height <= 0:
+        return []
+    if not _YUNET_FACE_MODEL_PATH.exists():
+        raise FileNotFoundError(f"YuNet face detector model not found: {_YUNET_FACE_MODEL_PATH}")
+    detector = cv2.FaceDetectorYN_create(
+        str(_YUNET_FACE_MODEL_PATH),
+        "",
+        (int(frame_width), int(frame_height)),
+        float(_YUNET_FACE_SCORE_THRESHOLD),
+        0.3,
+        5000,
+    )
+    _, detections = detector.detect(image)
     faces: list[dict[str, float | int]] = []
-    for detection in detections or []:
-        location = getattr(detection, "location_data", None)
-        relative_box = getattr(location, "relative_bounding_box", None)
-        if relative_box is None:
+    if detections is None:
+        return faces
+    for detection in detections:
+        if len(detection) < 5:
             continue
-        ratios = _preview_face_ratios_from_relative_box(
-            xmin=float(relative_box.xmin),
-            ymin=float(relative_box.ymin),
-            width=float(relative_box.width),
-            height=float(relative_box.height),
+        score = float(detection[-1])
+        if score < _YUNET_FACE_SCORE_THRESHOLD:
+            continue
+        ratios = _preview_face_ratios_from_box(
+            float(detection[0]),
+            float(detection[1]),
+            float(detection[2]),
+            float(detection[3]),
             frame_width=frame_width,
             frame_height=frame_height,
         )
@@ -2745,17 +2747,12 @@ def _mediapipe_face_detection_ratios(
 
 
 def _filter_preview_faces_by_size(
-    faces: Any,
-    frame_width: int,
-    frame_height: int,
+    faces: list[dict[str, float | int]],
 ) -> list[dict[str, float | int]]:
     filtered: list[dict[str, float | int]] = []
     for face in faces:
-        ratios = _preview_face_ratios(face, frame_width, frame_height)
-        if not ratios:
-            continue
-        if float(ratios["h_ratio"]) >= _PREVIEW_FACE_MIN_H_RATIO:
-            filtered.append(ratios)
+        if float(face["h_ratio"]) >= _PREVIEW_FACE_MIN_H_RATIO:
+            filtered.append(face)
     return filtered
 
 
@@ -2838,73 +2835,59 @@ def _ensure_preview_face_track(
     rows: list[dict[str, Any]] = []
     try:
         import cv2
-        import mediapipe as mp
-
-        mp_face_detection = mp.solutions.face_detection
 
         with tempfile.TemporaryDirectory(prefix=f"track_{video_id}_") as temp_dir:
             temp_dir_path = Path(temp_dir)
-            with mp_face_detection.FaceDetection(model_selection=1) as detector:
-                for index, timestamp in enumerate(timestamps):
-                    candidate_path = temp_dir_path / f"{video_id}_track_{index}.jpg"
-                    cmd = [
-                        ffmpeg_bin,
-                        "-y",
-                        "-ss",
-                        str(timestamp),
-                        "-i",
-                        str(source_path),
-                        "-frames:v",
-                        "1",
-                        "-vf",
-                        "scale=720:-1",
-                        "-q:v",
-                        "2",
-                        str(candidate_path),
-                    ]
-                    row: dict[str, Any] = {
-                        "t": timestamp,
-                        "cx_ratio": None,
-                        "cy_ratio": None,
-                        "w_ratio": None,
-                        "h_ratio": None,
-                        "found": False,
-                    }
-                    run_media_subprocess(
-                        cmd,
-                        operation="generate_preview_face_track",
-                        context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
-                        output_paths=[candidate_path],
-                        check=True,
-                        timeout=FFMPEG_SHORT_TIMEOUT,
-                    )
-                    image = cv2.imread(str(candidate_path))
-                    if image is not None:
-                        frame_height, frame_width = image.shape[:2]
-                        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        result = detector.process(rgb)
-                        faces = _mediapipe_face_detection_ratios(
-                            getattr(result, "detections", None),
-                            frame_width,
-                            frame_height,
+            for index, timestamp in enumerate(timestamps):
+                candidate_path = temp_dir_path / f"{video_id}_track_{index}.jpg"
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(source_path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale=720:-1",
+                    "-q:v",
+                    "2",
+                    str(candidate_path),
+                ]
+                row: dict[str, Any] = {
+                    "t": timestamp,
+                    "cx_ratio": None,
+                    "cy_ratio": None,
+                    "w_ratio": None,
+                    "h_ratio": None,
+                    "found": False,
+                }
+                run_media_subprocess(
+                    cmd,
+                    operation="generate_preview_face_track",
+                    context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
+                    output_paths=[candidate_path],
+                    check=True,
+                    timeout=FFMPEG_SHORT_TIMEOUT,
+                )
+                image = cv2.imread(str(candidate_path))
+                if image is not None:
+                    frame_height, frame_width = image.shape[:2]
+                    faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
+                    filtered_faces = _filter_preview_faces_by_size(faces)
+                    if len(filtered_faces) == 1:
+                        face = filtered_faces[0]
+                        row.update(
+                            {
+                                "cx_ratio": face["cx_ratio"],
+                                "cy_ratio": face["cy_ratio"],
+                                "w_ratio": face["w_ratio"],
+                                "h_ratio": face["h_ratio"],
+                                "found": True,
+                            }
                         )
-                        filtered_faces = [
-                            face
-                            for face in faces
-                            if float(face["h_ratio"]) >= _PREVIEW_FACE_MIN_H_RATIO
-                        ]
-                        if len(filtered_faces) == 1:
-                            face = filtered_faces[0]
-                            row.update(
-                                {
-                                    "cx_ratio": face["cx_ratio"],
-                                    "cy_ratio": face["cy_ratio"],
-                                    "w_ratio": face["w_ratio"],
-                                    "h_ratio": face["h_ratio"],
-                                    "found": True,
-                                }
-                            )
-                    rows.append(row)
+                rows.append(row)
         track_path.write_text(json.dumps(rows, ensure_ascii=True), encoding="utf-8")
         current_app.logger.info(
             "Preview face track written video_id=%s samples=%s found=%s output=%s",
@@ -2934,11 +2917,9 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
     ffmpeg_bin = _resolve_ffmpeg()
     try:
         import cv2
-        import mediapipe as mp
 
         frame_width = 0
         frame_height = 0
-        mp_face_detection = mp.solutions.face_detection
 
         candidate_timestamps = _preview_candidate_timestamps(duration_seconds)
         best_face: tuple[int, Path, float] | None = None
@@ -2946,66 +2927,55 @@ def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_s
         best_detail: tuple[float, Path, float] | None = None
         with tempfile.TemporaryDirectory(prefix=f"preview_{video_id}_") as temp_dir:
             temp_dir_path = Path(temp_dir)
-            with mp_face_detection.FaceDetection(model_selection=1) as detector:
-                for index, timestamp in enumerate(candidate_timestamps):
-                    candidate_path = temp_dir_path / f"{video_id}_{index}.jpg"
-                    cmd = [
-                        ffmpeg_bin,
-                        "-y",
-                        "-ss",
-                        str(timestamp),
-                        "-i",
-                        str(source_path),
-                        "-frames:v",
-                        "1",
-                        "-vf",
-                        "scale=720:-1",
-                        "-q:v",
-                        "2",
-                        str(candidate_path),
-                    ]
-                    run_media_subprocess(
-                        cmd,
-                        operation="generate_preview_frame",
-                        context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
-                        output_paths=[candidate_path],
-                        check=True,
-                        timeout=FFMPEG_SHORT_TIMEOUT,
+            for index, timestamp in enumerate(candidate_timestamps):
+                candidate_path = temp_dir_path / f"{video_id}_{index}.jpg"
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-ss",
+                    str(timestamp),
+                    "-i",
+                    str(source_path),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale=720:-1",
+                    "-q:v",
+                    "2",
+                    str(candidate_path),
+                ]
+                run_media_subprocess(
+                    cmd,
+                    operation="generate_preview_frame",
+                    context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
+                    output_paths=[candidate_path],
+                    check=True,
+                    timeout=FFMPEG_SHORT_TIMEOUT,
+                )
+                image = cv2.imread(str(candidate_path))
+                if image is None:
+                    continue
+                frame_height, frame_width = image.shape[:2]
+                faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
+                filtered_faces = _filter_preview_faces_by_size(faces)
+                if filtered_faces:
+                    largest_face = max(
+                        filtered_faces,
+                        key=lambda item: int(item["w"]) * int(item["h"]),
                     )
-                    image = cv2.imread(str(candidate_path))
-                    if image is None:
-                        continue
-                    frame_height, frame_width = image.shape[:2]
-                    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    result = detector.process(rgb)
-                    faces = _mediapipe_face_detection_ratios(
-                        getattr(result, "detections", None),
-                        frame_width,
-                        frame_height,
-                    )
-                    filtered_faces = [
-                        face
-                        for face in faces
-                        if float(face["h_ratio"]) >= _PREVIEW_FACE_MIN_H_RATIO
-                    ]
-                    if filtered_faces:
-                        largest_face = max(
-                            filtered_faces,
-                            key=lambda item: int(item["w"]) * int(item["h"]),
+                    largest_face_area = int(largest_face["w"]) * int(largest_face["h"])
+                    if best_face is None or largest_face_area > best_face[0]:
+                        best_face = (largest_face_area, candidate_path, timestamp)
+                        best_face_bbox = (
+                            int(largest_face["x"]),
+                            int(largest_face["y"]),
+                            int(largest_face["w"]),
+                            int(largest_face["h"]),
                         )
-                        largest_face_area = int(largest_face["w"]) * int(largest_face["h"])
-                        if best_face is None or largest_face_area > best_face[0]:
-                            best_face = (largest_face_area, candidate_path, timestamp)
-                            best_face_bbox = (
-                                int(largest_face["x"]),
-                                int(largest_face["y"]),
-                                int(largest_face["w"]),
-                                int(largest_face["h"]),
-                            )
-                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                    laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-                    if best_detail is None or laplacian_variance > best_detail[0]:
-                        best_detail = (laplacian_variance, candidate_path, timestamp)
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                laplacian_variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                if best_detail is None or laplacian_variance > best_detail[0]:
+                    best_detail = (laplacian_variance, candidate_path, timestamp)
 
             selected_path = None
             selected_metadata: dict[str, Any] = {

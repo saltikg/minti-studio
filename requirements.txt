@@ -1,7 +1,6 @@
 pandas
 numpy
 opencv-python-headless==4.14.0.94
-mediapipe
 python-dotenv
 tqdm
 pyyaml
