@@ -10650,20 +10650,37 @@ def _load_admin_outreach_emails(
               END AS starts_session
             FROM visit_events
         ),
+        visit_agg AS (
+            SELECT
+              recipient_key,
+              COALESCE(SUM(starts_session), 0) AS visit_count,
+              MIN(created_at) AS first_visit,
+              MAX(created_at) AS last_visit
+            FROM visit_sessions
+            GROUP BY recipient_key
+        ),
+        event_agg AS (
+            SELECT
+              recipient_key,
+              MAX(CASE WHEN event_name = 'share_watch_progress' THEN percent_watched ELSE NULL END) AS max_watched,
+              MAX(CASE WHEN event_name = 'lead_feed_view' THEN 1 ELSE 0 END) AS entered_feed
+            FROM recipient_events
+            GROUP BY recipient_key
+        ),
         engagement AS (
             SELECT
               rl.recipient_key,
-              COALESCE(SUM(vs.starts_session), 0) AS visit_count,
-              MIN(vs.created_at) AS first_visit,
-              MAX(vs.created_at) AS last_visit,
-              MAX(CASE WHEN re.event_name = 'share_watch_progress' THEN re.percent_watched ELSE NULL END) AS max_watched,
-              MAX(CASE WHEN re.event_name = 'lead_feed_view' THEN 1 ELSE 0 END) AS entered_feed
+              COALESCE(va.visit_count, 0) AS visit_count,
+              va.first_visit,
+              va.last_visit,
+              ea.max_watched,
+              COALESCE(ea.entered_feed, 0) AS entered_feed
             FROM recipient_links rl
-            LEFT JOIN visit_sessions vs
-              ON vs.recipient_key = rl.recipient_key
-            LEFT JOIN recipient_events re
-              ON re.recipient_key = rl.recipient_key
-            GROUP BY rl.recipient_key
+            LEFT JOIN visit_agg va
+              ON va.recipient_key = rl.recipient_key
+            LEFT JOIN event_agg ea
+              ON ea.recipient_key = rl.recipient_key
+            GROUP BY rl.recipient_key, va.visit_count, va.first_visit, va.last_visit, ea.max_watched, ea.entered_feed
         )
         """
     else:
