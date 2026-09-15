@@ -11012,24 +11012,26 @@ def _load_admin_outreach_emails(
             bucket = "scheduled"
         effective_status = "failed" if any_failed else latest_status
         send_date = row[26] or row[20] or row[10] or row[9]
+        is_cancelled_latest = effective_status == "cancelled"
         error_text = str((row[29] if any_failed else row[25]) or "").strip()
         failed_share_link_id = int(row[28]) if row[28] is not None else None
         latest_send_share_link_id = int(row[17]) if row[17] is not None else None
         cancel_share_link_id = latest_send_share_link_id
         cancel_schedule_id = int(row[16]) if row[16] is not None else None
-        for period_key, period_start in periods.items():
-            if _in_period(row[9], period_start):
-                summary_counts[period_key]["sent"] += 1
-            if _in_period(row[10], period_start):
-                summary_counts[period_key]["scheduled"] += 1
-            if _in_period(row[32], period_start):
-                summary_counts[period_key]["visited"] += 1
-            if repeat_visited and _in_period(row[32], period_start):
-                summary_counts[period_key]["repeat_visited"] += 1
-            if _in_period(converted_at, period_start):
-                summary_counts[period_key]["converted"] += 1
-            if any_failed and _in_period(send_date, period_start):
-                summary_counts[period_key]["failed"] += 1
+        if not is_cancelled_latest:
+            for period_key, period_start in periods.items():
+                if _in_period(row[9], period_start):
+                    summary_counts[period_key]["sent"] += 1
+                if _in_period(row[10], period_start):
+                    summary_counts[period_key]["scheduled"] += 1
+                if _in_period(row[32], period_start):
+                    summary_counts[period_key]["visited"] += 1
+                if repeat_visited and _in_period(row[32], period_start):
+                    summary_counts[period_key]["repeat_visited"] += 1
+                if _in_period(converted_at, period_start):
+                    summary_counts[period_key]["converted"] += 1
+                if any_failed and _in_period(send_date, period_start):
+                    summary_counts[period_key]["failed"] += 1
         items.append(
             {
                 "recipient_key": str(row[0] or ""),
@@ -11097,6 +11099,8 @@ def _load_admin_outreach_emails(
         )
 
     def _passes_filters(item: dict[str, Any]) -> bool:
+        if normalized_status == "all" and item["effective_status"] == "cancelled":
+            return False
         if normalized_period and normalized_metric:
             period_start = periods[normalized_period]
             if normalized_metric == "sent" and not _in_period(item["latest_sent_at"], period_start):
