@@ -10576,11 +10576,23 @@ def _load_admin_outreach_emails(
 
     has_user_events = bool(user_event_columns)
     has_archived = "archived" in share_link_columns
-    sl_language_sql = "sl2.language" if "language" in share_link_columns else "'EN'"
-    sl_emailed_at_sql = "sl2.emailed_at" if "emailed_at" in share_link_columns else "NULL"
-    sl_first_provider_sql = "sl2.first_email_provider_message_id" if "first_email_provider_message_id" in share_link_columns else "NULL"
-    sl_followup_sent_at_sql = "sl2.followup_sent_at" if "followup_sent_at" in share_link_columns else "NULL"
-    sl_followup_provider_sql = "sl2.followup_provider_message_id" if "followup_provider_message_id" in share_link_columns else "NULL"
+    sl_language_sql = "sl2.language" if "language" in share_link_columns else "CAST('EN' AS VARCHAR)"
+    sl_emailed_at_sql = "sl2.emailed_at" if "emailed_at" in share_link_columns else "CAST(NULL AS TIMESTAMP WITH TIME ZONE)"
+    sl_first_provider_sql = (
+        "sl2.first_email_provider_message_id"
+        if "first_email_provider_message_id" in share_link_columns
+        else "CAST(NULL AS VARCHAR)"
+    )
+    sl_followup_sent_at_sql = (
+        "sl2.followup_sent_at"
+        if "followup_sent_at" in share_link_columns
+        else "CAST(NULL AS TIMESTAMP WITH TIME ZONE)"
+    )
+    sl_followup_provider_sql = (
+        "sl2.followup_provider_message_id"
+        if "followup_provider_message_id" in share_link_columns
+        else "CAST(NULL AS VARCHAR)"
+    )
     archived_filter_sql = "COALESCE(sl.archived, false) = false" if has_archived else "TRUE"
     archived_filter_sl2_sql = "COALESCE(sl2.archived, false) = false" if has_archived else "TRUE"
     sl_key_sql = "COALESCE(NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), ''), lower(COALESCE(NULLIF(sl.recipient_email, ''), CAST(sl.id AS VARCHAR))))"
@@ -10727,14 +10739,14 @@ def _load_admin_outreach_emails(
               rl.recipient_key,
               (0 - (CAST(sl2.id AS BIGINT) * 10) - 1) AS id,
               sl2.id AS share_link_id,
-              'first' AS stage,
+              CAST('first' AS VARCHAR) AS stage,
               COALESCE(NULLIF({sl_language_sql}, ''), 'EN') AS language,
-              NULL AS scheduled_at,
-              'sent' AS status,
+              CAST(NULL AS TIMESTAMP WITH TIME ZONE) AS scheduled_at,
+              CAST('sent' AS VARCHAR) AS status,
               0 AS attempts,
               0 AS max_attempts,
               {sl_first_provider_sql} AS provider_message_id,
-              NULL AS error,
+              CAST(NULL AS TEXT) AS error,
               {sl_emailed_at_sql} AS sent_at,
               sl2.created_at,
               {sl_emailed_at_sql} AS updated_at
@@ -10748,14 +10760,14 @@ def _load_admin_outreach_emails(
               rl.recipient_key,
               (0 - (CAST(sl2.id AS BIGINT) * 10) - 2) AS id,
               sl2.id AS share_link_id,
-              'followup' AS stage,
+              CAST('followup' AS VARCHAR) AS stage,
               COALESCE(NULLIF({sl_language_sql}, ''), 'EN') AS language,
-              NULL AS scheduled_at,
-              'sent' AS status,
+              CAST(NULL AS TIMESTAMP WITH TIME ZONE) AS scheduled_at,
+              CAST('sent' AS VARCHAR) AS status,
               0 AS attempts,
               0 AS max_attempts,
               {sl_followup_provider_sql} AS provider_message_id,
-              NULL AS error,
+              CAST(NULL AS TEXT) AS error,
               {sl_followup_sent_at_sql} AS sent_at,
               sl2.created_at,
               {sl_followup_sent_at_sql} AS updated_at
