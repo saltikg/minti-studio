@@ -1,120 +1,130 @@
 {% extends "vs_admin_base.html" %}
 
-{% block title %}Outreach Emails{% endblock %}
-{% block admin_heading %}Outreach Emails{% endblock %}
+{% block title %}Outreach Follow-up{% endblock %}
+{% block admin_heading %}Outreach Follow-up{% endblock %}
 {% block admin_subheading %}
-  <p>Monitor scheduled, sent, failed, and cancelled outreach emails from Share Links.</p>
+  <p>One row per recipient, grouped by visits, watch depth, conversion, and send state.</p>
 {% endblock %}
+
+{% set bucket_options = [
+  ('failed', 'Failed send'),
+  ('hot_repeat', 'Hot — repeat visit'),
+  ('watched_no_convert', 'Watched, no convert'),
+  ('visited_once', 'Visited once'),
+  ('sent_no_visit', 'Sent, no visit'),
+  ('scheduled', 'Scheduled'),
+  ('converted', 'Converted')
+] %}
+{% set next_dir = 'asc' if sort_dir == 'desc' else 'desc' %}
+
+{% macro sort_link(key, label) -%}
+  <a
+    class="admin-outreach-sort-link"
+    href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=key, dir=('asc' if sort_key != key or sort_dir == 'desc' else 'desc'), page=1) }}">
+    <span>{{ label }}</span>
+    {% if sort_key == key %}<span class="admin-outreach-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
+  </a>
+{%- endmacro %}
 
 {% block extra_styles %}
   <style>
     .admin-outreach-toolbar {
       display: grid;
-      grid-template-columns: minmax(180px, 220px) minmax(240px, 1fr) repeat(2, minmax(150px, 180px)) auto;
+      grid-template-columns: minmax(210px, 1.1fr) minmax(150px, .7fr) repeat(2, minmax(135px, .6fr)) minmax(210px, 1fr) repeat(2, minmax(145px, .6fr)) auto;
       gap: 12px;
       align-items: end;
       margin-bottom: 18px;
     }
-    .admin-outreach-summary {
+    .admin-outreach-toolbar select[multiple] { min-height: 96px; }
+    .admin-outreach-periods {
       display: grid;
-      grid-template-columns: repeat(4, minmax(130px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 12px;
       margin-bottom: 18px;
     }
-    .admin-outreach-summary-card {
+    .admin-outreach-period-card {
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 14px;
       background: rgba(255, 255, 255, 0.045);
       padding: 14px;
     }
-    .admin-outreach-summary-label {
-      color: rgba(255, 255, 255, 0.62);
-      font-size: 0.78rem;
-      font-weight: 800;
+    .admin-outreach-period-title {
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 0.8rem;
+      font-weight: 850;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+      margin-bottom: 10px;
     }
-    .admin-outreach-summary-count {
-      margin-top: 8px;
+    .admin-outreach-period-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .admin-outreach-kpi {
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.055);
+      padding: 9px;
+    }
+    .admin-outreach-kpi-label {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.72rem;
+      font-weight: 750;
+    }
+    .admin-outreach-kpi-value {
+      margin-top: 3px;
       color: #fff;
-      font-size: 1.8rem;
+      font-size: 1.2rem;
       font-weight: 850;
       line-height: 1;
     }
-    .admin-outreach-table-wrap {
-      overflow-x: auto;
-    }
-    .admin-outreach-table {
-      width: 100%;
-      color: rgba(255, 255, 255, 0.92);
-    }
+    .admin-outreach-table-wrap { overflow-x: auto; }
+    .admin-outreach-table { width: 100%; color: rgba(255, 255, 255, 0.92); }
     .admin-outreach-table th,
     .admin-outreach-table td {
-      padding: 14px 16px;
+      padding: 13px 14px;
       vertical-align: top;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       white-space: nowrap;
     }
     .admin-outreach-table th {
       color: rgba(255, 255, 255, 0.58);
-      font-size: 0.82rem;
-      font-weight: 700;
+      font-size: 0.78rem;
+      font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
-    .admin-outreach-recipient {
-      font-weight: 700;
-    }
-    .admin-outreach-muted {
-      color: rgba(255, 255, 255, 0.62);
-      font-size: 0.84rem;
-    }
+    .admin-outreach-recipient { font-weight: 800; }
+    .admin-outreach-muted { color: rgba(255, 255, 255, 0.62); font-size: 0.84rem; }
+    .admin-outreach-sort-link { color: rgba(255,255,255,.72); text-decoration: none; display: inline-flex; gap: 5px; align-items: center; }
+    .admin-outreach-sort-link:hover, .admin-outreach-sort-link:focus { color: #8ff3d8; text-decoration: none; }
+    .admin-outreach-sort-arrow { color: #8ff3d8; font-size: .82rem; }
     .admin-outreach-pill {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 86px;
+      min-width: 74px;
       padding: 6px 10px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.08);
       color: rgba(255, 255, 255, 0.86);
-      font-size: 0.82rem;
-      font-weight: 750;
+      font-size: 0.8rem;
+      font-weight: 800;
     }
-    .admin-outreach-pill.status-scheduled {
-      background: rgba(148, 163, 184, 0.16);
-      color: #cbd5e1;
-    }
-    .admin-outreach-pill.status-processing {
-      background: rgba(59, 130, 246, 0.18);
-      color: #93c5fd;
-    }
-    .admin-outreach-pill.status-sent {
-      background: rgba(45, 212, 191, 0.14);
-      color: #8ff3d8;
-      border: 1px solid rgba(45, 212, 191, 0.22);
-    }
-    .admin-outreach-pill.status-failed {
-      background: rgba(248, 113, 113, 0.18);
-      color: #fca5a5;
-      border: 1px solid rgba(248, 113, 113, 0.26);
-    }
-    .admin-outreach-pill.status-cancelled {
-      background: rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.58);
-    }
-    .admin-outreach-error {
-      max-width: 340px;
-      white-space: normal;
-      color: #fca5a5;
-      line-height: 1.35;
-    }
-    .admin-outreach-actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
+    .admin-outreach-pill.status-scheduled { background: rgba(148, 163, 184, 0.16); color: #cbd5e1; }
+    .admin-outreach-pill.status-processing { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+    .admin-outreach-pill.status-sent { background: rgba(45, 212, 191, 0.14); color: #8ff3d8; border: 1px solid rgba(45, 212, 191, 0.22); }
+    .admin-outreach-pill.status-failed { background: rgba(248, 113, 113, 0.18); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.26); }
+    .admin-outreach-pill.status-cancelled { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.58); }
+    .admin-outreach-bucket.failed { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+    .admin-outreach-bucket.hot_repeat { background: rgba(251, 191, 36, 0.18); color: #fde68a; }
+    .admin-outreach-bucket.watched_no_convert { background: rgba(56, 189, 248, 0.18); color: #bae6fd; }
+    .admin-outreach-bucket.visited_once { background: rgba(96, 165, 250, 0.16); color: #bfdbfe; }
+    .admin-outreach-bucket.sent_no_visit { background: rgba(148, 163, 184, 0.16); color: #cbd5e1; }
+    .admin-outreach-bucket.scheduled { background: rgba(168, 85, 247, 0.16); color: #ddd6fe; }
+    .admin-outreach-bucket.converted { background: rgba(45, 212, 191, 0.16); color: #99f6e4; }
+    .admin-outreach-error { max-width: 340px; white-space: normal; color: #fca5a5; line-height: 1.35; margin-top: 6px; }
+    .admin-outreach-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .admin-outreach-actions a,
     .admin-outreach-actions button {
       color: #8ddfcb;
@@ -128,42 +138,20 @@
     .admin-outreach-actions a:hover,
     .admin-outreach-actions a:focus,
     .admin-outreach-actions button:hover,
-    .admin-outreach-actions button:focus {
-      text-decoration: underline;
+    .admin-outreach-actions button:focus { text-decoration: underline; }
+    .admin-outreach-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
+    .admin-outreach-feedback { min-height: 18px; margin-bottom: 12px; color: rgba(255, 255, 255, 0.62); font-size: 0.86rem; }
+    .admin-outreach-feedback.is-error { color: #fca5a5; }
+    .admin-outreach-feedback.is-success { color: #8ff3d8; }
+    @media (max-width: 1399.98px) {
+      .admin-outreach-toolbar { grid-template-columns: repeat(3, minmax(210px, 1fr)); }
     }
-    .admin-outreach-pagination {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-top: 18px;
-      flex-wrap: wrap;
-    }
-    .admin-outreach-feedback {
-      min-height: 18px;
-      margin-bottom: 12px;
-      color: rgba(255, 255, 255, 0.62);
-      font-size: 0.86rem;
-    }
-    .admin-outreach-feedback.is-error {
-      color: #fca5a5;
-    }
-    .admin-outreach-feedback.is-success {
-      color: #8ff3d8;
-    }
-    @media (max-width: 1199.98px) {
-      .admin-outreach-toolbar {
-        grid-template-columns: repeat(2, minmax(220px, 1fr));
-      }
-      .admin-outreach-summary {
-        grid-template-columns: repeat(2, minmax(130px, 1fr));
-      }
+    @media (max-width: 991.98px) {
+      .admin-outreach-periods { grid-template-columns: 1fr; }
+      .admin-outreach-toolbar { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
     }
     @media (max-width: 767.98px) {
-      .admin-outreach-toolbar,
-      .admin-outreach-summary {
-        grid-template-columns: 1fr;
-      }
+      .admin-outreach-toolbar { grid-template-columns: 1fr; }
     }
   </style>
 {% endblock %}
@@ -172,66 +160,92 @@
   <section class="vs-admin-card p-3 p-lg-4">
     <form method="get" class="admin-outreach-toolbar">
       <div>
+        <label class="form-label mb-2" for="outreach-bucket">Follow-up bucket</label>
+        <select id="outreach-bucket" name="bucket" class="form-select" multiple>
+          {% for value, label in bucket_options %}
+            <option value="{{ value }}" {% if value in selected_buckets %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
         <label class="form-label mb-2" for="outreach-status">Status</label>
         <select id="outreach-status" name="status" class="form-select">
-          {% for status in ['all', 'scheduled', 'sent', 'failed', 'cancelled'] %}
+          {% for status in ['all', 'scheduled', 'processing', 'sent', 'failed', 'cancelled'] %}
             <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status|capitalize }}</option>
           {% endfor %}
         </select>
       </div>
       <div>
-        <label class="form-label mb-2" for="outreach-email">Recipient email contains</label>
-        <input id="outreach-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="name@example.com">
+        <label class="form-label mb-2" for="outreach-visited">Visited</label>
+        <select id="outreach-visited" name="visited" class="form-select">
+          <option value="all" {% if selected_visited == 'all' %}selected{% endif %}>All</option>
+          <option value="yes" {% if selected_visited == 'yes' %}selected{% endif %}>Yes</option>
+          <option value="no" {% if selected_visited == 'no' %}selected{% endif %}>No</option>
+        </select>
       </div>
       <div>
-        <label class="form-label mb-2" for="outreach-date-from">Scheduled from</label>
+        <label class="form-label mb-2" for="outreach-converted">Converted</label>
+        <select id="outreach-converted" name="converted" class="form-select">
+          <option value="all" {% if selected_converted == 'all' %}selected{% endif %}>All</option>
+          <option value="yes" {% if selected_converted == 'yes' %}selected{% endif %}>Yes</option>
+          <option value="no" {% if selected_converted == 'no' %}selected{% endif %}>No</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-2" for="outreach-email">Recipient search</label>
+        <input id="outreach-email" type="text" name="email" value="{{ email_query }}" class="form-control" placeholder="Name or email">
+      </div>
+      <div>
+        <label class="form-label mb-2" for="outreach-date-from">Sent from</label>
         <input id="outreach-date-from" type="date" name="date_from" value="{{ date_from }}" class="form-control">
       </div>
       <div>
-        <label class="form-label mb-2" for="outreach-date-to">Scheduled to</label>
+        <label class="form-label mb-2" for="outreach-date-to">Sent to</label>
         <input id="outreach-date-to" type="date" name="date_to" value="{{ date_to }}" class="form-control">
       </div>
       <div>
+        <input type="hidden" name="sort" value="{{ sort_key }}">
+        <input type="hidden" name="dir" value="{{ sort_dir }}">
         <button type="submit" class="btn btn-primary">Filter</button>
         <a href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}" class="btn btn-outline-light ms-2">Reset</a>
       </div>
     </form>
 
-    <div class="admin-outreach-summary" aria-label="Outreach email summary">
-      <div class="admin-outreach-summary-card">
-        <div class="admin-outreach-summary-label">Scheduled</div>
-        <div class="admin-outreach-summary-count">{{ summary_counts.scheduled }}</div>
-      </div>
-      <div class="admin-outreach-summary-card">
-        <div class="admin-outreach-summary-label">Sent</div>
-        <div class="admin-outreach-summary-count">{{ summary_counts.sent }}</div>
-      </div>
-      <div class="admin-outreach-summary-card">
-        <div class="admin-outreach-summary-label">Failed</div>
-        <div class="admin-outreach-summary-count">{{ summary_counts.failed }}</div>
-      </div>
-      <div class="admin-outreach-summary-card">
-        <div class="admin-outreach-summary-label">Cancelled</div>
-        <div class="admin-outreach-summary-count">{{ summary_counts.cancelled }}</div>
-      </div>
+    <div class="admin-outreach-periods" aria-label="Outreach period summary">
+      {% for key, label in [('today', 'Today'), ('week', 'This week'), ('month', 'This month')] %}
+        {% set period = summary_counts[key] %}
+        <div class="admin-outreach-period-card">
+          <div class="admin-outreach-period-title">{{ label }}</div>
+          <div class="admin-outreach-period-grid">
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Sent</div><div class="admin-outreach-kpi-value">{{ period.sent }}</div></div>
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Scheduled</div><div class="admin-outreach-kpi-value">{{ period.scheduled }}</div></div>
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Visited</div><div class="admin-outreach-kpi-value">{{ period.visited }}</div></div>
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Repeat</div><div class="admin-outreach-kpi-value">{{ period.repeat_visited }}</div></div>
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Converted</div><div class="admin-outreach-kpi-value">{{ period.converted }}</div></div>
+            <div class="admin-outreach-kpi"><div class="admin-outreach-kpi-label">Failed</div><div class="admin-outreach-kpi-value">{{ period.failed }}</div></div>
+          </div>
+        </div>
+      {% endfor %}
     </div>
 
     <div class="admin-outreach-feedback" data-outreach-feedback></div>
-    <div class="admin-outreach-muted mb-3">{{ total_items }} matching emails · showing up to {{ per_page }} per page</div>
+    <div class="admin-outreach-muted mb-3">{{ total_items }} recipient{{ '' if total_items == 1 else 's' }} · {{ per_page }} per page · visit sessions use a 30-minute gap rule</div>
 
     <div class="admin-outreach-table-wrap">
       <table class="admin-outreach-table">
         <thead>
           <tr>
             <th>Recipient</th>
-            <th>Stage</th>
-            <th>Scheduled for</th>
-            <th>Status</th>
-            <th>Sent at</th>
-            <th>Attempts</th>
-            <th>Error</th>
-            <th>Provider id</th>
-            <th>Links</th>
+            <th>{{ sort_link('status', 'Latest send') }}</th>
+            <th>{{ sort_link('send_date', 'Sent/Scheduled') }}</th>
+            <th>{{ sort_link('days_since_first_email', 'Days since first email') }}</th>
+            <th>{{ sort_link('visit_count', 'Visited') }}</th>
+            <th>{{ sort_link('last_visit', 'Last visit') }}</th>
+            <th>{{ sort_link('max_watched', 'Max watched') }}</th>
+            <th>Entered feed</th>
+            <th>Converted</th>
+            <th>{{ sort_link('bucket', 'Bucket') }}</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -242,39 +256,50 @@
                 <div class="admin-outreach-muted">{{ item.recipient_email }}</div>
               </td>
               <td>
-                <div>{{ item.stage or '—' }}</div>
-                <div class="admin-outreach-muted">{{ item.language or '—' }}</div>
-              </td>
-              <td>{{ item.scheduled_at_pst or '—' }}</td>
-              <td><span class="admin-outreach-pill status-{{ item.status }}">{{ item.status or '—' }}</span></td>
-              <td>{{ item.sent_at_pst or '—' }}</td>
-              <td>{{ item.attempts }} / {{ item.max_attempts }}</td>
-              <td>
+                <span class="admin-outreach-pill status-{{ item.effective_status }}">{{ item.effective_status or '—' }}</span>
+                <div class="admin-outreach-muted">{{ item.latest_stage or '—' }}{% if item.latest_language %} · {{ item.latest_language }}{% endif %}</div>
                 {% if item.error %}
                   <div class="admin-outreach-error" title="{{ item.error }}">{{ item.error_short }}</div>
-                {% else %}
-                  <span class="admin-outreach-muted">—</span>
                 {% endif %}
               </td>
-              <td class="admin-outreach-muted">{{ item.provider_message_id or '—' }}</td>
+              <td>
+                <div>{{ item.latest_sent_at_for_row_pst or item.latest_scheduled_at_pst or '—' }}</div>
+                {% if item.latest_provider_message_id %}<div class="admin-outreach-muted">{{ item.latest_provider_message_id }}</div>{% endif %}
+              </td>
+              <td>{{ item.days_since_first_email if item.days_since_first_email is not none else '—' }}</td>
+              <td>
+                <div>{{ 'Yes' if item.visit_count else 'No' }} · {{ item.visit_count }}</div>
+                {% if item.repeat_visited %}<div class="admin-outreach-muted">Repeat visit</div>{% endif %}
+              </td>
+              <td>
+                <div>{{ item.last_visit_pst or '—' }}</div>
+                <div class="admin-outreach-muted">{{ item.days_since_last_visit if item.days_since_last_visit is not none else '—' }} days</div>
+              </td>
+              <td>{{ ('%.0f%%'|format(item.max_watched)) if item.max_watched else '—' }}</td>
+              <td>{{ 'Yes' if item.entered_feed else 'No' }}</td>
+              <td>
+                <div>{{ 'Yes' if item.converted else 'No' }}</div>
+                {% if item.converted_at_pst %}<div class="admin-outreach-muted">{{ item.converted_at_pst }}</div>{% endif %}
+              </td>
+              <td><span class="admin-outreach-pill admin-outreach-bucket {{ item.bucket }}">{{ item.bucket_label }}</span></td>
               <td>
                 <div class="admin-outreach-actions">
                   {% if item.share_url %}
                     <a href="{{ item.share_url }}" target="_blank" rel="noopener noreferrer">Watch link</a>
                   {% endif %}
                   <a href="{{ item.share_links_url }}">Share Links</a>
-                  {% if item.status == 'scheduled' and item.cancel_url %}
-                    <button type="button" data-cancel-endpoint="{{ item.cancel_url }}">Cancel</button>
+                  {% if item.cancel_url %}
+                    <button type="button" data-cancel-endpoint="{{ item.cancel_url }}">Cancel schedule</button>
                   {% endif %}
-                  {% if item.status == 'failed' %}
-                    <a href="{{ item.share_links_url }}">Reschedule in Share Links</a>
+                  {% if item.reschedule_url %}
+                    <a href="{{ item.reschedule_url }}">Reschedule in Share Links</a>
                   {% endif %}
                 </div>
               </td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="9" class="admin-outreach-muted text-center py-4">No outreach emails matched your filters.</td>
+              <td colspan="11" class="admin-outreach-muted text-center py-4">No recipients matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -285,10 +310,10 @@
       <div class="admin-outreach-muted">Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2 flex-wrap">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', status=selected_status, email=email_query, date_from=date_from, date_to=date_to, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', status=selected_status, email=email_query, date_from=date_from, date_to=date_to, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>
@@ -299,26 +324,18 @@
   <script>
     function setOutreachFeedback(message, kind = "") {
       const feedback = document.querySelector("[data-outreach-feedback]");
-      if (!feedback) {
-        return;
-      }
+      if (!feedback) return;
       feedback.textContent = message || "";
       feedback.classList.remove("is-error", "is-success");
-      if (kind) {
-        feedback.classList.add(kind);
-      }
+      if (kind) feedback.classList.add(kind);
     }
 
     document.addEventListener("click", async (event) => {
       const cancelButton = event.target.closest("[data-cancel-endpoint]");
-      if (!cancelButton || cancelButton.disabled) {
-        return;
-      }
+      if (!cancelButton || cancelButton.disabled) return;
       const endpoint = String(cancelButton.dataset.cancelEndpoint || "").trim();
       const row = cancelButton.closest("[data-outreach-row]");
-      if (!endpoint) {
-        return;
-      }
+      if (!endpoint) return;
       const originalLabel = cancelButton.textContent;
       cancelButton.disabled = true;
       cancelButton.textContent = "Cancelling...";
@@ -337,7 +354,7 @@
         if (!response.ok || !payload.ok) {
           throw new Error(payload.error || `HTTP ${response.status}`);
         }
-        const pill = row?.querySelector(".admin-outreach-pill");
+        const pill = row?.querySelector(".admin-outreach-pill.status-scheduled");
         if (pill) {
           pill.textContent = "cancelled";
           pill.className = "admin-outreach-pill status-cancelled";

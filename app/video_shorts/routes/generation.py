@@ -10524,142 +10524,599 @@ def _load_admin_outreach_emails(
     conn,
     *,
     status_filter: str = "all",
+    bucket_filter: str = "all",
+    visited_filter: str = "all",
+    converted_filter: str = "all",
     email_query: str = "",
     date_from: str = "",
     date_to: str = "",
+    sort_key: str = "bucket",
+    sort_dir: str = "asc",
     limit: int = 200,
     offset: int = 0,
-) -> tuple[list[dict[str, Any]], int, dict[str, int], str, str, str, str]:
+) -> tuple[list[dict[str, Any]], int, dict[str, Any], str, str, str, str, str, str, str, str, str]:
     outreach_columns = table_columns(conn, "outreach_scheduled_emails")
-    if not outreach_columns:
-        return [], 0, {"scheduled": 0, "sent": 0, "failed": 0, "cancelled": 0}, "all", "", "", ""
+    share_link_columns = table_columns(conn, "short_share_links")
+    user_event_columns = table_columns(conn, "user_events")
+    if not outreach_columns or not share_link_columns:
+        empty_summary = {
+            "today": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
+            "week": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
+            "month": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
+        }
+        return [], 0, empty_summary, "all", [], "all", "all", "", "", "", "bucket", "asc"
 
     normalized_status = str(status_filter or "all").strip().lower()
     if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled"}:
         normalized_status = "all"
+    bucket_keys = {"failed", "hot_repeat", "watched_no_convert", "visited_once", "sent_no_visit", "scheduled", "converted"}
+    raw_bucket_values: list[str] = []
+    if isinstance(bucket_filter, (list, tuple, set)):
+        raw_bucket_values = [str(value or "").strip().lower() for value in bucket_filter]
+    else:
+        raw_bucket_values = [part.strip().lower() for part in str(bucket_filter or "all").split(",")]
+    normalized_buckets = [value for value in raw_bucket_values if value in bucket_keys]
+    if not normalized_buckets or "all" in raw_bucket_values:
+        normalized_buckets = []
+    normalized_visited = str(visited_filter or "all").strip().lower()
+    if normalized_visited not in {"all", "yes", "no"}:
+        normalized_visited = "all"
+    normalized_converted = str(converted_filter or "all").strip().lower()
+    if normalized_converted not in {"all", "yes", "no"}:
+        normalized_converted = "all"
+    normalized_sort_key = str(sort_key or "bucket").strip().lower()
+    if normalized_sort_key not in {"bucket", "last_visit", "visit_count", "send_date", "max_watched", "days_since_first_email", "status"}:
+        normalized_sort_key = "bucket"
+    normalized_sort_dir = str(sort_dir or "asc").strip().lower()
+    if normalized_sort_dir not in {"asc", "desc"}:
+        normalized_sort_dir = "asc"
     normalized_email = str(email_query or "").strip().lower()
-    scheduled_from = _parse_admin_date_filter(date_from)
-    scheduled_to = _parse_admin_date_filter(date_to, end_of_day=True)
+    sent_from = _parse_admin_date_filter(date_from)
+    sent_to = _parse_admin_date_filter(date_to, end_of_day=True)
 
-    where_clauses = ["1=1"]
-    params: list[Any] = []
-    if normalized_status != "all":
-        where_clauses.append("lower(coalesce(ose.status, '')) = ?")
-        params.append(normalized_status)
-    if normalized_email:
-        where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
-        params.append(f"%{normalized_email}%")
-    if scheduled_from:
-        where_clauses.append("ose.scheduled_at >= ?")
-        params.append(scheduled_from)
-    if scheduled_to:
-        where_clauses.append("ose.scheduled_at <= ?")
-        params.append(scheduled_to)
-    where_sql = " AND ".join(where_clauses)
-    base_from_sql = f"""
-        FROM outreach_scheduled_emails ose
-        LEFT JOIN short_share_links sl
-          ON CAST(sl.id AS BIGINT) = CAST(ose.share_link_id AS BIGINT)
-        WHERE {where_sql}
+    has_user_events = bool(user_event_columns)
+    has_archived = "archived" in share_link_columns
+    sl_language_sql = "sl2.language" if "language" in share_link_columns else "'EN'"
+    sl_emailed_at_sql = "sl2.emailed_at" if "emailed_at" in share_link_columns else "NULL"
+    sl_first_provider_sql = "sl2.first_email_provider_message_id" if "first_email_provider_message_id" in share_link_columns else "NULL"
+    sl_followup_sent_at_sql = "sl2.followup_sent_at" if "followup_sent_at" in share_link_columns else "NULL"
+    sl_followup_provider_sql = "sl2.followup_provider_message_id" if "followup_provider_message_id" in share_link_columns else "NULL"
+    archived_filter_sql = "COALESCE(sl.archived, false) = false" if has_archived else "TRUE"
+    archived_filter_sl2_sql = "COALESCE(sl2.archived, false) = false" if has_archived else "TRUE"
+    sl_key_sql = "COALESCE(NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), ''), lower(COALESCE(NULLIF(sl.recipient_email, ''), CAST(sl.id AS VARCHAR))))"
+    sl2_key_sql = "COALESCE(NULLIF(CAST(sl2.autopilot_lead_id AS VARCHAR), ''), lower(COALESCE(NULLIF(sl2.recipient_email, ''), CAST(sl2.id AS VARCHAR))))"
+    percent_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
+    share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
+    token_expr = _user_event_metadata_text_sql(conn, "token")
+    lead_expr = _user_event_metadata_text_sql(conn, "autopilot_lead_id")
+
+    if has_user_events:
+        visits_cte_sql = f"""
+        recipient_events AS (
+            SELECT DISTINCT
+              rl.recipient_key,
+              ue.created_at,
+              ue.event_name,
+              CASE WHEN ue.event_name = 'share_watch_progress' THEN {percent_expr} ELSE NULL END AS percent_watched
+            FROM recipient_links rl
+            JOIN user_events ue
+              ON (
+                (
+                  ue.event_name IN ('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')
+                  AND (
+                    ({share_link_expr} IS NOT NULL AND {share_link_expr} = CAST(rl.share_link_id AS VARCHAR))
+                    OR ({share_link_expr} IS NULL AND {token_expr} = rl.token)
+                  )
+                )
+                OR (
+                  ue.event_name IN ('lead_feed_view')
+                  AND (
+                    ({share_link_expr} IS NOT NULL AND {share_link_expr} = CAST(rl.share_link_id AS VARCHAR))
+                    OR (rl.autopilot_lead_id IS NOT NULL AND {lead_expr} = rl.autopilot_lead_id)
+                  )
+                )
+              )
+        ),
+        visit_events AS (
+            SELECT
+              recipient_key,
+              created_at,
+              event_name,
+              LAG(created_at) OVER (PARTITION BY recipient_key ORDER BY created_at) AS previous_visit_at
+            FROM recipient_events
+            WHERE event_name IN ('share_view', 'lead_feed_view')
+        ),
+        visit_sessions AS (
+            SELECT
+              recipient_key,
+              created_at,
+              event_name,
+              CASE
+                WHEN previous_visit_at IS NULL THEN 1
+                WHEN created_at > previous_visit_at + INTERVAL '30 minutes' THEN 1
+                ELSE 0
+              END AS starts_session
+            FROM visit_events
+        ),
+        engagement AS (
+            SELECT
+              rl.recipient_key,
+              COALESCE(SUM(vs.starts_session), 0) AS visit_count,
+              MIN(vs.created_at) AS first_visit,
+              MAX(vs.created_at) AS last_visit,
+              MAX(CASE WHEN re.event_name = 'share_watch_progress' THEN re.percent_watched ELSE NULL END) AS max_watched,
+              MAX(CASE WHEN re.event_name = 'lead_feed_view' THEN 1 ELSE 0 END) AS entered_feed
+            FROM recipient_links rl
+            LEFT JOIN visit_sessions vs
+              ON vs.recipient_key = rl.recipient_key
+            LEFT JOIN recipient_events re
+              ON re.recipient_key = rl.recipient_key
+            GROUP BY rl.recipient_key
+        )
+        """
+    else:
+        visits_cte_sql = """
+        engagement AS (
+            SELECT
+              recipient_key,
+              0 AS visit_count,
+              NULL AS first_visit,
+              NULL AS last_visit,
+              NULL AS max_watched,
+              0 AS entered_feed
+            FROM recipient_links
+        )
+        """
+
+    base_cte_sql = f"""
+        WITH ranked_links AS (
+            SELECT
+              sl.id AS share_link_id,
+              {sl_key_sql} AS recipient_key,
+              sl.token,
+              sl.recipient_name,
+              sl.recipient_email,
+              NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id,
+              sl.generated_video_id,
+              sl.created_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY {sl_key_sql}
+                ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+              ) AS rn
+            FROM short_share_links sl
+            WHERE {archived_filter_sql}
+        ),
+        current_links AS (
+            SELECT *
+            FROM ranked_links
+            WHERE rn = 1
+        ),
+        recipient_links AS (
+            SELECT
+              cl.recipient_key,
+              sl2.id AS share_link_id,
+              sl2.token,
+              NULLIF(CAST(sl2.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id
+            FROM current_links cl
+            JOIN short_share_links sl2
+              ON {sl2_key_sql} = cl.recipient_key
+             AND {archived_filter_sl2_sql}
+        ),
+        scheduled_send_rows AS (
+            SELECT
+              rl.recipient_key,
+              ose.id,
+              ose.share_link_id,
+              ose.stage,
+              ose.language,
+              ose.scheduled_at,
+              ose.status,
+              ose.attempts,
+              ose.max_attempts,
+              ose.provider_message_id,
+              ose.error,
+              ose.sent_at,
+              ose.created_at,
+              ose.updated_at
+            FROM recipient_links rl
+            JOIN outreach_scheduled_emails ose
+              ON CAST(ose.share_link_id AS BIGINT) = CAST(rl.share_link_id AS BIGINT)
+        ),
+        direct_first_send_rows AS (
+            SELECT
+              rl.recipient_key,
+              (0 - (CAST(sl2.id AS BIGINT) * 10) - 1) AS id,
+              sl2.id AS share_link_id,
+              'first' AS stage,
+              COALESCE(NULLIF({sl_language_sql}, ''), 'EN') AS language,
+              NULL AS scheduled_at,
+              'sent' AS status,
+              0 AS attempts,
+              0 AS max_attempts,
+              {sl_first_provider_sql} AS provider_message_id,
+              NULL AS error,
+              {sl_emailed_at_sql} AS sent_at,
+              sl2.created_at,
+              {sl_emailed_at_sql} AS updated_at
+            FROM recipient_links rl
+            JOIN short_share_links sl2
+              ON CAST(sl2.id AS BIGINT) = CAST(rl.share_link_id AS BIGINT)
+            WHERE {sl_emailed_at_sql} IS NOT NULL
+        ),
+        direct_followup_send_rows AS (
+            SELECT
+              rl.recipient_key,
+              (0 - (CAST(sl2.id AS BIGINT) * 10) - 2) AS id,
+              sl2.id AS share_link_id,
+              'followup' AS stage,
+              COALESCE(NULLIF({sl_language_sql}, ''), 'EN') AS language,
+              NULL AS scheduled_at,
+              'sent' AS status,
+              0 AS attempts,
+              0 AS max_attempts,
+              {sl_followup_provider_sql} AS provider_message_id,
+              NULL AS error,
+              {sl_followup_sent_at_sql} AS sent_at,
+              sl2.created_at,
+              {sl_followup_sent_at_sql} AS updated_at
+            FROM recipient_links rl
+            JOIN short_share_links sl2
+              ON CAST(sl2.id AS BIGINT) = CAST(rl.share_link_id AS BIGINT)
+            WHERE {sl_followup_sent_at_sql} IS NOT NULL
+        ),
+        send_rows AS (
+            SELECT * FROM scheduled_send_rows
+            UNION ALL
+            SELECT * FROM direct_first_send_rows
+            UNION ALL
+            SELECT * FROM direct_followup_send_rows
+        ),
+        latest_send_ranked AS (
+            SELECT
+              sr.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY sr.recipient_key
+                ORDER BY COALESCE(sr.sent_at, sr.scheduled_at, sr.updated_at, sr.created_at) DESC NULLS LAST, sr.id DESC
+              ) AS rn
+            FROM send_rows sr
+        ),
+        send_agg AS (
+            SELECT
+              recipient_key,
+              MIN(sent_at) AS first_sent_at,
+              MAX(sent_at) AS latest_sent_at,
+              MAX(scheduled_at) FILTER (WHERE lower(coalesce(status, '')) IN ('scheduled', 'processing')) AS latest_pending_scheduled_at,
+              MAX(CASE WHEN lower(coalesce(status, '')) = 'sent' THEN 1 ELSE 0 END) AS any_sent,
+              MAX(CASE WHEN lower(coalesce(status, '')) = 'failed' THEN 1 ELSE 0 END) AS any_failed,
+              MAX(CASE WHEN lower(coalesce(status, '')) IN ('scheduled', 'processing') THEN 1 ELSE 0 END) AS any_scheduled,
+              MAX(CASE WHEN lower(coalesce(status, '')) = 'cancelled' THEN 1 ELSE 0 END) AS any_cancelled,
+              COUNT(*) AS send_count
+            FROM send_rows
+            GROUP BY recipient_key
+        ),
+        latest_send AS (
+            SELECT *
+            FROM latest_send_ranked
+            WHERE rn = 1
+        ),
+        failed_send AS (
+            SELECT *
+            FROM (
+                SELECT
+                  sr.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY sr.recipient_key
+                    ORDER BY COALESCE(sr.updated_at, sr.scheduled_at, sr.created_at) DESC NULLS LAST, sr.id DESC
+                  ) AS failed_rn
+                FROM send_rows sr
+                WHERE lower(coalesce(sr.status, '')) = 'failed'
+            ) ranked_failed
+            WHERE failed_rn = 1
+        ),
+        lead_rows AS (
+            SELECT
+              cl.recipient_key,
+              l.converted_at,
+              l.user_id,
+              l.brand_id,
+              l.creator_name,
+              l.creator_email,
+              l.recipient_name AS lead_recipient_name
+            FROM current_links cl
+            LEFT JOIN autopilot_leads l
+              ON cl.autopilot_lead_id IS NOT NULL
+             AND CAST(l.id AS VARCHAR) = cl.autopilot_lead_id
+        ),
+        {visits_cte_sql},
+        recipient_rows AS (
+            SELECT
+              cl.recipient_key,
+              cl.share_link_id,
+              cl.token,
+              COALESCE(NULLIF(lr.lead_recipient_name, ''), NULLIF(cl.recipient_name, ''), NULLIF(lr.creator_name, ''), '—') AS recipient_name,
+              COALESCE(NULLIF(cl.recipient_email, ''), NULLIF(lr.creator_email, ''), '—') AS recipient_email,
+              cl.autopilot_lead_id,
+              cl.generated_video_id,
+              lr.converted_at,
+              sa.first_sent_at,
+              sa.latest_sent_at,
+              sa.latest_pending_scheduled_at,
+              COALESCE(sa.any_sent, 0) AS any_sent,
+              COALESCE(sa.any_failed, 0) AS any_failed,
+              COALESCE(sa.any_scheduled, 0) AS any_scheduled,
+              COALESCE(sa.any_cancelled, 0) AS any_cancelled,
+              COALESCE(sa.send_count, 0) AS send_count,
+              ls.id AS latest_send_id,
+              ls.share_link_id AS latest_send_share_link_id,
+              ls.stage AS latest_stage,
+              ls.language AS latest_language,
+              ls.scheduled_at AS latest_scheduled_at,
+              ls.status AS latest_status,
+              ls.attempts AS latest_attempts,
+              ls.max_attempts AS latest_max_attempts,
+              ls.provider_message_id AS latest_provider_message_id,
+              ls.error AS latest_error,
+              ls.sent_at AS latest_sent_at_for_row,
+              fs.id AS failed_send_id,
+              fs.share_link_id AS failed_share_link_id,
+              fs.error AS failed_error,
+              COALESCE(e.visit_count, 0) AS visit_count,
+              e.first_visit,
+              e.last_visit,
+              e.max_watched,
+              COALESCE(e.entered_feed, 0) AS entered_feed
+            FROM current_links cl
+            LEFT JOIN lead_rows lr
+              ON lr.recipient_key = cl.recipient_key
+            LEFT JOIN send_agg sa
+              ON sa.recipient_key = cl.recipient_key
+            LEFT JOIN latest_send ls
+              ON ls.recipient_key = cl.recipient_key
+            LEFT JOIN failed_send fs
+              ON fs.recipient_key = cl.recipient_key
+            LEFT JOIN engagement e
+              ON e.recipient_key = cl.recipient_key
+            WHERE COALESCE(sa.send_count, 0) > 0
+        )
     """
-
-    total_count = int(conn.execute(f"SELECT COUNT(*) {base_from_sql}", params).fetchone()[0] or 0)
-    summary_row = conn.execute(
-        f"""
-        SELECT
-          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'scheduled' THEN 1 ELSE 0 END),
-          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'sent' THEN 1 ELSE 0 END),
-          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'failed' THEN 1 ELSE 0 END),
-          SUM(CASE WHEN lower(coalesce(ose.status, '')) = 'cancelled' THEN 1 ELSE 0 END)
-        {base_from_sql}
-        """,
-        params,
-    ).fetchone()
-    summary_counts = {
-        "scheduled": int(summary_row[0] or 0) if summary_row else 0,
-        "sent": int(summary_row[1] or 0) if summary_row else 0,
-        "failed": int(summary_row[2] or 0) if summary_row else 0,
-        "cancelled": int(summary_row[3] or 0) if summary_row else 0,
-    }
 
     rows = conn.execute(
         f"""
-        SELECT
-          ose.id,
-          ose.share_link_id,
-          ose.stage,
-          ose.language,
-          ose.scheduled_at,
-          ose.status,
-          ose.attempts,
-          ose.max_attempts,
-          ose.provider_message_id,
-          ose.error,
-          ose.sent_at,
-          ose.created_at,
-          ose.updated_at,
-          sl.recipient_name,
-          sl.recipient_email,
-          sl.token
-        {base_from_sql}
-        ORDER BY
-          CASE
-            WHEN lower(coalesce(ose.status, '')) = 'scheduled' AND ose.scheduled_at >= now() THEN 0
-            WHEN lower(coalesce(ose.status, '')) = 'failed' THEN 1
-            ELSE 2
-          END ASC,
-          CASE WHEN lower(coalesce(ose.status, '')) = 'scheduled' THEN ose.scheduled_at END ASC NULLS LAST,
-          ose.updated_at DESC NULLS LAST,
-          ose.id DESC
-        LIMIT ? OFFSET ?
-        """,
-        params + [limit, offset],
+        {base_cte_sql}
+        SELECT *
+        FROM recipient_rows
+        """
     ).fetchall()
+
+    now_utc = datetime.now(timezone.utc)
+    now_pacific = now_utc.astimezone(PST_ZONE)
+    today_start = now_pacific.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+    periods = {"today": today_start, "week": week_start, "month": month_start}
+    summary_counts: dict[str, dict[str, int]] = {
+        key: {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0}
+        for key in periods
+    }
+
+    def _as_aware_utc(value: Any) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return None
+
+    def _days_since(value: Any) -> int | None:
+        dt_value = _as_aware_utc(value)
+        if not dt_value:
+            return None
+        return max(0, int((now_utc - dt_value.astimezone(timezone.utc)).total_seconds() // 86400))
+
+    def _sort_timestamp(value: Any) -> float:
+        dt_value = _as_aware_utc(value)
+        if not dt_value:
+            return -1.0
+        return dt_value.astimezone(timezone.utc).timestamp()
+
+    def _in_period(value: Any, start_pacific: datetime) -> bool:
+        dt_value = _as_aware_utc(value)
+        if not dt_value:
+            return False
+        return dt_value.astimezone(PST_ZONE) >= start_pacific
+
+    bucket_labels = {
+        "failed": "Failed send",
+        "hot_repeat": "Hot — repeat visit",
+        "watched_no_convert": "Watched, no convert",
+        "visited_once": "Visited once",
+        "sent_no_visit": "Sent, no visit",
+        "scheduled": "Scheduled",
+        "converted": "Converted",
+    }
+    bucket_priority = {
+        "failed": 1,
+        "hot_repeat": 2,
+        "watched_no_convert": 3,
+        "visited_once": 4,
+        "sent_no_visit": 5,
+        "scheduled": 6,
+        "converted": 7,
+    }
     items: list[dict[str, Any]] = []
     for row in rows:
-        token = str(row[15] or "").strip()
-        recipient_email = str(row[14] or "").strip()
-        error_text = str(row[9] or "").strip()
-        share_link_id = int(row[1]) if row[1] is not None else None
+        recipient_email = str(row[4] or "").strip()
+        latest_status = str(row[21] or "").strip().lower()
+        any_failed = bool(row[12])
+        any_sent = bool(row[11])
+        any_scheduled = bool(row[13])
+        converted_at = row[7]
+        converted = bool(converted_at)
+        visit_count = int(row[30] or 0)
+        repeat_visited = visit_count >= 2
+        max_watched = float(row[33]) if row[33] is not None else 0.0
+        if any_failed:
+            bucket = "failed"
+        elif repeat_visited and not converted:
+            bucket = "hot_repeat"
+        elif max_watched >= 50 and not converted:
+            bucket = "watched_no_convert"
+        elif visit_count == 1 and not converted:
+            bucket = "visited_once"
+        elif any_sent and visit_count == 0 and not converted:
+            bucket = "sent_no_visit"
+        elif any_scheduled and not any_sent and not converted:
+            bucket = "scheduled"
+        elif converted:
+            bucket = "converted"
+        else:
+            bucket = "scheduled"
+        effective_status = "failed" if any_failed else latest_status
+        send_date = row[26] or row[20] or row[10] or row[9]
+        error_text = str((row[29] if any_failed else row[25]) or "").strip()
+        failed_share_link_id = int(row[28]) if row[28] is not None else None
+        latest_send_share_link_id = int(row[17]) if row[17] is not None else None
+        cancel_share_link_id = latest_send_share_link_id
+        cancel_schedule_id = int(row[16]) if row[16] is not None else None
+        for period_key, period_start in periods.items():
+            if _in_period(row[9], period_start):
+                summary_counts[period_key]["sent"] += 1
+            if _in_period(row[10], period_start):
+                summary_counts[period_key]["scheduled"] += 1
+            if _in_period(row[32], period_start):
+                summary_counts[period_key]["visited"] += 1
+            if repeat_visited and _in_period(row[32], period_start):
+                summary_counts[period_key]["repeat_visited"] += 1
+            if _in_period(converted_at, period_start):
+                summary_counts[period_key]["converted"] += 1
+            if any_failed and _in_period(send_date, period_start):
+                summary_counts[period_key]["failed"] += 1
         items.append(
             {
-                "id": int(row[0]),
-                "share_link_id": share_link_id,
-                "stage": str(row[2] or "").strip(),
-                "language": str(row[3] or "").strip().upper(),
-                "scheduled_at_pst": _format_datetime_pst(row[4]),
-                "status": str(row[5] or "").strip().lower(),
-                "attempts": int(row[6] or 0),
-                "max_attempts": int(row[7] or 0),
-                "provider_message_id": str(row[8] or "").strip(),
+                "recipient_key": str(row[0] or ""),
+                "share_link_id": int(row[1]) if row[1] is not None else None,
+                "share_url": _share_public_url(str(row[2] or "").strip()) if str(row[2] or "").strip() else "",
+                "recipient_name": str(row[3] or "—").strip() or "—",
+                "recipient_email": recipient_email or "—",
+                "autopilot_lead_id": str(row[5] or "").strip(),
+                "generated_video_id": str(row[6] or "").strip(),
+                "converted": converted,
+                "converted_at": converted_at,
+                "converted_at_pst": _format_datetime_pst(converted_at),
+                "first_sent_at": row[8],
+                "first_sent_at_pst": _format_datetime_pst(row[8]),
+                "latest_sent_at": row[9],
+                "latest_sent_at_pst": _format_datetime_pst(row[9]),
+                "latest_pending_scheduled_at": row[10],
+                "latest_pending_scheduled_at_pst": _format_datetime_pst(row[10]),
+                "any_sent": any_sent,
+                "any_failed": any_failed,
+                "any_scheduled": any_scheduled,
+                "any_cancelled": bool(row[14]),
+                "send_count": int(row[15] or 0),
+                "latest_send_id": int(row[16]) if row[16] is not None else None,
+                "latest_stage": str(row[18] or "").strip(),
+                "latest_language": str(row[19] or "").strip().upper(),
+                "latest_scheduled_at": row[20],
+                "latest_scheduled_at_pst": _format_datetime_pst(row[20]),
+                "latest_status": latest_status,
+                "effective_status": effective_status,
+                "latest_attempts": int(row[22] or 0),
+                "latest_max_attempts": int(row[23] or 0),
+                "latest_provider_message_id": str(row[24] or "").strip(),
                 "error": error_text,
                 "error_short": (error_text[:120] + "...") if len(error_text) > 120 else error_text,
-                "sent_at_pst": _format_datetime_pst(row[10]),
-                "created_at_pst": _format_datetime_pst(row[11]),
-                "updated_at_pst": _format_datetime_pst(row[12]),
-                "recipient_name": str(row[13] or "—").strip() or "—",
-                "recipient_email": recipient_email or "—",
-                "share_url": _share_public_url(token) if token else "",
+                "latest_sent_at_for_row": row[26],
+                "latest_sent_at_for_row_pst": _format_datetime_pst(row[26]),
+                "visit_count": visit_count,
+                "repeat_visited": repeat_visited,
+                "first_visit": row[31],
+                "first_visit_pst": _format_datetime_pst(row[31]),
+                "last_visit": row[32],
+                "last_visit_pst": _format_datetime_pst(row[32]),
+                "days_since_last_visit": _days_since(row[32]),
+                "days_since_first_email": _days_since(row[8]),
+                "max_watched": round(max_watched, 2),
+                "entered_feed": bool(row[34]),
+                "bucket": bucket,
+                "bucket_label": bucket_labels[bucket],
+                "bucket_priority": bucket_priority[bucket],
                 "share_links_url": url_for("video_shorts_bp.admin_share_links", email=recipient_email),
                 "cancel_url": (
                     url_for(
                         "video_shorts_bp.admin_share_link_cancel_scheduled_email",
-                        share_link_id=share_link_id,
-                        schedule_id=int(row[0]),
+                        share_link_id=cancel_share_link_id,
+                        schedule_id=cancel_schedule_id,
                     )
-                    if share_link_id is not None
+                    if latest_status == "scheduled" and cancel_share_link_id is not None and cancel_schedule_id is not None
                     else ""
                 ),
+                "reschedule_url": url_for("video_shorts_bp.admin_share_links", email=recipient_email) if any_failed else "",
+                "failed_share_link_id": failed_share_link_id,
             }
         )
+
+    def _passes_filters(item: dict[str, Any]) -> bool:
+        if normalized_status != "all" and item["effective_status"] != normalized_status:
+            return False
+        if normalized_buckets and item["bucket"] not in normalized_buckets:
+            return False
+        if normalized_visited == "yes" and item["visit_count"] <= 0:
+            return False
+        if normalized_visited == "no" and item["visit_count"] > 0:
+            return False
+        if normalized_converted == "yes" and not item["converted"]:
+            return False
+        if normalized_converted == "no" and item["converted"]:
+            return False
+        if normalized_email:
+            haystack = f"{item['recipient_name']} {item['recipient_email']}".lower()
+            if normalized_email not in haystack:
+                return False
+        first_sent = _as_aware_utc(item["first_sent_at"])
+        if sent_from and (not first_sent or first_sent < sent_from):
+            return False
+        if sent_to and (not first_sent or first_sent > sent_to):
+            return False
+        return True
+
+    filtered_items = [item for item in items if _passes_filters(item)]
+
+    def _sort_value(item: dict[str, Any]):
+        if normalized_sort_key == "last_visit":
+            return _sort_timestamp(item["last_visit"])
+        if normalized_sort_key == "visit_count":
+            return item["visit_count"]
+        if normalized_sort_key == "send_date":
+            return _sort_timestamp(item["latest_sent_at_for_row"] or item["latest_scheduled_at"] or item["first_sent_at"])
+        if normalized_sort_key == "max_watched":
+            return item["max_watched"]
+        if normalized_sort_key == "days_since_first_email":
+            return item["days_since_first_email"] if item["days_since_first_email"] is not None else -1
+        if normalized_sort_key == "status":
+            return item["effective_status"] or ""
+        return item["bucket_priority"]
+
+    reverse = normalized_sort_dir == "desc"
+    if normalized_sort_key == "bucket":
+        filtered_items.sort(key=lambda item: (item["bucket_priority"], -_sort_timestamp(item["last_visit"])), reverse=False)
+    else:
+        filtered_items.sort(key=_sort_value, reverse=reverse)
+    total_count = len(filtered_items)
+    page_items = filtered_items[offset : offset + limit]
+
     return (
-        items,
+        page_items,
         total_count,
         summary_counts,
         normalized_status,
+        normalized_buckets,
+        normalized_visited,
+        normalized_converted,
         normalized_email,
-        date_from if scheduled_from else "",
-        date_to if scheduled_to else "",
+        date_from if sent_from else "",
+        date_to if sent_to else "",
+        normalized_sort_key,
+        normalized_sort_dir,
     )
 
 
@@ -12375,9 +12832,15 @@ def admin_share_links():
 @require_admin
 def admin_outreach_emails():
     status_filter = (request.args.get("status") or "all").strip().lower()
+    bucket_values = request.args.getlist("bucket")
+    bucket_filter = bucket_values if bucket_values else (request.args.get("bucket") or "all").strip().lower()
+    visited_filter = (request.args.get("visited") or "all").strip().lower()
+    converted_filter = (request.args.get("converted") or "all").strip().lower()
     email_query = (request.args.get("email") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
     date_to = (request.args.get("date_to") or "").strip()
+    sort_key = (request.args.get("sort") or "bucket").strip().lower()
+    sort_dir = (request.args.get("dir") or "asc").strip().lower()
     try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
@@ -12387,34 +12850,34 @@ def admin_outreach_emails():
 
     conn = get_db_readonly()
     try:
-        total_items = _load_admin_outreach_emails(
-            conn,
-            status_filter=status_filter,
-            email_query=email_query,
-            date_from=date_from,
-            date_to=date_to,
-            limit=1,
-            offset=0,
-        )[1]
-        total_pages = max(1, (total_items + per_page - 1) // per_page)
-        page = min(page, total_pages)
         (
             emails,
             total_items,
             summary_counts,
             normalized_status,
+            normalized_buckets,
+            normalized_visited,
+            normalized_converted,
             normalized_email,
             normalized_date_from,
             normalized_date_to,
+            normalized_sort_key,
+            normalized_sort_dir,
         ) = _load_admin_outreach_emails(
             conn,
             status_filter=status_filter,
+            bucket_filter=bucket_filter,
+            visited_filter=visited_filter,
+            converted_filter=converted_filter,
             email_query=email_query,
             date_from=date_from,
             date_to=date_to,
+            sort_key=sort_key,
+            sort_dir=sort_dir,
             limit=per_page,
             offset=(page - 1) * per_page,
         )
+        total_pages = max(1, (total_items + per_page - 1) // per_page)
     finally:
         conn.close()
 
@@ -12424,9 +12887,14 @@ def admin_outreach_emails():
         emails=emails,
         summary_counts=summary_counts,
         selected_status=normalized_status,
+        selected_buckets=normalized_buckets,
+        selected_visited=normalized_visited,
+        selected_converted=normalized_converted,
         email_query=normalized_email,
         date_from=normalized_date_from,
         date_to=normalized_date_to,
+        sort_key=normalized_sort_key,
+        sort_dir=normalized_sort_dir,
         page=page,
         per_page=per_page,
         total_items=total_items,
