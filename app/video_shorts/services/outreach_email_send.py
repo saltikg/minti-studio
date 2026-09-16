@@ -9,6 +9,7 @@ from flask import current_app
 
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.email_verification import send_resend_email
+from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event
 from app.video_shorts.services.outreach_email_templates import (
     normalize_outreach_template_language,
     normalize_outreach_template_stage,
@@ -146,7 +147,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
           sl.followup_sent,
           sl.followup_sent_at,
           sl.followup_template_key,
-          COALESCE(sl.archived, false) AS archived
+          COALESCE(sl.archived, false) AS archived,
+          sl.autopilot_lead_id
         FROM short_share_links sl
         LEFT JOIN autopilot_leads l
           ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
@@ -277,6 +279,21 @@ def send_share_link_outreach_email(
              WHERE id = ?
             """,
             [provider_message_id or None, template_key, share_link_id],
+        )
+    lead_id = str(rendered["row"][12] or "").strip()
+    if lead_id:
+        record_lead_pipeline_event(
+            conn,
+            lead_id=lead_id,
+            event_type="email_sent",
+            to_state="sent",
+            detail={
+                "share_link_id": share_link_id,
+                "stage": normalized_stage,
+                "language": rendered_email["language"],
+                "template_key": template_key,
+                "provider_message_id": provider_message_id,
+            },
         )
     return {
         "ok": True,

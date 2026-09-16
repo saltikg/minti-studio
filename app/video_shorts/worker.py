@@ -65,6 +65,7 @@ from app.video_shorts.services.render_jobs import (
     update_job_result,
 )
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
+from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
 from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
 from app.video_shorts.services.disk_guard import disk_guard_triggered
 from app.video_shorts.services.storage import (
@@ -671,6 +672,22 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             if getattr(updated, "rowcount", 1) == 0:
                 raise PermanentRenderJobError("YouTube ingest source scope changed before S3 upload completion.")
             conn.commit()
+            try:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="download_completed",
+                    to_state="downloaded",
+                    detail={
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "job_id": job.get("id"),
+                        "source_key": source_key,
+                    },
+                )
+            except Exception as exc:
+                app.logger.warning("Failed to record lead download event video_pk=%s job_id=%s: %s", video_pk, job.get("id"), exc)
         finally:
             conn.close()
         enqueue_preview_frame_job(

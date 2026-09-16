@@ -293,6 +293,10 @@ from app.video_shorts.services.facebook_queue import enqueue_facebook_clip, load
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip, load_tiktok_queue_map
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir, ensure_video_shorts_tmp_dir
 from app.video_shorts.services.generated_video_lifecycle import _first_non_empty, upsert_generated_video_record
+from app.video_shorts.services.lead_pipeline import (
+    record_lead_pipeline_event,
+    record_lead_pipeline_event_for_scope,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
@@ -8412,6 +8416,37 @@ def admin_share_link_schedule_email(share_link_id: int):
             scheduled_at=scheduled_at,
             created_by=created_by,
         )
+        lead_row = None
+        if "autopilot_lead_id" in table_columns(conn, "short_share_links"):
+            lead_row = conn.execute(
+                """
+                SELECT CAST(autopilot_lead_id AS VARCHAR)
+                FROM short_share_links
+                WHERE id = ?
+                  AND NULLIF(CAST(autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+                LIMIT 1
+                """,
+                [share_link_id],
+            ).fetchone()
+        if lead_row and lead_row[0]:
+            record_lead_pipeline_event(
+                conn,
+                lead_id=str(lead_row[0]),
+                event_type="email_scheduled",
+                to_state="scheduled",
+                detail={
+                    "share_link_id": share_link_id,
+                    "schedule_id": scheduled["id"],
+                    "stage": scheduled["stage"],
+                    "language": scheduled["language"],
+                    "scheduled_at": (
+                        scheduled["scheduled_at"].isoformat()
+                        if hasattr(scheduled["scheduled_at"], "isoformat")
+                        else str(scheduled["scheduled_at"])
+                    ),
+                    "created_by": created_by,
+                },
+            )
         conn.commit()
         return jsonify(
             {
@@ -11791,6 +11826,8 @@ def _load_admin_lead_records(
 
     share_link_columns = table_columns(conn, "short_share_links")
     outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
+    lead_columns = table_columns(conn, "autopilot_leads")
+    pipeline_state_sql = "COALESCE(l.pipeline_state, 'new')" if "pipeline_state" in lead_columns else "'new'"
     has_emailed_at = "emailed_at" in share_link_columns
     has_share_links = bool(share_link_columns) and "autopilot_lead_id" in share_link_columns
     has_outreach_scheduled_emails = bool(outreach_scheduled_email_columns)
@@ -12035,6 +12072,7 @@ def _load_admin_lead_records(
             l.first_video_id,
             l.created_at,
             l.converted_at,
+            {pipeline_state_sql} AS pipeline_state,
             c.channel_name,
             v.title,
             v.video_id,
@@ -12055,7 +12093,7 @@ def _load_admin_lead_records(
     items: List[Dict[str, Any]] = []
     for row in rows:
         has_owner = bool(str(row[6] or "").strip() and str(row[7] or "").strip())
-        generated_count = int(row[16] or 0)
+        generated_count = int(row[17] or 0)
         items.append(
             {
                 "id": str(row[0] or ""),
@@ -12072,30 +12110,31 @@ def _load_admin_lead_records(
                 "lead_type_label": "Real lead" if has_owner else "Discovery",
                 "created_at_pst": _format_datetime_pst(row[9]),
                 "converted_at_pst": _format_datetime_pst(row[10]),
-                "channel_name": str(row[11] or "").strip() or "YouTube channel",
-                "video_title": str(row[12] or "").strip() or "Source video unavailable",
-                "youtube_video_id": str(row[13] or "").strip(),
-                "thumbnail_url": str(row[14] or "").strip(),
-                "download_status": str(row[15] or "").strip().lower() or "pending",
+                "pipeline_state": str(row[11] or "new").strip().lower() or "new",
+                "channel_name": str(row[12] or "").strip() or "YouTube channel",
+                "video_title": str(row[13] or "").strip() or "Source video unavailable",
+                "youtube_video_id": str(row[14] or "").strip(),
+                "thumbnail_url": str(row[15] or "").strip(),
+                "download_status": str(row[16] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "email_sent": bool(row[17]),
-                "converted": bool(row[10]) or str(row[18] or "").strip().lower() == "autopilot",
-                "watch_share_link_id": int(row[19]) if row[19] is not None else None,
-                "watch_share_token": str(row[20] or "").strip(),
-                "watch_share_url": _share_public_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
-                "watch_preview_url": _share_preview_url(str(row[20] or "").strip()) if str(row[20] or "").strip() else "",
-                "watch_generated_video_id": str(row[21] or "").strip(),
-                "watch_entry_score": _score_from_generated_raw_plan_entry(row[22]),
-                "watch_emailed_at": row[23],
-                "watch_emailed_at_pst": _format_datetime_pst(row[23]),
-                "watch_emailed": bool(row[23]),
-                "watch_schedule_id": int(row[24]) if row[24] is not None else None,
-                "watch_schedule_stage": str(row[25] or "").strip(),
-                "watch_schedule_language": str(row[26] or "").strip().upper(),
-                "watch_scheduled_at": row[27],
-                "watch_scheduled_at_pst": _format_datetime_pst(row[27]),
-                "watch_schedule_status": str(row[28] or "").strip(),
+                "email_sent": bool(row[18]),
+                "converted": bool(row[10]) or str(row[19] or "").strip().lower() == "autopilot",
+                "watch_share_link_id": int(row[20]) if row[20] is not None else None,
+                "watch_share_token": str(row[21] or "").strip(),
+                "watch_share_url": _share_public_url(str(row[21] or "").strip()) if str(row[21] or "").strip() else "",
+                "watch_preview_url": _share_preview_url(str(row[21] or "").strip()) if str(row[21] or "").strip() else "",
+                "watch_generated_video_id": str(row[22] or "").strip(),
+                "watch_entry_score": _score_from_generated_raw_plan_entry(row[23]),
+                "watch_emailed_at": row[24],
+                "watch_emailed_at_pst": _format_datetime_pst(row[24]),
+                "watch_emailed": bool(row[24]),
+                "watch_schedule_id": int(row[25]) if row[25] is not None else None,
+                "watch_schedule_stage": str(row[26] or "").strip(),
+                "watch_schedule_language": str(row[27] or "").strip().upper(),
+                "watch_scheduled_at": row[28],
+                "watch_scheduled_at_pst": _format_datetime_pst(row[28]),
+                "watch_schedule_status": str(row[29] or "").strip(),
             }
         )
     return items, total_count
@@ -13807,6 +13846,24 @@ def admin_create_lead_watch_page(lead_id: str):
             "entry_score": selected_short["score"],
         },
     )
+    try:
+        record_lead_pipeline_event_for_scope(
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+            video_pk=lead["first_video_id"],
+            event_type="watch_page_created",
+            update_state=False,
+            detail={
+                "acting_admin_id": scope["acting_admin_id"],
+                "video_pk": lead["first_video_id"],
+                "generated_video_id": result["generated_video_id"],
+                "share_link_id": result["share_link_id"],
+                "share_token": result["share_token"],
+                "entry_score": selected_short["score"],
+            },
+        )
+    except Exception as exc:
+        current_app.logger.warning("Failed to record lead watch page event lead_id=%s: %s", lead["id"], exc)
     return jsonify(
         {
             "success": True,
@@ -18154,6 +18211,25 @@ def _generate_clip_plan_for_video(
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         raise RuntimeError("Could not save the clip plan.")
+    if owner_user_id and brand_id:
+        try:
+            record_lead_pipeline_event_for_scope(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                event_type="ai_plan_created",
+                to_state="planned",
+                detail={
+                    "video_pk": video_pk,
+                    "video_id": vid,
+                    "clip_count": len(timestamped_plan),
+                    "combined_clip_count": len(combined_plan),
+                    "plan_focus": plan_focus,
+                    "focus_categories": list(focus_categories),
+                },
+            )
+        except Exception as exc:
+            current_app.logger.warning("Failed to record lead plan event video_pk=%s: %s", video_pk, exc)
 
     if debug_info:
         current_app.logger.info(
@@ -19890,6 +19966,24 @@ def autoclip_video(video_pk):
                     category="danger",
                     extras={"code": "export_limit_reached", "remaining": reserve_result.get("remaining")},
                 )
+            try:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=target_owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="generate_started",
+                    to_state="generating",
+                    detail={
+                        "video_pk": int(video_pk),
+                        "video_id": vid,
+                        "plan_index": int(plan_index),
+                        "job_id": job.get("id"),
+                        "enqueue_kind": kind,
+                        "clip_filename": plan_entry.get("clip_filename"),
+                    },
+                )
+            except Exception as exc:
+                current_app.logger.warning("Failed to record lead generate event video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
             return _respond(
                 "Render job queued.",
                 success=True,
