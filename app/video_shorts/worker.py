@@ -1366,6 +1366,11 @@ def run_worker_loop() -> None:
                     processed_any = True
             except Exception:
                 app.logger.exception("Scheduled outreach email processing failed")
+            try:
+                if generation.process_planned_lead_autogenerate():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("Planned lead auto-generate polling failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
                 if process_next_job(app, worker_id):
                     processed_any = True

@@ -295,6 +295,7 @@ from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir
 from app.video_shorts.services.generated_video_lifecycle import _first_non_empty, upsert_generated_video_record
 from app.video_shorts.services.lead_pipeline import (
     find_active_lead_for_scope,
+    lead_pipeline_available,
     record_lead_pipeline_event,
     record_lead_pipeline_event_for_scope,
 )
@@ -4458,6 +4459,317 @@ def _evaluate_lead_generation_approval_gate(
         raise
     finally:
         conn.close()
+
+
+AUTOPILOT_GENERATE_TIMEOUT_SECONDS = 60 * 60
+
+
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_lead_pipeline_event_at(conn, lead_id: str, event_types: List[str]) -> Optional[datetime]:
+    if not event_types:
+        return None
+    placeholders = ", ".join(["?"] * len(event_types))
+    row = conn.execute(
+        f"""
+        SELECT created_at
+        FROM lead_pipeline_events
+        WHERE CAST(lead_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND event_type IN ({placeholders})
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        [lead_id, *event_types],
+    ).fetchone()
+    return _as_utc_datetime(row[0]) if row else None
+
+
+def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    pending: List[Dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not entry.get("selected_for_generation"):
+            continue
+        status = str(entry.get("status") or "").strip().lower()
+        if status in {"created", "done", "queued", "processing", "rendering"}:
+            continue
+        if str(entry.get("render_job_id") or "").strip():
+            continue
+        pending.append(entry)
+    return pending
+
+
+def _enqueue_selected_lead_render(
+    *,
+    lead_id: str,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    plan_index: int,
+) -> Dict[str, Any]:
+    conn = get_db_readonly()
+    try:
+        user_row = conn.execute(
+            "SELECT id, email, role, plan_id FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not user_row:
+        return {"ok": False, "status_code": 404, "message": "Owner user not found."}
+    with current_app.test_request_context(
+        f"/video_shorts/generate/{int(video_pk)}/autoclip?admin_operation_brand={brand_id}&admin_operation_kind=lead",
+        method="POST",
+        data={"plan_index": str(plan_index)},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    ):
+        g.vs_current_user = {
+            "id": str(user_row[0]),
+            "email": str(user_row[1] or ""),
+            "role": str(user_row[2] or ""),
+            "plan_id": user_row[3],
+        }
+        g.vs_current_brand = {"id": brand_id}
+        g.vs_admin_operation_scope = {
+            "owner_user_id": owner_user_id,
+            "brand_id": brand_id,
+            "workspace_kind": "lead",
+            "acting_admin_id": "autopilot_cron",
+        }
+        response = autoclip_video(int(video_pk))
+        status_code = getattr(response, "status_code", None)
+        response_obj = response
+        if isinstance(response, tuple):
+            response_obj = response[0]
+            if len(response) > 1 and isinstance(response[1], int):
+                status_code = response[1]
+        if status_code is None:
+            status_code = 200
+        payload: Dict[str, Any] = {}
+        if hasattr(response_obj, "get_json"):
+            try:
+                payload = response_obj.get_json(silent=True) or {}
+            except Exception:
+                payload = {}
+        return {
+            "ok": bool(payload.get("success")) and int(status_code) < 400,
+            "status_code": int(status_code),
+            "payload": payload,
+            "job_id": payload.get("job_id"),
+            "message": payload.get("message"),
+        }
+
+
+def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = AUTOPILOT_GENERATE_TIMEOUT_SECONDS) -> bool:
+    conn = get_db()
+    processed_any = False
+    try:
+        if not lead_pipeline_available(conn):
+            conn.commit()
+            return False
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id,
+                COALESCE(l.pipeline_state, 'new'),
+                v.video_id
+            FROM autopilot_leads l
+            JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE l.converted_at IS NULL
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND COALESCE(l.pipeline_state, 'new') IN ('planned', 'generating')
+            ORDER BY l.created_at ASC NULLS LAST, l.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    now_utc = datetime.now(timezone.utc)
+    started_count = 0
+    for row in rows:
+        lead_id = str(row[0] or "").strip()
+        owner_user_id = str(row[1] or "").strip()
+        brand_id = str(row[2] or "").strip()
+        video_pk = int(row[3])
+        pipeline_state = str(row[4] or "new").strip().lower()
+        video_id = str(row[5] or "").strip()
+        entries = _load_plan_entries(video_id) or []
+        selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
+        if not selected:
+            if pipeline_state == "planned":
+                conn_fail = get_db()
+                try:
+                    record_lead_pipeline_event(
+                        conn_fail,
+                        lead_id=lead_id,
+                        event_type="clip_selection_failed",
+                        to_state="failed",
+                        detail={
+                            "reason": "no selected clips for auto-generate",
+                            "mechanism": "cron_poll",
+                            "video_pk": video_pk,
+                            "video_id": video_id,
+                        },
+                    )
+                    conn_fail.commit()
+                    processed_any = True
+                except Exception:
+                    conn_fail.rollback()
+                    raise
+                finally:
+                    conn_fail.close()
+            continue
+
+        if pipeline_state == "generating":
+            try:
+                gate_result = _evaluate_lead_generation_approval_gate(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    video_id=video_id,
+                )
+                if gate_result and gate_result.get("to_state") in {"awaiting_approval", "failed"}:
+                    processed_any = True
+                    continue
+            except Exception as exc:
+                current_app.logger.warning("Autopilot gate evaluation failed lead_id=%s: %s", lead_id, exc)
+            started_at = None
+            conn_age = get_db_readonly()
+            try:
+                started_at = _latest_lead_pipeline_event_at(
+                    conn_age,
+                    lead_id,
+                    ["planned_auto_generate_triggered", "generate_started"],
+                )
+            finally:
+                conn_age.close()
+            incomplete = [
+                entry
+                for entry in selected
+                if str(entry.get("status") or "").strip().lower() not in {"created", "done"}
+            ]
+            if incomplete and started_at and (now_utc - started_at).total_seconds() >= int(timeout_seconds):
+                conn_timeout = get_db()
+                try:
+                    record_lead_pipeline_event(
+                        conn_timeout,
+                        lead_id=lead_id,
+                        event_type="selected_generation_timeout",
+                        to_state="failed",
+                        detail={
+                            "mechanism": "cron_poll",
+                            "timeout_seconds": int(timeout_seconds),
+                            "video_pk": video_pk,
+                            "video_id": video_id,
+                            "incomplete": _summarize_selected_plan_entries(incomplete),
+                        },
+                    )
+                    conn_timeout.commit()
+                    processed_any = True
+                except Exception:
+                    conn_timeout.rollback()
+                    raise
+                finally:
+                    conn_timeout.close()
+                continue
+
+        to_enqueue = _selected_entries_requiring_enqueue(entries)
+        if not to_enqueue:
+            continue
+        if pipeline_state == "planned":
+            conn_start = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_start,
+                    lead_id=lead_id,
+                    event_type="planned_auto_generate_triggered",
+                    to_state="generating",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "selected_count": len(selected),
+                        "enqueue_count": len(to_enqueue),
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "selected": _summarize_selected_plan_entries(selected),
+                    },
+                )
+                conn_start.commit()
+                processed_any = True
+            except Exception:
+                conn_start.rollback()
+                raise
+            finally:
+                conn_start.close()
+        enqueue_results: List[Dict[str, Any]] = []
+        for entry in to_enqueue:
+            try:
+                plan_index = int(entry.get("plan_index"))
+            except Exception:
+                continue
+            enqueue_results.append(
+                {
+                    "plan_index": plan_index,
+                    **_enqueue_selected_lead_render(
+                        lead_id=lead_id,
+                        owner_user_id=owner_user_id,
+                        brand_id=brand_id,
+                        video_pk=video_pk,
+                        plan_index=plan_index,
+                    ),
+                }
+            )
+        if enqueue_results:
+            conn_event = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_event,
+                    lead_id=lead_id,
+                    event_type="planned_auto_generate_enqueued",
+                    update_state=False,
+                    detail={
+                        "mechanism": "cron_poll",
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "results": enqueue_results,
+                    },
+                )
+                conn_event.commit()
+                processed_any = True
+                started_count += 1
+            except Exception:
+                conn_event.rollback()
+                raise
+            finally:
+                conn_event.close()
+        if started_count >= max(1, int(limit)):
+            break
+    return processed_any
 
 
 def _build_render_job_options(
