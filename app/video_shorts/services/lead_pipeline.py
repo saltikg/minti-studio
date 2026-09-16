@@ -22,6 +22,20 @@ LEAD_PIPELINE_STATES = {
     "failed",
 }
 LEAD_PIPELINE_EVENTS_TABLE = "lead_pipeline_events"
+LEAD_PIPELINE_ALLOWED_TRANSITIONS = {
+    "new": {"downloading", "downloaded", "planning", "planned"},
+    "downloading": {"downloaded", "planning"},
+    "downloaded": {"planning", "planned"},
+    "planning": {"planned"},
+    "planned": {"generating"},
+    "generating": {"awaiting_approval"},
+    "awaiting_approval": {"approved"},
+    "approved": {"scheduling", "scheduled"},
+    "scheduling": {"scheduled"},
+    "scheduled": {"sent"},
+    "sent": set(),
+    "failed": set(),
+}
 
 
 def _json_value_sql(conn, param_placeholder: str = "?") -> str:
@@ -37,6 +51,18 @@ def _serialize_detail(detail: Optional[Dict[str, Any]]) -> Optional[str]:
         return json.dumps(detail, ensure_ascii=False, sort_keys=True)
     except Exception:
         return json.dumps({"detail": str(detail)}, ensure_ascii=False, sort_keys=True)
+
+
+def is_valid_lead_pipeline_transition(from_state: str, to_state: Optional[str]) -> bool:
+    normalized_from = str(from_state or "new").strip().lower() or "new"
+    normalized_to = str(to_state or "").strip().lower()
+    if not normalized_to:
+        return True
+    if normalized_to == normalized_from:
+        return True
+    if normalized_to == "failed":
+        return True
+    return normalized_to in LEAD_PIPELINE_ALLOWED_TRANSITIONS.get(normalized_from, set())
 
 
 def ensure_lead_pipeline_schema(conn) -> None:
@@ -128,7 +154,8 @@ def record_lead_pipeline_event(
     if not row:
         return None
     from_state = str(row[0] or "new")
-    effective_to_state = normalized_to_state if update_state and normalized_to_state else None
+    transition_allowed = is_valid_lead_pipeline_transition(from_state, normalized_to_state)
+    effective_to_state = normalized_to_state if update_state and normalized_to_state and transition_allowed else None
     if effective_to_state:
         conn.execute(
             """
@@ -138,6 +165,12 @@ def record_lead_pipeline_event(
             """,
             [effective_to_state, str(lead_id)],
         )
+    event_detail = detail
+    if update_state and normalized_to_state and not transition_allowed:
+        event_detail = dict(detail or {})
+        event_detail["transition_rejected"] = True
+        event_detail["rejected_from_state"] = from_state
+        event_detail["rejected_to_state"] = normalized_to_state
     conn.execute(
         f"""
         INSERT INTO {LEAD_PIPELINE_EVENTS_TABLE} (
@@ -157,7 +190,7 @@ def record_lead_pipeline_event(
             str(event_type).strip(),
             from_state,
             effective_to_state,
-            _serialize_detail(detail),
+            _serialize_detail(event_detail),
         ],
     )
     return {
@@ -165,6 +198,7 @@ def record_lead_pipeline_event(
         "event_type": str(event_type).strip(),
         "from_state": from_state,
         "to_state": effective_to_state,
+        "transition_allowed": transition_allowed,
     }
 
 

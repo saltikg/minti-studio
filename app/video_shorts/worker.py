@@ -178,6 +178,14 @@ def _mark_plan_failure(job: Dict[str, Any], error_message: str) -> None:
             status="failed",
             error_message=error_message,
         )
+        generation._evaluate_lead_generation_approval_gate(
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+            video_pk=payload.get("video_pk"),
+            video_id=source_video_id,
+            failed_plan_index=int(plan_index),
+            failure_message=error_message,
+        )
     except Exception:
         pass
 

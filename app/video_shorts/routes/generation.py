@@ -294,6 +294,7 @@ from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip, load_tik
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir, ensure_video_shorts_tmp_dir
 from app.video_shorts.services.generated_video_lifecycle import _first_non_empty, upsert_generated_video_record
 from app.video_shorts.services.lead_pipeline import (
+    find_active_lead_for_scope,
     record_lead_pipeline_event,
     record_lead_pipeline_event_for_scope,
 )
@@ -4330,6 +4331,133 @@ def _update_plan_entry_job_state(
         break
     if changed:
         _write_plan_entries(video_id, entries)
+
+
+def _coerce_plan_score(entry: Dict[str, Any]) -> Optional[float]:
+    try:
+        score = float(entry.get("score"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(score):
+        return None
+    return score
+
+
+def _select_lead_generation_entries(entries: List[Dict[str, Any]], *, min_score: float = 85.0, limit: int = 5) -> List[Dict[str, Any]]:
+    candidates: List[Tuple[float, int, Dict[str, Any]]] = []
+    for position, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            continue
+        entry["selected_for_generation"] = False
+        entry.pop("selected_for_generation_rank", None)
+        score = _coerce_plan_score(entry)
+        if score is None or score < min_score:
+            continue
+        candidates.append((score, position, entry))
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    selected: List[Dict[str, Any]] = []
+    for rank, (_score, _position, entry) in enumerate(candidates[: max(0, int(limit))], 1):
+        entry["selected_for_generation"] = True
+        entry["selected_for_generation_rank"] = rank
+        selected.append(entry)
+    return selected
+
+
+def _summarize_selected_plan_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected: List[Dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not entry.get("selected_for_generation"):
+            continue
+        selected.append(
+            {
+                "plan_index": entry.get("plan_index"),
+                "score": entry.get("score"),
+                "status": entry.get("status"),
+                "clip_filename": entry.get("clip_filename") or entry.get("output_filename"),
+            }
+        )
+    return selected
+
+
+def _evaluate_lead_generation_approval_gate(
+    *,
+    owner_user_id: Any,
+    brand_id: Any,
+    video_pk: Any,
+    video_id: str,
+    failed_plan_index: Optional[int] = None,
+    failure_message: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not owner_user_id or not brand_id or not video_pk or not video_id:
+        return None
+    conn = get_db()
+    try:
+        lead = find_active_lead_for_scope(conn, owner_user_id=owner_user_id, brand_id=brand_id, video_pk=video_pk)
+        if not lead:
+            conn.commit()
+            return None
+        entries = _load_plan_entries(video_id) or []
+        selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
+        if not selected:
+            conn.commit()
+            return None
+        failed_entry = None
+        for entry in selected:
+            try:
+                entry_index = int(entry.get("plan_index") or 0)
+            except Exception:
+                entry_index = None
+            status = str(entry.get("status") or "").strip().lower()
+            if (failed_plan_index is not None and entry_index == int(failed_plan_index)) or status in {"failed", "error"}:
+                failed_entry = entry
+                break
+        if failed_entry:
+            result = record_lead_pipeline_event(
+                conn,
+                lead_id=lead["id"],
+                event_type="selected_generation_failed",
+                to_state="failed",
+                detail={
+                    "video_pk": int(video_pk),
+                    "video_id": video_id,
+                    "failed_plan_index": failed_entry.get("plan_index"),
+                    "failure_message": failure_message,
+                    "selected": _summarize_selected_plan_entries(selected),
+                },
+            )
+            conn.commit()
+            return result
+        incomplete = [
+            entry
+            for entry in selected
+            if str(entry.get("status") or "").strip().lower() not in {"created", "done"}
+        ]
+        if incomplete:
+            conn.commit()
+            return {
+                "lead_id": lead["id"],
+                "complete": False,
+                "selected_count": len(selected),
+                "incomplete_count": len(incomplete),
+            }
+        result = record_lead_pipeline_event(
+            conn,
+            lead_id=lead["id"],
+            event_type="selected_generation_completed",
+            to_state="awaiting_approval",
+            detail={
+                "video_pk": int(video_pk),
+                "video_id": video_id,
+                "selected": _summarize_selected_plan_entries(selected),
+            },
+        )
+        conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _build_render_job_options(
@@ -13939,9 +14067,11 @@ def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     """Require a pre-conversion lead for this target scope; customer work is later."""
     conn = get_db_readonly()
     try:
+        lead_columns = table_columns(conn, "autopilot_leads")
+        pipeline_state_sql = "COALESCE(l.pipeline_state, 'new')" if "pipeline_state" in lead_columns else "'new'"
         row = conn.execute(
-            """
-            SELECT l.id, l.creator_name, l.recipient_name, l.creator_email, b.name
+            f"""
+            SELECT l.id, l.creator_name, l.recipient_name, l.creator_email, b.name, {pipeline_state_sql}
             FROM autopilot_leads l
             JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
             WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
@@ -13962,7 +14092,40 @@ def _require_active_lead_workspace(scope: Dict[str, str]) -> Dict[str, str]:
         "recipient_name": str(row[2] or "").strip(),
         "creator_email": str(row[3] or "").strip(),
         "brand_name": str(row[4] or "").strip() or "Unnamed brand",
+        "pipeline_state": str(row[5] or "new").strip().lower() or "new",
     }
+
+
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/approve", methods=["POST"])
+@require_admin
+def admin_operation_approve_lead(brand_id: str):
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead")
+    lead = _require_active_lead_workspace(scope)
+    if lead.get("pipeline_state") != "awaiting_approval":
+        flash("Lead is not awaiting approval.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
+    conn = get_db()
+    try:
+        current_user = getattr(g, "vs_current_user", None) or {}
+        record_lead_pipeline_event(
+            conn,
+            lead_id=lead["id"],
+            event_type="lead_approved",
+            to_state="approved",
+            detail={
+                "acting_admin_id": str(current_user.get("id") or "").strip(),
+                "brand_id": brand_id,
+            },
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to approve lead %s", lead["id"])
+        flash("Lead could not be approved.", "danger")
+    finally:
+        conn.close()
+    flash("Lead approved.", "success")
+    return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
 
 
 def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
@@ -14138,8 +14301,18 @@ def admin_operation_lead_workspace(brand_id: str):
     first_video_id = int(first_row[0]) if first_row and first_row[0] is not None else None
     videos = [_build_admin_workspace_video(row, brand_id=scope["brand_id"], workspace_kind="lead") for row in rows]
     videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
+    selected_plan_entries: List[Dict[str, Any]] = []
+    first_video = next((video for video in videos if video["id"] == first_video_id), None)
+    if first_video and first_video.get("video_id"):
+        selected_plan_entries = _summarize_selected_plan_entries(_load_plan_entries(first_video["video_id"]))
     lead["brand_id"] = scope["brand_id"]
-    return render_template("shorts_admin_lead_workspace.html", admin_title="Lead workspace", lead=lead, videos=videos)
+    return render_template(
+        "shorts_admin_lead_workspace.html",
+        admin_title="Lead workspace",
+        lead=lead,
+        videos=videos,
+        selected_plan_entries=selected_plan_entries,
+    )
 
 
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/workspace", methods=["GET"])
@@ -18204,6 +18377,10 @@ def _generate_clip_plan_for_video(
 
     combined_plan = _reindex_v1_plan_entries(vid, [*existing_plan_entries, *timestamped_plan])
 
+    selected_for_generation: List[Dict[str, Any]] = []
+    if owner_user_id and brand_id:
+        selected_for_generation = _select_lead_generation_entries(combined_plan, min_score=85.0, limit=5)
+
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
     try:
@@ -18213,21 +18390,35 @@ def _generate_clip_plan_for_video(
         raise RuntimeError("Could not save the clip plan.")
     if owner_user_id and brand_id:
         try:
-            record_lead_pipeline_event_for_scope(
-                owner_user_id=owner_user_id,
-                brand_id=brand_id,
-                video_pk=video_pk,
-                event_type="ai_plan_created",
-                to_state="planned",
-                detail={
-                    "video_pk": video_pk,
-                    "video_id": vid,
-                    "clip_count": len(timestamped_plan),
-                    "combined_clip_count": len(combined_plan),
-                    "plan_focus": plan_focus,
-                    "focus_categories": list(focus_categories),
-                },
-            )
+            detail = {
+                "video_pk": video_pk,
+                "video_id": vid,
+                "clip_count": len(timestamped_plan),
+                "combined_clip_count": len(combined_plan),
+                "selected_count": len(selected_for_generation),
+                "selected": _summarize_selected_plan_entries(selected_for_generation),
+                "selection_rule": {"min_score": 85, "limit": 5},
+                "plan_focus": plan_focus,
+                "focus_categories": list(focus_categories),
+            }
+            if selected_for_generation:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="ai_plan_created",
+                    to_state="planned",
+                    detail=detail,
+                )
+            else:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="clip_selection_failed",
+                    to_state="failed",
+                    detail={**detail, "reason": "no clips >= 85"},
+                )
         except Exception as exc:
             current_app.logger.warning("Failed to record lead plan event video_pk=%s: %s", video_pk, exc)
 
@@ -20717,6 +20908,20 @@ def autoclip_video(video_pk):
                     short_id=clip_filename,
                     status="completed",
                 )
+            try:
+                _evaluate_lead_generation_approval_gate(
+                    owner_user_id=target_owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    video_id=vid,
+                )
+            except Exception as exc:
+                current_app.logger.warning(
+                    "Failed to evaluate lead approval gate video_pk=%s plan_index=%s: %s",
+                    video_pk,
+                    plan_index,
+                    exc,
+                )
             made += 1
     except MediaSubprocessTimeoutError as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
@@ -20743,6 +20948,17 @@ def autoclip_video(video_pk):
                 short_id=clip_filename,
                 status="failed",
             )
+        try:
+            _evaluate_lead_generation_approval_gate(
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=vid,
+                failed_plan_index=plan_index,
+                failure_message=str(e),
+            )
+        except Exception as exc:
+            current_app.logger.warning("Failed to record lead selected render failure video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
         raise
     except FileNotFoundError:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
@@ -20769,6 +20985,17 @@ def autoclip_video(video_pk):
                 short_id=clip_filename,
                 status="failed",
             )
+        try:
+            _evaluate_lead_generation_approval_gate(
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=vid,
+                failed_plan_index=plan_index,
+                failure_message="Source video file not found.",
+            )
+        except Exception as exc:
+            current_app.logger.warning("Failed to record lead selected render failure video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
         raise
     except OSError as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
@@ -20795,6 +21022,17 @@ def autoclip_video(video_pk):
                 short_id=clip_filename,
                 status="failed",
             )
+        try:
+            _evaluate_lead_generation_approval_gate(
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=vid,
+                failed_plan_index=plan_index,
+                failure_message=str(e),
+            )
+        except Exception as exc:
+            current_app.logger.warning("Failed to record lead selected render failure video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
         if getattr(e, "errno", None) == errno.ENOSPC:
             raise
         error_message = "This video could not be processed right now. Please try again. If it keeps happening, contact support."
@@ -20823,6 +21061,17 @@ def autoclip_video(video_pk):
                 short_id=clip_filename,
                 status="failed",
             )
+        try:
+            _evaluate_lead_generation_approval_gate(
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=vid,
+                failed_plan_index=plan_index,
+                failure_message=str(e),
+            )
+        except Exception as exc:
+            current_app.logger.warning("Failed to record lead selected render failure video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
         error_message = "This video could not be processed right now. Please try again. If it keeps happening, contact support."
     finally:
         if export_reserved and not made and target_owner_user_id:

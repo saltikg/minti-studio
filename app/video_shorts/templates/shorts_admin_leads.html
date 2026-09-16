@@ -25,6 +25,9 @@
     .admin-leads-muted { color:rgba(255,255,255,.58); font-size:.84rem; margin-top:3px; }
     .admin-leads-status { display:inline-flex; padding:5px 9px; border-radius:999px; border:1px solid rgba(45,212,191,.22); background:rgba(45,212,191,.12); color:#8ff3d8; font-size:.82rem; font-weight:600; white-space:nowrap; }
     .admin-leads-status.discovery { border-color:rgba(245,158,11,.28); background:rgba(245,158,11,.12); color:#f8cc7a; }
+    .admin-leads-status.awaiting-approval { border-color:rgba(59,130,246,.42); background:rgba(59,130,246,.18); color:#bfdbfe; }
+    .admin-leads-status.approved { border-color:rgba(34,197,94,.38); background:rgba(34,197,94,.16); color:#bbf7d0; }
+    .admin-leads-status.failed { border-color:rgba(248,113,113,.42); background:rgba(248,113,113,.15); color:#fecaca; }
     .admin-leads-email-row { display:flex; align-items:center; gap:6px; }
     .admin-leads-email-edit { width:26px; height:26px; padding:0; display:inline-flex; align-items:center; justify-content:center; color:rgba(255,255,255,.6); border-color:rgba(255,255,255,.18); }
     .admin-leads-email-edit:hover, .admin-leads-email-edit:focus { color:#8ff3d8; border-color:rgba(45,212,191,.5); }
@@ -214,7 +217,7 @@
               </td>
               <td><span class="admin-leads-status {% if not lead.has_owner %}discovery{% endif %}">{{ lead.lead_type_label }}</span></td>
               <td>{{ lead.download_status }}</td>
-              <td><span class="admin-leads-status">{{ lead.pipeline_state|replace('_', ' ') }}</span></td>
+              <td><span class="admin-leads-status {{ lead.pipeline_state|replace('_', '-') }}">{{ lead.pipeline_state|replace('_', ' ') }}</span></td>
               <td>{{ lead.generation_label }}</td>
               <td>{{ 'Sent' if lead.email_sent else 'Not sent' }}</td>
               <td>{{ lead.converted_at_pst if lead.converted else 'Not converted' }}</td>
