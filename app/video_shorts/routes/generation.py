@@ -4462,6 +4462,7 @@ def _evaluate_lead_generation_approval_gate(
 
 
 AUTOPILOT_GENERATE_TIMEOUT_SECONDS = 60 * 60
+AUTOPILOT_PLAN_TIMEOUT_SECONDS = 30 * 60
 AUTOPILOT_OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
 AUTOPILOT_OUTREACH_SLOT_HOUR = 9
 AUTOPILOT_OUTREACH_STAGE = "first"
@@ -4513,6 +4514,449 @@ def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[D
             continue
         pending.append(entry)
     return pending
+
+
+def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
+    normalized = str(email or "").strip().lower()
+    if not normalized or "@" not in normalized:
+        return "missing_email"
+    local, _, domain = normalized.partition("@")
+    test_markers = (
+        "test",
+        "dummy",
+        "fake",
+        "example",
+        "placeholder",
+        "noreply",
+        "no-reply",
+        "donotreply",
+        "do-not-reply",
+    )
+    dummy_domains = {"example.com", "example.net", "example.org", "test.com", "invalid.com", "dummy.com"}
+    if any(marker in normalized for marker in test_markers) or domain in dummy_domains or local in {"none", "unknown"}:
+        return "test_email"
+    return None
+
+
+def _plan_entries_with_selection(video_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    entries = _load_plan_entries(video_id) or []
+    if entries:
+        selected = _select_lead_generation_entries(entries, min_score=85.0, limit=5)
+        _write_plan_entries(video_id, entries)
+        return entries, selected
+    return entries, []
+
+
+def process_new_lead_autodownload(*, limit: int = 1) -> bool:
+    conn = get_db()
+    processed_any = False
+    try:
+        if not lead_pipeline_available(conn):
+            conn.commit()
+            return False
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                l.creator_email,
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id,
+                v.video_id,
+                v.video_url,
+                COALESCE(v.download_status, ''),
+                COALESCE(v.transcript_status, '')
+            FROM autopilot_leads l
+            LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE l.converted_at IS NULL
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND COALESCE(l.pipeline_state, 'new') = 'new'
+            ORDER BY l.created_at ASC NULLS LAST, l.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    started_count = 0
+    for row in rows:
+        lead_id = str(row[0] or "").strip()
+        creator_email = str(row[1] or "").strip()
+        owner_user_id = str(row[2] or "").strip()
+        brand_id = str(row[3] or "").strip()
+        try:
+            video_pk = int(row[4])
+        except Exception:
+            video_pk = 0
+        video_id = str(row[5] or "").strip()
+        video_url = str(row[6] or "").strip()
+        download_status = str(row[7] or "").strip().lower()
+        transcript_status = str(row[8] or "").strip().lower()
+
+        invalid_reason = _invalid_autopilot_entry_email_reason(creator_email)
+        if invalid_reason:
+            conn_fail = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_fail,
+                    lead_id=lead_id,
+                    event_type="auto_download_entry_rejected",
+                    to_state="failed",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "reason": invalid_reason,
+                        "creator_email": creator_email,
+                        "video_pk": video_pk or None,
+                        "video_id": video_id,
+                    },
+                )
+                conn_fail.commit()
+                processed_any = True
+            except Exception:
+                conn_fail.rollback()
+                raise
+            finally:
+                conn_fail.close()
+            continue
+
+        if not video_pk or not video_id or not video_url:
+            conn_fail = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_fail,
+                    lead_id=lead_id,
+                    event_type="auto_download_entry_rejected",
+                    to_state="failed",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "reason": "missing_source_video",
+                        "video_pk": video_pk or None,
+                        "video_id": video_id,
+                    },
+                )
+                conn_fail.commit()
+                processed_any = True
+            except Exception:
+                conn_fail.rollback()
+                raise
+            finally:
+                conn_fail.close()
+            continue
+
+        if download_status == "downloaded" and transcript_status == "done":
+            conn_ready = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_ready,
+                    lead_id=lead_id,
+                    event_type="auto_download_already_ready",
+                    to_state="downloaded",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "download_status": download_status,
+                        "transcript_status": transcript_status,
+                    },
+                )
+                conn_ready.commit()
+                processed_any = True
+                started_count += 1
+            except Exception:
+                conn_ready.rollback()
+                raise
+            finally:
+                conn_ready.close()
+            if started_count >= max(1, int(limit)):
+                break
+            continue
+
+        scope = {
+            "owner_user_id": owner_user_id,
+            "brand_id": brand_id,
+            "workspace_kind": "lead",
+            "acting_admin_id": "autopilot_cron",
+        }
+        try:
+            current_app.logger.info(
+                "Autopilot download enqueue using _enqueue_admin_operation_ingest_youtube_job lead_id=%s video_pk=%s",
+                lead_id,
+                video_pk,
+            )
+            enqueue_row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
+        except HTTPException as exc:
+            conn_fail = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_fail,
+                    lead_id=lead_id,
+                    event_type="auto_download_enqueue_failed",
+                    to_state="failed",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "error": f"HTTP {exc.code}",
+                    },
+                )
+                conn_fail.commit()
+                processed_any = True
+            except Exception:
+                conn_fail.rollback()
+                raise
+            finally:
+                conn_fail.close()
+            continue
+        except Exception as exc:
+            conn_fail = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_fail,
+                    lead_id=lead_id,
+                    event_type="auto_download_enqueue_failed",
+                    to_state="failed",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                )
+                conn_fail.commit()
+                processed_any = True
+            except Exception:
+                conn_fail.rollback()
+                raise
+            finally:
+                conn_fail.close()
+            continue
+
+        enqueue_kind = str(enqueue_row.get("enqueue_kind") or "").strip()
+        target_state = "downloaded" if enqueue_kind == "already_downloaded" else "downloading"
+        conn_event = get_db()
+        try:
+            record_lead_pipeline_event(
+                conn_event,
+                lead_id=lead_id,
+                event_type="auto_download_enqueued",
+                to_state=target_state,
+                detail={
+                    "mechanism": "cron_poll",
+                    "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                    "video_pk": video_pk,
+                    "video_id": video_id,
+                    "job_id": enqueue_row.get("job_id"),
+                    "enqueue_kind": enqueue_kind,
+                },
+            )
+            conn_event.commit()
+            processed_any = True
+            started_count += 1
+        except Exception:
+            conn_event.rollback()
+            raise
+        finally:
+            conn_event.close()
+        if started_count >= max(1, int(limit)):
+            break
+    return processed_any
+
+
+def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = AUTOPILOT_PLAN_TIMEOUT_SECONDS) -> bool:
+    conn = get_db()
+    processed_any = False
+    try:
+        if not lead_pipeline_available(conn):
+            conn.commit()
+            return False
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id,
+                COALESCE(l.pipeline_state, 'new'),
+                v.video_id
+            FROM autopilot_leads l
+            JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE l.converted_at IS NULL
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND COALESCE(l.pipeline_state, 'new') IN ('downloaded', 'planning')
+            ORDER BY l.created_at ASC NULLS LAST, l.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    now_utc = datetime.now(timezone.utc)
+    planned_count = 0
+    for row in rows:
+        lead_id = str(row[0] or "").strip()
+        owner_user_id = str(row[1] or "").strip()
+        brand_id = str(row[2] or "").strip()
+        video_pk = int(row[3])
+        pipeline_state = str(row[4] or "new").strip().lower()
+        video_id = str(row[5] or "").strip()
+
+        if pipeline_state == "planning":
+            started_at = None
+            conn_age = get_db_readonly()
+            try:
+                started_at = _latest_lead_pipeline_event_at(
+                    conn_age,
+                    lead_id,
+                    ["downloaded_auto_plan_started"],
+                )
+            finally:
+                conn_age.close()
+            if started_at and (now_utc - started_at).total_seconds() >= int(timeout_seconds):
+                conn_timeout = get_db()
+                try:
+                    record_lead_pipeline_event(
+                        conn_timeout,
+                        lead_id=lead_id,
+                        event_type="downloaded_auto_plan_timeout",
+                        to_state="failed",
+                        detail={
+                            "mechanism": "cron_poll",
+                            "timeout_seconds": int(timeout_seconds),
+                            "video_pk": video_pk,
+                            "video_id": video_id,
+                        },
+                    )
+                    conn_timeout.commit()
+                    processed_any = True
+                except Exception:
+                    conn_timeout.rollback()
+                    raise
+                finally:
+                    conn_timeout.close()
+            continue
+
+        entries, selected = _plan_entries_with_selection(video_id)
+        if entries:
+            conn_existing = get_db()
+            try:
+                detail = {
+                    "mechanism": "cron_poll",
+                    "video_pk": video_pk,
+                    "video_id": video_id,
+                    "existing_plan": True,
+                    "combined_clip_count": len(entries),
+                    "selected_count": len(selected),
+                    "selected": _summarize_selected_plan_entries(selected),
+                    "selection_rule": {"min_score": 85, "limit": 5},
+                }
+                if selected:
+                    record_lead_pipeline_event(
+                        conn_existing,
+                        lead_id=lead_id,
+                        event_type="ai_plan_created",
+                        to_state="planned",
+                        detail=detail,
+                    )
+                else:
+                    record_lead_pipeline_event(
+                        conn_existing,
+                        lead_id=lead_id,
+                        event_type="clip_selection_failed",
+                        to_state="failed",
+                        detail={**detail, "reason": "no clips >= 85"},
+                    )
+                conn_existing.commit()
+                processed_any = True
+                planned_count += 1
+            except Exception:
+                conn_existing.rollback()
+                raise
+            finally:
+                conn_existing.close()
+            if planned_count >= max(1, int(limit)):
+                break
+            continue
+
+        conn_start = get_db()
+        try:
+            record_lead_pipeline_event(
+                conn_start,
+                lead_id=lead_id,
+                event_type="downloaded_auto_plan_started",
+                to_state="planning",
+                detail={
+                    "mechanism": "cron_poll",
+                    "video_pk": video_pk,
+                    "video_id": video_id,
+                    "planner": "_generate_clip_plan_for_video",
+                    "timeout_seconds": int(timeout_seconds),
+                },
+            )
+            conn_start.commit()
+            processed_any = True
+        except Exception:
+            conn_start.rollback()
+            raise
+        finally:
+            conn_start.close()
+
+        try:
+            _generate_clip_plan_for_video(
+                video_pk,
+                {},
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            )
+            planned_count += 1
+            processed_any = True
+        except Exception as exc:
+            conn_fail = get_db()
+            try:
+                record_lead_pipeline_event(
+                    conn_fail,
+                    lead_id=lead_id,
+                    event_type="downloaded_auto_plan_failed",
+                    to_state="failed",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "planner": "_generate_clip_plan_for_video",
+                        "error": str(exc) or exc.__class__.__name__,
+                    },
+                )
+                conn_fail.commit()
+                processed_any = True
+            except Exception:
+                conn_fail.rollback()
+                raise
+            finally:
+                conn_fail.close()
+        if planned_count >= max(1, int(limit)):
+            break
+    return processed_any
 
 
 def _normalize_utc_datetime(value: Any) -> Optional[datetime]:

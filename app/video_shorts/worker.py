@@ -1367,6 +1367,16 @@ def run_worker_loop() -> None:
             except Exception:
                 app.logger.exception("Scheduled outreach email processing failed")
             try:
+                if generation.process_new_lead_autodownload():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("New lead auto-download polling failed")
+            try:
+                if generation.process_downloaded_lead_autoplan():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("Downloaded lead auto-plan polling failed")
+            try:
                 if generation.process_planned_lead_autogenerate():
                     processed_any = True
             except Exception:
