@@ -4462,6 +4462,10 @@ def _evaluate_lead_generation_approval_gate(
 
 
 AUTOPILOT_GENERATE_TIMEOUT_SECONDS = 60 * 60
+AUTOPILOT_OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
+AUTOPILOT_OUTREACH_SLOT_HOUR = 9
+AUTOPILOT_OUTREACH_STAGE = "first"
+AUTOPILOT_OUTREACH_LANGUAGE = "EN"
 
 
 def _as_utc_datetime(value: Any) -> Optional[datetime]:
@@ -4509,6 +4513,74 @@ def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[D
             continue
         pending.append(entry)
     return pending
+
+
+def _normalize_utc_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _next_business_day_pacific(day: datetime) -> datetime:
+    current = day
+    while current.weekday() >= 5:
+        current = current + timedelta(days=1)
+    return current
+
+
+def allocate_next_outreach_slot(
+    *,
+    now: datetime,
+    scheduled_datetimes: List[datetime],
+) -> datetime:
+    """Return the next open outreach slot as UTC, using Pacific business-day slots."""
+    now_utc = _normalize_utc_datetime(now) or datetime.now(timezone.utc)
+    now_pacific = now_utc.astimezone(PST_ZONE)
+    occupied = set()
+    for scheduled in scheduled_datetimes or []:
+        scheduled_utc = _normalize_utc_datetime(scheduled)
+        if not scheduled_utc:
+            continue
+        scheduled_pacific = scheduled_utc.astimezone(PST_ZONE)
+        occupied.add(
+            (
+                scheduled_pacific.date().isoformat(),
+                scheduled_pacific.hour,
+                scheduled_pacific.minute,
+            )
+        )
+
+    day_cursor = _next_business_day_pacific(now_pacific)
+    for _ in range(370):
+        if day_cursor.weekday() >= 5:
+            day_cursor = _next_business_day_pacific(day_cursor + timedelta(days=1))
+            continue
+        for minute in AUTOPILOT_OUTREACH_SLOT_MINUTES:
+            slot_pacific = datetime(
+                day_cursor.year,
+                day_cursor.month,
+                day_cursor.day,
+                AUTOPILOT_OUTREACH_SLOT_HOUR,
+                minute,
+                tzinfo=PST_ZONE,
+            )
+            if slot_pacific <= now_pacific:
+                continue
+            key = (slot_pacific.date().isoformat(), slot_pacific.hour, slot_pacific.minute)
+            if key in occupied:
+                continue
+            return slot_pacific.astimezone(timezone.utc)
+        day_cursor = _next_business_day_pacific(day_cursor + timedelta(days=1))
+    raise RuntimeError("No outreach slot found in the next year.")
 
 
 def _enqueue_selected_lead_render(
@@ -4768,6 +4840,261 @@ def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = 
             finally:
                 conn_event.close()
         if started_count >= max(1, int(limit)):
+            break
+    return processed_any
+
+
+def _load_active_outreach_schedule_for_lead(conn, lead_id: str) -> Optional[Dict[str, Any]]:
+    if not _short_share_links_ready(conn):
+        return None
+    ensure_outreach_scheduled_email_schema(conn)
+    if "autopilot_lead_id" not in table_columns(conn, "short_share_links"):
+        return None
+    row = conn.execute(
+        """
+        SELECT ose.id, ose.share_link_id, ose.stage, ose.language, ose.scheduled_at, ose.status
+        FROM outreach_scheduled_emails ose
+        JOIN short_share_links sl ON CAST(sl.id AS BIGINT) = CAST(ose.share_link_id AS BIGINT)
+        WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND ose.status IN ('scheduled', 'processing')
+        ORDER BY ose.scheduled_at ASC, ose.id ASC
+        LIMIT 1
+        """,
+        [str(lead_id or "").strip()],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row[0]),
+        "share_link_id": int(row[1]),
+        "stage": str(row[2] or ""),
+        "language": str(row[3] or ""),
+        "scheduled_at": row[4],
+        "status": str(row[5] or ""),
+    }
+
+
+def _load_active_outreach_schedule_datetimes(conn) -> List[datetime]:
+    ensure_outreach_scheduled_email_schema(conn)
+    rows = conn.execute(
+        """
+        SELECT scheduled_at
+        FROM outreach_scheduled_emails
+        WHERE status IN ('scheduled', 'processing')
+        """
+    ).fetchall()
+    values: List[datetime] = []
+    for row in rows:
+        parsed = _normalize_utc_datetime(row[0])
+        if parsed:
+            values.append(parsed)
+    return values
+
+
+def _create_or_get_lead_watch_page(conn, *, lead: Dict[str, Any], acting_admin_id: str) -> Dict[str, Any]:
+    existing = _load_existing_lead_watch_page(conn, str(lead["id"]))
+    if existing and existing.get("share_token"):
+        return {
+            "success": True,
+            "existing": True,
+            **existing,
+        }
+    selected_short = _load_lead_watch_page_entry_short(conn, lead=lead)
+    if not selected_short:
+        return {"success": False, "message": "No generated shorts yet.", "status_code": 404}
+    scope = {
+        "acting_admin_id": acting_admin_id,
+        "owner_user_id": str(lead["owner_user_id"]),
+        "brand_id": str(lead["brand_id"]),
+        "workspace_kind": "lead",
+    }
+    result = _create_or_update_lead_share_link_for_generated(
+        conn,
+        scope=scope,
+        lead=lead,
+        video_pk=int(lead["first_video_id"]),
+        generated_video_id=str(selected_short["generated_video_id"]),
+        trial_days=DEFAULT_SHARE_TRIAL_DAYS,
+    )
+    if not result.get("success"):
+        return result
+    record_lead_pipeline_event(
+        conn,
+        lead_id=lead["id"],
+        event_type="watch_page_created",
+        update_state=False,
+        detail={
+            "acting_admin_id": acting_admin_id,
+            "video_pk": int(lead["first_video_id"]),
+            "generated_video_id": result["generated_video_id"],
+            "share_link_id": result["share_link_id"],
+            "share_token": result["share_token"],
+            "entry_score": selected_short["score"],
+            "mechanism": "cron_poll",
+        },
+    )
+    return {
+        "success": True,
+        "existing": False,
+        "share_link_id": result["share_link_id"],
+        "share_token": result["share_token"],
+        "share_url": result["share_url"],
+        "generated_video_id": result["generated_video_id"],
+        "entry_score": selected_short["score"],
+    }
+
+
+def process_approved_lead_autoschedule(*, limit: int = 1, now: Optional[datetime] = None) -> bool:
+    conn = get_db()
+    processed_any = False
+    try:
+        if not lead_pipeline_available(conn):
+            conn.commit()
+            return False
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                l.creator_name,
+                l.recipient_name,
+                l.creator_email,
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id,
+                COALESCE(l.pipeline_state, 'new')
+            FROM autopilot_leads l
+            WHERE l.converted_at IS NULL
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND COALESCE(l.pipeline_state, 'new') = 'approved'
+            ORDER BY l.created_at ASC NULLS LAST, l.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    scheduled_count = 0
+    now_utc = _normalize_utc_datetime(now) or datetime.now(timezone.utc)
+    for row in rows:
+        lead = {
+            "id": str(row[0] or "").strip(),
+            "creator_name": str(row[1] or "").strip() or "Unknown creator",
+            "recipient_name": str(row[2] or "").strip(),
+            "creator_email": str(row[3] or "").strip().lower(),
+            "owner_user_id": str(row[4] or "").strip(),
+            "brand_id": str(row[5] or "").strip(),
+            "first_video_id": int(row[6]),
+            "pipeline_state": str(row[7] or "new").strip().lower(),
+        }
+        conn_lead = get_db()
+        try:
+            existing_schedule = _load_active_outreach_schedule_for_lead(conn_lead, lead["id"])
+            if existing_schedule:
+                record_lead_pipeline_event(
+                    conn_lead,
+                    lead_id=lead["id"],
+                    event_type="email_schedule_already_exists",
+                    to_state="scheduled",
+                    detail={
+                        "mechanism": "cron_poll",
+                        "schedule_id": existing_schedule["id"],
+                        "share_link_id": existing_schedule["share_link_id"],
+                        "scheduled_at": (
+                            existing_schedule["scheduled_at"].isoformat()
+                            if hasattr(existing_schedule["scheduled_at"], "isoformat")
+                            else str(existing_schedule["scheduled_at"])
+                        ),
+                    },
+                )
+                conn_lead.commit()
+                processed_any = True
+                scheduled_count += 1
+                continue
+
+            if not lead["creator_email"] or "@" not in lead["creator_email"]:
+                record_lead_pipeline_event(
+                    conn_lead,
+                    lead_id=lead["id"],
+                    event_type="email_schedule_failed",
+                    to_state="failed",
+                    detail={"mechanism": "cron_poll", "reason": "missing_creator_email"},
+                )
+                conn_lead.commit()
+                processed_any = True
+                continue
+
+            record_lead_pipeline_event(
+                conn_lead,
+                lead_id=lead["id"],
+                event_type="approved_auto_schedule_started",
+                to_state="scheduling",
+                detail={"mechanism": "cron_poll"},
+            )
+            watch_page = _create_or_get_lead_watch_page(conn_lead, lead=lead, acting_admin_id="autopilot_cron")
+            if not watch_page.get("success"):
+                raise RuntimeError(str(watch_page.get("message") or "watch_page_failed"))
+
+            active_scheduled = _load_active_outreach_schedule_datetimes(conn_lead)
+            scheduled_at = allocate_next_outreach_slot(now=now_utc, scheduled_datetimes=active_scheduled)
+            scheduled = schedule_outreach_email(
+                conn_lead,
+                share_link_id=int(watch_page["share_link_id"]),
+                stage=AUTOPILOT_OUTREACH_STAGE,
+                language=AUTOPILOT_OUTREACH_LANGUAGE,
+                scheduled_at=scheduled_at,
+                created_by="autopilot_cron",
+            )
+            scheduled_at_pacific = scheduled_at.astimezone(PST_ZONE)
+            record_lead_pipeline_event(
+                conn_lead,
+                lead_id=lead["id"],
+                event_type="email_scheduled",
+                to_state="scheduled",
+                detail={
+                    "mechanism": "cron_poll",
+                    "share_link_id": int(watch_page["share_link_id"]),
+                    "schedule_id": scheduled["id"],
+                    "stage": scheduled["stage"],
+                    "language": scheduled["language"],
+                    "scheduled_at": scheduled_at.isoformat(),
+                    "scheduled_at_pacific": scheduled_at_pacific.isoformat(),
+                    "scheduled_date_pacific": scheduled_at_pacific.date().isoformat(),
+                    "watch_page_existing": bool(watch_page.get("existing")),
+                    "share_url": watch_page.get("share_url") or _share_public_url(str(watch_page.get("share_token") or "")),
+                    "greeting_name": lead["recipient_name"] or lead["creator_name"],
+                },
+            )
+            conn_lead.commit()
+            processed_any = True
+            scheduled_count += 1
+        except Exception as exc:
+            conn_lead.rollback()
+            try:
+                record_lead_pipeline_event(
+                    conn_lead,
+                    lead_id=lead["id"],
+                    event_type="approved_auto_schedule_failed",
+                    to_state="failed",
+                    detail={"mechanism": "cron_poll", "error": str(exc) or exc.__class__.__name__},
+                )
+                conn_lead.commit()
+                processed_any = True
+            except Exception:
+                conn_lead.rollback()
+                raise
+        finally:
+            conn_lead.close()
+        if scheduled_count >= max(1, int(limit)):
             break
     return processed_any
 

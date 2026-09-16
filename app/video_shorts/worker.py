@@ -1371,6 +1371,11 @@ def run_worker_loop() -> None:
                     processed_any = True
             except Exception:
                 app.logger.exception("Planned lead auto-generate polling failed")
+            try:
+                if generation.process_approved_lead_autoschedule():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("Approved lead auto-schedule polling failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
                 if process_next_job(app, worker_id):
                     processed_any = True
