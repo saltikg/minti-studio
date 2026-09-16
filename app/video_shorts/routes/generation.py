@@ -14415,6 +14415,170 @@ def admin_leads():
     )
 
 
+PIPELINE_OVERVIEW_STEPS = [
+    ("download", "Download", {"download_completed"}),
+    ("plan", "AI plan", {"ai_plan_created"}),
+    ("generate", "Generate", {"planned_auto_generate_triggered", "generate_started"}),
+    ("approval", "Onay", {"lead_approved"}),
+    ("schedule", "Schedule", {"email_scheduled", "email_schedule_already_exists"}),
+    ("sent", "Sent", {"email_sent"}),
+]
+PIPELINE_FAILED_EVENTS = {
+    "clip_selection_failed",
+    "selected_generation_failed",
+    "selected_generation_timeout",
+    "email_schedule_failed",
+    "approved_auto_schedule_failed",
+}
+PIPELINE_STATE_LABELS = {
+    "new": "Yeni",
+    "downloading": "Downloading",
+    "downloaded": "Downloaded",
+    "planning": "Planning",
+    "planned": "Planned",
+    "generating": "Generating",
+    "awaiting_approval": "Onay bekliyor",
+    "approved": "Approved",
+    "scheduling": "Scheduling email",
+    "scheduled": "Email scheduled",
+    "sent": "Sent",
+    "failed": "Failed",
+}
+
+
+def _pipeline_event_step(event_type: str) -> str:
+    normalized = str(event_type or "").strip()
+    for step_key, _label, event_types in PIPELINE_OVERVIEW_STEPS:
+        if normalized in event_types:
+            return step_key
+    if normalized in PIPELINE_FAILED_EVENTS:
+        return "failed"
+    return ""
+
+
+@video_shorts_bp.route("/admin/leads/pipeline", methods=["GET"])
+@require_admin
+def admin_leads_pipeline_overview():
+    limit = 300
+    conn = get_db_readonly()
+    try:
+        lead_columns = table_columns(conn, "autopilot_leads")
+        event_columns = table_columns(conn, "lead_pipeline_events")
+        if "pipeline_state" not in lead_columns or not event_columns:
+            leads = []
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                    CAST(l.id AS VARCHAR),
+                    l.creator_name,
+                    l.recipient_name,
+                    l.creator_email,
+                    l.created_at,
+                    COALESCE(l.pipeline_state, 'new') AS pipeline_state,
+                    l.first_video_id,
+                    v.title,
+                    v.video_id,
+                    COALESCE(
+                        (
+                            SELECT MAX(e.created_at)
+                            FROM lead_pipeline_events e
+                            WHERE CAST(e.lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                        ),
+                        l.created_at
+                    ) AS last_activity_at
+                FROM autopilot_leads l
+                LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+                WHERE l.converted_at IS NULL
+                ORDER BY last_activity_at DESC NULLS LAST, l.created_at DESC NULLS LAST, l.id DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchall()
+            lead_ids = [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
+            events_by_lead: Dict[str, List[Any]] = {lead_id: [] for lead_id in lead_ids}
+            if lead_ids:
+                placeholders = ", ".join(["?"] * len(lead_ids))
+                event_rows = conn.execute(
+                    f"""
+                    SELECT CAST(lead_id AS VARCHAR), event_type, from_state, to_state, detail, created_at
+                    FROM lead_pipeline_events
+                    WHERE CAST(lead_id AS VARCHAR) IN ({placeholders})
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    lead_ids,
+                ).fetchall()
+                for event_row in event_rows:
+                    events_by_lead.setdefault(str(event_row[0] or ""), []).append(event_row)
+
+            leads = []
+            for row in rows:
+                lead_id = str(row[0] or "").strip()
+                state = str(row[5] or "new").strip().lower() or "new"
+                cells = {step_key: {"at": "", "event_type": "", "is_failed": False} for step_key, _label, _types in PIPELINE_OVERVIEW_STEPS}
+                failed_event = None
+                last_activity_at = row[9]
+                for event_row in events_by_lead.get(lead_id, []):
+                    event_type = str(event_row[1] or "").strip()
+                    step_key = _pipeline_event_step(event_type)
+                    if event_type in PIPELINE_FAILED_EVENTS:
+                        failed_event = event_row
+                        continue
+                    if not step_key or step_key == "failed" or step_key not in cells:
+                        continue
+                    if not cells[step_key]["at"]:
+                        cells[step_key] = {
+                            "at": _format_datetime_pst(event_row[5]),
+                            "event_type": event_type,
+                            "is_failed": False,
+                        }
+                failed_step = ""
+                if failed_event:
+                    failed_step = _pipeline_event_step(str(failed_event[1] or "")) or "failed"
+                    if failed_step == "failed":
+                        failed_step = {
+                            "clip_selection_failed": "plan",
+                            "selected_generation_failed": "generate",
+                            "selected_generation_timeout": "generate",
+                            "email_schedule_failed": "schedule",
+                            "approved_auto_schedule_failed": "schedule",
+                        }.get(str(failed_event[1] or ""), "schedule")
+                    if failed_step in cells:
+                        cells[failed_step] = {
+                            "at": _format_datetime_pst(failed_event[5]),
+                            "event_type": str(failed_event[1] or ""),
+                            "is_failed": True,
+                        }
+                leads.append(
+                    {
+                        "id": lead_id,
+                        "creator_name": str(row[1] or "").strip() or "Unknown creator",
+                        "recipient_name": str(row[2] or "").strip(),
+                        "creator_email": str(row[3] or "").strip(),
+                        "created_at": _format_datetime_pst(row[4]),
+                        "pipeline_state": state,
+                        "pipeline_state_label": PIPELINE_STATE_LABELS.get(state, state.replace("_", " ").title()),
+                        "is_failed": state == "failed",
+                        "first_video_id": int(row[6]) if row[6] is not None else None,
+                        "video_title": str(row[7] or "").strip() or "Source video unavailable",
+                        "youtube_video_id": str(row[8] or "").strip(),
+                        "last_activity_at": _format_datetime_pst(last_activity_at),
+                        "cells": cells,
+                    }
+                )
+    finally:
+        conn.close()
+
+    return render_template(
+        "shorts_admin_pipeline_overview.html",
+        admin_title="Pipeline Overview",
+        leads=leads,
+        steps=PIPELINE_OVERVIEW_STEPS,
+        total_leads=len(leads),
+        limit=limit,
+    )
+
+
 @video_shorts_bp.route("/admin/leads/<lead_id>/email", methods=["POST"])
 @require_admin
 def admin_provision_discovery_lead_email(lead_id: str):

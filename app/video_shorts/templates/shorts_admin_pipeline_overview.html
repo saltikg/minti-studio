@@ -1,0 +1,156 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Pipeline Overview{% endblock %}
+{% block admin_heading %}Pipeline Overview{% endblock %}
+{% block admin_subheading %}
+  <p>Read-only timeline overview from lead pipeline events. Sorted by latest movement first.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .pipeline-overview-meta {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+    }
+    .pipeline-overview-wrap {
+      overflow-x: auto;
+    }
+    .pipeline-overview-table {
+      width: 100%;
+      min-width: 1120px;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .pipeline-overview-table th,
+    .pipeline-overview-table td {
+      padding: 12px 14px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+    .pipeline-overview-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .pipeline-overview-table tr:last-child td {
+      border-bottom: 0;
+    }
+    .pipeline-overview-table tr.is-failed td {
+      background: rgba(127, 29, 29, 0.18);
+    }
+    .pipeline-lead {
+      min-width: 260px;
+      white-space: normal;
+    }
+    .pipeline-lead-name {
+      font-weight: 800;
+      line-height: 1.25;
+    }
+    .pipeline-lead-meta,
+    .pipeline-event-name {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.82rem;
+      margin-top: 4px;
+    }
+    .pipeline-time {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 128px;
+    }
+    .pipeline-time.is-empty {
+      color: rgba(255, 255, 255, 0.28);
+    }
+    .pipeline-time.is-failed {
+      color: #fecaca;
+      font-weight: 800;
+    }
+    .pipeline-status {
+      display: inline-flex;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+      background: rgba(45, 212, 191, 0.12);
+      color: #8ff3d8;
+      font-size: 0.82rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .pipeline-status.awaiting-approval {
+      border-color: rgba(59, 130, 246, 0.42);
+      background: rgba(59, 130, 246, 0.18);
+      color: #bfdbfe;
+    }
+    .pipeline-status.scheduled,
+    .pipeline-status.sent {
+      border-color: rgba(34, 197, 94, 0.38);
+      background: rgba(34, 197, 94, 0.16);
+      color: #bbf7d0;
+    }
+    .pipeline-status.failed {
+      border-color: rgba(248, 113, 113, 0.42);
+      background: rgba(248, 113, 113, 0.15);
+      color: #fecaca;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+      <div class="pipeline-overview-meta">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} shown · latest {{ limit }} · Pacific time</div>
+      <a href="{{ url_for('video_shorts_bp.admin_leads') }}" class="btn btn-sm btn-outline-light">Leads</a>
+    </div>
+
+    <div class="pipeline-overview-wrap">
+      <table class="pipeline-overview-table">
+        <thead>
+          <tr>
+            <th>Lead</th>
+            <th>Eklendi</th>
+            {% for _key, label, _events in steps %}
+              <th>{{ label }}</th>
+            {% endfor %}
+            <th>Durum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lead in leads %}
+            <tr class="{{ 'is-failed' if lead.is_failed else '' }}">
+              <td class="pipeline-lead">
+                <div class="pipeline-lead-name">{{ lead.recipient_name or lead.creator_name }}</div>
+                <div class="pipeline-lead-meta">{{ lead.creator_email or 'No email' }}</div>
+                <div class="pipeline-lead-meta">{{ lead.video_title }}</div>
+              </td>
+              <td>
+                <span class="pipeline-time {{ 'is-empty' if not lead.created_at else '' }}">{{ lead.created_at or '—' }}</span>
+              </td>
+              {% for key, _label, _events in steps %}
+                {% set cell = lead.cells[key] %}
+                <td>
+                  <span class="pipeline-time {{ 'is-empty' if not cell.at else '' }} {{ 'is-failed' if cell.is_failed else '' }}">
+                    <span>{{ cell.at or '—' }}</span>
+                    {% if cell.event_type %}
+                      <span class="pipeline-event-name">{{ cell.event_type }}</span>
+                    {% endif %}
+                  </span>
+                </td>
+              {% endfor %}
+              <td>
+                <span class="pipeline-status {{ lead.pipeline_state|replace('_', '-') }}">{{ lead.pipeline_state_label }}</span>
+                <div class="pipeline-lead-meta">Last: {{ lead.last_activity_at or '—' }}</div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="{{ steps|length + 3 }}" class="text-center text-white-50 py-4">No pipeline data yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

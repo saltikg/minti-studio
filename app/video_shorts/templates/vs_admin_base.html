@@ -175,10 +175,18 @@
       <nav class="vs-admin-nav" aria-label="Admin navigation">
         <a
           href="{{ url_for('video_shorts_bp.admin_leads') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/leads') %}is-active{% endif %}">
+          class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads' %}is-active{% endif %}">
           <span aria-hidden="true">●</span>
           <span class="vs-admin-nav-label">
             <span>Leads</span>
+          </span>
+        </a>
+        <a
+          href="{{ url_for('video_shorts_bp.admin_leads_pipeline_overview') }}"
+          class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads_pipeline_overview' %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Pipeline</span>
           </span>
         </a>
         <a
