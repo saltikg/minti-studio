@@ -20006,6 +20006,23 @@ def autoclip_video(video_pk):
             status=404,
             category="danger",
         )
+    try:
+        record_lead_pipeline_event_for_scope(
+            owner_user_id=target_owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            event_type="generate_started",
+            to_state="generating",
+            detail={
+                "video_pk": int(video_pk),
+                "video_id": vid,
+                "plan_index": int(plan_index),
+                "render_mode": "sync",
+                "clip_filename": plan_entry.get("clip_filename"),
+            },
+        )
+    except Exception as exc:
+        current_app.logger.warning("Failed to record lead generate event video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     font_choice, sub_font_name, title_font_size, sub_font_size, sub_margin, title_margin, title_bg_color, title_bg_alpha, title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha, subtitle_text_alpha = _get_font_settings_from_session(
         video_font_key=video_font_key,
