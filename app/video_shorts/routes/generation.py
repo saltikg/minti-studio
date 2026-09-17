@@ -315,6 +315,7 @@ from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_RENDER_SHORT,
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
@@ -4461,7 +4462,8 @@ def _evaluate_lead_generation_approval_gate(
         conn.close()
 
 
-AUTOPILOT_GENERATE_TIMEOUT_SECONDS = 60 * 60
+AUTOPILOT_GENERATE_PROCESSING_TIMEOUT_SECONDS = 30 * 60
+AUTOPILOT_GENERATE_QUEUE_BACKLOG_LIMIT = 12
 AUTOPILOT_PLAN_TIMEOUT_SECONDS = 30 * 60
 AUTOPILOT_OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
 AUTOPILOT_OUTREACH_SLOT_HOUR = 9
@@ -4500,6 +4502,99 @@ def _latest_lead_pipeline_event_at(conn, lead_id: str, event_types: List[str]) -
         [lead_id, *event_types],
     ).fetchone()
     return _as_utc_datetime(row[0]) if row else None
+
+
+def _active_render_queue_depth(conn) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM shorts_render_jobs
+        WHERE type = ?
+          AND status = 'queued'
+        """,
+        [JOB_TYPE_RENDER_SHORT],
+    ).fetchone()
+    try:
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def _load_render_jobs_by_id(conn, job_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    cleaned = [str(job_id or "").strip() for job_id in job_ids or [] if str(job_id or "").strip()]
+    if not cleaned:
+        return {}
+    placeholders = ", ".join(["?"] * len(cleaned))
+    rows = conn.execute(
+        f"""
+        SELECT
+            CAST(id AS VARCHAR),
+            status,
+            started_at,
+            finished_at,
+            error
+        FROM shorts_render_jobs
+        WHERE CAST(id AS VARCHAR) IN ({placeholders})
+        """,
+        cleaned,
+    ).fetchall()
+    jobs: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        job_id = str(row[0] or "").strip()
+        if not job_id:
+            continue
+        jobs[job_id] = {
+            "id": job_id,
+            "status": str(row[1] or "").strip().lower(),
+            "started_at": _as_utc_datetime(row[2]),
+            "finished_at": _as_utc_datetime(row[3]),
+            "error": row[4],
+        }
+    return jobs
+
+
+def _selected_processing_timeout_entries(
+    entries: List[Dict[str, Any]],
+    *,
+    now: datetime,
+    timeout_seconds: int,
+) -> List[Dict[str, Any]]:
+    job_ids = [
+        str(entry.get("render_job_id") or "").strip()
+        for entry in entries or []
+        if isinstance(entry, dict) and str(entry.get("render_job_id") or "").strip()
+    ]
+    conn = get_db_readonly()
+    try:
+        jobs_by_id = _load_render_jobs_by_id(conn, job_ids)
+    finally:
+        conn.close()
+
+    timed_out: List[Dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "").strip().lower()
+        if status in {"created", "done", "failed", "error"}:
+            continue
+        job_id = str(entry.get("render_job_id") or "").strip()
+        job = jobs_by_id.get(job_id)
+        if not job:
+            continue
+        job_status = str(job.get("status") or "").strip().lower()
+        if job_status != "processing":
+            continue
+        started_at = job.get("started_at")
+        if started_at and (now - started_at).total_seconds() >= int(timeout_seconds):
+            timed_out.append(
+                {
+                    **entry,
+                    "render_job_status": job_status,
+                    "render_job_started_at": started_at.isoformat(),
+                    "render_job_id": job_id,
+                }
+            )
+    return timed_out
 
 
 def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -5088,7 +5183,12 @@ def _enqueue_selected_lead_render(
         }
 
 
-def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = AUTOPILOT_GENERATE_TIMEOUT_SECONDS) -> bool:
+def process_planned_lead_autogenerate(
+    *,
+    limit: int = 1,
+    processing_timeout_seconds: int = AUTOPILOT_GENERATE_PROCESSING_TIMEOUT_SECONDS,
+    queue_backlog_limit: int = AUTOPILOT_GENERATE_QUEUE_BACKLOG_LIMIT,
+) -> bool:
     conn = get_db()
     processed_any = False
     try:
@@ -5175,22 +5275,17 @@ def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = 
                     continue
             except Exception as exc:
                 current_app.logger.warning("Autopilot gate evaluation failed lead_id=%s: %s", lead_id, exc)
-            started_at = None
-            conn_age = get_db_readonly()
-            try:
-                started_at = _latest_lead_pipeline_event_at(
-                    conn_age,
-                    lead_id,
-                    ["planned_auto_generate_triggered", "generate_started"],
-                )
-            finally:
-                conn_age.close()
             incomplete = [
                 entry
                 for entry in selected
                 if str(entry.get("status") or "").strip().lower() not in {"created", "done"}
             ]
-            if incomplete and started_at and (now_utc - started_at).total_seconds() >= int(timeout_seconds):
+            timed_out = _selected_processing_timeout_entries(
+                incomplete,
+                now=now_utc,
+                timeout_seconds=int(processing_timeout_seconds),
+            )
+            if timed_out:
                 conn_timeout = get_db()
                 try:
                     record_lead_pipeline_event(
@@ -5200,9 +5295,11 @@ def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = 
                         to_state="failed",
                         detail={
                             "mechanism": "cron_poll",
-                            "timeout_seconds": int(timeout_seconds),
+                            "timeout_basis": "render_job_processing_started_at",
+                            "timeout_seconds": int(processing_timeout_seconds),
                             "video_pk": video_pk,
                             "video_id": video_id,
+                            "timed_out": _summarize_selected_plan_entries(timed_out),
                             "incomplete": _summarize_selected_plan_entries(incomplete),
                         },
                     )
@@ -5219,6 +5316,19 @@ def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = 
         if not to_enqueue:
             continue
         if pipeline_state == "planned":
+            conn_queue = get_db_readonly()
+            try:
+                queued_depth = _active_render_queue_depth(conn_queue)
+            finally:
+                conn_queue.close()
+            if queued_depth >= max(1, int(queue_backlog_limit)):
+                current_app.logger.info(
+                    "Autopilot planned->generate paused by render queue backlog lead_id=%s queued=%s limit=%s",
+                    lead_id,
+                    queued_depth,
+                    queue_backlog_limit,
+                )
+                continue
             conn_start = get_db()
             try:
                 record_lead_pipeline_event(
@@ -5230,6 +5340,9 @@ def process_planned_lead_autogenerate(*, limit: int = 1, timeout_seconds: int = 
                         "mechanism": "cron_poll",
                         "selected_count": len(selected),
                         "enqueue_count": len(to_enqueue),
+                        "queue_backlog_limit": int(queue_backlog_limit),
+                        "queued_render_jobs_before_enqueue": queued_depth,
+                        "processing_timeout_seconds": int(processing_timeout_seconds),
                         "video_pk": video_pk,
                         "video_id": video_id,
                         "selected": _summarize_selected_plan_entries(selected),
