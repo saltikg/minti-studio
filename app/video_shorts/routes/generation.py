@@ -16344,7 +16344,6 @@ def remove_plan_entry(video_pk):
 
 def _find_plan_entry(
     plan_entries: List[Dict[str, Any]],
-    *,
     plan_index_raw: str = "",
     filename: str = "",
 ) -> Optional[Dict[str, Any]]:
