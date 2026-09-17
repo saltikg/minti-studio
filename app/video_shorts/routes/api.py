@@ -772,6 +772,7 @@ def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
                 COALESCE(c.channel_name, l.creator_name, '') AS channel_name,
                 COALESCE(c.channel_description, '') AS channel_description,
                 v.video_id AS source_video_id,
+                COALESCE(v.title, '') AS source_video_title,
                 ose.sent_at AS sent_at
             FROM autopilot_leads l
             JOIN short_share_links sl
@@ -793,6 +794,7 @@ def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
                 COALESCE(c.channel_name, l.creator_name, '') AS channel_name,
                 COALESCE(c.channel_description, '') AS channel_description,
                 v.video_id AS source_video_id,
+                COALESCE(v.title, '') AS source_video_title,
                 sl.emailed_at AS sent_at
             FROM autopilot_leads l
             JOIN short_share_links sl
@@ -810,6 +812,7 @@ def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
                 channel_name,
                 channel_description,
                 source_video_id,
+                source_video_title,
                 sent_at,
                 ROW_NUMBER() OVER (
                     PARTITION BY youtube_channel_id
@@ -823,6 +826,7 @@ def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
             r.channel_name,
             r.channel_description,
             r.source_video_id,
+            r.source_video_title,
             COALESCE(t.full_text, '') AS transcript_text
         FROM ranked r
         LEFT JOIN youtube_transcripts t ON t.video_id = r.source_video_id
@@ -842,7 +846,8 @@ def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
                 "channel_name": str(row[2] or "").strip(),
                 "channel_description": str(row[3] or "").strip(),
                 "source_video_id": str(row[4] or "").strip(),
-                "transcript_text": str(row[5] or "").strip(),
+                "source_video_title": str(row[5] or "").strip(),
+                "transcript_text": str(row[6] or "").strip(),
             }
         )
     return seeds
@@ -909,6 +914,68 @@ def _generate_seed_icp_profile(profile_items: List[Dict[str, Any]]) -> Dict[str,
         "profile_text": str(payload.get("profile_text") or "").strip()[:5000],
         "keywords": _normalize_discovery_keywords(payload.get("keywords"))[:15],
     }
+
+
+def _normalize_seed_search_keywords(raw_keywords: Any, *, limit: int = 20) -> List[str]:
+    if isinstance(raw_keywords, list):
+        values = raw_keywords
+    else:
+        values = re.split(r"[\n,;]+", str(raw_keywords or ""))
+    keywords: List[str] = []
+    seen = set()
+    blocked = ("solo educator", "online coach", "consultant", "youtube channel", "expert creator")
+    for value in values:
+        keyword = " ".join(str(value or "").strip().strip('"').split())
+        if not keyword:
+            continue
+        lowered = keyword.lower()
+        if lowered in seen or any(term == lowered for term in blocked):
+            continue
+        seen.add(lowered)
+        keywords.append(keyword[:120])
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[str]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    compact_items = [
+        {
+            "channel_name": str(item.get("channel_name") or "")[:160],
+            "source_video_title": str(item.get("source_video_title") or "")[:180],
+            "transcript_summary": str(item.get("transcript_summary") or "")[:1200],
+        }
+        for item in profile_items
+    ]
+    prompt = (
+        "These are real channels we target. Produce 20 YouTube search queries that would surface MORE channels "
+        "making videos like these. Use concrete topic language a viewer types into YouTube, not category labels "
+        "describing the creators.\n\n"
+        "Good examples: chronic fatigue recovery, mindset shifts after 50, how to journal for personal growth, "
+        "discipline neuroscience, frugal living tips.\n\n"
+        "Avoid meta or industry labels like: solo educator, online coach, consultant, consultant YouTube channel, "
+        "expert creator, personal brand, content creator.\n"
+        "Each query must be 2-5 words, specific to a topic/audience/problem, not a job title. "
+        "Return STRICT JSON only: {\"keywords\":[\"query\", ...]}.\n\n"
+        "Seed channel signals:\n"
+        + json.dumps(compact_items, ensure_ascii=False)
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You create searchable YouTube topic queries from seed video titles and transcript summaries."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.35,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+        return _normalize_seed_search_keywords(payload.get("keywords"), limit=20)
+    except Exception:
+        return _normalize_seed_search_keywords(content, limit=20)
 
 
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
@@ -1330,7 +1397,7 @@ def admin_seed_build_profile():
     auth_error = _admin_json_auth_error()
     if auth_error:
         payload, status = auth_error
-        payload.update({"seed_used": 0, "summaries_created": 0, "keywords": [], "profile_text": ""})
+        payload.update({"seed_used": 0, "summaries_created": 0, "keywords": [], "profile_text": "", "seed_source_video_titles": []})
         return jsonify(payload), status
 
     conn = None
@@ -1345,6 +1412,7 @@ def admin_seed_build_profile():
                     "summaries_created": 0,
                     "keywords": [],
                     "profile_text": "",
+                    "seed_source_video_titles": [],
                     "errors": [{"error": "no_seed_transcripts", "message": "No emailed seed transcripts were found."}],
                 }
             ), 404
@@ -1389,14 +1457,22 @@ def admin_seed_build_profile():
                     "channel_id": seed["channel_id"],
                     "channel_name": seed.get("channel_name") or "",
                     "channel_description": seed.get("channel_description") or "",
+                    "source_video_title": seed.get("source_video_title") or "",
                     "transcript_summary": summary,
                 }
             )
 
-        profile = _generate_seed_icp_profile(profile_items)
-        profile_text = profile["profile_text"]
-        keywords = profile["keywords"]
-        existing_profile = conn.execute("SELECT id FROM icp_profile WHERE id = 1").fetchone()
+        source_video_titles = [
+            str(item.get("source_video_title") or "").strip()
+            for item in profile_items
+            if str(item.get("source_video_title") or "").strip()
+        ]
+        keywords = _generate_seed_search_keywords(profile_items)
+        existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
+        profile_text = str((existing_profile or [None])[0] or "").strip()
+        if not profile_text:
+            profile = _generate_seed_icp_profile(profile_items)
+            profile_text = profile["profile_text"]
         if existing_profile:
             conn.execute(
                 """
@@ -1422,6 +1498,7 @@ def admin_seed_build_profile():
                 "summaries_created": summaries_created,
                 "keywords": keywords,
                 "profile_text": profile_text,
+                "seed_source_video_titles": source_video_titles,
                 "errors": [],
             }
         )
@@ -1439,6 +1516,7 @@ def admin_seed_build_profile():
                 "summaries_created": 0,
                 "keywords": [],
                 "profile_text": "",
+                "seed_source_video_titles": [],
                 "errors": [{"error": "seed_profile_failed", "message": str(exc) or "Seed profile build failed."}],
             }
         ), 500
