@@ -15188,6 +15188,8 @@ def admin_discovery_lead_pipeline():
         totals = {"total": 0, "with_email": 0, "icp_fit": 0, "pending_email_enrichment": 0}
         keyword_summary = {"total": 0, "queued": 0, "searched": 0}
         leads: List[Dict[str, Any]] = []
+        keyword_queue_rows: List[Dict[str, Any]] = []
+        seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
         total_pages = 1
 
         if has_discovery:
@@ -15209,7 +15211,8 @@ def admin_discovery_lead_pipeline():
                     COUNT(*) FILTER (
                         WHERE status IN ('icp_qualified', 'email_failed')
                           AND COALESCE(creator_email, '') = ''
-                    )
+                    ),
+                    COUNT(*) FILTER (WHERE COALESCE(is_seed, false) IS TRUE)
                 FROM discovery_leads
                 """
             ).fetchone()
@@ -15219,12 +15222,14 @@ def admin_discovery_lead_pipeline():
                 "icp_fit": int(total_row[2] or 0),
                 "pending_email_enrichment": int(total_row[3] or 0),
             }
+            seed_summary["promoted_leads"] = int(total_row[4] or 0)
             total_pages = max(1, int(math.ceil(totals["total"] / per_page))) if totals["total"] else 1
             row_limit = totals["total"] if wants_csv else per_page
             row_offset = 0 if wants_csv else offset
             rows = conn.execute(
                 """
                 SELECT
+                    id,
                     youtube_channel_id,
                     channel_url,
                     channel_title,
@@ -15243,7 +15248,9 @@ def admin_discovery_lead_pipeline():
                     last_discovered_at,
                     matched_keyword,
                     email_enriched_at,
-                    email_enrichment_error
+                    email_enrichment_error,
+                    is_seed,
+                    promoted_at
                 FROM discovery_leads
                 ORDER BY last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC
                 LIMIT ? OFFSET ?
@@ -15252,25 +15259,28 @@ def admin_discovery_lead_pipeline():
             ).fetchall()
             leads = [
                 {
-                    "youtube_channel_id": str(row[0] or ""),
-                    "channel_url": str(row[1] or ""),
-                    "channel_title": str(row[2] or row[0] or "Channel"),
-                    "subscriber_count": row[3],
-                    "longform_last_60d": row[4],
-                    "shorts_last_15d": row[5],
-                    "icp_fit": bool(row[6]) if row[6] is not None else None,
-                    "creator_email": str(row[7] or ""),
-                    "email_confidence": row[8],
-                    "email_role": str(row[9] or ""),
-                    "is_generic_email": bool(row[10]) if row[10] is not None else None,
-                    "website": str(row[11] or ""),
-                    "lead_tier": str(row[12] or ""),
-                    "status": str(row[13] or "discovered"),
-                    "last_seen_at": _format_datetime_pst(row[14]),
-                    "last_discovered_at": _format_datetime_pst(row[15]),
-                    "matched_keyword": str(row[16] or ""),
-                    "email_enriched_at": _format_datetime_pst(row[17]),
-                    "email_enrichment_error": str(row[18] or ""),
+                    "id": row[0],
+                    "youtube_channel_id": str(row[1] or ""),
+                    "channel_url": str(row[2] or ""),
+                    "channel_title": str(row[3] or row[1] or "Channel"),
+                    "subscriber_count": row[4],
+                    "longform_last_60d": row[5],
+                    "shorts_last_15d": row[6],
+                    "icp_fit": bool(row[7]) if row[7] is not None else None,
+                    "creator_email": str(row[8] or ""),
+                    "email_confidence": row[9],
+                    "email_role": str(row[10] or ""),
+                    "is_generic_email": bool(row[11]) if row[11] is not None else None,
+                    "website": str(row[12] or ""),
+                    "lead_tier": str(row[13] or ""),
+                    "status": str(row[14] or "discovered"),
+                    "last_seen_at": _format_datetime_pst(row[15]),
+                    "last_discovered_at": _format_datetime_pst(row[16]),
+                    "matched_keyword": str(row[17] or ""),
+                    "email_enriched_at": _format_datetime_pst(row[18]),
+                    "email_enrichment_error": str(row[19] or ""),
+                    "is_seed": bool(row[20]) if row[20] is not None else False,
+                    "promoted_at": _format_datetime_pst(row[21]),
                 }
                 for row in rows
             ]
@@ -15290,9 +15300,35 @@ def admin_discovery_lead_pipeline():
                 "queued": int(keyword_row[1] or 0),
                 "searched": int(keyword_row[2] or 0),
             }
+            keyword_rows = conn.execute(
+                """
+                SELECT keyword, source, status, priority, times_searched, found_count, last_searched_at, created_at
+                FROM keyword_queue
+                ORDER BY found_count DESC, priority ASC, created_at DESC
+                LIMIT 50
+                """
+            ).fetchall()
+            keyword_queue_rows = [
+                {
+                    "keyword": str(row[0] or ""),
+                    "source": str(row[1] or ""),
+                    "status": str(row[2] or ""),
+                    "priority": row[3],
+                    "times_searched": row[4],
+                    "found_count": row[5],
+                    "last_searched_at": _format_datetime_pst(row[6]),
+                    "created_at": _format_datetime_pst(row[7]),
+                }
+                for row in keyword_rows
+            ]
+
+        if table_columns(conn, "seed_channel_profiles"):
+            seed_row = conn.execute("SELECT COUNT(*) FROM seed_channel_profiles").fetchone()
+            seed_summary["seed_profiles"] = int((seed_row[0] if seed_row else 0) or 0)
 
         if wants_csv:
             headers = [
+                "id",
                 "youtube_channel_id",
                 "channel_url",
                 "channel_title",
@@ -15312,6 +15348,8 @@ def admin_discovery_lead_pipeline():
                 "matched_keyword",
                 "email_enriched_at",
                 "email_enrichment_error",
+                "is_seed",
+                "promoted_at",
             ]
             lines = [",".join(headers)]
             for lead in leads:
@@ -15330,6 +15368,8 @@ def admin_discovery_lead_pipeline():
         status_counts=status_counts,
         totals=totals,
         keyword_summary=keyword_summary,
+        keyword_queue_rows=keyword_queue_rows,
+        seed_summary=seed_summary,
         leads=leads,
         page=page,
         per_page=per_page,

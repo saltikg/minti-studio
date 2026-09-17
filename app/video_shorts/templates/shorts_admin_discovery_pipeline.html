@@ -107,6 +107,28 @@
       padding: 14px;
       margin-bottom: 18px;
     }
+    .discovery-action-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .discovery-action-panel {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 14px;
+    }
+    .discovery-action-panel h3 {
+      color: rgba(255, 255, 255, 0.94);
+      font-size: 0.95rem;
+      font-weight: 850;
+      margin: 0 0 10px;
+    }
+    .discovery-select-cell {
+      width: 42px;
+      min-width: 42px;
+    }
     .discovery-pager {
       display: flex;
       align-items: center;
@@ -117,6 +139,7 @@
     }
     @media (max-width: 991.98px) {
       .discovery-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .discovery-action-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 575.98px) {
       .discovery-summary-grid { grid-template-columns: 1fr; }
@@ -146,6 +169,33 @@
         <div class="discovery-muted">Pending: {{ totals.pending_email_enrichment }} · ~$0.005/channel; refresh to see worker progress.</div>
       </div>
       <div id="emailEnrichStatus" class="discovery-muted mt-2"></div>
+    </div>
+
+    <div class="discovery-action-grid">
+      <div class="discovery-action-panel">
+        <h3>Seed promotion</h3>
+        <button id="promoteSeedButton" type="button" class="btn btn-sm btn-outline-warning" {% if not has_discovery %}disabled{% endif %}>Promote selected to seed</button>
+        <div class="discovery-muted mt-2">Promoted leads: {{ seed_summary.promoted_leads }} · Seed profiles: {{ seed_summary.seed_profiles }}</div>
+        <div id="promoteSeedStatus" class="discovery-muted mt-2"></div>
+      </div>
+      <div class="discovery-action-panel">
+        <h3>Seed keywords</h3>
+        <button id="seedKeywordButton" type="button" class="btn btn-sm btn-outline-info">Generate keywords from seed pool</button>
+        <div class="discovery-muted mt-2">Writes deduped seed keywords into the queue.</div>
+        <div id="seedKeywordStatus" class="discovery-muted mt-2"></div>
+      </div>
+      <div class="discovery-action-panel">
+        <h3>Queue discovery</h3>
+        <div class="d-flex align-items-end gap-2 flex-wrap">
+          <div>
+            <label for="queueTakeN" class="form-label mb-1">Take</label>
+            <input id="queueTakeN" class="form-control form-control-sm" type="number" min="1" max="20" value="10" style="width: 84px;">
+          </div>
+          <button id="queueDiscoveryButton" type="button" class="btn btn-sm btn-success" {% if keyword_summary.queued|int == 0 %}disabled{% endif %}>Run discovery from queue</button>
+        </div>
+        <div class="discovery-muted mt-2">Queued keywords: {{ keyword_summary.queued }}</div>
+        <div id="queueDiscoveryStatus" class="discovery-muted mt-2"></div>
+      </div>
     </div>
 
     <div class="discovery-summary-grid">
@@ -206,6 +256,39 @@
     </div>
 
     {% if has_keywords %}
+      <div class="discovery-table-wrap mb-4">
+        <table class="discovery-table">
+          <thead>
+            <tr>
+              <th>Keyword</th>
+              <th>Status</th>
+              <th>Source</th>
+              <th>Searches</th>
+              <th>Found</th>
+              <th>Last searched</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for keyword in keyword_queue_rows %}
+              <tr>
+                <td>{{ keyword.keyword }}</td>
+                <td><span class="discovery-status {{ keyword.status }}">{{ keyword.status }}</span></td>
+                <td>{{ keyword.source }}</td>
+                <td>{{ keyword.times_searched or 0 }}</td>
+                <td>{{ keyword.found_count or 0 }}</td>
+                <td>{{ keyword.last_searched_at or '' }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="6" class="text-center text-white-50 py-4">No queued keywords yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    {% if has_keywords %}
       <div class="discovery-muted mb-3">Keyword queue: {{ keyword_summary.total }} total · {{ keyword_summary.queued }} queued · {{ keyword_summary.searched }} searched</div>
     {% else %}
       <div class="discovery-muted mb-3">keyword_queue table is not available yet.</div>
@@ -215,6 +298,7 @@
       <table class="discovery-table">
         <thead>
           <tr>
+            <th class="discovery-select-cell">Seed</th>
             <th>Channel</th>
             <th>Subscribers</th>
             <th>Longform 60d</th>
@@ -234,6 +318,16 @@
         <tbody>
           {% for lead in leads %}
             <tr>
+              <td class="discovery-select-cell">
+                {% if lead.status == 'email_enriched' and lead.creator_email and not lead.is_seed %}
+                  <input class="seed-lead-checkbox" type="checkbox" value="{{ lead.id }}">
+                {% elif lead.is_seed %}
+                  <span class="discovery-status icp_qualified">seed</span>
+                  {% if lead.promoted_at %}
+                    <div class="discovery-muted">{{ lead.promoted_at }}</div>
+                  {% endif %}
+                {% endif %}
+              </td>
               <td class="discovery-channel">
                 <a href="{{ lead.channel_url or ('https://www.youtube.com/channel/' ~ lead.youtube_channel_id) }}" target="_blank" rel="noopener">{{ lead.channel_title }}</a>
                 <div class="discovery-muted">{{ lead.youtube_channel_id }}</div>
@@ -269,7 +363,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="14" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+              <td colspan="15" class="text-center text-white-50 py-4">No discovery leads yet.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -321,6 +415,88 @@
           button.disabled = false;
         }
       });
+    })();
+
+    (function () {
+      async function postJson(url, payload) {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload || {})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          const message = (data.errors && data.errors[0] && data.errors[0].message) || 'Request failed.';
+          throw new Error(message);
+        }
+        return data;
+      }
+
+      const promoteButton = document.getElementById('promoteSeedButton');
+      const promoteStatus = document.getElementById('promoteSeedStatus');
+      if (promoteButton && promoteStatus) {
+        promoteButton.addEventListener('click', async function () {
+          const leadIds = Array.from(document.querySelectorAll('.seed-lead-checkbox:checked')).map((input) => input.value);
+          if (!leadIds.length) {
+            promoteStatus.textContent = 'Select at least one eligible lead.';
+            return;
+          }
+          promoteButton.disabled = true;
+          promoteStatus.textContent = 'Promoting seed lead...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_seed") }}', { lead_ids: leadIds });
+            promoteStatus.textContent = `Promoted ${data.promoted}; summaries ${data.summaries_created}; skipped ${data.skipped.length}. Refresh to see seed marks.`;
+          } catch (error) {
+            promoteStatus.textContent = error.message || 'Seed promotion failed.';
+          } finally {
+            promoteButton.disabled = false;
+          }
+        });
+      }
+
+      const seedKeywordButton = document.getElementById('seedKeywordButton');
+      const seedKeywordStatus = document.getElementById('seedKeywordStatus');
+      if (seedKeywordButton && seedKeywordStatus) {
+        seedKeywordButton.addEventListener('click', async function () {
+          seedKeywordButton.disabled = true;
+          seedKeywordStatus.textContent = 'Generating seed keywords...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_seed_generate_keywords") }}', {});
+            seedKeywordStatus.textContent = `Generated ${data.generated}; new ${data.newly_enqueued}; already present ${data.already_present}. ${data.keywords.join(', ')}`;
+          } catch (error) {
+            seedKeywordStatus.textContent = error.message || 'Seed keyword generation failed.';
+          } finally {
+            seedKeywordButton.disabled = false;
+          }
+        });
+      }
+
+      const queueButton = document.getElementById('queueDiscoveryButton');
+      const queueTakeInput = document.getElementById('queueTakeN');
+      const queueStatus = document.getElementById('queueDiscoveryStatus');
+      if (queueButton && queueTakeInput && queueStatus) {
+        queueButton.addEventListener('click', async function () {
+          const takeN = Math.max(1, Math.min(20, parseInt(queueTakeInput.value || '10', 10) || 10));
+          queueButton.disabled = true;
+          queueStatus.textContent = 'Running discovery from queue...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_lead_discovery_test") }}', {
+              use_queue: true,
+              take_n: takeN,
+              ai_icp: true,
+              max_results_per_keyword: 20,
+              max_channels_enriched: 100
+            });
+            const counts = Object.entries(data.keyword_found_counts || {}).map(([keyword, count]) => `${keyword}: ${count}`).join('; ');
+            queueStatus.textContent = `Consumed ${data.queue_taken}; rows ${data.rows_returned}; persisted ${JSON.stringify(data.persistence || {})}; found ${counts || '0'}. Refresh to see queue updates.`;
+          } catch (error) {
+            queueStatus.textContent = error.message || 'Queue discovery failed.';
+          } finally {
+            queueButton.disabled = false;
+          }
+        });
+      }
     })();
   </script>
 {% endblock %}

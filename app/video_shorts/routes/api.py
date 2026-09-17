@@ -67,6 +67,9 @@ LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT = 5
 LEAD_DISCOVERY_SEED_CHANNEL_LIMIT = 50
 LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
 LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT = 100
+LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT = 10
+LEAD_DISCOVERY_QUEUE_TAKE_MAX = 20
+SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -1116,6 +1119,191 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[
         return _normalize_seed_search_keywords(content, limit=20)
 
 
+def _fetch_recent_channel_titles(channel_id: str, *, limit: int = LEAD_DISCOVERY_SEED_RECENT_TITLES) -> List[str]:
+    clean_channel_id = str(channel_id or "").strip()
+    if not clean_channel_id:
+        return []
+    try:
+        channel_meta = get_channel_metadata(f"https://www.youtube.com/channel/{clean_channel_id}")
+        uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
+        if not uploads_playlist_id:
+            return []
+        batch = fetch_playlist_items_batch(
+            playlist_id=uploads_playlist_id,
+            max_results=max(1, min(int(limit or LEAD_DISCOVERY_SEED_RECENT_TITLES), LEAD_DISCOVERY_SEED_RECENT_TITLES)),
+        )
+    except Exception:
+        current_app.logger.exception("Could not fetch recent titles for promoted discovery seed channel=%s", clean_channel_id)
+        return []
+    titles: List[str] = []
+    for video in batch.get("videos") or []:
+        title = " ".join(str(video.get("title") or "").strip().split())
+        if title and title not in titles:
+            titles.append(title[:180])
+    return titles[:LEAD_DISCOVERY_SEED_RECENT_TITLES]
+
+
+def _summarize_promoted_discovery_seed(lead: Dict[str, Any], recent_titles: List[str]) -> str:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    prompt = (
+        "Create a 3-5 sentence synthetic seed summary for this promoted YouTube discovery lead. "
+        "There is no transcript, so infer only from the channel title, channel description, and recent video titles. "
+        "Focus on creator persona, audience, teaching style, expertise, offer signals, and recurring topics. "
+        "Return plain text only.\n\n"
+        f"Channel: {lead.get('channel_title') or lead.get('youtube_channel_id')}\n"
+        f"Channel description: {str(lead.get('channel_description') or '')[:1600]}\n"
+        f"Recent titles: {json.dumps(recent_titles[:LEAD_DISCOVERY_SEED_RECENT_TITLES], ensure_ascii=False)}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You summarize promoted creator-channel leads for seed-based ICP keyword discovery."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+    )
+    summary = " ".join((response.choices[0].message.content or "").strip().split())[:2800]
+    return f"{SYNTHETIC_SEED_PREFIX} {summary}".strip()
+
+
+def load_seed_pool(conn=None) -> List[Dict[str, Any]]:
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db_readonly()
+    try:
+        seed_rows = conn.execute(
+            """
+            SELECT
+                scp.channel_id,
+                scp.source_video_id,
+                scp.transcript_summary,
+                COALESCE(dl.channel_title, yc.channel_name, scp.channel_id) AS channel_name,
+                COALESCE(dl.channel_description, yc.channel_description, '') AS channel_description,
+                COALESCE(yv.title, '') AS source_video_title,
+                CASE WHEN scp.transcript_summary LIKE ? THEN 'synthetic' ELSE 'transcript' END AS seed_kind
+            FROM seed_channel_profiles scp
+            LEFT JOIN discovery_leads dl ON dl.youtube_channel_id = scp.channel_id
+            LEFT JOIN youtube_channels yc ON yc.youtube_channel_id = scp.channel_id
+            LEFT JOIN youtube_videos yv ON yv.video_id = scp.source_video_id
+            ORDER BY scp.created_at DESC NULLS LAST, scp.channel_id
+            """,
+            [f"{SYNTHETIC_SEED_PREFIX}%"],
+        ).fetchall()
+        pool: List[Dict[str, Any]] = []
+        seen = set()
+        for row in seed_rows:
+            channel_id = str(row[0] or "").strip()
+            summary = str(row[2] or "").strip()
+            if not channel_id or not summary:
+                continue
+            seen.add(channel_id)
+            pool.append(
+                {
+                    "channel_id": channel_id,
+                    "source_video_id": str(row[1] or "").strip(),
+                    "transcript_summary": summary,
+                    "channel_name": str(row[3] or channel_id).strip(),
+                    "channel_description": str(row[4] or "").strip(),
+                    "source_video_title": str(row[5] or "").strip(),
+                    "seed_kind": str(row[6] or "transcript"),
+                }
+            )
+
+        if "is_seed" in table_columns(conn, "discovery_leads"):
+            promoted_rows = conn.execute(
+                """
+                SELECT youtube_channel_id, channel_title, channel_description
+                FROM discovery_leads
+                WHERE COALESCE(is_seed, false) IS TRUE
+                ORDER BY promoted_at DESC NULLS LAST, id DESC
+                """
+            ).fetchall()
+            for row in promoted_rows:
+                channel_id = str(row[0] or "").strip()
+                if not channel_id or channel_id in seen:
+                    continue
+                pool.append(
+                    {
+                        "channel_id": channel_id,
+                        "source_video_id": "",
+                        "transcript_summary": f"{SYNTHETIC_SEED_PREFIX} {str(row[2] or '').strip()}"[:3000],
+                        "channel_name": str(row[1] or channel_id).strip(),
+                        "channel_description": str(row[2] or "").strip(),
+                        "source_video_title": "",
+                        "seed_kind": "synthetic",
+                    }
+                )
+        return pool
+    finally:
+        if owns_conn and conn:
+            conn.close()
+
+
+def _insert_keywords_into_queue(conn, keywords: List[str], *, source: str = "seed") -> Dict[str, Any]:
+    inserted = 0
+    already_present = 0
+    for keyword in keywords:
+        clean_keyword = " ".join(str(keyword or "").strip().split())[:120]
+        if not clean_keyword:
+            continue
+        existing = conn.execute("SELECT id FROM keyword_queue WHERE lower(keyword) = lower(?) LIMIT 1", [clean_keyword]).fetchone()
+        if existing:
+            already_present += 1
+            continue
+        conn.execute(
+            """
+            INSERT INTO keyword_queue (keyword, source, status, priority, created_at, updated_at)
+            VALUES (?, ?, 'queued', 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (keyword) DO NOTHING
+            """,
+            [clean_keyword, source],
+        )
+        inserted += 1
+    return {"newly_enqueued": inserted, "already_present": already_present}
+
+
+def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT id, keyword
+        FROM keyword_queue
+        WHERE status = 'queued'
+          AND (next_run_at IS NULL OR next_run_at <= CURRENT_TIMESTAMP)
+        ORDER BY priority ASC, created_at ASC, id ASC
+        LIMIT ?
+        """,
+        [take_n],
+    ).fetchall()
+    return [{"id": row[0], "keyword": str(row[1] or "").strip()} for row in rows if str(row[1] or "").strip()]
+
+
+def _update_keyword_queue_after_run(conn, queue_keywords: List[Dict[str, Any]], results: List[Dict[str, Any]]) -> Dict[str, int]:
+    qualified_by_keyword: Dict[str, int] = {}
+    for row in results:
+        keyword = str(row.get("matched_keyword") or "").strip()
+        if not keyword:
+            continue
+        if _lead_discovery_status(row) == "icp_qualified":
+            qualified_by_keyword[keyword.lower()] = qualified_by_keyword.get(keyword.lower(), 0) + 1
+    for item in queue_keywords:
+        keyword = str(item.get("keyword") or "").strip()
+        found_count = int(qualified_by_keyword.get(keyword.lower(), 0))
+        conn.execute(
+            """
+            UPDATE keyword_queue
+            SET times_searched = times_searched + 1,
+                last_searched_at = CURRENT_TIMESTAMP,
+                found_count = found_count + ?,
+                status = 'searched',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            [found_count, item["id"]],
+        )
+    return {str(item["keyword"]): int(qualified_by_keyword.get(str(item["keyword"]).lower(), 0)) for item in queue_keywords}
+
+
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
 def admin_youtube_channel_diagnose():
     current_user = getattr(g, "vs_current_user", None)
@@ -1219,6 +1407,14 @@ def admin_lead_discovery_test():
     payload = request.get_json(silent=True) or {}
     niche = " ".join(str(payload.get("niche") or "").strip().split())
     supplied_keywords = _normalize_discovery_keywords(payload.get("keywords"))
+    use_queue = bool(payload.get("use_queue"))
+    take_n = _coerce_int_param(
+        payload.get("take_n"),
+        LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT,
+        minimum=1,
+        maximum=LEAD_DISCOVERY_QUEUE_TAKE_MAX,
+    )
+    queue_keyword_items: List[Dict[str, Any]] = []
     max_keywords = _coerce_int_param(
         payload.get("max_keywords"),
         5,
@@ -1254,7 +1450,32 @@ def admin_lead_discovery_test():
     ai_icp = bool(payload.get("ai_icp"))
     errors: List[Dict[str, Any]] = []
 
-    if not niche and not supplied_keywords:
+    if use_queue:
+        conn = None
+        try:
+            conn = get_db()
+            if not table_columns(conn, "keyword_queue"):
+                return jsonify(
+                    {
+                        "success": False,
+                        "keywords": [],
+                        "queue_mode": True,
+                        "queue_taken": 0,
+                        "keyword_found_counts": {},
+                        "search_calls": 0,
+                        "enrichment_read_calls": 0,
+                        "results": [],
+                        "errors": [{"error": "keyword_queue_missing", "message": "keyword_queue table is not available."}],
+                    }
+                ), 500
+            queue_keyword_items = _load_queue_keywords(conn, take_n)
+        finally:
+            if conn:
+                conn.close()
+        supplied_keywords = [item["keyword"] for item in queue_keyword_items]
+        max_keywords = max(max_keywords, len(supplied_keywords))
+
+    if not use_queue and not niche and not supplied_keywords:
         return jsonify(
             {
                 "success": False,
@@ -1267,7 +1488,7 @@ def admin_lead_discovery_test():
         ), 400
 
     try:
-        keywords = supplied_keywords[:max_keywords] or _generate_lead_discovery_keywords(niche, max_keywords, lang)
+        keywords = supplied_keywords[:max_keywords] if use_queue else (supplied_keywords[:max_keywords] or _generate_lead_discovery_keywords(niche, max_keywords, lang))
     except Exception as exc:
         current_app.logger.exception("Lead discovery keyword generation failed")
         return jsonify(
@@ -1286,10 +1507,13 @@ def admin_lead_discovery_test():
             {
                 "success": False,
                 "keywords": [],
+                "queue_mode": use_queue,
+                "queue_taken": 0,
+                "keyword_found_counts": {},
                 "search_calls": 0,
                 "enrichment_read_calls": 0,
                 "results": [],
-                "errors": [{"error": "no_keywords", "message": "No usable keywords were generated."}],
+                "errors": [{"error": "no_keywords", "message": "No queued keywords are available." if use_queue else "No usable keywords were generated."}],
             }
         ), 400
 
@@ -1367,6 +1591,25 @@ def admin_lead_discovery_test():
             and shorts_count <= LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D
         )
 
+    keyword_found_counts: Dict[str, int] = {}
+    if use_queue and queue_keyword_items:
+        conn = None
+        try:
+            conn = get_db()
+            keyword_found_counts = _update_keyword_queue_after_run(conn, queue_keyword_items, results)
+            conn.commit()
+        except Exception:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            current_app.logger.exception("Keyword queue update failed after discovery run")
+            errors.append({"error": "keyword_queue_update_failed", "message": "Discovery completed, but keyword queue metrics could not be updated."})
+        finally:
+            if conn:
+                conn.close()
+
     return jsonify(
         {
             "success": not errors or bool(results),
@@ -1381,8 +1624,242 @@ def admin_lead_discovery_test():
             "persistence": persistence_counts,
             "results": results,
             "errors": errors,
+            "queue_mode": use_queue,
+            "queue_taken": len(queue_keyword_items),
+            "keyword_found_counts": keyword_found_counts,
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/discovery-promote-seed", methods=["POST"])
+def admin_discovery_promote_seed():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"promoted": 0, "skipped": [], "summaries_created": 0})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("lead_ids") or payload.get("leadIds") or []
+    if isinstance(raw_ids, (str, int)):
+        raw_ids = [raw_ids]
+    lead_ids: List[int] = []
+    seen_ids = set()
+    for raw_id in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            lead_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if lead_id > 0 and lead_id not in seen_ids:
+            seen_ids.add(lead_id)
+            lead_ids.append(lead_id)
+    if not lead_ids:
+        return jsonify(
+            {
+                "success": False,
+                "promoted": 0,
+                "skipped": [{"id": None, "reason": "Provide at least one lead id."}],
+                "summaries_created": 0,
+                "errors": [{"error": "bad_request", "message": "Provide lead_ids."}],
+            }
+        ), 400
+
+    promoted = 0
+    summaries_created = 0
+    skipped: List[Dict[str, Any]] = []
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        missing_columns = [column for column in ("is_seed", "promoted_at", "seed_notes") if column not in columns]
+        if missing_columns:
+            return jsonify(
+                {
+                    "success": False,
+                    "promoted": 0,
+                    "skipped": [],
+                    "summaries_created": 0,
+                    "errors": [{"error": "schema_missing", "message": f"Missing discovery_leads columns: {', '.join(missing_columns)}"}],
+                }
+            ), 500
+        for lead_id in lead_ids:
+            row = conn.execute(
+                """
+                SELECT id, youtube_channel_id, channel_title, channel_description,
+                       creator_email, status, is_seed
+                FROM discovery_leads
+                WHERE id = ?
+                LIMIT 1
+                """,
+                [lead_id],
+            ).fetchone()
+            if not row:
+                skipped.append({"id": lead_id, "reason": "not_found"})
+                continue
+            lead = {
+                "id": row[0],
+                "youtube_channel_id": str(row[1] or "").strip(),
+                "channel_title": str(row[2] or "").strip(),
+                "channel_description": str(row[3] or "").strip(),
+                "creator_email": str(row[4] or "").strip(),
+                "status": str(row[5] or "").strip(),
+                "is_seed": bool(row[6]),
+            }
+            if not lead["creator_email"]:
+                skipped.append({"id": lead_id, "reason": "missing_email"})
+                continue
+            if lead["status"] != "email_enriched":
+                skipped.append({"id": lead_id, "reason": "status_not_email_enriched"})
+                continue
+            if not lead["youtube_channel_id"]:
+                skipped.append({"id": lead_id, "reason": "missing_channel_id"})
+                continue
+
+            existing_seed = conn.execute(
+                """
+                SELECT source_video_id, transcript_summary
+                FROM seed_channel_profiles
+                WHERE channel_id = ?
+                LIMIT 1
+                """,
+                [lead["youtube_channel_id"]],
+            ).fetchone()
+            existing_summary = str((existing_seed or [None, ""])[1] or "").strip()
+            should_create_summary = not existing_summary or existing_summary.startswith(SYNTHETIC_SEED_PREFIX)
+            if should_create_summary:
+                recent_titles = _fetch_recent_channel_titles(lead["youtube_channel_id"])
+                summary = _summarize_promoted_discovery_seed(lead, recent_titles)
+                summaries_created += 1
+                if existing_seed:
+                    conn.execute(
+                        """
+                        UPDATE seed_channel_profiles
+                        SET source_video_id = NULL,
+                            transcript_summary = ?
+                        WHERE channel_id = ?
+                        """,
+                        [summary, lead["youtube_channel_id"]],
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO seed_channel_profiles (
+                            channel_id, source_video_id, transcript_summary, created_at
+                        )
+                        VALUES (?, NULL, ?, CURRENT_TIMESTAMP)
+                        """,
+                        [lead["youtube_channel_id"], summary],
+                    )
+            conn.execute(
+                """
+                UPDATE discovery_leads
+                SET is_seed = true,
+                    promoted_at = COALESCE(promoted_at, CURRENT_TIMESTAMP),
+                    seed_notes = COALESCE(seed_notes, ?)
+                WHERE id = ?
+                """,
+                ["manual seed promotion", lead_id],
+            )
+            promoted += 1
+        conn.commit()
+        return jsonify({"success": True, "promoted": promoted, "skipped": skipped, "summaries_created": summaries_created, "errors": []})
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Discovery seed promotion failed")
+        return jsonify(
+            {
+                "success": False,
+                "promoted": promoted,
+                "skipped": skipped,
+                "summaries_created": summaries_created,
+                "errors": [{"error": "seed_promotion_failed", "message": str(exc) or "Seed promotion failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@video_shorts_bp.route("/api/admin/seed-generate-keywords", methods=["POST"])
+def admin_seed_generate_keywords():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"generated": 0, "newly_enqueued": 0, "already_present": 0, "keywords": []})
+        return jsonify(payload), status
+
+    conn = None
+    try:
+        conn = get_db()
+        pool = load_seed_pool(conn)
+        if not pool:
+            return jsonify(
+                {
+                    "success": False,
+                    "generated": 0,
+                    "newly_enqueued": 0,
+                    "already_present": 0,
+                    "keywords": [],
+                    "errors": [{"error": "no_seed_pool", "message": "No seed profiles are available."}],
+                }
+            ), 404
+        keywords = _generate_seed_search_keywords(pool)
+        queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
+        existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
+        profile_text = str((existing_profile or [None])[0] or "").strip()
+        if existing_profile:
+            conn.execute(
+                """
+                UPDATE icp_profile
+                SET keywords_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+                """,
+                [json.dumps(keywords, ensure_ascii=False)],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
+                VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [profile_text, json.dumps(keywords, ensure_ascii=False)],
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "generated": len(keywords),
+                "newly_enqueued": int(queue_counts["newly_enqueued"]),
+                "already_present": int(queue_counts["already_present"]),
+                "keywords": keywords,
+                "seed_pool_count": len(pool),
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Seed keyword queue generation failed")
+        return jsonify(
+            {
+                "success": False,
+                "generated": 0,
+                "newly_enqueued": 0,
+                "already_present": 0,
+                "keywords": [],
+                "errors": [{"error": "seed_keyword_queue_failed", "message": str(exc) or "Seed keyword generation failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @video_shorts_bp.route("/api/admin/lead-discovery-enrich-emails", methods=["POST"])
