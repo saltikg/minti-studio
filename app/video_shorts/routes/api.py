@@ -1178,13 +1178,34 @@ def load_seed_pool(conn=None) -> List[Dict[str, Any]]:
                 scp.channel_id,
                 scp.source_video_id,
                 scp.transcript_summary,
-                COALESCE(dl.channel_title, yc.channel_name, scp.channel_id) AS channel_name,
-                COALESCE(dl.channel_description, yc.channel_description, '') AS channel_description,
+                COALESCE(
+                    dl.channel_title,
+                    (
+                        SELECT yc.channel_name
+                        FROM youtube_channels yc
+                        WHERE yc.youtube_channel_id = scp.channel_id
+                          AND COALESCE(yc.channel_name, '') <> ''
+                        ORDER BY yc.channel_id DESC
+                        LIMIT 1
+                    ),
+                    scp.channel_id
+                ) AS channel_name,
+                COALESCE(
+                    dl.channel_description,
+                    (
+                        SELECT yc.channel_description
+                        FROM youtube_channels yc
+                        WHERE yc.youtube_channel_id = scp.channel_id
+                          AND COALESCE(yc.channel_description, '') <> ''
+                        ORDER BY yc.channel_id DESC
+                        LIMIT 1
+                    ),
+                    ''
+                ) AS channel_description,
                 COALESCE(yv.title, '') AS source_video_title,
                 CASE WHEN scp.transcript_summary LIKE ? THEN 'synthetic' ELSE 'transcript' END AS seed_kind
             FROM seed_channel_profiles scp
             LEFT JOIN discovery_leads dl ON dl.youtube_channel_id = scp.channel_id
-            LEFT JOIN youtube_channels yc ON yc.youtube_channel_id = scp.channel_id
             LEFT JOIN youtube_videos yv ON yv.video_id = scp.source_video_id
             ORDER BY scp.created_at DESC NULLS LAST, scp.channel_id
             """,
