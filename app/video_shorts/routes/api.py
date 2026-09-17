@@ -17,6 +17,7 @@ from app.video_shorts.services.db import (
     ensure_youtube_video_local_bucket_schema,
     get_db,
     get_db_readonly,
+    table_columns,
 )
 from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
 from app.video_shorts.services.email_verification import send_autopilot_upgrade_request_email
@@ -30,13 +31,13 @@ from app.video_shorts.services.autopilot_leads import (
 )
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
+    _parse_duration_iso8601,
     _youtube_get_json,
     extract_channel_id,
     extract_video_id,
     fetch_channel_subscriber_counts,
     fetch_playlist_items_batch,
     fetch_video_metadata,
-    fetch_video_stats,
     get_channel_metadata,
 )
 from app.video_shorts.routes.videos import _get_or_create_real_youtube_channel, _load_admin_global_outreach_match
@@ -51,13 +52,18 @@ SHORTS_WINDOW_DAYS = 15
 UPLOAD_SAMPLE_SIZE = 50
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"(iletisim|iletişim|contact|business)", re.IGNORECASE)
-LEAD_DISCOVERY_DEFAULT_MIN_SUBSCRIBERS = 5_000
-LEAD_DISCOVERY_DEFAULT_MAX_SUBSCRIBERS = 300_000
+LEAD_DISCOVERY_DEFAULT_MIN_SUBSCRIBERS = 1_000
+LEAD_DISCOVERY_DEFAULT_MAX_SUBSCRIBERS = 2_000_000
 LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D = 2
-LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D = 6
+LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D = 3
+LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS = 300
+LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS = 180
 LEAD_DISCOVERY_MAX_KEYWORDS = 10
 LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 40
 LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
+LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT = 5
+LEAD_DISCOVERY_SEED_CHANNEL_LIMIT = 50
+LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -262,6 +268,24 @@ def _resolve_auto_creator_email(channel_description: str | None, video_descripti
     return _extract_creator_email(channel_description) or _extract_creator_email(video_description)
 
 
+def _resolve_creator_email_with_source(
+    channel_description: str | None,
+    video_descriptions: List[str] | None = None,
+    fallback_video_description: str | None = None,
+) -> tuple[str | None, str | None]:
+    channel_email = _extract_creator_email(channel_description)
+    if channel_email:
+        return channel_email, "channel_desc"
+    for description in video_descriptions or []:
+        video_email = _extract_creator_email(description)
+        if video_email:
+            return video_email, "video_desc"
+    fallback_email = _extract_creator_email(fallback_video_description)
+    if fallback_email:
+        return fallback_email, "video_desc"
+    return None, None
+
+
 def _resolve_auto_creator_name(
     channel_description: str | None,
     video_description: str | None,
@@ -337,11 +361,60 @@ def _increment_enrichment_counter(quota_counter: Optional[Dict[str, int]], amoun
         quota_counter["enrichment_read_calls"] = int(quota_counter.get("enrichment_read_calls") or 0) + max(0, int(amount or 0))
 
 
+def _fetch_video_details(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    clean_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
+    if not clean_ids:
+        return {}
+    details: Dict[str, Dict[str, Any]] = {}
+    for i in range(0, len(clean_ids), 50):
+        chunk = clean_ids[i : i + 50]
+        payload = _youtube_get_json(
+            "videos",
+            {
+                "part": "snippet,contentDetails,statistics",
+                "id": ",".join(chunk),
+            },
+            timeout=10,
+            require_auth=False,
+        )
+        for item in payload.get("items") or []:
+            video_id = str(item.get("id") or "").strip()
+            if not video_id:
+                continue
+            snippet = item.get("snippet") or {}
+            content_details = item.get("contentDetails") or {}
+            statistics = item.get("statistics") or {}
+            try:
+                duration_seconds = _parse_duration_iso8601(content_details.get("duration") or "")
+            except Exception:
+                duration_seconds = 0
+
+            def _to_int(value):
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+
+            details[video_id] = {
+                "duration_seconds": duration_seconds or None,
+                "description": snippet.get("description") or "",
+                "title": snippet.get("title") or "",
+                "view_count": _to_int(statistics.get("viewCount")),
+                "like_count": _to_int(statistics.get("likeCount")),
+                "comment_count": _to_int(statistics.get("commentCount")),
+            }
+    return details
+
+
 def diagnose_channel(
     channel_id: str,
     *,
     video_meta: Optional[Dict[str, Any]] = None,
     quota_counter: Optional[Dict[str, int]] = None,
+    min_longform_seconds: int = LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS,
+    short_max_seconds: int = LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS,
+    email_video_description_limit: int = LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT,
+    count_unknown_as_short: bool = False,
 ) -> Dict[str, Any]:
     resolved_channel_id = str(channel_id or "").strip()
     if not resolved_channel_id:
@@ -361,27 +434,29 @@ def diagnose_channel(
     video_ids = [item.get("video_id") for item in recent_uploads if item.get("video_id")]
     if video_ids:
         _increment_enrichment_counter(quota_counter, (len(video_ids) + 49) // 50)
-    stats_map = fetch_video_stats(video_ids)
+    stats_map = _fetch_video_details(video_ids)
 
     now_utc = datetime.now(timezone.utc)
     longform_last_60d = 0
     shorts_last_15d = 0
     latest_short_dt = None
+    min_longform_seconds = max(0, int(min_longform_seconds or 0))
+    short_max_seconds = max(0, int(short_max_seconds or 0))
     for item in recent_uploads:
         video_id = str(item.get("video_id") or "").strip()
         published_at = _parse_yt_timestamp(item.get("published_at"))
         duration_seconds = (stats_map.get(video_id) or {}).get("duration_seconds")
         try:
-            is_short = int(duration_seconds or 0) <= 60
+            duration_value = int(duration_seconds or 0)
         except (TypeError, ValueError):
-            is_short = False
-        if is_short:
+            duration_value = 0
+        if duration_value <= short_max_seconds and (duration_value > 0 or count_unknown_as_short):
             if published_at and (latest_short_dt is None or published_at > latest_short_dt):
                 latest_short_dt = published_at
             if published_at and published_at >= now_utc - timedelta(days=SHORTS_WINDOW_DAYS):
                 shorts_last_15d += 1
             continue
-        if published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
+        if duration_value and duration_value > min_longform_seconds and published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
             longform_last_60d += 1
 
     subscriber_count = subscriber_info.get("subscriber_count")
@@ -398,8 +473,14 @@ def diagnose_channel(
         (video_meta or {}).get("description"),
         channel_title,
     )
-    creator_email = _resolve_auto_creator_email(
+    recent_video_descriptions = [
+        str((stats_map.get(str(item.get("video_id") or "").strip()) or {}).get("description") or "")
+        for item in recent_uploads[: max(0, int(email_video_description_limit or 0))]
+        if str(item.get("video_id") or "").strip()
+    ]
+    creator_email, email_source = _resolve_creator_email_with_source(
         channel_description,
+        recent_video_descriptions,
         (video_meta or {}).get("description"),
     )
     return {
@@ -409,6 +490,7 @@ def diagnose_channel(
         "subscriber_count": subscriber_count,
         "creator_name": creator_name,
         "creator_email": creator_email,
+        "email_source": email_source,
         "eligible": gate_subscriber != "hedef_disi" and gate_cadence == "aktif",
         "gate_subscriber": gate_subscriber,
         "gate_cadence": gate_cadence,
@@ -476,7 +558,7 @@ def _generate_lead_discovery_keywords(niche: str, max_keywords: int, lang: str) 
         return _normalize_discovery_keywords(content)[:max_keywords]
 
 
-def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang: str, region: str) -> List[Dict[str, str]]:
+def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang: str, region: str) -> tuple[List[Dict[str, str]], int]:
     params: Dict[str, Any] = {
         "part": "snippet,id",
         "q": keyword,
@@ -490,7 +572,8 @@ def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang
         params["regionCode"] = region
     payload = _youtube_get_json("search", params, timeout=10)
     candidates: List[Dict[str, str]] = []
-    for item in payload.get("items") or []:
+    items = payload.get("items") or []
+    for item in items:
         snippet = item.get("snippet") or {}
         channel_id = str(snippet.get("channelId") or "").strip()
         if not channel_id:
@@ -502,7 +585,7 @@ def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang
                 "matched_keyword": keyword,
             }
         )
-    return candidates
+    return candidates, len(items)
 
 
 def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -536,6 +619,138 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
     }
 
 
+def _load_emailed_seed_channels(limit: int = LEAD_DISCOVERY_SEED_CHANNEL_LIMIT) -> List[Dict[str, Any]]:
+    conn = get_db_readonly()
+    try:
+        has_scheduled = bool(table_columns(conn, "outreach_scheduled_emails"))
+        sent_clause = "sl.emailed_at IS NOT NULL"
+        join_scheduled = ""
+        if has_scheduled:
+            join_scheduled = "LEFT JOIN outreach_scheduled_emails ose ON ose.share_link_id = sl.id"
+            sent_clause = "(sl.emailed_at IS NOT NULL OR ose.sent_at IS NOT NULL OR ose.status = 'sent')"
+        rows = conn.execute(
+            f"""
+            SELECT
+                l.youtube_channel_id,
+                COALESCE(c.channel_name, l.creator_name, '') AS channel_name,
+                COALESCE(v.title, '') AS first_video_title,
+                MAX(COALESCE(sl.emailed_at, {'ose.sent_at' if has_scheduled else 'NULL'})) AS last_sent_at
+            FROM autopilot_leads l
+            JOIN short_share_links sl
+              ON CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+            {join_scheduled}
+            LEFT JOIN youtube_channels c
+              ON c.channel_id = l.channel_id
+            LEFT JOIN youtube_videos v
+              ON v.id = l.first_video_id
+            WHERE COALESCE(l.youtube_channel_id, '') <> ''
+              AND COALESCE(sl.archived, false) = false
+              AND {sent_clause}
+            GROUP BY l.youtube_channel_id, COALESCE(c.channel_name, l.creator_name, ''), COALESCE(v.title, '')
+            ORDER BY last_sent_at DESC NULLS LAST, l.youtube_channel_id
+            LIMIT ?
+            """,
+            [max(1, min(int(limit or LEAD_DISCOVERY_SEED_CHANNEL_LIMIT), LEAD_DISCOVERY_SEED_CHANNEL_LIMIT))],
+        ).fetchall()
+    finally:
+        conn.close()
+    seeds: List[Dict[str, Any]] = []
+    for row in rows:
+        channel_id = str(row[0] or "").strip()
+        if not channel_id:
+            continue
+        seeds.append(
+            {
+                "channel_id": channel_id,
+                "channel_name": str(row[1] or "").strip(),
+                "first_video_title": str(row[2] or "").strip(),
+            }
+        )
+    return seeds
+
+
+def _hydrate_seed_channel_context(seeds: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], int]:
+    if not seeds:
+        return [], 0
+    read_calls = 0
+    seed_by_id = {seed["channel_id"]: dict(seed) for seed in seeds if seed.get("channel_id")}
+    channel_ids = list(seed_by_id.keys())
+    for i in range(0, len(channel_ids), 50):
+        chunk = channel_ids[i : i + 50]
+        payload = _youtube_get_json(
+            "channels",
+            {"part": "snippet,contentDetails", "id": ",".join(chunk)},
+            timeout=10,
+        )
+        read_calls += 1
+        for item in payload.get("items") or []:
+            channel_id = str(item.get("id") or "").strip()
+            if channel_id not in seed_by_id:
+                continue
+            snippet = item.get("snippet") or {}
+            content_details = item.get("contentDetails") or {}
+            related = content_details.get("relatedPlaylists") or {}
+            seed_by_id[channel_id]["channel_name"] = seed_by_id[channel_id].get("channel_name") or str(snippet.get("title") or "").strip()
+            seed_by_id[channel_id]["channel_description"] = str(snippet.get("description") or "").strip()
+            seed_by_id[channel_id]["uploads_playlist_id"] = str(related.get("uploads") or "").strip()
+
+    hydrated: List[Dict[str, Any]] = []
+    for seed in seed_by_id.values():
+        uploads_playlist_id = str(seed.get("uploads_playlist_id") or "").strip()
+        titles: List[str] = []
+        if seed.get("first_video_title"):
+            titles.append(str(seed["first_video_title"]).strip())
+        if uploads_playlist_id:
+            read_calls += 1
+            batch = fetch_playlist_items_batch(
+                playlist_id=uploads_playlist_id,
+                max_results=LEAD_DISCOVERY_SEED_RECENT_TITLES,
+            )
+            for video in batch.get("videos") or []:
+                title = str(video.get("title") or "").strip()
+                if title and title not in titles:
+                    titles.append(title)
+                if len(titles) >= LEAD_DISCOVERY_SEED_RECENT_TITLES:
+                    break
+        seed["recent_titles"] = titles[:LEAD_DISCOVERY_SEED_RECENT_TITLES]
+        hydrated.append(seed)
+    return hydrated, read_calls
+
+
+def _generate_keywords_from_seed_context(seeds: List[Dict[str, Any]]) -> List[str]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    compact_items = []
+    for seed in seeds:
+        compact_items.append(
+            {
+                "name": str(seed.get("channel_name") or "")[:120],
+                "description": str(seed.get("channel_description") or "")[:700],
+                "recent_titles": [str(title)[:140] for title in (seed.get("recent_titles") or [])[:LEAD_DISCOVERY_SEED_RECENT_TITLES]],
+            }
+        )
+    prompt = (
+        "These are my ideal target YouTube channels. Produce 15 distinct YouTube search "
+        "keywords likely to surface similar channels I have not contacted. Return JSON only: "
+        "{\"keywords\":[...]}.\n\n"
+        + json.dumps(compact_items, ensure_ascii=False)
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You create concise YouTube lead-discovery search keywords from seed channels."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.35,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+        return _normalize_discovery_keywords(payload.get("keywords"))[:15]
+    except Exception:
+        return _normalize_discovery_keywords(content)[:15]
+
+
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
 def admin_youtube_channel_diagnose():
     current_user = getattr(g, "vs_current_user", None)
@@ -556,7 +771,14 @@ def admin_youtube_channel_diagnose():
             status = 400 if code in {"missing_url", "invalid_url"} else 404
             return jsonify({"error": code, "message": message}), status
 
-        diagnosis = diagnose_channel(resolved_channel_id, video_meta=video_meta)
+        diagnosis = diagnose_channel(
+            resolved_channel_id,
+            video_meta=video_meta,
+            min_longform_seconds=60,
+            short_max_seconds=60,
+            email_video_description_limit=0,
+            count_unknown_as_short=True,
+        )
         outreach_detail = None
         already_added = False
         channel_video_count = 0
@@ -587,6 +809,7 @@ def admin_youtube_channel_diagnose():
                 "subscriber_count": diagnosis.get("subscriber_count"),
                 "creator_name": diagnosis.get("creator_name"),
                 "creator_email": diagnosis.get("creator_email"),
+                "email_source": diagnosis.get("email_source"),
                 "eligible": diagnosis.get("eligible"),
                 "gate_subscriber": diagnosis.get("gate_subscriber"),
                 "gate_cadence": diagnosis.get("gate_cadence"),
@@ -649,6 +872,18 @@ def admin_lead_discovery_test():
         minimum=1,
         maximum=LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED,
     )
+    min_longform_seconds = _coerce_int_param(
+        payload.get("min_longform_seconds"),
+        LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS,
+        minimum=0,
+        maximum=3600,
+    )
+    short_max_seconds = _coerce_int_param(
+        payload.get("short_max_seconds"),
+        LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS,
+        minimum=0,
+        maximum=600,
+    )
     lang = re.sub(r"[^A-Za-z-]", "", str(payload.get("lang") or "en").strip())[:12] or "en"
     region = re.sub(r"[^A-Za-z]", "", str(payload.get("region") or "US").strip()).upper()[:2] or "US"
     ai_icp = bool(payload.get("ai_icp"))
@@ -694,16 +929,19 @@ def admin_lead_discovery_test():
         ), 400
 
     search_calls = 0
+    raw_search_items = 0
     candidates_by_channel: Dict[str, Dict[str, str]] = {}
     for keyword in keywords:
         try:
             search_calls += 1
-            for candidate in _search_youtube_channels_for_keyword(
+            candidates, raw_count = _search_youtube_channels_for_keyword(
                 keyword,
                 max_results=max_results_per_keyword,
                 lang=lang,
                 region=region,
-            ):
+            )
+            raw_search_items += raw_count
+            for candidate in candidates:
                 channel_id = candidate["channel_id"]
                 if channel_id not in candidates_by_channel:
                     candidates_by_channel[channel_id] = candidate
@@ -715,10 +953,18 @@ def admin_lead_discovery_test():
 
     quota_counter = {"enrichment_read_calls": 0}
     results: List[Dict[str, Any]] = []
-    for candidate in list(candidates_by_channel.values())[:max_channels_enriched]:
+    enrichment_candidates = list(candidates_by_channel.values())[:max_channels_enriched]
+    channels_enriched = 0
+    for candidate in enrichment_candidates:
         channel_id = candidate["channel_id"]
         try:
-            row = diagnose_channel(channel_id, quota_counter=quota_counter)
+            channels_enriched += 1
+            row = diagnose_channel(
+                channel_id,
+                quota_counter=quota_counter,
+                min_longform_seconds=min_longform_seconds,
+                short_max_seconds=short_max_seconds,
+            )
             row["matched_keyword"] = candidate.get("matched_keyword")
             row["channel_url"] = f"https://www.youtube.com/channel/{channel_id}"
             if ai_icp:
@@ -733,16 +979,112 @@ def admin_lead_discovery_test():
             current_app.logger.exception("Lead discovery enrichment failed for channel=%s", channel_id)
             errors.append({"error": "enrichment_failed", "channel_id": channel_id, "message": str(exc) or "Enrichment failed."})
 
+    def _passes_default_thresholds(row: Dict[str, Any]) -> bool:
+        try:
+            subscribers = int(row.get("subscriber_count") or -1)
+        except Exception:
+            subscribers = -1
+        try:
+            longform_count = int(row.get("longform_last_60d") or 0)
+        except Exception:
+            longform_count = 0
+        try:
+            shorts_count = int(row.get("shorts_last_15d") or 0)
+        except Exception:
+            shorts_count = 0
+        return (
+            LEAD_DISCOVERY_DEFAULT_MIN_SUBSCRIBERS <= subscribers <= LEAD_DISCOVERY_DEFAULT_MAX_SUBSCRIBERS
+            and longform_count >= LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D
+            and shorts_count <= LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D
+        )
+
     return jsonify(
         {
             "success": not errors or bool(results),
             "keywords": keywords,
             "search_calls": search_calls,
             "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
+            "raw_search_items": raw_search_items,
+            "unique_channel_ids": len(candidates_by_channel),
+            "channels_enriched": channels_enriched,
+            "rows_returned": len(results),
+            "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
             "results": results,
             "errors": errors,
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/lead-discovery-seed-keywords", methods=["POST"])
+def admin_lead_discovery_seed_keywords():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(
+            {
+                "success": False,
+                "seed_channels_used": 0,
+                "seed_read_calls": 0,
+                "keywords": [],
+                "errors": [{"error": "unauthorized", "message": "Admin session required."}],
+            }
+        ), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify(
+            {
+                "success": False,
+                "seed_channels_used": 0,
+                "seed_read_calls": 0,
+                "keywords": [],
+                "errors": [{"error": "forbidden", "message": "Admin access required."}],
+            }
+        ), 403
+
+    try:
+        seeds = _load_emailed_seed_channels(LEAD_DISCOVERY_SEED_CHANNEL_LIMIT)
+        hydrated, seed_read_calls = _hydrate_seed_channel_context(seeds)
+        if not hydrated:
+            return jsonify(
+                {
+                    "success": False,
+                    "seed_channels_used": 0,
+                    "seed_read_calls": seed_read_calls,
+                    "keywords": [],
+                    "errors": [{"error": "no_seed_channels", "message": "No emailed seed channels were found."}],
+                }
+            ), 404
+        keywords = _generate_keywords_from_seed_context(hydrated)
+        return jsonify(
+            {
+                "success": True,
+                "seed_channels_used": len(hydrated),
+                "seed_read_calls": seed_read_calls,
+                "keywords": keywords,
+                "errors": [],
+            }
+        )
+    except YoutubeApiError as exc:
+        env_message = _youtube_env_error_message(exc)
+        message = env_message or str(exc) or "YouTube API request failed."
+        return jsonify(
+            {
+                "success": False,
+                "seed_channels_used": 0,
+                "seed_read_calls": 0,
+                "keywords": [],
+                "errors": [{"error": "youtube_api_error", "message": message}],
+            }
+        ), 500 if env_message else 502
+    except Exception as exc:
+        current_app.logger.exception("Lead discovery seed keyword generation failed")
+        return jsonify(
+            {
+                "success": False,
+                "seed_channels_used": 0,
+                "seed_read_calls": 0,
+                "keywords": [],
+                "errors": [{"error": "seed_keyword_generation_failed", "message": str(exc) or "Seed keyword generation failed."}],
+            }
+        ), 500
 
 
 @video_shorts_bp.route("/api/admin/add-youtube-video", methods=["POST"])

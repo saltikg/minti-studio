@@ -14984,10 +14984,12 @@ def admin_lead_discovery_test_page():
             "max_channels_enriched": 50,
             "lang": "en",
             "region": "US",
-            "min_subscribers": 5000,
-            "max_subscribers": 300000,
+            "min_subscribers": 1000,
+            "max_subscribers": 2000000,
             "min_longform_60d": 2,
-            "max_shorts_15d": 6,
+            "max_shorts_15d": 3,
+            "min_longform_seconds": 300,
+            "short_max_seconds": 180,
         },
     )
 

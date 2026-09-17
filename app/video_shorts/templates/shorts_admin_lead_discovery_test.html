@@ -76,18 +76,27 @@
         <label class="form-label" for="ldMinLongform">Min longform 60d</label>
         <input id="ldMinLongform" data-threshold name="min_longform_60d" type="number" min="0" step="1" class="form-control" value="{{ defaults.min_longform_60d }}">
       </div>
-      <div>
-        <label class="form-label" for="ldMaxShorts">Max Shorts 15d</label>
-        <input id="ldMaxShorts" data-threshold name="max_shorts_15d" type="number" min="0" step="1" class="form-control" value="{{ defaults.max_shorts_15d }}">
-      </div>
-      <div class="form-check form-switch">
-        <input id="ldAiIcp" name="ai_icp" class="form-check-input" type="checkbox">
-        <label class="form-check-label" for="ldAiIcp">AI ICP check</label>
-      </div>
-      <div class="wide lead-discovery-actions">
-        <button id="ldRunButton" type="submit" class="btn btn-primary">Run</button>
-        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
-      </div>
+	      <div>
+	        <label class="form-label" for="ldMaxShorts">Max Shorts 15d</label>
+	        <input id="ldMaxShorts" data-threshold name="max_shorts_15d" type="number" min="0" step="1" class="form-control" value="{{ defaults.max_shorts_15d }}">
+	      </div>
+	      <div>
+	        <label class="form-label" for="ldMinLongformSeconds">Longform seconds</label>
+	        <input id="ldMinLongformSeconds" name="min_longform_seconds" type="number" min="0" max="3600" step="1" class="form-control" value="{{ defaults.min_longform_seconds }}">
+	      </div>
+	      <div>
+	        <label class="form-label" for="ldShortMaxSeconds">Short max seconds</label>
+	        <input id="ldShortMaxSeconds" name="short_max_seconds" type="number" min="0" max="600" step="1" class="form-control" value="{{ defaults.short_max_seconds }}">
+	      </div>
+	      <div class="form-check form-switch">
+	        <input id="ldAiIcp" name="ai_icp" class="form-check-input" type="checkbox">
+	        <label class="form-check-label" for="ldAiIcp">AI ICP check</label>
+	      </div>
+	      <div class="wide lead-discovery-actions">
+	        <button id="ldRunButton" type="submit" class="btn btn-primary">Run</button>
+	        <button id="ldSeedButton" type="button" class="btn btn-outline-warning">Generate keywords from seed channels</button>
+	        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
+	      </div>
     </form>
 
     <div class="lead-discovery-note mt-3">Large runs consume the shared 10,000/day read pool — prefer off-peak (low comment-ingest hours).</div>
@@ -104,24 +113,26 @@
             <th>Shorts 15d</th>
             <th>Cadence</th>
             <th>Eligible</th>
-            <th>Creator</th>
-            <th>Email</th>
-            <th>Keyword</th>
-            <th>ICP</th>
-          </tr>
-        </thead>
-        <tbody id="ldResultsBody">
-          <tr><td colspan="10"><div class="lead-discovery-empty">No results yet.</div></td></tr>
-        </tbody>
-      </table>
+	            <th>Creator</th>
+	            <th>Email</th>
+	            <th>Email Source</th>
+	            <th>Keyword</th>
+	            <th>ICP</th>
+	          </tr>
+	        </thead>
+	        <tbody id="ldResultsBody">
+	          <tr><td colspan="11"><div class="lead-discovery-empty">No results yet.</div></td></tr>
+	        </tbody>
+	      </table>
     </div>
   </section>
 
   <script>
     (() => {
-      const form = document.getElementById("leadDiscoveryForm");
-      const runButton = document.getElementById("ldRunButton");
-      const csvButton = document.getElementById("ldCsvButton");
+	      const form = document.getElementById("leadDiscoveryForm");
+	      const runButton = document.getElementById("ldRunButton");
+	      const seedButton = document.getElementById("ldSeedButton");
+	      const csvButton = document.getElementById("ldCsvButton");
       const feedback = document.getElementById("ldFeedback");
       const summary = document.getElementById("ldSummary");
       const body = document.getElementById("ldResultsBody");
@@ -165,14 +176,19 @@
         return reasons.join(", ") || "pass";
       };
 
-      const renderSummary = (payload) => {
-        const keywords = payload.keywords || [];
-        const items = [
-          `Keywords: ${keywords.length ? keywords.join(", ") : "none"}`,
-          `Search calls: ${payload.search_calls || 0} / 100 search/day`,
-          `Enrichment read calls: ${payload.enrichment_read_calls || 0} / 10,000 read/day`,
-          `Rows: ${filteredRows.length}/${allRows.length}`,
-        ];
+	      const renderSummary = (payload) => {
+	        const keywords = payload.keywords || [];
+	        const items = [
+	          `Keywords: ${keywords.length ? keywords.join(", ") : "none"}`,
+	          `Raw search items: ${payload.raw_search_items || 0}`,
+	          `Unique channels: ${payload.unique_channel_ids || 0}`,
+	          `Channels enriched: ${payload.channels_enriched || 0}`,
+	          `Rows returned: ${payload.rows_returned || 0}`,
+	          `Rows passing defaults: ${payload.rows_passing_default_thresholds || 0}`,
+	          `Search calls: ${payload.search_calls || 0}`,
+	          `Enrichment read calls: ${payload.enrichment_read_calls || 0}`,
+	          `Rows: ${filteredRows.length}/${allRows.length}`,
+	        ];
         if (payload.errors?.length) items.push(`Errors: ${payload.errors.length}`);
         summary.innerHTML = items.map((item, index) => `<span class="lead-discovery-pill ${index === 0 ? "" : "is-muted"}">${escapeHtml(item)}</span>`).join("");
         summary.classList.remove("d-none");
@@ -181,10 +197,10 @@
       const renderRows = () => {
         filteredRows = allRows.filter(passesThresholds);
         csvButton.disabled = filteredRows.length === 0;
-        if (!filteredRows.length) {
-          body.innerHTML = '<tr><td colspan="10"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
-          return;
-        }
+	        if (!filteredRows.length) {
+	          body.innerHTML = '<tr><td colspan="11"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
+	          return;
+	        }
         body.innerHTML = filteredRows.map((row) => {
           const pass = passesThresholds(row);
           const eligible = row.eligible ? "Pass" : "Fail";
@@ -201,10 +217,11 @@
               <td>${escapeHtml(row.shorts_last_15d ?? 0)}</td>
               <td>${escapeHtml(row.gate_cadence || "")}</td>
               <td><span class="lead-discovery-status ${row.eligible ? "pass" : "fail"}">${eligible}</span><div class="lead-discovery-muted">${escapeHtml(gateReason(row))}</div></td>
-              <td>${escapeHtml(row.creator_name || "")}</td>
-              <td>${escapeHtml(row.creator_email || "")}</td>
-              <td>${escapeHtml(row.matched_keyword || "")}</td>
-              <td>${escapeHtml(icpText)}${icpReason}</td>
+	              <td>${escapeHtml(row.creator_name || "")}</td>
+	              <td>${escapeHtml(row.creator_email || "")}</td>
+	              <td>${escapeHtml(row.email_source || "")}</td>
+	              <td>${escapeHtml(row.matched_keyword || "")}</td>
+	              <td>${escapeHtml(icpText)}${icpReason}</td>
             </tr>
           `;
         }).join("");
@@ -219,7 +236,7 @@
 
       const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
       const downloadCsv = () => {
-        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "matched_keyword", "icp_fit", "icp_reason"];
+	        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "email_source", "matched_keyword", "icp_fit", "icp_reason"];
         const lines = [headers.join(",")];
         filteredRows.forEach((row) => {
           lines.push(headers.map((key) => {
@@ -252,10 +269,12 @@
             max_keywords: form.max_keywords.value,
             max_results_per_keyword: form.max_results_per_keyword.value,
             max_channels_enriched: form.max_channels_enriched.value,
-            lang: form.lang.value,
-            region: form.region.value,
-            ai_icp: form.ai_icp.checked,
-          };
+	            lang: form.lang.value,
+	            region: form.region.value,
+	            min_longform_seconds: form.min_longform_seconds.value,
+	            short_max_seconds: form.short_max_seconds.value,
+	            ai_icp: form.ai_icp.checked,
+	          };
           const response = await fetch("{{ url_for('video_shorts_bp.admin_lead_discovery_test') }}", {
             method: "POST",
             credentials: "same-origin",
@@ -271,21 +290,47 @@
           renderRows();
           renderSummary(data);
           feedback.textContent = data.errors?.length ? "Completed with warnings." : "Completed.";
-        } catch (error) {
-          allRows = [];
-          filteredRows = [];
-          body.innerHTML = '<tr><td colspan="10"><div class="lead-discovery-empty">No results.</div></td></tr>';
-          feedback.textContent = error.message || "Lead discovery failed.";
-          feedback.classList.add("is-error");
+	        } catch (error) {
+	          allRows = [];
+	          filteredRows = [];
+	          body.innerHTML = '<tr><td colspan="11"><div class="lead-discovery-empty">No results.</div></td></tr>';
+	          feedback.textContent = error.message || "Lead discovery failed.";
+	          feedback.classList.add("is-error");
         } finally {
           runButton.disabled = false;
         }
       });
 
-      form.querySelectorAll("[data-threshold]").forEach((input) => {
-        input.addEventListener("input", updateAfterFilter);
-      });
-      csvButton.addEventListener("click", downloadCsv);
+	      form.querySelectorAll("[data-threshold]").forEach((input) => {
+	        input.addEventListener("input", updateAfterFilter);
+	      });
+	      seedButton.addEventListener("click", async () => {
+	        feedback.textContent = "Generating seed keywords...";
+	        feedback.classList.remove("is-error");
+	        seedButton.disabled = true;
+	        try {
+	          const response = await fetch("{{ url_for('video_shorts_bp.admin_lead_discovery_seed_keywords') }}", {
+	            method: "POST",
+	            credentials: "same-origin",
+	            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	            body: JSON.stringify({}),
+	          });
+	          const data = await response.json().catch(() => ({}));
+	          if (!response.ok || !data.success) {
+	            const message = data.errors?.[0]?.message || "Seed keyword generation failed.";
+	            throw new Error(message);
+	          }
+	          const keywords = Array.isArray(data.keywords) ? data.keywords : [];
+	          form.keywords.value = keywords.join(", ");
+	          feedback.textContent = `Generated ${keywords.length} keywords from ${data.seed_channels_used || 0} seed channels. Seed read calls: ${data.seed_read_calls || 0}.`;
+	        } catch (error) {
+	          feedback.textContent = error.message || "Seed keyword generation failed.";
+	          feedback.classList.add("is-error");
+	        } finally {
+	          seedButton.disabled = false;
+	        }
+	      });
+	      csvButton.addEventListener("click", downloadCsv);
     })();
   </script>
 {% endblock %}
