@@ -78,6 +78,7 @@ from src.trends.facebook_page_tokens import get_facebook_page_data
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
     extract_video_id,
+    fetch_channel_subscriber_counts,
     fetch_playlist_items_batch,
     fetch_video_metadata,
     fetch_video_stats,
@@ -216,9 +217,21 @@ def _channel_video_scope_params(channel_id: Any, *, include_local_bucket_attachm
 
 
 def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
+    enriched_meta = dict(meta or {})
+    if not str(enriched_meta.get("channel_description") or "").strip():
+        channel_key = str(enriched_meta.get("channel_id") or "").strip()
+        if channel_key:
+            try:
+                subscriber_info = (fetch_channel_subscriber_counts([channel_key]) or {}).get(channel_key) or {}
+                if subscriber_info.get("channel_description"):
+                    enriched_meta["channel_description"] = subscriber_info.get("channel_description")
+                if subscriber_info.get("channel_title") and not enriched_meta.get("channel_title"):
+                    enriched_meta["channel_title"] = subscriber_info.get("channel_title")
+            except Exception:
+                current_app.logger.exception("Best-effort channel description fetch failed for channel=%s", channel_key)
     return get_or_create_scoped_youtube_channel(
         conn,
-        meta=meta,
+        meta=enriched_meta,
         owner_user_id=str(owner_id or "").strip(),
         brand_id=str(brand_id or "").strip(),
         notes="Add by URL import",

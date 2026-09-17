@@ -149,6 +149,12 @@ def get_or_create_scoped_youtube_channel(
     youtube_channel_id = str(meta.get("channel_id") or "").strip()
     if not youtube_channel_id or not owner_user_id or not brand_id:
         return None
+    try:
+        channel_cols = table_columns(conn, "youtube_channels")
+    except Exception:
+        channel_cols = set()
+    has_channel_description = "channel_description" in channel_cols
+    channel_description = str(meta.get("channel_description") or "").strip() or None
     row = conn.execute(
         """
         SELECT channel_id
@@ -161,28 +167,51 @@ def get_or_create_scoped_youtube_channel(
         [youtube_channel_id, owner_user_id, brand_id],
     ).fetchone()
     if row:
+        if has_channel_description and channel_description:
+            conn.execute(
+                """
+                UPDATE youtube_channels
+                SET channel_description = ?
+                WHERE channel_id = ?
+                  AND NULLIF(COALESCE(channel_description, ''), '') IS NULL
+                """,
+                [channel_description, row[0]],
+            )
         return int(row[0])
     next_channel_id = conn.execute(
         "SELECT COALESCE(MAX(channel_id), 0) + 1 FROM youtube_channels"
     ).fetchone()[0]
     channel_name = str(meta.get("channel_title") or "YouTube Channel").strip() or "YouTube Channel"
+    columns = [
+        "channel_id",
+        "channel_name",
+        "channel_url",
+        "notes",
+        "owner_user_id",
+        "youtube_channel_id",
+        "is_active",
+        "brand_id",
+    ]
+    values = [
+        next_channel_id,
+        channel_name,
+        f"https://www.youtube.com/channel/{youtube_channel_id}",
+        notes,
+        owner_user_id,
+        youtube_channel_id,
+        True,
+        brand_id,
+    ]
+    if has_channel_description:
+        columns.append("channel_description")
+        values.append(channel_description)
+    placeholders = ", ".join("?" for _ in columns)
     conn.execute(
-        """
-        INSERT INTO youtube_channels (
-            channel_id, channel_name, channel_url, notes, owner_user_id,
-            youtube_channel_id, is_active, brand_id
-        )
-        VALUES (?, ?, ?, ?, ?, ?, TRUE, ?)
+        f"""
+        INSERT INTO youtube_channels ({", ".join(columns)})
+        VALUES ({placeholders})
         """,
-        [
-            next_channel_id,
-            channel_name,
-            f"https://www.youtube.com/channel/{youtube_channel_id}",
-            notes,
-            owner_user_id,
-            youtube_channel_id,
-            brand_id,
-        ],
+        values,
     )
     return int(next_channel_id)
 

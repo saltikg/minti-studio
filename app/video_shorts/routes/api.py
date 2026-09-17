@@ -751,6 +751,166 @@ def _generate_keywords_from_seed_context(seeds: List[Dict[str, Any]]) -> List[st
         return _normalize_discovery_keywords(content)[:15]
 
 
+def _admin_json_auth_error():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return {"success": False, "errors": [{"error": "unauthorized", "message": "Admin session required."}]}, 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return {"success": False, "errors": [{"error": "forbidden", "message": "Admin access required."}]}, 403
+    return None
+
+
+def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
+    has_scheduled = bool(table_columns(conn, "outreach_scheduled_emails"))
+    scheduled_union = ""
+    if has_scheduled:
+        scheduled_union = """
+            UNION ALL
+            SELECT DISTINCT
+                COALESCE(NULLIF(l.youtube_channel_id, ''), c.youtube_channel_id) AS youtube_channel_id,
+                c.channel_id AS local_channel_id,
+                COALESCE(c.channel_name, l.creator_name, '') AS channel_name,
+                COALESCE(c.channel_description, '') AS channel_description,
+                v.video_id AS source_video_id,
+                ose.sent_at AS sent_at
+            FROM autopilot_leads l
+            JOIN short_share_links sl
+              ON CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+            JOIN outreach_scheduled_emails ose
+              ON ose.share_link_id = sl.id
+            LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+            LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE (ose.sent_at IS NOT NULL OR ose.status = 'sent')
+              AND COALESCE(sl.archived, false) = false
+              AND COALESCE(COALESCE(NULLIF(l.youtube_channel_id, ''), c.youtube_channel_id), '') <> ''
+        """
+    rows = conn.execute(
+        f"""
+        WITH emailed AS (
+            SELECT DISTINCT
+                COALESCE(NULLIF(l.youtube_channel_id, ''), c.youtube_channel_id) AS youtube_channel_id,
+                c.channel_id AS local_channel_id,
+                COALESCE(c.channel_name, l.creator_name, '') AS channel_name,
+                COALESCE(c.channel_description, '') AS channel_description,
+                v.video_id AS source_video_id,
+                sl.emailed_at AS sent_at
+            FROM autopilot_leads l
+            JOIN short_share_links sl
+              ON CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+            LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
+            LEFT JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE sl.emailed_at IS NOT NULL
+              AND COALESCE(sl.archived, false) = false
+              AND COALESCE(COALESCE(NULLIF(l.youtube_channel_id, ''), c.youtube_channel_id), '') <> ''
+            {scheduled_union}
+        ), ranked AS (
+            SELECT
+                youtube_channel_id,
+                local_channel_id,
+                channel_name,
+                channel_description,
+                source_video_id,
+                sent_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY youtube_channel_id
+                    ORDER BY sent_at DESC NULLS LAST, source_video_id
+                ) AS rn
+            FROM emailed
+        )
+        SELECT
+            r.youtube_channel_id,
+            r.local_channel_id,
+            r.channel_name,
+            r.channel_description,
+            r.source_video_id,
+            COALESCE(t.full_text, '') AS transcript_text
+        FROM ranked r
+        LEFT JOIN youtube_transcripts t ON t.video_id = r.source_video_id
+        WHERE r.rn = 1
+        ORDER BY r.sent_at DESC NULLS LAST, r.youtube_channel_id
+        """,
+    ).fetchall()
+    seeds: List[Dict[str, Any]] = []
+    for row in rows:
+        channel_id = str(row[0] or "").strip()
+        if not channel_id:
+            continue
+        seeds.append(
+            {
+                "channel_id": channel_id,
+                "local_channel_id": row[1],
+                "channel_name": str(row[2] or "").strip(),
+                "channel_description": str(row[3] or "").strip(),
+                "source_video_id": str(row[4] or "").strip(),
+                "transcript_text": str(row[5] or "").strip(),
+            }
+        )
+    return seeds
+
+
+def _summarize_seed_transcript(seed: Dict[str, Any]) -> str:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    transcript = " ".join(str(seed.get("transcript_text") or "").split())
+    if not transcript:
+        return ""
+    prompt = (
+        "Summarize this YouTube seed channel transcript in 3-5 sentences for learning an ICP lookalike profile. "
+        "Focus on the creator's persona, audience, teaching style, expertise, monetizable offer signals, and recurring topics. "
+        "Return plain text only.\n\n"
+        f"Channel: {seed.get('channel_name') or seed.get('channel_id')}\n"
+        f"Channel description: {str(seed.get('channel_description') or '')[:1200]}\n\n"
+        f"Transcript:\n{transcript[:18000]}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You summarize creator transcripts for B2B lead-discovery ICP learning."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+    )
+    return " ".join((response.choices[0].message.content or "").strip().split())[:3000]
+
+
+def _generate_seed_icp_profile(profile_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    compact_items = [
+        {
+            "channel_name": str(item.get("channel_name") or "")[:160],
+            "channel_description": str(item.get("channel_description") or "")[:900],
+            "transcript_summary": str(item.get("transcript_summary") or "")[:1600],
+        }
+        for item in profile_items
+    ]
+    prompt = (
+        "These are channels we already emailed and consider strong lookalike seeds. "
+        "Learn the shared ICP profile, then produce YouTube search keywords likely to find similar creators. "
+        "Return STRICT JSON only: {\"profile_text\":\"concise profile\", \"keywords\":[\"keyword\", ...]}.\n\n"
+        "The target is broad: solo educators, coaches, consultants, and expert creators who talk to camera, "
+        "make long-form educational content, and likely have something to sell. Do not narrow to therapists only.\n\n"
+        + json.dumps(compact_items, ensure_ascii=False)
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You learn concise ICP profiles and YouTube discovery keywords from seed creator channels."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.25,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+    except Exception:
+        payload = {"profile_text": content[:2500], "keywords": _normalize_discovery_keywords(content)}
+    return {
+        "profile_text": str(payload.get("profile_text") or "").strip()[:5000],
+        "keywords": _normalize_discovery_keywords(payload.get("keywords"))[:15],
+    }
+
+
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
 def admin_youtube_channel_diagnose():
     current_user = getattr(g, "vs_current_user", None)
@@ -1087,6 +1247,262 @@ def admin_lead_discovery_seed_keywords():
         ), 500
 
 
+@video_shorts_bp.route("/api/admin/seed-backfill-descriptions", methods=["POST"])
+def admin_seed_backfill_descriptions():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"updated_count": 0, "read_calls": 0})
+        return jsonify(payload), status
+
+    conn = None
+    try:
+        conn = get_db()
+        seeds = _load_emailed_seed_sources(conn)
+        channel_ids = sorted({seed["channel_id"] for seed in seeds if seed.get("channel_id")})
+        if not channel_ids:
+            return jsonify({"success": True, "updated_count": 0, "read_calls": 0, "errors": []})
+
+        descriptions: Dict[str, str] = {}
+        read_calls = 0
+        for i in range(0, len(channel_ids), 50):
+            chunk = channel_ids[i : i + 50]
+            payload = _youtube_get_json(
+                "channels",
+                {"part": "snippet", "id": ",".join(chunk)},
+                timeout=10,
+            )
+            read_calls += 1
+            for item in payload.get("items") or []:
+                channel_id = str(item.get("id") or "").strip()
+                snippet = item.get("snippet") or {}
+                description = str(snippet.get("description") or "").strip()
+                if channel_id and description:
+                    descriptions[channel_id] = description
+
+        updated_count = 0
+        for channel_id, description in descriptions.items():
+            result = conn.execute(
+                """
+                UPDATE youtube_channels
+                SET channel_description = ?
+                WHERE youtube_channel_id = ?
+                  AND COALESCE(channel_description, '') <> ?
+                """,
+                [description, channel_id, description],
+            )
+            try:
+                updated_count += max(0, int(result.rowcount or 0))
+            except Exception:
+                updated_count += 1
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "updated_count": updated_count,
+                "read_calls": read_calls,
+                "seed_channels": len(channel_ids),
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Seed channel description backfill failed")
+        return jsonify(
+            {
+                "success": False,
+                "updated_count": 0,
+                "read_calls": 0,
+                "errors": [{"error": "seed_backfill_failed", "message": str(exc) or "Backfill failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@video_shorts_bp.route("/api/admin/seed-build-profile", methods=["POST"])
+def admin_seed_build_profile():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"seed_used": 0, "summaries_created": 0, "keywords": [], "profile_text": ""})
+        return jsonify(payload), status
+
+    conn = None
+    try:
+        conn = get_db()
+        seeds = [seed for seed in _load_emailed_seed_sources(conn) if seed.get("source_video_id") and seed.get("transcript_text")]
+        if not seeds:
+            return jsonify(
+                {
+                    "success": False,
+                    "seed_used": 0,
+                    "summaries_created": 0,
+                    "keywords": [],
+                    "profile_text": "",
+                    "errors": [{"error": "no_seed_transcripts", "message": "No emailed seed transcripts were found."}],
+                }
+            ), 404
+
+        summaries_created = 0
+        profile_items: List[Dict[str, Any]] = []
+        for seed in seeds:
+            existing = conn.execute(
+                """
+                SELECT transcript_summary
+                FROM seed_channel_profiles
+                WHERE channel_id = ?
+                LIMIT 1
+                """,
+                [seed["channel_id"]],
+            ).fetchone()
+            summary = str((existing or [None])[0] or "").strip()
+            if not summary:
+                summary = _summarize_seed_transcript(seed)
+                summaries_created += 1
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE seed_channel_profiles
+                        SET source_video_id = ?, transcript_summary = ?
+                        WHERE channel_id = ?
+                        """,
+                        [seed["source_video_id"], summary, seed["channel_id"]],
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO seed_channel_profiles (
+                            channel_id, source_video_id, transcript_summary, created_at
+                        )
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        [seed["channel_id"], seed["source_video_id"], summary],
+                    )
+            profile_items.append(
+                {
+                    "channel_id": seed["channel_id"],
+                    "channel_name": seed.get("channel_name") or "",
+                    "channel_description": seed.get("channel_description") or "",
+                    "transcript_summary": summary,
+                }
+            )
+
+        profile = _generate_seed_icp_profile(profile_items)
+        profile_text = profile["profile_text"]
+        keywords = profile["keywords"]
+        existing_profile = conn.execute("SELECT id FROM icp_profile WHERE id = 1").fetchone()
+        if existing_profile:
+            conn.execute(
+                """
+                UPDATE icp_profile
+                SET profile_text = ?, keywords_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+                """,
+                [profile_text, json.dumps(keywords, ensure_ascii=False)],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
+                VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [profile_text, json.dumps(keywords, ensure_ascii=False)],
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "seed_used": len(profile_items),
+                "summaries_created": summaries_created,
+                "keywords": keywords,
+                "profile_text": profile_text,
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Seed ICP profile build failed")
+        return jsonify(
+            {
+                "success": False,
+                "seed_used": 0,
+                "summaries_created": 0,
+                "keywords": [],
+                "profile_text": "",
+                "errors": [{"error": "seed_profile_failed", "message": str(exc) or "Seed profile build failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@video_shorts_bp.route("/api/admin/seed-icp-profile", methods=["GET", "POST"])
+def admin_seed_icp_profile():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"keywords": [], "profile_text": ""})
+        return jsonify(payload), status
+    conn = None
+    try:
+        conn = get_db_readonly()
+        row = conn.execute(
+            """
+            SELECT profile_text, keywords_json, updated_at
+            FROM icp_profile
+            WHERE id = 1
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return jsonify(
+                {
+                    "success": False,
+                    "keywords": [],
+                    "profile_text": "",
+                    "errors": [{"error": "profile_missing", "message": "ICP profile has not been built yet."}],
+                }
+            ), 404
+        try:
+            keywords = _normalize_discovery_keywords(json.loads(row[1] or "[]"))[:15]
+        except Exception:
+            keywords = _normalize_discovery_keywords(row[1])[:15]
+        updated_at = row[2]
+        return jsonify(
+            {
+                "success": True,
+                "keywords": keywords,
+                "profile_text": str(row[0] or ""),
+                "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        current_app.logger.exception("Seed ICP profile load failed")
+        return jsonify(
+            {
+                "success": False,
+                "keywords": [],
+                "profile_text": "",
+                "errors": [{"error": "profile_load_failed", "message": str(exc) or "Profile load failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
+
+
 @video_shorts_bp.route("/api/admin/add-youtube-video", methods=["POST"])
 def admin_add_youtube_video():
     current_user = getattr(g, "vs_current_user", None)
@@ -1146,6 +1562,10 @@ def admin_add_youtube_video():
         or None
     )
     channel_description = subscriber_info.get("channel_description")
+    if channel_description:
+        meta["channel_description"] = channel_description
+    if channel_title and not meta.get("channel_title"):
+        meta["channel_title"] = channel_title
     fallback_creator_name = _resolve_auto_creator_name(
         channel_description,
         meta.get("description"),

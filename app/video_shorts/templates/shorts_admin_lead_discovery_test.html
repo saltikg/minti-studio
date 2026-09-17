@@ -92,15 +92,19 @@
 	        <input id="ldAiIcp" name="ai_icp" class="form-check-input" type="checkbox">
 	        <label class="form-check-label" for="ldAiIcp">AI ICP check</label>
 	      </div>
-	      <div class="wide lead-discovery-actions">
-	        <button id="ldRunButton" type="submit" class="btn btn-primary">Run</button>
-	        <button id="ldSeedButton" type="button" class="btn btn-outline-warning">Generate keywords from seed channels</button>
-	        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
-	      </div>
+		      <div class="wide lead-discovery-actions">
+		        <button id="ldRunButton" type="submit" class="btn btn-primary">Run</button>
+		        <button id="ldSeedButton" type="button" class="btn btn-outline-warning">Generate keywords from seed channels</button>
+		        <button id="ldBackfillButton" type="button" class="btn btn-outline-info">Backfill seed descriptions</button>
+		        <button id="ldBuildProfileButton" type="button" class="btn btn-outline-success">Build ICP profile from seed</button>
+		        <button id="ldLoadProfileButton" type="button" class="btn btn-outline-light">Load keywords from ICP profile</button>
+		        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
+		      </div>
     </form>
 
     <div class="lead-discovery-note mt-3">Large runs consume the shared 10,000/day read pool — prefer off-peak (low comment-ingest hours).</div>
     <div id="ldFeedback" class="lead-discovery-feedback"></div>
+    <div id="ldProfileBox" class="lead-discovery-note mt-2 d-none"></div>
     <div id="ldSummary" class="lead-discovery-summary d-none"></div>
 
     <div class="lead-discovery-table-wrap mt-3">
@@ -132,8 +136,12 @@
 	      const form = document.getElementById("leadDiscoveryForm");
 	      const runButton = document.getElementById("ldRunButton");
 	      const seedButton = document.getElementById("ldSeedButton");
+	      const backfillButton = document.getElementById("ldBackfillButton");
+	      const buildProfileButton = document.getElementById("ldBuildProfileButton");
+	      const loadProfileButton = document.getElementById("ldLoadProfileButton");
 	      const csvButton = document.getElementById("ldCsvButton");
       const feedback = document.getElementById("ldFeedback");
+      const profileBox = document.getElementById("ldProfileBox");
       const summary = document.getElementById("ldSummary");
       const body = document.getElementById("ldResultsBody");
       let allRows = [];
@@ -328,6 +336,86 @@
 	          feedback.classList.add("is-error");
 	        } finally {
 	          seedButton.disabled = false;
+	        }
+	      });
+	      backfillButton.addEventListener("click", async () => {
+	        feedback.textContent = "Backfilling seed descriptions...";
+	        feedback.classList.remove("is-error");
+	        backfillButton.disabled = true;
+	        try {
+	          const response = await fetch("{{ url_for('video_shorts_bp.admin_seed_backfill_descriptions') }}", {
+	            method: "POST",
+	            credentials: "same-origin",
+	            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	            body: JSON.stringify({}),
+	          });
+	          const data = await response.json().catch(() => ({}));
+	          if (!response.ok || !data.success) {
+	            const message = data.errors?.[0]?.message || "Seed description backfill failed.";
+	            throw new Error(message);
+	          }
+	          feedback.textContent = `Backfill complete. Updated ${data.updated_count || 0} row(s). Read calls: ${data.read_calls || 0}.`;
+	        } catch (error) {
+	          feedback.textContent = error.message || "Seed description backfill failed.";
+	          feedback.classList.add("is-error");
+	        } finally {
+	          backfillButton.disabled = false;
+	        }
+	      });
+	      buildProfileButton.addEventListener("click", async () => {
+	        feedback.textContent = "Building ICP profile from seed transcripts...";
+	        feedback.classList.remove("is-error");
+	        profileBox.classList.add("d-none");
+	        buildProfileButton.disabled = true;
+	        try {
+	          const response = await fetch("{{ url_for('video_shorts_bp.admin_seed_build_profile') }}", {
+	            method: "POST",
+	            credentials: "same-origin",
+	            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	            body: JSON.stringify({}),
+	          });
+	          const data = await response.json().catch(() => ({}));
+	          if (!response.ok || !data.success) {
+	            const message = data.errors?.[0]?.message || "ICP profile build failed.";
+	            throw new Error(message);
+	          }
+	          const keywords = Array.isArray(data.keywords) ? data.keywords : [];
+	          profileBox.innerHTML = `<strong>ICP profile</strong><br>${escapeHtml(data.profile_text || "")}<br><br><strong>Keywords</strong><br>${escapeHtml(keywords.join(", "))}`;
+	          profileBox.classList.remove("d-none");
+	          feedback.textContent = `Profile built from ${data.seed_used || 0} seed channel(s). Summaries created: ${data.summaries_created || 0}.`;
+	        } catch (error) {
+	          feedback.textContent = error.message || "ICP profile build failed.";
+	          feedback.classList.add("is-error");
+	        } finally {
+	          buildProfileButton.disabled = false;
+	        }
+	      });
+	      loadProfileButton.addEventListener("click", async () => {
+	        feedback.textContent = "Loading ICP profile keywords...";
+	        feedback.classList.remove("is-error");
+	        loadProfileButton.disabled = true;
+	        try {
+	          const response = await fetch("{{ url_for('video_shorts_bp.admin_seed_icp_profile') }}", {
+	            method: "POST",
+	            credentials: "same-origin",
+	            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	            body: JSON.stringify({}),
+	          });
+	          const data = await response.json().catch(() => ({}));
+	          if (!response.ok || !data.success) {
+	            const message = data.errors?.[0]?.message || "ICP profile has not been built yet.";
+	            throw new Error(message);
+	          }
+	          const keywords = Array.isArray(data.keywords) ? data.keywords : [];
+	          form.keywords.value = keywords.join(", ");
+	          profileBox.innerHTML = `<strong>ICP profile</strong><br>${escapeHtml(data.profile_text || "")}<br><br><strong>Keywords</strong><br>${escapeHtml(keywords.join(", "))}`;
+	          profileBox.classList.remove("d-none");
+	          feedback.textContent = `Loaded ${keywords.length} keyword(s) from ICP profile.`;
+	        } catch (error) {
+	          feedback.textContent = error.message || "ICP profile load failed.";
+	          feedback.classList.add("is-error");
+	        } finally {
+	          loadProfileButton.disabled = false;
 	        }
 	      });
 	      csvButton.addEventListener("click", downloadCsv);
