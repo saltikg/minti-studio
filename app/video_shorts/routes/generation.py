@@ -19962,8 +19962,21 @@ def create_clip_plan_status(video_pk):
         return jsonify({"ok": False, "status": "failed", "message": str(exc)}), 500
 
 
+DEPRECATED_CLIP_PLAN_ROUTE_MESSAGE = "This experimental clip planner endpoint is disabled. Use the primary clip planner."
+
+
+def _abort_deprecated_clip_plan_route(version: str):
+    current_app.logger.info("Deprecated clip planner route blocked version=%s", version)
+    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+        return jsonify({"ok": False, "message": DEPRECATED_CLIP_PLAN_ROUTE_MESSAGE, "version": version}), 404
+    abort(404, description=DEPRECATED_CLIP_PLAN_ROUTE_MESSAGE)
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v2", methods=["POST"])
 def create_clip_plan_v2(video_pk):
+    disabled = _abort_deprecated_clip_plan_route("v2")
+    if disabled:
+        return disabled
     video_info = _fetch_video_with_transcript(video_pk)
     if not video_info:
         flash("Video not found", "danger")
@@ -20160,6 +20173,9 @@ def create_clip_plan_v2(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v3", methods=["POST"])
 def create_clip_plan_v3(video_pk):
+    disabled = _abort_deprecated_clip_plan_route("v3")
+    if disabled:
+        return disabled
     video_info = _fetch_video_with_transcript(video_pk)
     if not video_info:
         flash("Video not found", "danger")
@@ -20265,6 +20281,9 @@ def create_clip_plan_v3(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v4", methods=["POST"])
 def create_clip_plan_v4(video_pk):
+    disabled = _abort_deprecated_clip_plan_route("v4")
+    if disabled:
+        return disabled
     video_info = _fetch_video_with_transcript(video_pk)
     if not video_info:
         flash("Video not found", "danger")
