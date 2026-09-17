@@ -51,19 +51,19 @@ def _normalize_confidence(value: Any) -> int | None:
 
 
 def _normalize_result(row: Dict[str, Any], fallback_url: str = "") -> Dict[str, Any]:
-    channel_url = str(_first_value(row, ["channelUrl", "channel_url", "url", "inputUrl", "matchedInput"]) or fallback_url or "").strip()
+    channel_url = str(_first_value(row, ["channelUrl", "channel_url", "channel", "url", "inputUrl", "matchedInput"]) or fallback_url or "").strip()
     channel_id = str(_first_value(row, ["channelId", "channel_id", "youtubeChannelId"]) or _channel_id_from_url(channel_url)).strip()
-    email = str(_first_value(row, ["email", "primaryEmail", "businessEmail", "contactEmail"]) or "").strip()
-    source_url = str(_first_value(row, ["email_source_url", "emailSourceUrl", "sourceUrl", "emailEvidenceUrl", "evidenceUrl"]) or "").strip()
+    email = str(_first_value(row, ["email", "primaryEmail", "primary_email", "businessEmail", "contactEmail"]) or "").strip()
+    source_url = str(_first_value(row, ["email_source_url", "emailSourceUrl", "evidenceUrl", "emailEvidenceUrl", "sourceUrl"]) or "").strip()
     return {
         "channel_id": channel_id,
         "channel_url": channel_url,
         "email": email,
         "email_confidence": _normalize_confidence(_first_value(row, ["email_confidence", "emailConfidence", "confidence"])),
         "email_validation": str(_first_value(row, ["email_validation", "emailValidation", "validation", "emailStatus"]) or "").strip(),
-        "email_source_type": str(_first_value(row, ["email_source_type", "emailSourceType", "emailSource", "source"]) or "").strip(),
+        "email_source_type": str(_first_value(row, ["email_source_type", "emailSourceType", "emailSource", "source", "sourceType"]) or "").strip(),
         "email_source_url": source_url,
-        "phone": str(_first_value(row, ["phone", "primaryPhone", "phoneNumber"]) or "").strip(),
+        "phone": str(_first_value(row, ["phone", "primaryPhone", "primary_phone", "phoneNumber"]) or "").strip(),
         "website": str(_first_value(row, ["website", "websiteUrl", "publicWebsiteUrl"]) or "").strip(),
         "lead_tier": str(_first_value(row, ["lead_tier", "leadTier", "tier", "audienceBand"]) or "").strip(),
         "is_generic_email": _is_generic_email(email),
@@ -74,6 +74,7 @@ def _normalize_result(row: Dict[str, Any], fallback_url: str = "") -> Dict[str, 
 def _build_actor_input(channel_urls: List[str]) -> Dict[str, Any]:
     return {
         "scrapeType": "channelContacts",
+        "channels": channel_urls,
         "urls": channel_urls,
         "channelUrls": channel_urls,
         "creatorChannels": channel_urls,
