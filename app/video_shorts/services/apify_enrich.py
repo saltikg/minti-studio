@@ -12,7 +12,8 @@ import requests
 APIFY_API_BASE = "https://api.apify.com/v2"
 TRAKK_ACTOR_ID = "trakk/youtube-channel-email-sponsor-leads"
 TRAKK_ACTOR_PATH = TRAKK_ACTOR_ID.replace("/", "~")
-GENERIC_EMAIL_LOCAL_PARTS = {"info", "hello", "contact", "support", "admin", "team", "press", "hi"}
+GENERIC_EMAIL_LOCAL_PARTS = {"info", "hello", "contact", "support", "admin", "team", "press", "hi", "hey", "office"}
+PERSON_EMAIL_ROLES = {"creator", "owner", "founder", "personal", "person"}
 
 
 def _channel_id_from_url(value: str | None) -> str:
@@ -25,16 +26,18 @@ def _channel_id_from_url(value: str | None) -> str:
     return ""
 
 
-def _is_generic_email(email: str | None) -> bool:
-    local = str(email or "").split("@", 1)[0].strip().lower()
-    return local in GENERIC_EMAIL_LOCAL_PARTS
-
-
 def _first_value(row: Dict[str, Any], keys: List[str]) -> Any:
     for key in keys:
         value = row.get(key)
         if value not in (None, "", []):
             return value
+    return None
+
+
+def _list_value(row: Dict[str, Any], key: str, index: int = 0) -> Any:
+    value = row.get(key)
+    if isinstance(value, list) and len(value) > index:
+        return value[index]
     return None
 
 
@@ -50,23 +53,57 @@ def _normalize_confidence(value: Any) -> int | None:
     return max(0, min(100, int(round(parsed))))
 
 
+def _is_generic_email(email: str | None, email_role: str | None = None) -> bool:
+    role = str(email_role or "").strip().lower()
+    if role:
+        return role not in PERSON_EMAIL_ROLES
+    local = str(email or "").split("@", 1)[0].strip().lower()
+    return local in GENERIC_EMAIL_LOCAL_PARTS
+
+
 def _normalize_result(row: Dict[str, Any], fallback_url: str = "") -> Dict[str, Any]:
     channel_url = str(_first_value(row, ["channelUrl", "channel_url", "channel", "url", "inputUrl", "matchedInput"]) or fallback_url or "").strip()
     channel_id = str(_first_value(row, ["channelId", "channel_id", "youtubeChannelId"]) or _channel_id_from_url(channel_url)).strip()
     email = str(_first_value(row, ["email", "primaryEmail", "primary_email", "businessEmail", "contactEmail"]) or "").strip()
-    source_url = str(_first_value(row, ["email_source_url", "emailSourceUrl", "evidenceUrl", "emailEvidenceUrl", "sourceUrl"]) or "").strip()
+    if not email:
+        email = str(_list_value(row, "emails") or "").strip()
+    email_role = str(_first_value(row, ["email_role", "emailRole", "primaryEmailRole"]) or _list_value(row, "emailRoles") or "").strip()
+    email_validation = str(
+        _first_value(row, ["email_validation", "emailValidation", "validation", "emailStatus", "primaryEmailValidation"])
+        or _list_value(row, "emailValidations")
+        or ""
+    ).strip()
+    email_validation_scope = str(
+        _first_value(row, ["email_validation_scope", "emailValidationScope", "primaryEmailValidationScope"])
+        or ""
+    ).strip()
+    email_source_type = str(
+        _first_value(row, ["email_source_type", "emailSourceType", "emailSource", "source", "sourceType", "primaryEmailSourceType"])
+        or _list_value(row, "emailSourceTypes")
+        or ""
+    ).strip()
+    source_url = str(
+        _first_value(row, ["email_source_url", "emailSourceUrl", "evidenceUrl", "emailEvidenceUrl", "sourceUrl", "primaryEmailSourceUrl"])
+        or _list_value(row, "emailSourceUrls")
+        or ""
+    ).strip()
+    phone = str(_first_value(row, ["phone", "primaryPhone", "primary_phone", "phoneNumber"]) or _list_value(row, "phones") or "").strip()
     return {
         "channel_id": channel_id,
         "channel_url": channel_url,
         "email": email,
-        "email_confidence": _normalize_confidence(_first_value(row, ["email_confidence", "emailConfidence", "confidence"])),
-        "email_validation": str(_first_value(row, ["email_validation", "emailValidation", "validation", "emailStatus"]) or "").strip(),
-        "email_source_type": str(_first_value(row, ["email_source_type", "emailSourceType", "emailSource", "source", "sourceType"]) or "").strip(),
+        "email_confidence": _normalize_confidence(_first_value(row, ["email_confidence", "emailConfidence", "confidence", "primaryEmailConfidence"])),
+        "email_validation": email_validation,
+        "email_validation_scope": email_validation_scope,
+        "email_role": email_role,
+        "email_source_type": email_source_type,
         "email_source_url": source_url,
-        "phone": str(_first_value(row, ["phone", "primaryPhone", "primary_phone", "phoneNumber"]) or "").strip(),
+        "phone": phone,
         "website": str(_first_value(row, ["website", "websiteUrl", "publicWebsiteUrl"]) or "").strip(),
         "lead_tier": str(_first_value(row, ["lead_tier", "leadTier", "tier", "audienceBand"]) or "").strip(),
-        "is_generic_email": _is_generic_email(email),
+        "has_hidden_email": bool(row.get("hasHiddenEmail")),
+        "protected_email_status": str(row.get("protectedEmailStatus") or "").strip(),
+        "is_generic_email": _is_generic_email(email, email_role),
         "error": "",
     }
 

@@ -122,6 +122,8 @@
 	            <th>Email</th>
 	            <th>Email Source</th>
 	            <th>Confidence</th>
+	            <th>Validation</th>
+	            <th>Role</th>
 	            <th>Generic?</th>
 	            <th>Phone</th>
 	            <th>Website</th>
@@ -132,7 +134,7 @@
 	          </tr>
 	        </thead>
 	        <tbody id="ldResultsBody">
-	          <tr><td colspan="17"><div class="lead-discovery-empty">No results yet.</div></td></tr>
+	          <tr><td colspan="19"><div class="lead-discovery-empty">No results yet.</div></td></tr>
 	        </tbody>
 	      </table>
     </div>
@@ -221,7 +223,7 @@
         csvButton.disabled = filteredRows.length === 0;
         emailEnrichButton.disabled = filteredRows.length === 0;
 	        if (!filteredRows.length) {
-	          body.innerHTML = '<tr><td colspan="17"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
+	          body.innerHTML = '<tr><td colspan="19"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
 	          return;
 	        }
         body.innerHTML = filteredRows.map((row) => {
@@ -249,6 +251,8 @@
 	              <td>${escapeHtml(email)}${row.trakk_error ? `<div class="lead-discovery-muted">${escapeHtml(row.trakk_error)}</div>` : ""}</td>
 	              <td>${escapeHtml(sourceType)}</td>
 	              <td>${escapeHtml(row.email_confidence ?? "")}</td>
+	              <td>${escapeHtml(row.email_validation || "")}</td>
+	              <td>${escapeHtml(row.email_role || "")}</td>
 	              <td>${escapeHtml(genericText)}</td>
 	              <td>${escapeHtml(row.phone || "")}</td>
 	              <td>${website}</td>
@@ -270,7 +274,7 @@
 
       const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
       const downloadCsv = () => {
-	        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "email_source", "email_confidence", "email_validation", "email_source_type", "is_generic_email", "email_source_url", "phone", "website", "lead_tier", "matched_keyword", "icp_fit", "icp_reason"];
+	        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "email_source", "email_confidence", "email_validation", "email_validation_scope", "email_role", "email_source_type", "is_generic_email", "email_source_url", "phone", "website", "lead_tier", "has_hidden_email", "protected_email_status", "matched_keyword", "icp_fit", "icp_reason"];
         const lines = [headers.join(",")];
         filteredRows.forEach((row) => {
           lines.push(headers.map((key) => {
@@ -328,7 +332,7 @@
 	        } catch (error) {
 	          allRows = [];
 	          filteredRows = [];
-	          body.innerHTML = '<tr><td colspan="17"><div class="lead-discovery-empty">No results.</div></td></tr>';
+	          body.innerHTML = '<tr><td colspan="19"><div class="lead-discovery-empty">No results.</div></td></tr>';
 	          feedback.textContent = error.message || "Lead discovery failed.";
 	          feedback.classList.add("is-error");
         } finally {
@@ -488,12 +492,16 @@
 	              email_source: enriched.email_source_type || row.email_source || "",
 	              email_confidence: enriched.email_confidence,
 	              email_validation: enriched.email_validation || "",
+	              email_validation_scope: enriched.email_validation_scope || "",
+	              email_role: enriched.email_role || "",
 	              email_source_type: enriched.email_source_type || "",
 	              email_source_url: enriched.email_source_url || "",
 	              is_generic_email: enriched.is_generic_email,
 	              phone: enriched.phone || "",
 	              website: enriched.website || "",
 	              lead_tier: enriched.lead_tier || "",
+	              has_hidden_email: enriched.has_hidden_email,
+	              protected_email_status: enriched.protected_email_status || "",
 	              trakk_error: enriched.error || "",
 	            };
 	          });
