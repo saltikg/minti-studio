@@ -1,0 +1,224 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Discovery Pipeline{% endblock %}
+{% block admin_heading %}Discovery Pipeline{% endblock %}
+{% block admin_subheading %}
+  <p>Persistent view of discovered YouTube channels. Discovery and queue controls land in later phases.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .discovery-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .discovery-summary-item {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.045);
+      padding: 14px;
+    }
+    .discovery-summary-label {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .discovery-summary-value {
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.94);
+      font-size: 1.55rem;
+      font-weight: 850;
+      line-height: 1;
+    }
+    .discovery-table-wrap {
+      overflow-x: auto;
+    }
+    .discovery-table {
+      width: 100%;
+      min-width: 1080px;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .discovery-table th,
+    .discovery-table td {
+      padding: 12px 14px;
+      vertical-align: top;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      white-space: nowrap;
+    }
+    .discovery-table th {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .discovery-channel {
+      min-width: 260px;
+      white-space: normal;
+    }
+    .discovery-channel a {
+      color: #8ff3d8;
+      text-decoration: none;
+      font-weight: 800;
+    }
+    .discovery-muted {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.82rem;
+      margin-top: 4px;
+    }
+    .discovery-status {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 5px 9px;
+      border: 1px solid rgba(45, 212, 191, 0.22);
+      background: rgba(45, 212, 191, 0.12);
+      color: #8ff3d8;
+      font-size: 0.82rem;
+      font-weight: 800;
+    }
+    .discovery-status.disqualified {
+      border-color: rgba(248, 113, 113, 0.32);
+      background: rgba(248, 113, 113, 0.12);
+      color: #fecaca;
+    }
+    .discovery-status.icp_qualified {
+      border-color: rgba(34, 197, 94, 0.34);
+      background: rgba(34, 197, 94, 0.14);
+      color: #bbf7d0;
+    }
+    .discovery-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 16px;
+      color: rgba(255, 255, 255, 0.62);
+    }
+    @media (max-width: 991.98px) {
+      .discovery-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 575.98px) {
+      .discovery-summary-grid { grid-template-columns: 1fr; }
+      .discovery-pager { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    {% if not has_discovery %}
+      <div class="alert alert-warning mb-3">discovery_leads table is not available yet. Run the manual schema SQL on prod, then reload this page.</div>
+    {% endif %}
+
+    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
+      <div class="discovery-muted">Sorted by last discovered time · persistent discovery store</div>
+      <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', format='csv') }}" class="btn btn-sm btn-outline-info">Download CSV</a>
+    </div>
+
+    <div class="discovery-summary-grid">
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Total leads</div>
+        <div class="discovery-summary-value">{{ totals.total }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">With email</div>
+        <div class="discovery-summary-value">{{ totals.with_email }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">ICP fit</div>
+        <div class="discovery-summary-value">{{ totals.icp_fit }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Keywords queued</div>
+        <div class="discovery-summary-value">{{ keyword_summary.queued }}</div>
+      </div>
+    </div>
+
+    <div class="discovery-summary-grid">
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Discovered</div>
+        <div class="discovery-summary-value">{{ status_counts.get('discovered', 0) }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">ICP qualified</div>
+        <div class="discovery-summary-value">{{ status_counts.get('icp_qualified', 0) }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Disqualified</div>
+        <div class="discovery-summary-value">{{ status_counts.get('disqualified', 0) }}</div>
+      </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Keyword searches</div>
+        <div class="discovery-summary-value">{{ keyword_summary.searched }}</div>
+      </div>
+    </div>
+
+    {% if has_keywords %}
+      <div class="discovery-muted mb-3">Keyword queue: {{ keyword_summary.total }} total · {{ keyword_summary.queued }} queued · {{ keyword_summary.searched }} searched</div>
+    {% else %}
+      <div class="discovery-muted mb-3">keyword_queue table is not available yet.</div>
+    {% endif %}
+
+    <div class="discovery-table-wrap">
+      <table class="discovery-table">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Subscribers</th>
+            <th>Longform 60d</th>
+            <th>Shorts 15d</th>
+            <th>ICP</th>
+            <th>Email</th>
+            <th>Tier</th>
+            <th>Status</th>
+            <th>Last seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lead in leads %}
+            <tr>
+              <td class="discovery-channel">
+                <a href="{{ lead.channel_url or ('https://www.youtube.com/channel/' ~ lead.youtube_channel_id) }}" target="_blank" rel="noopener">{{ lead.channel_title }}</a>
+                <div class="discovery-muted">{{ lead.youtube_channel_id }}</div>
+                {% if lead.matched_keyword %}
+                  <div class="discovery-muted">{{ lead.matched_keyword }}</div>
+                {% endif %}
+              </td>
+              <td>{{ lead.subscriber_count or '' }}</td>
+              <td>{{ lead.longform_last_60d or 0 }}</td>
+              <td>{{ lead.shorts_last_15d or 0 }}</td>
+              <td>{{ 'yes' if lead.icp_fit is true else ('no' if lead.icp_fit is false else '') }}</td>
+              <td>{{ lead.creator_email or '' }}</td>
+              <td>{{ lead.lead_tier or '' }}</td>
+              <td><span class="discovery-status {{ lead.status }}">{{ lead.status }}</span></td>
+              <td>
+                <div>{{ lead.last_seen_at or '' }}</div>
+                <div class="discovery-muted">{{ lead.last_discovered_at or '' }}</div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="9" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="discovery-pager">
+      <div>Page {{ page }} of {{ total_pages }}</div>
+      <div class="d-flex gap-2">
+        {% if page > 1 %}
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page-1, per_page=per_page) }}">Previous</a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page+1, per_page=per_page) }}">Next</a>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+{% endblock %}

@@ -198,6 +198,14 @@
           </span>
         </a>
         <a
+          href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/lead-pipeline') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Discovery Pipeline</span>
+          </span>
+        </a>
+        <a
           href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/outreach-emails') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>

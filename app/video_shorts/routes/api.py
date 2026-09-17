@@ -773,6 +773,130 @@ def _lead_discovery_channel_url(value: Any) -> str:
     return text
 
 
+def _json_sql_param(conn, placeholder: str = "?") -> str:
+    if getattr(conn, "backend_name", "") == "postgres":
+        return f"CAST({placeholder} AS JSONB)"
+    return placeholder
+
+
+def _lead_discovery_status(row: Dict[str, Any]) -> str:
+    if row.get("icp_fit") is True:
+        return "icp_qualified"
+    if row.get("icp_fit") is False or row.get("eligible") is False:
+        return "disqualified"
+    return "discovered"
+
+
+def _persist_discovery_lead(row: Dict[str, Any]) -> str:
+    youtube_channel_id = str(row.get("channel_id") or "").strip()
+    if not youtube_channel_id:
+        return "skipped"
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        if not columns:
+            return "skipped"
+        status = _lead_discovery_status(row)
+        raw_json = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        params = [
+            youtube_channel_id,
+            str(row.get("channel_url") or f"https://www.youtube.com/channel/{youtube_channel_id}"),
+            row.get("channel_title"),
+            row.get("channel_description"),
+            row.get("subscriber_count"),
+            row.get("longform_last_60d"),
+            row.get("shorts_last_15d"),
+            row.get("gate_subscriber"),
+            row.get("gate_cadence"),
+            row.get("eligible"),
+            row.get("icp_fit"),
+            row.get("icp_reason"),
+            row.get("creator_name"),
+            row.get("creator_email"),
+            row.get("email_source"),
+            row.get("email_confidence"),
+            row.get("email_validation"),
+            row.get("email_role"),
+            row.get("is_generic_email"),
+            row.get("website"),
+            row.get("phone"),
+            row.get("lead_tier"),
+            row.get("email_source_url"),
+            row.get("matched_keyword"),
+            status,
+            raw_json,
+        ]
+        insert_sql = f"""
+            INSERT INTO discovery_leads (
+                youtube_channel_id, channel_url, channel_title, channel_description,
+                subscriber_count, longform_last_60d, shorts_last_15d,
+                gate_subscriber, gate_cadence, eligible, icp_fit, icp_reason,
+                creator_name, creator_email, email_source, email_confidence,
+                email_validation, email_role, is_generic_email, website, phone,
+                lead_tier, email_source_url, matched_keyword, status, raw_json,
+                first_seen_at, last_seen_at, last_discovered_at
+            )
+            VALUES (
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, {_json_sql_param(conn)},
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (youtube_channel_id) DO UPDATE SET
+                channel_url = EXCLUDED.channel_url,
+                channel_title = COALESCE(EXCLUDED.channel_title, discovery_leads.channel_title),
+                channel_description = COALESCE(EXCLUDED.channel_description, discovery_leads.channel_description),
+                subscriber_count = EXCLUDED.subscriber_count,
+                longform_last_60d = EXCLUDED.longform_last_60d,
+                shorts_last_15d = EXCLUDED.shorts_last_15d,
+                gate_subscriber = EXCLUDED.gate_subscriber,
+                gate_cadence = EXCLUDED.gate_cadence,
+                eligible = EXCLUDED.eligible,
+                icp_fit = EXCLUDED.icp_fit,
+                icp_reason = COALESCE(EXCLUDED.icp_reason, discovery_leads.icp_reason),
+                creator_name = COALESCE(EXCLUDED.creator_name, discovery_leads.creator_name),
+                creator_email = COALESCE(NULLIF(EXCLUDED.creator_email, ''), discovery_leads.creator_email),
+                email_source = COALESCE(NULLIF(EXCLUDED.email_source, ''), discovery_leads.email_source),
+                email_confidence = COALESCE(EXCLUDED.email_confidence, discovery_leads.email_confidence),
+                email_validation = COALESCE(NULLIF(EXCLUDED.email_validation, ''), discovery_leads.email_validation),
+                email_role = COALESCE(NULLIF(EXCLUDED.email_role, ''), discovery_leads.email_role),
+                is_generic_email = COALESCE(EXCLUDED.is_generic_email, discovery_leads.is_generic_email),
+                website = COALESCE(NULLIF(EXCLUDED.website, ''), discovery_leads.website),
+                phone = COALESCE(NULLIF(EXCLUDED.phone, ''), discovery_leads.phone),
+                lead_tier = COALESCE(NULLIF(EXCLUDED.lead_tier, ''), discovery_leads.lead_tier),
+                email_source_url = COALESCE(NULLIF(EXCLUDED.email_source_url, ''), discovery_leads.email_source_url),
+                matched_keyword = COALESCE(NULLIF(EXCLUDED.matched_keyword, ''), discovery_leads.matched_keyword),
+                status = CASE
+                    WHEN discovery_leads.status IN ('email_enriched', 'contacted', 'converted', 'archived') THEN discovery_leads.status
+                    WHEN discovery_leads.status = 'icp_qualified' AND EXCLUDED.status = 'discovered' THEN discovery_leads.status
+                    ELSE EXCLUDED.status
+                END,
+                raw_json = EXCLUDED.raw_json,
+                last_seen_at = CURRENT_TIMESTAMP,
+                last_discovered_at = CURRENT_TIMESTAMP
+            RETURNING (xmax = 0) AS inserted
+        """
+        result = conn.execute(insert_sql, params)
+        inserted_row = result.fetchone()
+        conn.commit()
+        return "inserted" if inserted_row and bool(inserted_row[0]) else "updated"
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Lead discovery persistence failed for channel=%s", youtube_channel_id)
+        return "failed"
+    finally:
+        if conn:
+            conn.close()
+
+
 def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
     has_scheduled = bool(table_columns(conn, "outreach_scheduled_emails"))
     scheduled_union = ""
@@ -1193,6 +1317,7 @@ def admin_lead_discovery_test():
 
     quota_counter = {"enrichment_read_calls": 0}
     results: List[Dict[str, Any]] = []
+    persistence_counts = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0}
     enrichment_candidates = list(candidates_by_channel.values())[:max_channels_enriched]
     channels_enriched = 0
     for candidate in enrichment_candidates:
@@ -1212,6 +1337,9 @@ def admin_lead_discovery_test():
             else:
                 row["icp_fit"] = None
                 row["icp_reason"] = ""
+            persistence_result = _persist_discovery_lead(row)
+            if persistence_result in persistence_counts:
+                persistence_counts[persistence_result] += 1
             results.append(row)
         except YoutubeApiError as exc:
             errors.append({"error": "youtube_enrichment_error", "channel_id": channel_id, "message": str(exc)})
@@ -1249,6 +1377,7 @@ def admin_lead_discovery_test():
             "channels_enriched": channels_enriched,
             "rows_returned": len(results),
             "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
+            "persistence": persistence_counts,
             "results": results,
             "errors": errors,
         }

@@ -209,6 +209,7 @@
 	          `Channels enriched: ${payload.channels_enriched || 0}`,
 	          `Rows returned: ${payload.rows_returned || 0}`,
 	          `Rows passing defaults: ${payload.rows_passing_default_thresholds || 0}`,
+	          `Persisted: ${(payload.persistence?.inserted || 0)} inserted / ${(payload.persistence?.updated || 0)} updated`,
 	          `Search calls: ${payload.search_calls || 0}`,
 	          `Enrichment read calls: ${payload.enrichment_read_calls || 0}`,
 	          `Rows: ${filteredRows.length}/${allRows.length}`,

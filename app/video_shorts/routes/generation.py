@@ -15158,6 +15158,162 @@ def admin_leads_pipeline_overview():
     )
 
 
+def _csv_cell(value: Any) -> str:
+    text = str(value or "")
+    return '"' + text.replace('"', '""') + '"'
+
+
+def _request_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+@video_shorts_bp.route("/admin/lead-pipeline", methods=["GET"])
+@require_admin
+def admin_discovery_lead_pipeline():
+    page = max(1, _request_int(request.args.get("page"), 1))
+    per_page = min(100, max(10, _request_int(request.args.get("per_page"), 50)))
+    offset = (page - 1) * per_page
+    wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
+    conn = get_db_readonly()
+    try:
+        discovery_columns = table_columns(conn, "discovery_leads")
+        keyword_columns = table_columns(conn, "keyword_queue")
+        has_discovery = bool(discovery_columns)
+        has_keywords = bool(keyword_columns)
+
+        status_counts: Dict[str, int] = {}
+        totals = {"total": 0, "with_email": 0, "icp_fit": 0}
+        keyword_summary = {"total": 0, "queued": 0, "searched": 0}
+        leads: List[Dict[str, Any]] = []
+        total_pages = 1
+
+        if has_discovery:
+            for row in conn.execute(
+                """
+                SELECT COALESCE(status, 'discovered') AS status, COUNT(*)
+                FROM discovery_leads
+                GROUP BY COALESCE(status, 'discovered')
+                ORDER BY status
+                """
+            ).fetchall():
+                status_counts[str(row[0] or "discovered")] = int(row[1] or 0)
+            total_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*),
+                    COUNT(*) FILTER (WHERE COALESCE(creator_email, '') <> ''),
+                    COUNT(*) FILTER (WHERE icp_fit IS TRUE)
+                FROM discovery_leads
+                """
+            ).fetchone()
+            totals = {
+                "total": int(total_row[0] or 0),
+                "with_email": int(total_row[1] or 0),
+                "icp_fit": int(total_row[2] or 0),
+            }
+            total_pages = max(1, int(math.ceil(totals["total"] / per_page))) if totals["total"] else 1
+            row_limit = totals["total"] if wants_csv else per_page
+            row_offset = 0 if wants_csv else offset
+            rows = conn.execute(
+                """
+                SELECT
+                    youtube_channel_id,
+                    channel_url,
+                    channel_title,
+                    subscriber_count,
+                    longform_last_60d,
+                    shorts_last_15d,
+                    icp_fit,
+                    creator_email,
+                    lead_tier,
+                    status,
+                    last_seen_at,
+                    last_discovered_at,
+                    matched_keyword
+                FROM discovery_leads
+                ORDER BY last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [row_limit, row_offset],
+            ).fetchall()
+            leads = [
+                {
+                    "youtube_channel_id": str(row[0] or ""),
+                    "channel_url": str(row[1] or ""),
+                    "channel_title": str(row[2] or row[0] or "Channel"),
+                    "subscriber_count": row[3],
+                    "longform_last_60d": row[4],
+                    "shorts_last_15d": row[5],
+                    "icp_fit": bool(row[6]) if row[6] is not None else None,
+                    "creator_email": str(row[7] or ""),
+                    "lead_tier": str(row[8] or ""),
+                    "status": str(row[9] or "discovered"),
+                    "last_seen_at": _format_datetime_pst(row[10]),
+                    "last_discovered_at": _format_datetime_pst(row[11]),
+                    "matched_keyword": str(row[12] or ""),
+                }
+                for row in rows
+            ]
+
+        if has_keywords:
+            keyword_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*),
+                    COUNT(*) FILTER (WHERE COALESCE(status, 'queued') = 'queued'),
+                    COUNT(*) FILTER (WHERE times_searched > 0 OR last_searched_at IS NOT NULL)
+                FROM keyword_queue
+                """
+            ).fetchone()
+            keyword_summary = {
+                "total": int(keyword_row[0] or 0),
+                "queued": int(keyword_row[1] or 0),
+                "searched": int(keyword_row[2] or 0),
+            }
+
+        if wants_csv:
+            headers = [
+                "youtube_channel_id",
+                "channel_url",
+                "channel_title",
+                "subscriber_count",
+                "longform_last_60d",
+                "shorts_last_15d",
+                "icp_fit",
+                "creator_email",
+                "lead_tier",
+                "status",
+                "last_seen_at",
+                "last_discovered_at",
+                "matched_keyword",
+            ]
+            lines = [",".join(headers)]
+            for lead in leads:
+                lines.append(",".join(_csv_cell(lead.get(header)) for header in headers))
+            response = current_app.response_class("\n".join(lines), mimetype="text/csv")
+            response.headers["Content-Disposition"] = "attachment; filename=discovery-leads.csv"
+            return response
+    finally:
+        conn.close()
+
+    return render_template(
+        "shorts_admin_discovery_pipeline.html",
+        admin_title="Discovery Pipeline",
+        has_discovery=has_discovery,
+        has_keywords=has_keywords,
+        status_counts=status_counts,
+        totals=totals,
+        keyword_summary=keyword_summary,
+        leads=leads,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
+
+
 @video_shorts_bp.route("/admin/leads/<lead_id>/email", methods=["POST"])
 @require_admin
 def admin_provision_discovery_lead_email(lead_id: str):
