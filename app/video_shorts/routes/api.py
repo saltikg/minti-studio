@@ -29,6 +29,7 @@ from app.video_shorts.services.autopilot_leads import (
     AutopilotLeadSchemaUnavailable,
     create_autopilot_lead_from_video,
 )
+from app.video_shorts.services.apify_enrich import apify_trakk_enrich
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
     _parse_duration_iso8601,
@@ -64,6 +65,7 @@ LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
 LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT = 5
 LEAD_DISCOVERY_SEED_CHANNEL_LIMIT = 50
 LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
+LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT = 100
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -760,6 +762,17 @@ def _admin_json_auth_error():
     return None
 
 
+def _lead_discovery_channel_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+    if text.startswith("UC") and "/" not in text:
+        return f"https://www.youtube.com/channel/{text}"
+    return text
+
+
 def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
     has_scheduled = bool(table_columns(conn, "outreach_scheduled_emails"))
     scheduled_union = ""
@@ -1237,6 +1250,87 @@ def admin_lead_discovery_test():
             "rows_returned": len(results),
             "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
             "results": results,
+            "errors": errors,
+        }
+    )
+
+
+@video_shorts_bp.route("/api/admin/lead-discovery-enrich-emails", methods=["POST"])
+def admin_lead_discovery_enrich_emails():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"results": [], "enriched_count": 0, "channels_sent": 0, "cost_note": ""})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    supplied = (
+        payload.get("channels")
+        or payload.get("channel_urls")
+        or payload.get("channelUrls")
+        or payload.get("channel_ids")
+        or []
+    )
+    if isinstance(supplied, (str, dict)):
+        supplied = [supplied]
+
+    channel_urls: List[str] = []
+    seen = set()
+    for item in (supplied if isinstance(supplied, list) else []):
+        if isinstance(item, dict):
+            raw_value = (
+                item.get("channel_url")
+                or item.get("channelUrl")
+                or item.get("url")
+                or item.get("channel_id")
+                or item.get("channelId")
+            )
+        else:
+            raw_value = item
+        channel_url = _lead_discovery_channel_url(raw_value)
+        key = channel_url.rstrip("/")
+        if not channel_url or key in seen:
+            continue
+        seen.add(key)
+        channel_urls.append(channel_url)
+        if len(channel_urls) >= LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT:
+            break
+
+    if not channel_urls:
+        return jsonify(
+            {
+                "success": False,
+                "results": [],
+                "enriched_count": 0,
+                "channels_sent": 0,
+                "cost_note": "",
+                "errors": [{"error": "bad_request", "message": "Provide channel URLs or channel IDs."}],
+            }
+        ), 400
+
+    try:
+        enrichment = apify_trakk_enrich(channel_urls)
+    except Exception as exc:
+        current_app.logger.exception("Lead discovery Apify email enrichment failed")
+        return jsonify(
+            {
+                "success": False,
+                "results": [],
+                "enriched_count": 0,
+                "channels_sent": len(channel_urls),
+                "cost_note": f"Estimated Apify actor cost: {len(channel_urls)} x $0.005 = ${len(channel_urls) * 0.005:.3f}",
+                "errors": [{"error": "apify_enrichment_failed", "message": str(exc) or "Email enrichment failed."}],
+            }
+        ), 502
+
+    errors = enrichment.get("errors") or []
+    return jsonify(
+        {
+            "success": not errors or bool(enrichment.get("results")),
+            "results": enrichment.get("results") or [],
+            "enriched_count": int(enrichment.get("enriched_count") or 0),
+            "channels_sent": len(channel_urls),
+            "cost_note": f"Estimated Apify actor cost: {len(channel_urls)} x $0.005 = ${len(channel_urls) * 0.005:.3f}",
             "errors": errors,
         }
     )

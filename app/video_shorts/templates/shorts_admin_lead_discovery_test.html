@@ -98,6 +98,7 @@
 		        <button id="ldBackfillButton" type="button" class="btn btn-outline-info">Backfill seed descriptions</button>
 		        <button id="ldBuildProfileButton" type="button" class="btn btn-outline-success">Build ICP profile from seed</button>
 		        <button id="ldLoadProfileButton" type="button" class="btn btn-outline-light">Load keywords from ICP profile</button>
+		        <button id="ldEmailEnrichButton" type="button" class="btn btn-outline-warning" disabled>Enrich emails (trakk)</button>
 		        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
 		      </div>
     </form>
@@ -120,12 +121,18 @@
 	            <th>Creator</th>
 	            <th>Email</th>
 	            <th>Email Source</th>
+	            <th>Confidence</th>
+	            <th>Generic?</th>
+	            <th>Phone</th>
+	            <th>Website</th>
+	            <th>Tier</th>
+	            <th>Source URL</th>
 	            <th>Keyword</th>
 	            <th>ICP</th>
 	          </tr>
 	        </thead>
 	        <tbody id="ldResultsBody">
-	          <tr><td colspan="11"><div class="lead-discovery-empty">No results yet.</div></td></tr>
+	          <tr><td colspan="17"><div class="lead-discovery-empty">No results yet.</div></td></tr>
 	        </tbody>
 	      </table>
     </div>
@@ -139,6 +146,7 @@
 	      const backfillButton = document.getElementById("ldBackfillButton");
 	      const buildProfileButton = document.getElementById("ldBuildProfileButton");
 	      const loadProfileButton = document.getElementById("ldLoadProfileButton");
+	      const emailEnrichButton = document.getElementById("ldEmailEnrichButton");
 	      const csvButton = document.getElementById("ldCsvButton");
       const feedback = document.getElementById("ldFeedback");
       const profileBox = document.getElementById("ldProfileBox");
@@ -158,6 +166,12 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+
+      const externalUrl = (value) => {
+        const text = String(value ?? "").trim();
+        if (!text) return "";
+        return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+      };
 
       const thresholds = () => ({
         minSubscribers: asNumber(form.min_subscribers.value, 0),
@@ -205,8 +219,9 @@
       const renderRows = () => {
         filteredRows = allRows.filter(passesThresholds);
         csvButton.disabled = filteredRows.length === 0;
+        emailEnrichButton.disabled = filteredRows.length === 0;
 	        if (!filteredRows.length) {
-	          body.innerHTML = '<tr><td colspan="11"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
+	          body.innerHTML = '<tr><td colspan="17"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
 	          return;
 	        }
         body.innerHTML = filteredRows.map((row) => {
@@ -214,6 +229,11 @@
           const eligible = row.eligible ? "Pass" : "Fail";
           const icpText = row.icp_fit === true ? "Fit" : (row.icp_fit === false ? "No" : "");
           const icpReason = row.icp_reason ? `<div class="lead-discovery-muted">${escapeHtml(row.icp_reason)}</div>` : "";
+          const email = row.creator_email || row.email || "";
+          const sourceType = row.email_source_type || row.email_source || "";
+          const genericText = email ? (row.is_generic_email ? "Yes" : "No") : "";
+          const website = row.website ? `<a href="${escapeHtml(externalUrl(row.website))}" target="_blank" rel="noopener">${escapeHtml(row.website)}</a>` : "";
+          const sourceUrl = row.email_source_url ? `<a href="${escapeHtml(row.email_source_url)}" target="_blank" rel="noopener">source</a>` : "";
           return `
             <tr class="${pass ? "is-pass" : ""}">
               <td>
@@ -224,10 +244,16 @@
               <td>${escapeHtml(row.longform_last_60d ?? 0)}</td>
               <td>${escapeHtml(row.shorts_last_15d ?? 0)}</td>
               <td>${escapeHtml(row.gate_cadence || "")}</td>
-              <td><span class="lead-discovery-status ${row.eligible ? "pass" : "fail"}">${eligible}</span><div class="lead-discovery-muted">${escapeHtml(gateReason(row))}</div></td>
+	              <td><span class="lead-discovery-status ${row.eligible ? "pass" : "fail"}">${eligible}</span><div class="lead-discovery-muted">${escapeHtml(gateReason(row))}</div></td>
 	              <td>${escapeHtml(row.creator_name || "")}</td>
-	              <td>${escapeHtml(row.creator_email || "")}</td>
-	              <td>${escapeHtml(row.email_source || "")}</td>
+	              <td>${escapeHtml(email)}${row.trakk_error ? `<div class="lead-discovery-muted">${escapeHtml(row.trakk_error)}</div>` : ""}</td>
+	              <td>${escapeHtml(sourceType)}</td>
+	              <td>${escapeHtml(row.email_confidence ?? "")}</td>
+	              <td>${escapeHtml(genericText)}</td>
+	              <td>${escapeHtml(row.phone || "")}</td>
+	              <td>${website}</td>
+	              <td>${escapeHtml(row.lead_tier || "")}</td>
+	              <td>${sourceUrl}</td>
 	              <td>${escapeHtml(row.matched_keyword || "")}</td>
 	              <td>${escapeHtml(icpText)}${icpReason}</td>
             </tr>
@@ -244,7 +270,7 @@
 
       const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
       const downloadCsv = () => {
-	        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "email_source", "matched_keyword", "icp_fit", "icp_reason"];
+	        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "email_source", "email_confidence", "email_validation", "email_source_type", "is_generic_email", "email_source_url", "phone", "website", "lead_tier", "matched_keyword", "icp_fit", "icp_reason"];
         const lines = [headers.join(",")];
         filteredRows.forEach((row) => {
           lines.push(headers.map((key) => {
@@ -270,6 +296,7 @@
         feedback.classList.remove("is-error");
         runButton.disabled = true;
         csvButton.disabled = true;
+        emailEnrichButton.disabled = true;
         try {
           const payload = {
             niche: form.niche.value,
@@ -301,7 +328,7 @@
 	        } catch (error) {
 	          allRows = [];
 	          filteredRows = [];
-	          body.innerHTML = '<tr><td colspan="11"><div class="lead-discovery-empty">No results.</div></td></tr>';
+	          body.innerHTML = '<tr><td colspan="17"><div class="lead-discovery-empty">No results.</div></td></tr>';
 	          feedback.textContent = error.message || "Lead discovery failed.";
 	          feedback.classList.add("is-error");
         } finally {
@@ -416,6 +443,67 @@
 	          feedback.classList.add("is-error");
 	        } finally {
 	          loadProfileButton.disabled = false;
+	        }
+	      });
+	      emailEnrichButton.addEventListener("click", async () => {
+	        const rowsToEnrich = filteredRows
+	          .map((row) => ({
+	            channel_id: row.channel_id || "",
+	            channel_url: row.channel_url || (row.channel_id ? `https://www.youtube.com/channel/${row.channel_id}` : ""),
+	          }))
+	          .filter((row) => row.channel_url || row.channel_id);
+	        if (!rowsToEnrich.length) {
+	          feedback.textContent = "No filtered rows to enrich.";
+	          feedback.classList.add("is-error");
+	          return;
+	        }
+	        feedback.textContent = `Enriching ${rowsToEnrich.length} channel(s) with trakk...`;
+	        feedback.classList.remove("is-error");
+	        emailEnrichButton.disabled = true;
+	        try {
+	          const response = await fetch("{{ url_for('video_shorts_bp.admin_lead_discovery_enrich_emails') }}", {
+	            method: "POST",
+	            credentials: "same-origin",
+	            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	            body: JSON.stringify({ channels: rowsToEnrich }),
+	          });
+	          const data = await response.json().catch(() => ({}));
+	          if (!response.ok || !data.success) {
+	            const message = data.errors?.[0]?.message || "Email enrichment failed.";
+	            throw new Error(message);
+	          }
+	          const byId = new Map();
+	          const byUrl = new Map();
+	          (data.results || []).forEach((result) => {
+	            if (result.channel_id) byId.set(String(result.channel_id), result);
+	            if (result.channel_url) byUrl.set(String(result.channel_url).replace(/\/$/, ""), result);
+	          });
+	          allRows = allRows.map((row) => {
+	            const rowUrl = String(row.channel_url || (row.channel_id ? `https://www.youtube.com/channel/${row.channel_id}` : "")).replace(/\/$/, "");
+	            const enriched = (row.channel_id && byId.get(String(row.channel_id))) || byUrl.get(rowUrl);
+	            if (!enriched) return row;
+	            return {
+	              ...row,
+	              creator_email: enriched.email || row.creator_email || "",
+	              email_source: enriched.email_source_type || row.email_source || "",
+	              email_confidence: enriched.email_confidence,
+	              email_validation: enriched.email_validation || "",
+	              email_source_type: enriched.email_source_type || "",
+	              email_source_url: enriched.email_source_url || "",
+	              is_generic_email: enriched.is_generic_email,
+	              phone: enriched.phone || "",
+	              website: enriched.website || "",
+	              lead_tier: enriched.lead_tier || "",
+	              trakk_error: enriched.error || "",
+	            };
+	          });
+	          updateAfterFilter();
+	          feedback.textContent = `Email enrichment complete. Enriched ${data.enriched_count || 0}/${data.channels_sent || rowsToEnrich.length}. ${data.cost_note || ""}`;
+	        } catch (error) {
+	          feedback.textContent = error.message || "Email enrichment failed.";
+	          feedback.classList.add("is-error");
+	        } finally {
+	          emailEnrichButton.disabled = filteredRows.length === 0;
 	        }
 	      });
 	      csvButton.addEventListener("click", downloadCsv);
