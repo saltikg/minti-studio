@@ -166,7 +166,7 @@ def _run_actor_with_poll(actor_input: Dict[str, Any], *, token: str, timeout_sec
     return _dataset_items(str(dataset_id), token=token)
 
 
-def apify_trakk_enrich(channel_urls: List[str], *, timeout_seconds: int = 240) -> Dict[str, Any]:
+def apify_trakk_enrich(channel_urls: List[str], *, timeout_seconds: int = 240, prefer_sync: bool = True) -> Dict[str, Any]:
     clean_urls = []
     seen = set()
     for url in channel_urls or []:
@@ -189,13 +189,15 @@ def apify_trakk_enrich(channel_urls: List[str], *, timeout_seconds: int = 240) -
     actor_input = _build_actor_input(clean_urls)
     items: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
-    sync_url = f"{APIFY_API_BASE}/acts/{TRAKK_ACTOR_PATH}/run-sync-get-dataset-items"
-    try:
-        payload = _request_json("POST", sync_url, token=token, timeout=min(70, max(20, timeout_seconds)), json=actor_input)
-        if isinstance(payload, list):
-            items = payload
-    except Exception as exc:
-        errors.append({"error": "apify_sync_fallback", "message": str(exc)})
+    if prefer_sync:
+        sync_url = f"{APIFY_API_BASE}/acts/{TRAKK_ACTOR_PATH}/run-sync-get-dataset-items"
+        try:
+            payload = _request_json("POST", sync_url, token=token, timeout=min(70, max(20, timeout_seconds)), json=actor_input)
+            if isinstance(payload, list):
+                items = payload
+        except Exception as exc:
+            errors.append({"error": "apify_sync_fallback", "message": str(exc)})
+    if not items:
         try:
             items = _run_actor_with_poll(actor_input, token=token, timeout_seconds=timeout_seconds)
         except Exception as poll_exc:

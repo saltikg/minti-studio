@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from flask import current_app, flash, g, jsonify, redirect, request, url_for
 
@@ -21,7 +22,7 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
 from app.video_shorts.services.email_verification import send_autopilot_upgrade_request_email
-from app.video_shorts.services.render_jobs import enqueue_preview_frame_job, get_job
+from app.video_shorts.services.render_jobs import JOB_TYPE_ENRICH_DISCOVERY_EMAILS, enqueue_preview_frame_job, enqueue_worker_job, get_job
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
@@ -1461,6 +1462,77 @@ def admin_lead_discovery_enrich_emails():
             "channels_sent": len(channel_urls),
             "cost_note": f"Estimated Apify actor cost: {len(channel_urls)} x $0.005 = ${len(channel_urls) * 0.005:.3f}",
             "errors": errors,
+        }
+    )
+
+
+@video_shorts_bp.route("/api/admin/discovery-enrich-emails", methods=["POST"])
+def admin_discovery_enrich_emails():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"enqueued": False, "job_id": None, "batch_size": 0, "pending_count": 0})
+        return jsonify(payload), status
+
+    current_user = getattr(g, "vs_current_user", None) or {}
+    payload = request.get_json(silent=True) or {}
+    batch_size = _coerce_int_param(payload.get("batch_size"), 5, minimum=1, maximum=20)
+
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        required_columns = {
+            "enrichment_attempted_at",
+            "email_enriched_at",
+            "email_enrichment_error",
+            "email_validation_scope",
+            "has_hidden_email",
+            "protected_email_status",
+        }
+        missing = sorted(required_columns - set(columns))
+        if missing:
+            return jsonify(
+                {
+                    "success": False,
+                    "enqueued": False,
+                    "job_id": None,
+                    "batch_size": batch_size,
+                    "pending_count": 0,
+                    "errors": [{"error": "schema_missing", "message": f"Missing discovery_leads columns: {', '.join(missing)}"}],
+                }
+            ), 500
+        pending_row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM discovery_leads
+            WHERE status IN ('icp_qualified', 'email_failed')
+              AND COALESCE(creator_email, '') = ''
+            """
+        ).fetchone()
+        pending_count = int((pending_row[0] if pending_row else 0) or 0)
+    finally:
+        if conn:
+            conn.close()
+
+    enqueue_result = enqueue_worker_job(
+        user_id=str(current_user.get("id") or "admin"),
+        job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+        payload={"batch_size": batch_size},
+        input_hash=f"discovery-email-enrich:{uuid4()}",
+        max_attempts=1,
+        priority=20,
+    )
+    job = enqueue_result.get("job") or {}
+    return jsonify(
+        {
+            "success": True,
+            "enqueued": True,
+            "job_id": job.get("id"),
+            "batch_size": batch_size,
+            "pending_count": pending_count,
+            "cost_note": f"Batch of {batch_size}; estimated Apify actor cost: {batch_size} x $0.005 = ${batch_size * 0.005:.3f}",
+            "errors": [],
         }
     )
 

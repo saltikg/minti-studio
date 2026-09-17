@@ -15185,7 +15185,7 @@ def admin_discovery_lead_pipeline():
         has_keywords = bool(keyword_columns)
 
         status_counts: Dict[str, int] = {}
-        totals = {"total": 0, "with_email": 0, "icp_fit": 0}
+        totals = {"total": 0, "with_email": 0, "icp_fit": 0, "pending_email_enrichment": 0}
         keyword_summary = {"total": 0, "queued": 0, "searched": 0}
         leads: List[Dict[str, Any]] = []
         total_pages = 1
@@ -15205,7 +15205,11 @@ def admin_discovery_lead_pipeline():
                 SELECT
                     COUNT(*),
                     COUNT(*) FILTER (WHERE COALESCE(creator_email, '') <> ''),
-                    COUNT(*) FILTER (WHERE icp_fit IS TRUE)
+                    COUNT(*) FILTER (WHERE icp_fit IS TRUE),
+                    COUNT(*) FILTER (
+                        WHERE status IN ('icp_qualified', 'email_failed')
+                          AND COALESCE(creator_email, '') = ''
+                    )
                 FROM discovery_leads
                 """
             ).fetchone()
@@ -15213,6 +15217,7 @@ def admin_discovery_lead_pipeline():
                 "total": int(total_row[0] or 0),
                 "with_email": int(total_row[1] or 0),
                 "icp_fit": int(total_row[2] or 0),
+                "pending_email_enrichment": int(total_row[3] or 0),
             }
             total_pages = max(1, int(math.ceil(totals["total"] / per_page))) if totals["total"] else 1
             row_limit = totals["total"] if wants_csv else per_page
@@ -15228,11 +15233,17 @@ def admin_discovery_lead_pipeline():
                     shorts_last_15d,
                     icp_fit,
                     creator_email,
+                    email_confidence,
+                    email_role,
+                    is_generic_email,
+                    website,
                     lead_tier,
                     status,
                     last_seen_at,
                     last_discovered_at,
-                    matched_keyword
+                    matched_keyword,
+                    email_enriched_at,
+                    email_enrichment_error
                 FROM discovery_leads
                 ORDER BY last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC
                 LIMIT ? OFFSET ?
@@ -15249,11 +15260,17 @@ def admin_discovery_lead_pipeline():
                     "shorts_last_15d": row[5],
                     "icp_fit": bool(row[6]) if row[6] is not None else None,
                     "creator_email": str(row[7] or ""),
-                    "lead_tier": str(row[8] or ""),
-                    "status": str(row[9] or "discovered"),
-                    "last_seen_at": _format_datetime_pst(row[10]),
-                    "last_discovered_at": _format_datetime_pst(row[11]),
-                    "matched_keyword": str(row[12] or ""),
+                    "email_confidence": row[8],
+                    "email_role": str(row[9] or ""),
+                    "is_generic_email": bool(row[10]) if row[10] is not None else None,
+                    "website": str(row[11] or ""),
+                    "lead_tier": str(row[12] or ""),
+                    "status": str(row[13] or "discovered"),
+                    "last_seen_at": _format_datetime_pst(row[14]),
+                    "last_discovered_at": _format_datetime_pst(row[15]),
+                    "matched_keyword": str(row[16] or ""),
+                    "email_enriched_at": _format_datetime_pst(row[17]),
+                    "email_enrichment_error": str(row[18] or ""),
                 }
                 for row in rows
             ]
@@ -15284,11 +15301,17 @@ def admin_discovery_lead_pipeline():
                 "shorts_last_15d",
                 "icp_fit",
                 "creator_email",
+                "email_confidence",
+                "email_role",
+                "is_generic_email",
+                "website",
                 "lead_tier",
                 "status",
                 "last_seen_at",
                 "last_discovered_at",
                 "matched_keyword",
+                "email_enriched_at",
+                "email_enrichment_error",
             ]
             lines = [",".join(headers)]
             for lead in leads:
