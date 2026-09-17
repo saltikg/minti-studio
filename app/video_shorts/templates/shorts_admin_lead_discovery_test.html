@@ -1,0 +1,291 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Lead Discovery Test{% endblock %}
+{% block admin_heading %}Lead Discovery Test{% endblock %}
+{% block admin_subheading %}
+  <p>Manual YouTube discovery for finding creator channels before creating leads.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .lead-discovery-grid { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); gap:14px; align-items:end; }
+    .lead-discovery-grid .wide { grid-column:span 2; }
+    .lead-discovery-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .lead-discovery-note { border:1px solid rgba(245,158,11,.28); border-radius:10px; background:rgba(245,158,11,.10); color:#f8cc7a; padding:10px 12px; font-size:.9rem; }
+    .lead-discovery-summary { display:flex; gap:10px; flex-wrap:wrap; margin:18px 0; }
+    .lead-discovery-pill { border:1px solid rgba(45,212,191,.22); border-radius:999px; background:rgba(45,212,191,.10); color:#9ff5df; padding:7px 11px; font-size:.86rem; }
+    .lead-discovery-pill.is-muted { border-color:rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:rgba(255,255,255,.74); }
+    .lead-discovery-feedback { min-height:24px; margin-top:14px; color:rgba(255,255,255,.72); }
+    .lead-discovery-feedback.is-error { color:#fca5a5; }
+    .lead-discovery-table-wrap { overflow-x:auto; }
+    .lead-discovery-table { width:100%; color:rgba(255,255,255,.92); }
+    .lead-discovery-table th, .lead-discovery-table td { padding:12px 14px; vertical-align:top; border-bottom:1px solid rgba(255,255,255,.08); }
+    .lead-discovery-table th { color:rgba(255,255,255,.58); font-size:.78rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; white-space:nowrap; }
+    .lead-discovery-table tr.is-pass td { background:rgba(45,212,191,.08); }
+    .lead-discovery-table a { color:#8ff3d8; text-decoration:none; }
+    .lead-discovery-muted { color:rgba(255,255,255,.58); font-size:.84rem; }
+    .lead-discovery-status { display:inline-flex; min-width:70px; justify-content:center; border-radius:999px; padding:4px 8px; font-size:.8rem; font-weight:700; }
+    .lead-discovery-status.pass { background:rgba(34,197,94,.16); color:#bbf7d0; border:1px solid rgba(34,197,94,.28); }
+    .lead-discovery-status.fail { background:rgba(248,113,113,.14); color:#fecaca; border:1px solid rgba(248,113,113,.24); }
+    .lead-discovery-empty { padding:28px 16px; color:rgba(255,255,255,.58); text-align:center; }
+    @media (max-width:991.98px) { .lead-discovery-grid { grid-template-columns:1fr 1fr; } .lead-discovery-grid .wide { grid-column:span 2; } }
+    @media (max-width:767.98px) { .lead-discovery-grid { grid-template-columns:1fr; } .lead-discovery-grid .wide { grid-column:span 1; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form id="leadDiscoveryForm" class="lead-discovery-grid">
+      <div class="wide">
+        <label class="form-label" for="ldNiche">Niche</label>
+        <input id="ldNiche" name="niche" class="form-control" placeholder="Example: wellness coaches for women over 40">
+      </div>
+      <div class="wide">
+        <label class="form-label" for="ldKeywords">Keywords</label>
+        <input id="ldKeywords" name="keywords" class="form-control" placeholder="Optional, comma separated">
+      </div>
+      <div>
+        <label class="form-label" for="ldMaxKeywords">Keywords</label>
+        <input id="ldMaxKeywords" name="max_keywords" type="number" min="1" max="10" step="1" class="form-control" value="{{ defaults.max_keywords }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldResultsPerKeyword">Results/keyword</label>
+        <input id="ldResultsPerKeyword" name="max_results_per_keyword" type="number" min="1" max="40" step="1" class="form-control" value="{{ defaults.max_results_per_keyword }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldMaxChannels">Enrich cap</label>
+        <input id="ldMaxChannels" name="max_channels_enriched" type="number" min="1" max="150" step="1" class="form-control" value="{{ defaults.max_channels_enriched }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldLang">Language</label>
+        <input id="ldLang" name="lang" class="form-control" value="{{ defaults.lang }}" maxlength="12">
+      </div>
+      <div>
+        <label class="form-label" for="ldRegion">Region</label>
+        <input id="ldRegion" name="region" class="form-control" value="{{ defaults.region }}" maxlength="2">
+      </div>
+      <div>
+        <label class="form-label" for="ldMinSubs">Min subscribers</label>
+        <input id="ldMinSubs" data-threshold name="min_subscribers" type="number" min="0" step="1" class="form-control" value="{{ defaults.min_subscribers }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldMaxSubs">Max subscribers</label>
+        <input id="ldMaxSubs" data-threshold name="max_subscribers" type="number" min="0" step="1" class="form-control" value="{{ defaults.max_subscribers }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldMinLongform">Min longform 60d</label>
+        <input id="ldMinLongform" data-threshold name="min_longform_60d" type="number" min="0" step="1" class="form-control" value="{{ defaults.min_longform_60d }}">
+      </div>
+      <div>
+        <label class="form-label" for="ldMaxShorts">Max Shorts 15d</label>
+        <input id="ldMaxShorts" data-threshold name="max_shorts_15d" type="number" min="0" step="1" class="form-control" value="{{ defaults.max_shorts_15d }}">
+      </div>
+      <div class="form-check form-switch">
+        <input id="ldAiIcp" name="ai_icp" class="form-check-input" type="checkbox">
+        <label class="form-check-label" for="ldAiIcp">AI ICP check</label>
+      </div>
+      <div class="wide lead-discovery-actions">
+        <button id="ldRunButton" type="submit" class="btn btn-primary">Run</button>
+        <button id="ldCsvButton" type="button" class="btn btn-outline-info" disabled>Download CSV</button>
+      </div>
+    </form>
+
+    <div class="lead-discovery-note mt-3">Large runs consume the shared 10,000/day read pool — prefer off-peak (low comment-ingest hours).</div>
+    <div id="ldFeedback" class="lead-discovery-feedback"></div>
+    <div id="ldSummary" class="lead-discovery-summary d-none"></div>
+
+    <div class="lead-discovery-table-wrap mt-3">
+      <table class="lead-discovery-table">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th>Subscribers</th>
+            <th>Longform 60d</th>
+            <th>Shorts 15d</th>
+            <th>Cadence</th>
+            <th>Eligible</th>
+            <th>Creator</th>
+            <th>Email</th>
+            <th>Keyword</th>
+            <th>ICP</th>
+          </tr>
+        </thead>
+        <tbody id="ldResultsBody">
+          <tr><td colspan="10"><div class="lead-discovery-empty">No results yet.</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const form = document.getElementById("leadDiscoveryForm");
+      const runButton = document.getElementById("ldRunButton");
+      const csvButton = document.getElementById("ldCsvButton");
+      const feedback = document.getElementById("ldFeedback");
+      const summary = document.getElementById("ldSummary");
+      const body = document.getElementById("ldResultsBody");
+      let allRows = [];
+      let filteredRows = [];
+
+      const asNumber = (value, fallback = null) => {
+        const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      };
+
+      const escapeHtml = (value) => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+      const thresholds = () => ({
+        minSubscribers: asNumber(form.min_subscribers.value, 0),
+        maxSubscribers: asNumber(form.max_subscribers.value, Number.MAX_SAFE_INTEGER),
+        minLongform: asNumber(form.min_longform_60d.value, 0),
+        maxShorts: asNumber(form.max_shorts_15d.value, Number.MAX_SAFE_INTEGER),
+      });
+
+      const passesThresholds = (row) => {
+        const t = thresholds();
+        const subscribers = asNumber(row.subscriber_count, -1);
+        const longform = asNumber(row.longform_last_60d, 0);
+        const shorts = asNumber(row.shorts_last_15d, 0);
+        return subscribers >= t.minSubscribers
+          && subscribers <= t.maxSubscribers
+          && longform >= t.minLongform
+          && shorts <= t.maxShorts;
+      };
+
+      const gateReason = (row) => {
+        const reasons = [];
+        if (row.gate_subscriber && row.gate_subscriber !== "uygun") reasons.push(row.gate_subscriber);
+        if (row.gate_cadence && row.gate_cadence !== "aktif") reasons.push(row.gate_cadence);
+        return reasons.join(", ") || "pass";
+      };
+
+      const renderSummary = (payload) => {
+        const keywords = payload.keywords || [];
+        const items = [
+          `Keywords: ${keywords.length ? keywords.join(", ") : "none"}`,
+          `Search calls: ${payload.search_calls || 0} / 100 search/day`,
+          `Enrichment read calls: ${payload.enrichment_read_calls || 0} / 10,000 read/day`,
+          `Rows: ${filteredRows.length}/${allRows.length}`,
+        ];
+        if (payload.errors?.length) items.push(`Errors: ${payload.errors.length}`);
+        summary.innerHTML = items.map((item, index) => `<span class="lead-discovery-pill ${index === 0 ? "" : "is-muted"}">${escapeHtml(item)}</span>`).join("");
+        summary.classList.remove("d-none");
+      };
+
+      const renderRows = () => {
+        filteredRows = allRows.filter(passesThresholds);
+        csvButton.disabled = filteredRows.length === 0;
+        if (!filteredRows.length) {
+          body.innerHTML = '<tr><td colspan="10"><div class="lead-discovery-empty">No rows match the current thresholds.</div></td></tr>';
+          return;
+        }
+        body.innerHTML = filteredRows.map((row) => {
+          const pass = passesThresholds(row);
+          const eligible = row.eligible ? "Pass" : "Fail";
+          const icpText = row.icp_fit === true ? "Fit" : (row.icp_fit === false ? "No" : "");
+          const icpReason = row.icp_reason ? `<div class="lead-discovery-muted">${escapeHtml(row.icp_reason)}</div>` : "";
+          return `
+            <tr class="${pass ? "is-pass" : ""}">
+              <td>
+                <a href="${escapeHtml(row.channel_url || `https://www.youtube.com/channel/${row.channel_id}`)}" target="_blank" rel="noopener">${escapeHtml(row.channel_title || row.channel_id || "Channel")}</a>
+                <div class="lead-discovery-muted">${escapeHtml(row.channel_id || "")}</div>
+              </td>
+              <td>${escapeHtml(row.subscriber_count ?? "")}</td>
+              <td>${escapeHtml(row.longform_last_60d ?? 0)}</td>
+              <td>${escapeHtml(row.shorts_last_15d ?? 0)}</td>
+              <td>${escapeHtml(row.gate_cadence || "")}</td>
+              <td><span class="lead-discovery-status ${row.eligible ? "pass" : "fail"}">${eligible}</span><div class="lead-discovery-muted">${escapeHtml(gateReason(row))}</div></td>
+              <td>${escapeHtml(row.creator_name || "")}</td>
+              <td>${escapeHtml(row.creator_email || "")}</td>
+              <td>${escapeHtml(row.matched_keyword || "")}</td>
+              <td>${escapeHtml(icpText)}${icpReason}</td>
+            </tr>
+          `;
+        }).join("");
+      };
+
+      const updateAfterFilter = () => {
+        renderRows();
+        const pills = Array.from(summary.querySelectorAll(".lead-discovery-pill"));
+        const rowPill = pills.find((pill) => pill.textContent.startsWith("Rows:"));
+        if (rowPill) rowPill.textContent = `Rows: ${filteredRows.length}/${allRows.length}`;
+      };
+
+      const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+      const downloadCsv = () => {
+        const headers = ["channel_title", "channel_url", "subscriber_count", "longform_last_60d", "shorts_last_15d", "gate_cadence", "eligible", "gate_reason", "creator_name", "creator_email", "matched_keyword", "icp_fit", "icp_reason"];
+        const lines = [headers.join(",")];
+        filteredRows.forEach((row) => {
+          lines.push(headers.map((key) => {
+            if (key === "gate_reason") return csvValue(gateReason(row));
+            if (key === "icp_fit") return csvValue(row.icp_fit === true ? "fit" : (row.icp_fit === false ? "no" : ""));
+            return csvValue(row[key]);
+          }).join(","));
+        });
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "lead-discovery-test.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        feedback.textContent = "Running discovery...";
+        feedback.classList.remove("is-error");
+        runButton.disabled = true;
+        csvButton.disabled = true;
+        try {
+          const payload = {
+            niche: form.niche.value,
+            keywords: form.keywords.value,
+            max_keywords: form.max_keywords.value,
+            max_results_per_keyword: form.max_results_per_keyword.value,
+            max_channels_enriched: form.max_channels_enriched.value,
+            lang: form.lang.value,
+            region: form.region.value,
+            ai_icp: form.ai_icp.checked,
+          };
+          const response = await fetch("{{ url_for('video_shorts_bp.admin_lead_discovery_test') }}", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.success) {
+            const message = data.errors?.[0]?.message || "Lead discovery failed.";
+            throw new Error(message);
+          }
+          allRows = Array.isArray(data.results) ? data.results : [];
+          renderRows();
+          renderSummary(data);
+          feedback.textContent = data.errors?.length ? "Completed with warnings." : "Completed.";
+        } catch (error) {
+          allRows = [];
+          filteredRows = [];
+          body.innerHTML = '<tr><td colspan="10"><div class="lead-discovery-empty">No results.</div></td></tr>';
+          feedback.textContent = error.message || "Lead discovery failed.";
+          feedback.classList.add("is-error");
+        } finally {
+          runButton.disabled = false;
+        }
+      });
+
+      form.querySelectorAll("[data-threshold]").forEach((input) => {
+        input.addEventListener("input", updateAfterFilter);
+      });
+      csvButton.addEventListener("click", downloadCsv);
+    })();
+  </script>
+{% endblock %}

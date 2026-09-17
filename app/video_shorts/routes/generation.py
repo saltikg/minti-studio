@@ -14972,6 +14972,26 @@ def admin_leads():
     )
 
 
+@video_shorts_bp.route("/admin/lead-discovery-test", methods=["GET"])
+@require_admin
+def admin_lead_discovery_test_page():
+    return render_template(
+        "shorts_admin_lead_discovery_test.html",
+        admin_title="Lead Discovery Test",
+        defaults={
+            "max_keywords": 5,
+            "max_results_per_keyword": 20,
+            "max_channels_enriched": 50,
+            "lang": "en",
+            "region": "US",
+            "min_subscribers": 5000,
+            "max_subscribers": 300000,
+            "min_longform_60d": 2,
+            "max_shorts_15d": 6,
+        },
+    )
+
+
 PIPELINE_OVERVIEW_STEPS = [
     ("download", "Download", {"download_completed"}),
     ("plan", "AI plan", {"ai_plan_created"}),

@@ -1,11 +1,12 @@
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from flask import current_app, flash, g, jsonify, redirect, request, url_for
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import CAPTION_API_TOKEN
+from app.video_shorts.config import CAPTION_API_TOKEN, OPENAI_MODEL, _openai_client
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
@@ -29,6 +30,7 @@ from app.video_shorts.services.autopilot_leads import (
 )
 from app.video_shorts.youtube_api import (
     YoutubeApiError,
+    _youtube_get_json,
     extract_channel_id,
     extract_video_id,
     fetch_channel_subscriber_counts,
@@ -49,6 +51,13 @@ SHORTS_WINDOW_DAYS = 15
 UPLOAD_SAMPLE_SIZE = 50
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"(iletisim|iletişim|contact|business)", re.IGNORECASE)
+LEAD_DISCOVERY_DEFAULT_MIN_SUBSCRIBERS = 5_000
+LEAD_DISCOVERY_DEFAULT_MAX_SUBSCRIBERS = 300_000
+LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D = 2
+LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D = 6
+LEAD_DISCOVERY_MAX_KEYWORDS = 10
+LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 40
+LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -98,10 +107,17 @@ def _resolve_channel_context(raw_url: str):
     return str(channel_id).strip(), None, None
 
 
-def _collect_recent_uploads(uploads_playlist_id: str, *, limit: int = UPLOAD_SAMPLE_SIZE):
+def _collect_recent_uploads(
+    uploads_playlist_id: str,
+    *,
+    limit: int = UPLOAD_SAMPLE_SIZE,
+    quota_counter: Optional[Dict[str, int]] = None,
+):
     videos = []
     page_token = None
     while len(videos) < limit:
+        if quota_counter is not None:
+            quota_counter["enrichment_read_calls"] = int(quota_counter.get("enrichment_read_calls") or 0) + 1
         batch = fetch_playlist_items_batch(
             playlist_id=uploads_playlist_id,
             page_token=page_token,
@@ -316,6 +332,210 @@ def _coerce_video_pk(value):
         return value
 
 
+def _increment_enrichment_counter(quota_counter: Optional[Dict[str, int]], amount: int = 1) -> None:
+    if quota_counter is not None:
+        quota_counter["enrichment_read_calls"] = int(quota_counter.get("enrichment_read_calls") or 0) + max(0, int(amount or 0))
+
+
+def diagnose_channel(
+    channel_id: str,
+    *,
+    video_meta: Optional[Dict[str, Any]] = None,
+    quota_counter: Optional[Dict[str, int]] = None,
+) -> Dict[str, Any]:
+    resolved_channel_id = str(channel_id or "").strip()
+    if not resolved_channel_id:
+        raise YoutubeApiError("Channel not found on YouTube")
+
+    channel_lookup_url = f"https://www.youtube.com/channel/{resolved_channel_id}"
+    _increment_enrichment_counter(quota_counter)
+    channel_meta = get_channel_metadata(channel_lookup_url)
+    _increment_enrichment_counter(quota_counter)
+    subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id])
+    subscriber_info = subscriber_map.get(resolved_channel_id) or {}
+    recent_uploads = _collect_recent_uploads(
+        channel_meta["uploads_playlist_id"],
+        limit=UPLOAD_SAMPLE_SIZE,
+        quota_counter=quota_counter,
+    )
+    video_ids = [item.get("video_id") for item in recent_uploads if item.get("video_id")]
+    if video_ids:
+        _increment_enrichment_counter(quota_counter, (len(video_ids) + 49) // 50)
+    stats_map = fetch_video_stats(video_ids)
+
+    now_utc = datetime.now(timezone.utc)
+    longform_last_60d = 0
+    shorts_last_15d = 0
+    latest_short_dt = None
+    for item in recent_uploads:
+        video_id = str(item.get("video_id") or "").strip()
+        published_at = _parse_yt_timestamp(item.get("published_at"))
+        duration_seconds = (stats_map.get(video_id) or {}).get("duration_seconds")
+        try:
+            is_short = int(duration_seconds or 0) <= 60
+        except (TypeError, ValueError):
+            is_short = False
+        if is_short:
+            if published_at and (latest_short_dt is None or published_at > latest_short_dt):
+                latest_short_dt = published_at
+            if published_at and published_at >= now_utc - timedelta(days=SHORTS_WINDOW_DAYS):
+                shorts_last_15d += 1
+            continue
+        if published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
+            longform_last_60d += 1
+
+    subscriber_count = subscriber_info.get("subscriber_count")
+    gate_subscriber = _subscriber_gate(subscriber_count)
+    gate_cadence = "aktif" if longform_last_60d >= LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D else "aktif_degil"
+    channel_title = (
+        subscriber_info.get("channel_title")
+        or (video_meta or {}).get("channel_title")
+        or None
+    )
+    channel_description = subscriber_info.get("channel_description")
+    creator_name = _resolve_auto_creator_name(
+        channel_description,
+        (video_meta or {}).get("description"),
+        channel_title,
+    )
+    creator_email = _resolve_auto_creator_email(
+        channel_description,
+        (video_meta or {}).get("description"),
+    )
+    return {
+        "channel_id": resolved_channel_id,
+        "channel_title": channel_title,
+        "channel_description": channel_description,
+        "subscriber_count": subscriber_count,
+        "creator_name": creator_name,
+        "creator_email": creator_email,
+        "eligible": gate_subscriber != "hedef_disi" and gate_cadence == "aktif",
+        "gate_subscriber": gate_subscriber,
+        "gate_cadence": gate_cadence,
+        "longform_last_60d": longform_last_60d,
+        "shorts_last_15d": shorts_last_15d,
+        "shorts_color": "yellow" if shorts_last_15d >= 7 else "green",
+        "shorts_window": "last_15_days",
+        "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+    }
+
+
+def _coerce_int_param(value: Any, default: int, *, minimum: int = 0, maximum: Optional[int] = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def _normalize_discovery_keywords(raw_keywords: Any) -> List[str]:
+    if isinstance(raw_keywords, list):
+        values = raw_keywords
+    else:
+        values = re.split(r"[\n,;]+", str(raw_keywords or ""))
+    keywords: List[str] = []
+    seen = set()
+    for value in values:
+        keyword = " ".join(str(value or "").strip().split())
+        if not keyword:
+            continue
+        key = keyword.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword[:120])
+    return keywords[:LEAD_DISCOVERY_MAX_KEYWORDS]
+
+
+def _generate_lead_discovery_keywords(niche: str, max_keywords: int, lang: str) -> List[str]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    prompt = (
+        "Generate YouTube search keywords for finding creator channels in this niche.\n"
+        "Return JSON only: {\"keywords\":[...]}.\n"
+        f"Language code: {lang or 'en'}\n"
+        f"Maximum keywords: {max_keywords}\n"
+        f"Niche: {niche}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You create concise YouTube discovery search keywords."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.35,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+        return _normalize_discovery_keywords(payload.get("keywords"))[:max_keywords]
+    except Exception:
+        return _normalize_discovery_keywords(content)[:max_keywords]
+
+
+def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang: str, region: str) -> List[Dict[str, str]]:
+    params: Dict[str, Any] = {
+        "part": "snippet,id",
+        "q": keyword,
+        "type": "video",
+        "maxResults": max_results,
+        "order": "relevance",
+    }
+    if lang:
+        params["relevanceLanguage"] = lang
+    if region:
+        params["regionCode"] = region
+    payload = _youtube_get_json("search", params, timeout=10)
+    candidates: List[Dict[str, str]] = []
+    for item in payload.get("items") or []:
+        snippet = item.get("snippet") or {}
+        channel_id = str(snippet.get("channelId") or "").strip()
+        if not channel_id:
+            continue
+        candidates.append(
+            {
+                "channel_id": channel_id,
+                "channel_title": str(snippet.get("channelTitle") or "").strip(),
+                "matched_keyword": keyword,
+            }
+        )
+    return candidates
+
+
+def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    if not _openai_client:
+        return {"icp_fit": None, "icp_reason": "OpenAI is not configured."}
+    channel_title = str(row.get("channel_title") or "")
+    channel_description = str(row.get("channel_description") or "")[:1400]
+    prompt = (
+        "Decide if this YouTube creator channel fits the target niche.\n"
+        "Return JSON only: {\"icp_fit\":true|false,\"reason\":\"one short sentence\"}.\n\n"
+        f"Niche: {niche}\n"
+        f"Channel title: {channel_title}\n"
+        f"Channel description: {channel_description}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You classify creator-channel ICP fit for B2B lead discovery."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+    )
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+    except Exception:
+        return {"icp_fit": None, "icp_reason": content[:180] or "Could not parse ICP response."}
+    return {
+        "icp_fit": bool(payload.get("icp_fit")),
+        "icp_reason": str(payload.get("reason") or "").strip()[:220],
+    }
+
+
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
 def admin_youtube_channel_diagnose():
     current_user = getattr(g, "vs_current_user", None)
@@ -336,52 +556,7 @@ def admin_youtube_channel_diagnose():
             status = 400 if code in {"missing_url", "invalid_url"} else 404
             return jsonify({"error": code, "message": message}), status
 
-        channel_lookup_url = f"https://www.youtube.com/channel/{resolved_channel_id}"
-        channel_meta = get_channel_metadata(channel_lookup_url)
-        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id])
-        subscriber_info = subscriber_map.get(resolved_channel_id) or {}
-        recent_uploads = _collect_recent_uploads(channel_meta["uploads_playlist_id"], limit=UPLOAD_SAMPLE_SIZE)
-        stats_map = fetch_video_stats([item.get("video_id") for item in recent_uploads if item.get("video_id")])
-
-        now_utc = datetime.now(timezone.utc)
-        longform_last_60d = 0
-        shorts_last_15d = 0
-        latest_short_dt = None
-        for item in recent_uploads:
-            video_id = str(item.get("video_id") or "").strip()
-            published_at = _parse_yt_timestamp(item.get("published_at"))
-            duration_seconds = (stats_map.get(video_id) or {}).get("duration_seconds")
-            try:
-                is_short = int(duration_seconds or 0) <= 60
-            except (TypeError, ValueError):
-                is_short = False
-            if is_short:
-                if published_at and (latest_short_dt is None or published_at > latest_short_dt):
-                    latest_short_dt = published_at
-                if published_at and published_at >= now_utc - timedelta(days=SHORTS_WINDOW_DAYS):
-                    shorts_last_15d += 1
-                continue
-            if published_at and published_at >= now_utc - timedelta(days=LONGFORM_WINDOW_DAYS):
-                longform_last_60d += 1
-
-        subscriber_count = subscriber_info.get("subscriber_count")
-        gate_subscriber = _subscriber_gate(subscriber_count)
-        gate_cadence = "aktif" if longform_last_60d >= 2 else "aktif_degil"
-        channel_title = (
-            subscriber_info.get("channel_title")
-            or (video_meta or {}).get("channel_title")
-            or None
-        )
-        channel_description = subscriber_info.get("channel_description")
-        creator_name = _resolve_auto_creator_name(
-            channel_description,
-            (video_meta or {}).get("description"),
-            channel_title,
-        )
-        creator_email = _resolve_auto_creator_email(
-            channel_description,
-            (video_meta or {}).get("description"),
-        )
+        diagnosis = diagnose_channel(resolved_channel_id, video_meta=video_meta)
         outreach_detail = None
         already_added = False
         channel_video_count = 0
@@ -408,18 +583,18 @@ def admin_youtube_channel_diagnose():
         return jsonify(
             {
                 "channel_id": resolved_channel_id,
-                "channel_title": channel_title,
-                "subscriber_count": subscriber_count,
-                "creator_name": creator_name,
-                "creator_email": creator_email,
-                "eligible": gate_subscriber != "hedef_disi" and gate_cadence == "aktif",
-                "gate_subscriber": gate_subscriber,
-                "gate_cadence": gate_cadence,
-                "longform_last_60d": longform_last_60d,
-                "shorts_last_15d": shorts_last_15d,
-                "shorts_color": "yellow" if shorts_last_15d >= 7 else "green",
-                "shorts_window": "last_15_days",
-                "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+                "channel_title": diagnosis.get("channel_title"),
+                "subscriber_count": diagnosis.get("subscriber_count"),
+                "creator_name": diagnosis.get("creator_name"),
+                "creator_email": diagnosis.get("creator_email"),
+                "eligible": diagnosis.get("eligible"),
+                "gate_subscriber": diagnosis.get("gate_subscriber"),
+                "gate_cadence": diagnosis.get("gate_cadence"),
+                "longform_last_60d": diagnosis.get("longform_last_60d"),
+                "shorts_last_15d": diagnosis.get("shorts_last_15d"),
+                "shorts_color": diagnosis.get("shorts_color"),
+                "shorts_window": diagnosis.get("shorts_window"),
+                "latest_short_date": diagnosis.get("latest_short_date"),
                 "already_added": already_added,
                 "already_reached": bool(outreach_detail),
                 "channel_already_in_minti": channel_video_count > 0,
@@ -443,6 +618,131 @@ def admin_youtube_channel_diagnose():
     except Exception:
         current_app.logger.exception("Unexpected error in admin YouTube diagnose endpoint")
         return jsonify({"error": "server_error", "message": "Unexpected server error."}), 500
+
+
+@video_shorts_bp.route("/api/admin/lead-discovery-test", methods=["POST"])
+def admin_lead_discovery_test():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"success": False, "errors": [{"error": "unauthorized", "message": "Admin session required."}]}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"success": False, "errors": [{"error": "forbidden", "message": "Admin access required."}]}), 403
+
+    payload = request.get_json(silent=True) or {}
+    niche = " ".join(str(payload.get("niche") or "").strip().split())
+    supplied_keywords = _normalize_discovery_keywords(payload.get("keywords"))
+    max_keywords = _coerce_int_param(
+        payload.get("max_keywords"),
+        5,
+        minimum=1,
+        maximum=LEAD_DISCOVERY_MAX_KEYWORDS,
+    )
+    max_results_per_keyword = _coerce_int_param(
+        payload.get("max_results_per_keyword"),
+        20,
+        minimum=1,
+        maximum=LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD,
+    )
+    max_channels_enriched = _coerce_int_param(
+        payload.get("max_channels_enriched"),
+        50,
+        minimum=1,
+        maximum=LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED,
+    )
+    lang = re.sub(r"[^A-Za-z-]", "", str(payload.get("lang") or "en").strip())[:12] or "en"
+    region = re.sub(r"[^A-Za-z]", "", str(payload.get("region") or "US").strip()).upper()[:2] or "US"
+    ai_icp = bool(payload.get("ai_icp"))
+    errors: List[Dict[str, Any]] = []
+
+    if not niche and not supplied_keywords:
+        return jsonify(
+            {
+                "success": False,
+                "keywords": [],
+                "search_calls": 0,
+                "enrichment_read_calls": 0,
+                "results": [],
+                "errors": [{"error": "bad_request", "message": "Provide a niche or keywords."}],
+            }
+        ), 400
+
+    try:
+        keywords = supplied_keywords[:max_keywords] or _generate_lead_discovery_keywords(niche, max_keywords, lang)
+    except Exception as exc:
+        current_app.logger.exception("Lead discovery keyword generation failed")
+        return jsonify(
+            {
+                "success": False,
+                "keywords": [],
+                "search_calls": 0,
+                "enrichment_read_calls": 0,
+                "results": [],
+                "errors": [{"error": "keyword_generation_failed", "message": str(exc) or "Keyword generation failed."}],
+            }
+        ), 500
+    keywords = keywords[:max_keywords]
+    if not keywords:
+        return jsonify(
+            {
+                "success": False,
+                "keywords": [],
+                "search_calls": 0,
+                "enrichment_read_calls": 0,
+                "results": [],
+                "errors": [{"error": "no_keywords", "message": "No usable keywords were generated."}],
+            }
+        ), 400
+
+    search_calls = 0
+    candidates_by_channel: Dict[str, Dict[str, str]] = {}
+    for keyword in keywords:
+        try:
+            search_calls += 1
+            for candidate in _search_youtube_channels_for_keyword(
+                keyword,
+                max_results=max_results_per_keyword,
+                lang=lang,
+                region=region,
+            ):
+                channel_id = candidate["channel_id"]
+                if channel_id not in candidates_by_channel:
+                    candidates_by_channel[channel_id] = candidate
+        except YoutubeApiError as exc:
+            errors.append({"error": "youtube_search_error", "keyword": keyword, "message": str(exc)})
+        except Exception as exc:
+            current_app.logger.exception("Lead discovery search failed for keyword=%s", keyword)
+            errors.append({"error": "search_failed", "keyword": keyword, "message": str(exc) or "Search failed."})
+
+    quota_counter = {"enrichment_read_calls": 0}
+    results: List[Dict[str, Any]] = []
+    for candidate in list(candidates_by_channel.values())[:max_channels_enriched]:
+        channel_id = candidate["channel_id"]
+        try:
+            row = diagnose_channel(channel_id, quota_counter=quota_counter)
+            row["matched_keyword"] = candidate.get("matched_keyword")
+            row["channel_url"] = f"https://www.youtube.com/channel/{channel_id}"
+            if ai_icp:
+                row.update(_classify_lead_discovery_icp(niche or candidate.get("matched_keyword") or "", row))
+            else:
+                row["icp_fit"] = None
+                row["icp_reason"] = ""
+            results.append(row)
+        except YoutubeApiError as exc:
+            errors.append({"error": "youtube_enrichment_error", "channel_id": channel_id, "message": str(exc)})
+        except Exception as exc:
+            current_app.logger.exception("Lead discovery enrichment failed for channel=%s", channel_id)
+            errors.append({"error": "enrichment_failed", "channel_id": channel_id, "message": str(exc) or "Enrichment failed."})
+
+    return jsonify(
+        {
+            "success": not errors or bool(results),
+            "keywords": keywords,
+            "search_calls": search_calls,
+            "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
+            "results": results,
+            "errors": errors,
+        }
+    )
 
 
 @video_shorts_bp.route("/api/admin/add-youtube-video", methods=["POST"])

@@ -190,6 +190,14 @@
           </span>
         </a>
         <a
+          href="{{ url_for('video_shorts_bp.admin_lead_discovery_test_page') }}"
+          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/lead-discovery-test') %}is-active{% endif %}">
+          <span aria-hidden="true">●</span>
+          <span class="vs-admin-nav-label">
+            <span>Lead Discovery Test</span>
+          </span>
+        </a>
+        <a
           href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}"
           class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/outreach-emails') %}is-active{% endif %}">
           <span aria-hidden="true">●</span>
