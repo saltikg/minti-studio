@@ -565,13 +565,21 @@ def fetch_video_comments(
             )
         except YoutubeApiError as exc:
             oauth_error = exc
-            logger.warning(
-                "Owner OAuth YouTube comment fetch failed for video_id=%s user_id=%s; trying shared API key fallback: %s",
-                video_id,
-                user_id,
-                exc,
-            )
-        if _youtube_api_key():
+            if allow_other_oauth_fallback:
+                logger.warning(
+                    "Owner OAuth YouTube comment fetch failed for video_id=%s user_id=%s; trying shared API key fallback: %s",
+                    video_id,
+                    user_id,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "Owner OAuth YouTube comment fetch failed for video_id=%s user_id=%s; shared API key fallback disabled for this call: %s",
+                    video_id,
+                    user_id,
+                    exc,
+                )
+        if allow_other_oauth_fallback and _youtube_api_key():
             try:
                 return _fetch_video_comments_api_key(video_id, max_results)
             except YoutubeApiError as api_key_exc:

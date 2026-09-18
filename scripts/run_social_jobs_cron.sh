@@ -32,7 +32,9 @@ pick_log_file() {
 if [[ "$MODE" == "youtube-comments" ]]; then
   LOG_FILE="$(pick_log_file "$LOG_DIR/social_youtube_comments.log")"
   COMMENT_SCAN_SCOPE="recent50"
-  if (( $(date -u +%H) % 4 == 0 )); then
+  ALL_SCAN_UTC_HOUR="${YT_COMMENT_ALL_SCAN_UTC_HOUR:-4}"
+  CURRENT_UTC_HOUR="$(date -u +%H)"
+  if [[ "$ALL_SCAN_UTC_HOUR" =~ ^[0-9]+$ ]] && [[ "$CURRENT_UTC_HOUR" == "$(printf '%02d' "$ALL_SCAN_UTC_HOUR")" ]]; then
     COMMENT_SCAN_SCOPE="all"
   fi
   CMD=(

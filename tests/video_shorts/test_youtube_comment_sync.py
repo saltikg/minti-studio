@@ -133,7 +133,7 @@ def test_tracked_short_comment_total_includes_pending_and_rejected():
     )
 
 
-def test_youtube_body_sync_fetches_when_count_unchanged_but_cache_incomplete():
+def test_youtube_body_sync_skips_when_count_unchanged_even_if_cache_incomplete():
     helpers = _load_sync_helpers()
 
     should_fetch = helpers["_should_fetch_youtube_comment_bodies"]
@@ -143,7 +143,7 @@ def test_youtube_body_sync_fetches_when_count_unchanged_but_cache_incomplete():
         5,
         {"last_comment_count": 5},
         3,
-    ) is True
+    ) is False
 
 
 def test_youtube_body_sync_caps_completeness_target_at_fetch_window():

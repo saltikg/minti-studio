@@ -27,6 +27,7 @@ from app.video_shorts.routes.videos import (
     _merge_youtube_comments,
     _summarize_comment_counts_for_entries,
     _upsert_short_comment_counts,
+    _upsert_short_comment_platform_total,
 )
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.db import (
@@ -52,6 +53,16 @@ logger = logging.getLogger(__name__)
 COMMENT_COUNT_SYNC_RECENT_SIZE = int(os.getenv("SHORT_COMMENT_COUNT_SYNC_LIMIT", "100"))
 YOUTUBE_COMMENT_FETCH_MAX_RESULTS = 50
 YOUTUBE_COMMENT_RECENT_SCAN_SIZE = 50
+
+
+def _env_enabled(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
 
 
 def _unique_short_ids(entries: List[Dict[str, object]]) -> List[str]:
@@ -169,21 +180,10 @@ def _should_fetch_youtube_comment_bodies(
 ) -> bool:
     if _should_fetch_youtube_comments(short_id, current_comment_count, sync_state_entry):
         return True
-    target_count = _youtube_comment_body_target(current_comment_count)
-    cached_count = _normalize_comment_count(cached_top_level_count) or 0
-    if target_count is not None and cached_count < target_count:
-        logger.info(
-            "Fetching YouTube comments for %s because cached top-level bodies are incomplete (%s/%s target rows).",
-            short_id,
-            cached_count,
-            target_count,
-        )
-        return True
     logger.info(
-        "Skipping YouTube comment fetch for %s because cached top-level bodies are complete (%s/%s target rows).",
+        "Skipping YouTube comment fetch for %s because observed comment_count is unchanged; cached top-level bodies=%s.",
         short_id,
-        cached_count,
-        target_count if target_count is not None else "unknown",
+        _normalize_comment_count(cached_top_level_count) or 0,
     )
     return False
 
@@ -231,6 +231,7 @@ def _sync_youtube_comment_totals(
                 "observed_comment_count_at": observed_at,
             }
         )
+        _upsert_short_comment_platform_total(short_id, total)
         refreshed += 1
     return refreshed
 
@@ -642,11 +643,28 @@ def _sync_youtube_comments_for_videos(
     owner_user_id: str,
     short_ids: List[str],
     title_map: Dict[str, str],
+    short_comment_cache: Dict[str, Dict[str, object]],
+    sync_state: Dict[str, Dict[str, object]],
+    comment_count_map: Dict[str, Optional[int]],
+    cached_top_level_counts: Dict[str, Optional[int]],
     sync_updates: Dict[str, Dict[str, object]],
     short_oauth_user_ids: Dict[str, Optional[str]],
+    *,
+    skip_unchanged: bool = True,
 ) -> int:
     updated_count = 0
+    skipped_unchanged = 0
+    attempted_count = 0
     for short_id in short_ids:
+        current_comment_count = _normalize_comment_count(comment_count_map.get(short_id))
+        if skip_unchanged and not _should_fetch_youtube_comment_bodies(
+            short_id,
+            current_comment_count,
+            sync_state.get(short_id),
+            cached_top_level_counts.get(short_id),
+        ):
+            skipped_unchanged += 1
+            continue
         comments: List[Dict[str, object]] = []
         any_success = False
         try:
@@ -658,6 +676,7 @@ def _sync_youtube_comments_for_videos(
                     owner_user_id,
                 )
                 continue
+            attempted_count += 1
             comments.extend(
                 fetch_video_comments(
                     short_id,
@@ -692,7 +711,11 @@ def _sync_youtube_comments_for_videos(
         sync_updates.setdefault(short_id, {}).update(
             {
                 "last_synced_at": datetime.now(timezone.utc),
-                "last_comment_count": badge_total,
+                "last_comment_count": (
+                    current_comment_count
+                    if current_comment_count is not None
+                    else badge_total
+                ),
             }
         )
         if not comments:
@@ -735,6 +758,14 @@ def _sync_youtube_comments_for_videos(
         if records:
             upsert_comment_records(records)
         updated_count += 1
+    logger.info(
+        "YouTube comment body sync owner_user_id=%s candidates=%s fetched=%s skipped_unchanged=%s updated=%s.",
+        owner_user_id,
+        len(short_ids),
+        attempted_count,
+        skipped_unchanged,
+        updated_count,
+    )
     return updated_count
 
 
@@ -769,6 +800,7 @@ def main(*, comment_scan_scope: str = "recent50") -> int:
             "yes",
             "on",
         }
+        skip_unchanged_enabled = _env_enabled("YT_COMMENT_SKIP_UNCHANGED_ENABLED", True)
         try:
             if comment_sync_enabled:
                 scan_scope = _normalize_comment_scan_scope(comment_scan_scope)
@@ -792,6 +824,10 @@ def main(*, comment_scan_scope: str = "recent50") -> int:
                 scan_short_oauth_user_ids = _resolve_short_oauth_user_ids(
                     scan_short_owner_context
                 )
+                scan_short_ids = _unique_short_ids(scan_entries)
+                scan_sync_state = _load_sync_state(scan_short_ids) if scan_short_ids else {}
+                scan_comment_cache: Dict[str, Dict[str, object]] = {}
+                cached_top_level_counts: Dict[str, Optional[int]] = {}
                 if not all_short_video_ids:
                     logger.info("No short videos found for comment count sync.")
                 else:
@@ -834,8 +870,13 @@ def main(*, comment_scan_scope: str = "recent50") -> int:
                                     owner_user_id,
                                     candidate_ids,
                                     title_map,
+                                    scan_comment_cache,
+                                    scan_sync_state,
+                                    comment_count_map,
+                                    cached_top_level_counts,
                                     sync_updates,
                                     scan_short_oauth_user_ids,
+                                    skip_unchanged=skip_unchanged_enabled,
                                 )
                                 total_records += updated_count
                             except Exception:
