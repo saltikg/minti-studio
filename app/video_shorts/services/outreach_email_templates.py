@@ -21,7 +21,7 @@ class OutreachEmailTemplate:
 OUTREACH_EMAIL_TEMPLATES: dict[str, OutreachEmailTemplate] = {
     "FIRST_EN": OutreachEmailTemplate(
         key="FIRST_EN",
-        subject="I made a Short from your video — first month free",
+        subject="I made a Short from your video",
         text="""Hi [Name],
 
 I'm the founder of Minti Studio, based in San Francisco. Instead of explaining what we do, I thought I'd show you.

@@ -243,9 +243,9 @@ def send_share_link_outreach_email(
             "template_key": template_key,
         }
 
-    requested_from_email = "info@mintistudio.com"
-    verified_info_sender = resend_sender_domain_verified(requested_from_email)
-    outreach_from_email = requested_from_email if verified_info_sender else ""
+    requested_from_email = "hello@mintistudio.com"
+    verified_sender = resend_sender_domain_verified(requested_from_email)
+    outreach_from_email = requested_from_email if verified_sender else ""
     send_result = send_resend_email(
         to_email=rendered["recipient_email"],
         subject=rendered_email["subject"],
@@ -253,7 +253,7 @@ def send_share_link_outreach_email(
         text=rendered_email["text"],
         from_display_name="Gokhan Saltik",
         from_email=outreach_from_email,
-        reply_to_email="info@mintistudio.com",
+        reply_to_email="hello@mintistudio.com",
         error_message="Outreach email could not be sent.",
     )
     provider_message_id = str(send_result.get("request_id") or "").strip()
@@ -301,8 +301,8 @@ def send_share_link_outreach_email(
         "language": rendered_email["language"],
         "template_key": template_key,
         "provider_message_id": provider_message_id,
-        "from_email": requested_from_email if verified_info_sender else os.getenv("MAIL_FROM", ""),
-        "info_sender_verified": verified_info_sender,
+        "from_email": requested_from_email if verified_sender else os.getenv("MAIL_FROM", ""),
+        "info_sender_verified": verified_sender,
     }
 
 
