@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import os
+import smtplib
+import ssl
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
 
 import requests
@@ -23,6 +27,8 @@ SCHEDULED_OUTREACH_STATUSES_ACTIVE = {"scheduled", "processing"}
 SCHEDULED_OUTREACH_MAX_ATTEMPTS = 3
 SCHEDULED_OUTREACH_BACKOFF_MINUTES = 5
 OUTREACH_RESEND_GUARD_MINUTES = 10
+OUTREACH_ZOHO_FROM_EMAIL = "info@mintistudio.com"
+OUTREACH_ZOHO_FROM_NAME = "Gokhan Saltik"
 
 
 def ensure_outreach_scheduled_email_schema(conn) -> None:
@@ -126,6 +132,80 @@ def resend_sender_domain_verified(sender_email: str) -> bool:
         status = str(domain.get("status") or "").strip().lower()
         return status in {"verified", "success", "active"}
     return False
+
+
+def _outreach_mailer() -> str:
+    value = str(os.getenv("OUTREACH_MAILER") or "zoho").strip().lower()
+    return value or "zoho"
+
+
+def _zoho_smtp_settings() -> dict[str, Any]:
+    required = {
+        "ZOHO_SMTP_HOST": str(os.getenv("ZOHO_SMTP_HOST") or "").strip(),
+        "ZOHO_SMTP_PORT": str(os.getenv("ZOHO_SMTP_PORT") or "").strip(),
+        "ZOHO_SMTP_USER": str(os.getenv("ZOHO_SMTP_USER") or "").strip(),
+        "ZOHO_SMTP_PASS": str(os.getenv("ZOHO_SMTP_PASS") or "").strip(),
+    }
+    missing = [key for key, value in required.items() if not value]
+    if missing:
+        raise RuntimeError(f"Zoho SMTP env missing: {', '.join(missing)}")
+    try:
+        port = int(required["ZOHO_SMTP_PORT"])
+    except ValueError as exc:
+        raise RuntimeError("ZOHO_SMTP_PORT must be an integer") from exc
+    user = required["ZOHO_SMTP_USER"].lower()
+    if user != OUTREACH_ZOHO_FROM_EMAIL:
+        raise RuntimeError("ZOHO_SMTP_USER must be info@mintistudio.com for Zoho outreach")
+    return {
+        "host": required["ZOHO_SMTP_HOST"],
+        "port": port,
+        "user": required["ZOHO_SMTP_USER"],
+        "password": required["ZOHO_SMTP_PASS"],
+    }
+
+
+def send_zoho_outreach_email(
+    *,
+    to_email: str,
+    subject: str,
+    html: str,
+    text: str,
+) -> dict[str, object]:
+    settings = _zoho_smtp_settings()
+    recipient = str(to_email or "").strip()
+    if not recipient or "@" not in recipient:
+        raise RuntimeError("Outreach recipient email is missing")
+    message_id = make_msgid(domain="mintistudio.com")
+    message = EmailMessage()
+    message["From"] = formataddr((OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
+    message["To"] = recipient
+    message["Reply-To"] = OUTREACH_ZOHO_FROM_EMAIL
+    message["Subject"] = str(subject or "").strip()
+    message["Date"] = formatdate(localtime=False, usegmt=True)
+    message["Message-ID"] = message_id
+    message.set_content(str(text or ""))
+    message.add_alternative(str(html or ""), subtype="html")
+
+    context = ssl.create_default_context()
+    if int(settings["port"]) == 465:
+        with smtplib.SMTP_SSL(settings["host"], settings["port"], context=context, timeout=20) as smtp:
+            smtp.login(settings["user"], settings["password"])
+            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
+    else:
+        with smtplib.SMTP(settings["host"], settings["port"], timeout=20) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=context)
+            smtp.ehlo()
+            smtp.login(settings["user"], settings["password"])
+            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
+    if refused:
+        raise RuntimeError(f"Zoho SMTP refused recipient: {refused}")
+    return {
+        "status_code": 250,
+        "request_id": message_id,
+        "message_id": message_id,
+        "transport": "zoho",
+    }
 
 
 def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object, language: object) -> dict[str, Any]:
@@ -249,19 +329,33 @@ def send_share_link_outreach_email(
             "template_key": template_key,
         }
 
-    requested_from_email = "hello@mintistudio.com"
-    verified_sender = resend_sender_domain_verified(requested_from_email)
-    outreach_from_email = requested_from_email if verified_sender else ""
-    send_result = send_resend_email(
-        to_email=(override_to_email or rendered["recipient_email"]),
-        subject=rendered_email["subject"],
-        html=rendered_email["html"],
-        text=rendered_email["text"],
-        from_display_name="Gokhan Saltik",
-        from_email=outreach_from_email,
-        reply_to_email="hello@mintistudio.com",
-        error_message="Outreach email could not be sent.",
-    )
+    mailer = _outreach_mailer()
+    recipient_email = override_to_email or rendered["recipient_email"]
+    if mailer == "zoho":
+        send_result = send_zoho_outreach_email(
+            to_email=recipient_email,
+            subject=rendered_email["subject"],
+            html=rendered_email["html"],
+            text=rendered_email["text"],
+        )
+        requested_from_email = OUTREACH_ZOHO_FROM_EMAIL
+        verified_sender = True
+    elif mailer == "resend":
+        requested_from_email = "hello@mintistudio.com"
+        verified_sender = resend_sender_domain_verified(requested_from_email)
+        outreach_from_email = requested_from_email if verified_sender else ""
+        send_result = send_resend_email(
+            to_email=recipient_email,
+            subject=rendered_email["subject"],
+            html=rendered_email["html"],
+            text=rendered_email["text"],
+            from_display_name="Gokhan Saltik",
+            from_email=outreach_from_email,
+            reply_to_email="hello@mintistudio.com",
+            error_message="Outreach email could not be sent.",
+        )
+    else:
+        raise RuntimeError(f"Unsupported OUTREACH_MAILER: {mailer}")
     provider_message_id = str(send_result.get("request_id") or "").strip()
     if override_to_email:
         return {
@@ -273,6 +367,7 @@ def send_share_link_outreach_email(
             "from_email": requested_from_email if verified_sender else os.getenv("MAIL_FROM", ""),
             "info_sender_verified": verified_sender,
             "recipient_email_override": override_to_email,
+            "transport": mailer,
         }
     if normalized_stage == "followup":
         conn.execute(
@@ -320,6 +415,7 @@ def send_share_link_outreach_email(
         "provider_message_id": provider_message_id,
         "from_email": requested_from_email if verified_sender else os.getenv("MAIL_FROM", ""),
         "info_sender_verified": verified_sender,
+        "transport": mailer,
     }
 
 
