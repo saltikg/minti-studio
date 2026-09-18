@@ -965,6 +965,98 @@ def _lead_discovery_channel_url(value: Any) -> str:
     return text
 
 
+def _lead_discovery_existing_lead(conn, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
+    channel_id = str(youtube_channel_id or "").strip()
+    if not channel_id:
+        return None
+    autopilot_columns = table_columns(conn, "autopilot_leads")
+    if "youtube_channel_id" in autopilot_columns:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM autopilot_leads
+            WHERE youtube_channel_id = ?
+            LIMIT 1
+            """,
+            [channel_id],
+        ).fetchone()
+        if row:
+            return {"source": "autopilot_leads", "autopilot_lead_id": str(row[0] or "")}
+    discovery_columns = table_columns(conn, "discovery_leads")
+    if "youtube_channel_id" in discovery_columns and "autopilot_lead_id" in discovery_columns:
+        row = conn.execute(
+            """
+            SELECT autopilot_lead_id
+            FROM discovery_leads
+            WHERE youtube_channel_id = ?
+              AND autopilot_lead_id IS NOT NULL
+            LIMIT 1
+            """,
+            [channel_id],
+        ).fetchone()
+        if row:
+            return {"source": "discovery_leads", "autopilot_lead_id": str(row[0] or "")}
+    return None
+
+
+def _persist_already_lead_discovery_row(channel_id: str, matched_keyword: str, existing_lead: Dict[str, Any]) -> str:
+    clean_channel_id = str(channel_id or "").strip()
+    if not clean_channel_id:
+        return "skipped"
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        if not columns:
+            return "skipped"
+        raw_json = json.dumps(
+            {
+                "channel_id": clean_channel_id,
+                "channel_url": f"https://www.youtube.com/channel/{clean_channel_id}",
+                "matched_keyword": matched_keyword,
+                "status": "already_lead",
+                "already_lead": existing_lead,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        conn.execute(
+            f"""
+            INSERT INTO discovery_leads (
+                youtube_channel_id, channel_url, matched_keyword, status, raw_json,
+                first_seen_at, last_seen_at, last_discovered_at
+            )
+            VALUES (?, ?, ?, 'already_lead', {_json_sql_param(conn)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (youtube_channel_id) DO UPDATE SET
+                channel_url = EXCLUDED.channel_url,
+                matched_keyword = COALESCE(NULLIF(EXCLUDED.matched_keyword, ''), discovery_leads.matched_keyword),
+                status = 'already_lead',
+                raw_json = EXCLUDED.raw_json,
+                last_seen_at = CURRENT_TIMESTAMP,
+                last_discovered_at = CURRENT_TIMESTAMP
+            """,
+            [
+                clean_channel_id,
+                f"https://www.youtube.com/channel/{clean_channel_id}",
+                str(matched_keyword or "").strip(),
+                raw_json,
+            ],
+        )
+        conn.commit()
+        return "updated"
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Already-lead discovery persistence failed for channel=%s", clean_channel_id)
+        return "failed"
+    finally:
+        if conn:
+            conn.close()
+
+
 def _json_sql_param(conn, placeholder: str = "?") -> str:
     if getattr(conn, "backend_name", "") == "postgres":
         return f"CAST({placeholder} AS JSONB)"
@@ -1338,6 +1430,51 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[
         return _normalize_seed_search_keywords(content, limit=20)
 
 
+def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str) -> Dict[str, List[str]]:
+    normalized = _normalize_seed_search_keywords(keywords, limit=20)
+    profile = " ".join(str(profile_text or "").split())
+    if not normalized or not profile:
+        return {"kept": normalized, "dropped": []}
+    if not _openai_client:
+        return {"kept": normalized, "dropped": []}
+    prompt = (
+        "Filter these YouTube search keywords against the ICP profile. Keep keywords that could plausibly find "
+        "solo educators, coaches, consultants, expert creators, or long-form educational creators matching the profile. "
+        "Drop keywords clearly outside the persona, such as sports match analysis, soccer tactics, dating/courtship advice, "
+        "generic news, entertainment, or topics with no creator/business/educational angle. "
+        "Return STRICT JSON only: {\"kept\":[\"keyword\"],\"dropped\":[\"keyword\"]}.\n\n"
+        f"ICP profile:\n{profile[:2500]}\n\n"
+        f"Keywords:\n{json.dumps(normalized, ensure_ascii=False)}"
+    )
+    try:
+        response = _openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": "You conservatively filter YouTube discovery keywords for ICP fit."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        payload = json.loads(content)
+        kept = _normalize_seed_search_keywords(payload.get("kept"), limit=20)
+        dropped = _normalize_seed_search_keywords(payload.get("dropped"), limit=20)
+    except Exception:
+        current_app.logger.exception("Seed keyword ICP filter failed; keeping generated keywords")
+        return {"kept": normalized, "dropped": []}
+    normalized_by_lower = {keyword.lower(): keyword for keyword in normalized}
+    kept_lowers = {keyword.lower() for keyword in kept}
+    dropped_lowers = {keyword.lower() for keyword in dropped}
+    final_kept = [keyword for keyword in normalized if keyword.lower() in kept_lowers and keyword.lower() not in dropped_lowers]
+    final_dropped = [normalized_by_lower[value] for value in dropped_lowers if value in normalized_by_lower and value not in {k.lower() for k in final_kept}]
+    if not final_kept:
+        current_app.logger.warning("Seed keyword ICP filter returned no kept keywords; preserving generated keywords")
+        return {"kept": normalized, "dropped": []}
+    if final_dropped:
+        current_app.logger.info("Seed keyword ICP filter dropped keywords: %s", final_dropped)
+    return {"kept": final_kept, "dropped": final_dropped}
+
+
 def _fetch_recent_channel_titles(channel_id: str, *, limit: int = LEAD_DISCOVERY_SEED_RECENT_TITLES) -> List[str]:
     clean_channel_id = str(channel_id or "").strip()
     if not clean_channel_id:
@@ -1542,6 +1679,95 @@ def _update_keyword_queue_after_run(conn, queue_keywords: List[Dict[str, Any]], 
             [found_count, item["id"]],
         )
     return {str(item["keyword"]): int(qualified_by_keyword.get(str(item["keyword"]).lower(), 0)) for item in queue_keywords}
+
+
+@video_shorts_bp.route("/api/admin/keyword-queue/delete", methods=["POST"])
+def admin_keyword_queue_delete():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"deleted": 0})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("ids") or payload.get("keyword_ids") or []
+    raw_texts = payload.get("texts") or payload.get("keywords") or []
+    delete_searched = bool(payload.get("delete_searched") or payload.get("all_searched"))
+    if isinstance(raw_ids, (str, int)):
+        raw_ids = [raw_ids]
+    if isinstance(raw_texts, str):
+        raw_texts = [raw_texts]
+    keyword_ids: List[int] = []
+    seen_ids = set()
+    for raw_id in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            keyword_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if keyword_id > 0 and keyword_id not in seen_ids:
+            seen_ids.add(keyword_id)
+            keyword_ids.append(keyword_id)
+    keyword_texts: List[str] = []
+    seen_texts = set()
+    for raw_text in raw_texts if isinstance(raw_texts, list) else []:
+        keyword = " ".join(str(raw_text or "").strip().split())[:120]
+        lowered = keyword.lower()
+        if keyword and lowered not in seen_texts:
+            seen_texts.add(lowered)
+            keyword_texts.append(keyword)
+    if not keyword_ids and not keyword_texts and not delete_searched:
+        return jsonify(
+            {
+                "success": False,
+                "deleted": 0,
+                "errors": [{"error": "bad_request", "message": "Provide keyword ids, keyword texts, or delete_searched."}],
+            }
+        ), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        if not table_columns(conn, "keyword_queue"):
+            return jsonify(
+                {
+                    "success": False,
+                    "deleted": 0,
+                    "errors": [{"error": "keyword_queue_missing", "message": "keyword_queue table is not available."}],
+                }
+            ), 500
+        clauses = []
+        params: List[Any] = []
+        if keyword_ids:
+            placeholders = ", ".join(["?"] * len(keyword_ids))
+            clauses.append(f"id IN ({placeholders})")
+            params.extend(keyword_ids)
+        if keyword_texts:
+            placeholders = ", ".join(["lower(?)"] * len(keyword_texts))
+            clauses.append(f"lower(keyword) IN ({placeholders})")
+            params.extend(keyword_texts)
+        if delete_searched:
+            clauses.append("(times_searched > 0 OR last_searched_at IS NOT NULL OR status = 'searched')")
+        result = conn.execute(f"DELETE FROM keyword_queue WHERE {' OR '.join(clauses)}", params)
+        deleted = int(getattr(result, "rowcount", 0) or 0)
+        conn.commit()
+        return jsonify({"success": True, "deleted": deleted, "errors": []})
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Keyword queue delete failed")
+        return jsonify(
+            {
+                "success": False,
+                "deleted": 0,
+                "errors": [{"error": "keyword_queue_delete_failed", "message": str(exc) or "Keyword delete failed."}],
+            }
+        ), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @video_shorts_bp.route("/api/admin/youtube-channel-diagnose", methods=["POST"])
@@ -1769,9 +1995,36 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
     persistence_counts = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0}
     enrichment_candidates = list(candidates_by_channel.values())[:max_channels_enriched]
     channels_enriched = 0
+    already_lead_skipped = 0
     for candidate in enrichment_candidates:
         channel_id = candidate["channel_id"]
         try:
+            existing_lead = None
+            conn = None
+            try:
+                conn = get_db_readonly()
+                existing_lead = _lead_discovery_existing_lead(conn, channel_id)
+            finally:
+                if conn:
+                    conn.close()
+            if existing_lead:
+                already_lead_skipped += 1
+                matched_keyword = str(candidate.get("matched_keyword") or "").strip()
+                persistence_result = _persist_already_lead_discovery_row(channel_id, matched_keyword, existing_lead)
+                if persistence_result in persistence_counts:
+                    persistence_counts[persistence_result] += 1
+                results.append(
+                    {
+                        "channel_id": channel_id,
+                        "channel_url": f"https://www.youtube.com/channel/{channel_id}",
+                        "matched_keyword": matched_keyword,
+                        "status": "already_lead",
+                        "already_lead": True,
+                        "already_lead_source": existing_lead.get("source"),
+                        "autopilot_lead_id": existing_lead.get("autopilot_lead_id"),
+                    }
+                )
+                continue
             channels_enriched += 1
             row = diagnose_channel(
                 channel_id,
@@ -1852,6 +2105,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         "raw_search_items": raw_search_items,
         "unique_channel_ids": len(candidates_by_channel),
         "channels_enriched": channels_enriched,
+        "already_lead_skipped": already_lead_skipped,
         "rows_returned": len(results),
         "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
         "persistence": persistence_counts,
@@ -2265,10 +2519,13 @@ def admin_seed_generate_keywords():
                     "errors": [{"error": "no_seed_pool", "message": "No seed profiles are available."}],
                 }
             ), 404
-        keywords = _generate_seed_search_keywords(pool)
-        queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
         existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
         profile_text = str((existing_profile or [None])[0] or "").strip()
+        generated_keywords = _generate_seed_search_keywords(pool)
+        filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
+        keywords = filter_result["kept"]
+        dropped_keywords = filter_result["dropped"]
+        queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
         if existing_profile:
             conn.execute(
                 """
@@ -2294,6 +2551,7 @@ def admin_seed_generate_keywords():
                 "newly_enqueued": int(queue_counts["newly_enqueued"]),
                 "already_present": int(queue_counts["already_present"]),
                 "keywords": keywords,
+                "dropped_keywords": dropped_keywords,
                 "seed_pool_count": len(pool),
                 "errors": [],
             }

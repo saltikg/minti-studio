@@ -15342,7 +15342,7 @@ def admin_discovery_lead_pipeline():
             }
             keyword_rows = conn.execute(
                 """
-                SELECT keyword, source, status, priority, times_searched, found_count, last_searched_at, created_at
+                SELECT id, keyword, source, status, priority, times_searched, found_count, last_searched_at, created_at
                 FROM keyword_queue
                 ORDER BY found_count DESC, priority ASC, created_at DESC
                 LIMIT 50
@@ -15350,14 +15350,15 @@ def admin_discovery_lead_pipeline():
             ).fetchall()
             keyword_queue_rows = [
                 {
-                    "keyword": str(row[0] or ""),
-                    "source": str(row[1] or ""),
-                    "status": str(row[2] or ""),
-                    "priority": row[3],
-                    "times_searched": row[4],
-                    "found_count": row[5],
-                    "last_searched_at": _format_datetime_pst(row[6]),
-                    "created_at": _format_datetime_pst(row[7]),
+                    "id": row[0],
+                    "keyword": str(row[1] or ""),
+                    "source": str(row[2] or ""),
+                    "status": str(row[3] or ""),
+                    "priority": row[4],
+                    "times_searched": row[5],
+                    "found_count": row[6],
+                    "last_searched_at": _format_datetime_pst(row[7]),
+                    "created_at": _format_datetime_pst(row[8]),
                 }
                 for row in keyword_rows
             ]

@@ -100,6 +100,27 @@
       background: rgba(251, 146, 60, 0.14);
       color: #fed7aa;
     }
+    .discovery-status.already_lead {
+      border-color: rgba(148, 163, 184, 0.34);
+      background: rgba(148, 163, 184, 0.14);
+      color: #e2e8f0;
+    }
+    .keyword-select-cell {
+      width: 38px;
+      text-align: center;
+    }
+    .keyword-action-cell {
+      width: 92px;
+      text-align: right;
+    }
+    .keyword-bulk-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+      margin-bottom: 10px;
+    }
     .discovery-action-bar {
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 8px;
@@ -338,31 +359,44 @@
     </div>
 
     {% if has_keywords %}
+      <div class="keyword-bulk-actions">
+        <button id="deleteSelectedKeywordsButton" type="button" class="btn btn-sm btn-outline-danger">Delete selected</button>
+        <button id="deleteSearchedKeywordsButton" type="button" class="btn btn-sm btn-outline-warning">Delete all searched</button>
+        <span id="keywordDeleteStatus" class="discovery-muted"></span>
+      </div>
       <div class="discovery-table-wrap mb-4">
         <table class="discovery-table">
           <thead>
             <tr>
+              <th class="keyword-select-cell"><input id="selectAllKeywords" type="checkbox" aria-label="Select all keywords"></th>
               <th>Keyword</th>
               <th>Status</th>
               <th>Source</th>
               <th>Searches</th>
               <th>Found</th>
               <th>Last searched</th>
+              <th class="keyword-action-cell">Action</th>
             </tr>
           </thead>
           <tbody>
             {% for keyword in keyword_queue_rows %}
-              <tr>
+              <tr data-keyword-row="{{ keyword.id }}">
+                <td class="keyword-select-cell">
+                  <input class="keyword-row-checkbox" type="checkbox" value="{{ keyword.id }}" aria-label="Select {{ keyword.keyword }}">
+                </td>
                 <td>{{ keyword.keyword }}</td>
                 <td><span class="discovery-status {{ keyword.status }}">{{ keyword.status }}</span></td>
                 <td>{{ keyword.source }}</td>
                 <td>{{ keyword.times_searched or 0 }}</td>
                 <td>{{ keyword.found_count or 0 }}</td>
                 <td>{{ keyword.last_searched_at or '' }}</td>
+                <td class="keyword-action-cell">
+                  <button type="button" class="btn btn-sm btn-outline-danger keyword-delete-button" data-keyword-id="{{ keyword.id }}" data-keyword-text="{{ keyword.keyword }}">Delete</button>
+                </td>
               </tr>
             {% else %}
               <tr>
-                <td colspan="6" class="text-center text-white-50 py-4">No queued keywords yet.</td>
+                <td colspan="8" class="text-center text-white-50 py-4">No queued keywords yet.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -730,6 +764,82 @@
         });
       });
 
+      const keywordDeleteStatus = document.getElementById('keywordDeleteStatus');
+      const selectAllKeywords = document.getElementById('selectAllKeywords');
+      const deleteSelectedKeywordsButton = document.getElementById('deleteSelectedKeywordsButton');
+      const deleteSearchedKeywordsButton = document.getElementById('deleteSearchedKeywordsButton');
+
+      function selectedKeywordIds() {
+        return Array.from(document.querySelectorAll('.keyword-row-checkbox:checked'))
+          .map((input) => parseInt(input.value || '0', 10))
+          .filter((value) => Number.isInteger(value) && value > 0);
+      }
+
+      async function deleteKeywords(payload, statusText) {
+        if (!keywordDeleteStatus) return;
+        keywordDeleteStatus.textContent = statusText;
+        const data = await postJson('{{ url_for("video_shorts_bp.admin_keyword_queue_delete") }}', payload);
+        keywordDeleteStatus.textContent = `Deleted ${data.deleted || 0}. Refreshing...`;
+        window.location.reload();
+      }
+
+      if (selectAllKeywords) {
+        selectAllKeywords.addEventListener('change', function () {
+          document.querySelectorAll('.keyword-row-checkbox').forEach((input) => {
+            input.checked = selectAllKeywords.checked;
+          });
+        });
+      }
+
+      document.querySelectorAll('.keyword-delete-button').forEach((button) => {
+        button.addEventListener('click', async function () {
+          const keywordId = parseInt(button.getAttribute('data-keyword-id') || '0', 10);
+          const keywordText = button.getAttribute('data-keyword-text') || 'keyword';
+          const confirmed = window.confirm(`Delete "${keywordText}" from the queue?`);
+          if (!confirmed || !keywordId) return;
+          button.disabled = true;
+          try {
+            await deleteKeywords({ ids: [keywordId] }, 'Deleting keyword...');
+          } catch (error) {
+            if (keywordDeleteStatus) keywordDeleteStatus.textContent = error.message || 'Keyword delete failed.';
+            button.disabled = false;
+          }
+        });
+      });
+
+      if (deleteSelectedKeywordsButton) {
+        deleteSelectedKeywordsButton.addEventListener('click', async function () {
+          const ids = selectedKeywordIds();
+          if (!ids.length) {
+            if (keywordDeleteStatus) keywordDeleteStatus.textContent = 'Select at least one keyword.';
+            return;
+          }
+          const confirmed = window.confirm(`Delete ${ids.length} selected keyword${ids.length === 1 ? '' : 's'}?`);
+          if (!confirmed) return;
+          deleteSelectedKeywordsButton.disabled = true;
+          try {
+            await deleteKeywords({ ids }, 'Deleting selected keywords...');
+          } catch (error) {
+            if (keywordDeleteStatus) keywordDeleteStatus.textContent = error.message || 'Selected keyword delete failed.';
+            deleteSelectedKeywordsButton.disabled = false;
+          }
+        });
+      }
+
+      if (deleteSearchedKeywordsButton) {
+        deleteSearchedKeywordsButton.addEventListener('click', async function () {
+          const confirmed = window.confirm('Delete all searched keywords from the queue?');
+          if (!confirmed) return;
+          deleteSearchedKeywordsButton.disabled = true;
+          try {
+            await deleteKeywords({ delete_searched: true }, 'Deleting searched keywords...');
+          } catch (error) {
+            if (keywordDeleteStatus) keywordDeleteStatus.textContent = error.message || 'Searched keyword delete failed.';
+            deleteSearchedKeywordsButton.disabled = false;
+          }
+        });
+      }
+
       const seedKeywordButton = document.getElementById('seedKeywordButton');
       const seedKeywordStatus = document.getElementById('seedKeywordStatus');
       if (seedKeywordButton && seedKeywordStatus) {
@@ -738,7 +848,8 @@
           seedKeywordStatus.textContent = 'Generating seed keywords...';
           try {
             const data = await postJson('{{ url_for("video_shorts_bp.admin_seed_generate_keywords") }}', {});
-            seedKeywordStatus.textContent = `Generated ${data.generated}; new ${data.newly_enqueued}; already present ${data.already_present}. ${data.keywords.join(', ')}`;
+            const dropped = (data.dropped_keywords || []).length ? ` Dropped ${data.dropped_keywords.length}: ${data.dropped_keywords.join(', ')}.` : '';
+            seedKeywordStatus.textContent = `Generated ${data.generated}; new ${data.newly_enqueued}; already present ${data.already_present}.${dropped} ${data.keywords.join(', ')}`;
           } catch (error) {
             seedKeywordStatus.textContent = error.message || 'Seed keyword generation failed.';
           } finally {
