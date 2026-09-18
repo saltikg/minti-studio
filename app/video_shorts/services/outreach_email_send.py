@@ -60,6 +60,8 @@ def ensure_outreach_scheduled_email_schema(conn) -> None:
         ("status", "VARCHAR"),
         ("attempts", "INTEGER DEFAULT 0"),
         ("max_attempts", f"INTEGER DEFAULT {SCHEDULED_OUTREACH_MAX_ATTEMPTS}"),
+        ("recipient_email_override", "VARCHAR"),
+        ("recipient_name_override", "VARCHAR"),
         ("provider_message_id", "VARCHAR"),
         ("error", "TEXT"),
         ("sent_at", timestamp_sql),
@@ -221,6 +223,7 @@ def send_share_link_outreach_email(
     stage: object,
     language: object,
     confirm_resend: bool = False,
+    recipient_email_override: str = "",
 ) -> dict[str, Any]:
     normalized_stage = normalize_outreach_template_stage(stage)
     rendered = render_share_link_outreach_email(conn, share_link_id, stage=normalized_stage, language=language)
@@ -247,7 +250,7 @@ def send_share_link_outreach_email(
     verified_sender = resend_sender_domain_verified(requested_from_email)
     outreach_from_email = requested_from_email if verified_sender else ""
     send_result = send_resend_email(
-        to_email=rendered["recipient_email"],
+        to_email=(str(recipient_email_override or "").strip() or rendered["recipient_email"]),
         subject=rendered_email["subject"],
         html=rendered_email["html"],
         text=rendered_email["text"],
@@ -408,13 +411,15 @@ def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING id, share_link_id, stage, language, attempts, max_attempts
+             RETURNING id, share_link_id, stage, language, attempts, max_attempts,
+                       recipient_email_override, recipient_name_override
             """
         ).fetchone()
     else:
         row = conn.execute(
             """
-            SELECT id, share_link_id, stage, language, attempts, max_attempts
+            SELECT id, share_link_id, stage, language, attempts, max_attempts,
+                   recipient_email_override, recipient_name_override
             FROM outreach_scheduled_emails
             WHERE status = 'scheduled'
               AND scheduled_at <= CURRENT_TIMESTAMP
@@ -443,6 +448,8 @@ def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
         "language": str(row[3] or "EN"),
         "attempts": int(row[4] or 0),
         "max_attempts": int(row[5] or SCHEDULED_OUTREACH_MAX_ATTEMPTS),
+        "recipient_email_override": str(row[6] or "").strip() if len(row) > 6 else "",
+        "recipient_name_override": str(row[7] or "").strip() if len(row) > 7 else "",
     }
 
 
@@ -530,6 +537,7 @@ def process_due_scheduled_outreach_email() -> bool:
                 stage=job["stage"],
                 language=job["language"],
                 confirm_resend=False,
+                recipient_email_override=str(job.get("recipient_email_override") or ""),
             )
             if not result.get("ok"):
                 if result.get("error") == "recently_sent":
