@@ -690,7 +690,8 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
     source_signal = (
         f"Best recent source-video sweet-spot score: {sweetspot_score}; minutes: {sweetspot_minutes}. "
         "Score is based on recent video duration suitability for making demo Shorts. "
-        "All recent videos under 5 minutes or over 35 minutes is a weak Minti fit signal, but not a hard exclusion."
+        "All recent videos under 5 minutes, missing suitable videos, or only videos over 35 minutes is a weak Minti fit signal, but not a hard exclusion. "
+        "If the score is missing/null or very low, explicitly mention weak demo-source material in the reason."
     )
     prompt = (
         "Decide if this YouTube creator channel fits the target niche.\n"
