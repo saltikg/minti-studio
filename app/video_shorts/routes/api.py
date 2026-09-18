@@ -60,6 +60,10 @@ LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D = 2
 LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D = 3
 LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS = 300
 LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS = 180
+LEAD_DISCOVERY_HARD_MIN_SUBSCRIBERS = 2_000
+LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS = 150_000
+LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D = 2
+LEAD_DISCOVERY_HARD_MAX_SHORTS_15D = 8
 LEAD_DISCOVERY_MAX_KEYWORDS = 10
 LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 40
 LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
@@ -159,6 +163,36 @@ def _subscriber_gate(subscriber_count):
     if count <= 300_000:
         return "uygun"
     return "hedef_disi"
+
+
+def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
+    reasons: List[str] = []
+    try:
+        subscriber_count = int(row.get("subscriber_count"))
+    except (TypeError, ValueError):
+        subscriber_count = None
+    try:
+        longform_count = int(row.get("longform_last_60d") or 0)
+    except (TypeError, ValueError):
+        longform_count = 0
+    try:
+        shorts_count = int(row.get("shorts_last_15d") or 0)
+    except (TypeError, ValueError):
+        shorts_count = 0
+
+    if subscriber_count is None:
+        reasons.append("subscriber_count missing")
+    elif subscriber_count < LEAD_DISCOVERY_HARD_MIN_SUBSCRIBERS:
+        reasons.append(f"subscriber_count {subscriber_count} < {LEAD_DISCOVERY_HARD_MIN_SUBSCRIBERS}")
+    elif subscriber_count > LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS:
+        reasons.append(f"subscriber_count {subscriber_count} > {LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS}")
+    if longform_count < LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D:
+        reasons.append(f"longform_last_60d {longform_count} < {LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D}")
+    if shorts_count > LEAD_DISCOVERY_HARD_MAX_SHORTS_15D:
+        reasons.append(f"shorts_last_15d {shorts_count} > {LEAD_DISCOVERY_HARD_MAX_SHORTS_15D}")
+    if not reasons:
+        return None
+    return "Hard numeric gate failed: " + "; ".join(reasons)
 
 
 def _youtube_env_error_message(exc: Exception) -> str | None:
@@ -423,6 +457,7 @@ def diagnose_channel(
     short_max_seconds: int = LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS,
     email_video_description_limit: int = LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT,
     count_unknown_as_short: bool = False,
+    resolve_email: bool = True,
 ) -> Dict[str, Any]:
     resolved_channel_id = str(channel_id or "").strip()
     if not resolved_channel_id:
@@ -482,20 +517,33 @@ def diagnose_channel(
         (video_meta or {}).get("description"),
         channel_title,
     )
+    recent_video_titles = [
+        str(
+            (stats_map.get(str(item.get("video_id") or "").strip()) or {}).get("title")
+            or item.get("title")
+            or ""
+        ).strip()
+        for item in recent_uploads[:5]
+        if str(item.get("video_id") or "").strip()
+    ]
     recent_video_descriptions = [
         str((stats_map.get(str(item.get("video_id") or "").strip()) or {}).get("description") or "")
         for item in recent_uploads[: max(0, int(email_video_description_limit or 0))]
         if str(item.get("video_id") or "").strip()
     ]
-    creator_email, email_source = _resolve_creator_email_with_source(
-        channel_description,
-        recent_video_descriptions,
-        (video_meta or {}).get("description"),
-    )
+    creator_email = None
+    email_source = None
+    if resolve_email:
+        creator_email, email_source = _resolve_creator_email_with_source(
+            channel_description,
+            recent_video_descriptions,
+            (video_meta or {}).get("description"),
+        )
     return {
         "channel_id": resolved_channel_id,
         "channel_title": channel_title,
         "channel_description": channel_description,
+        "recent_video_titles": [title for title in recent_video_titles if title],
         "subscriber_count": subscriber_count,
         "creator_name": creator_name,
         "creator_email": creator_email,
@@ -511,6 +559,7 @@ def diagnose_channel(
         "sweetspot_score": sweetspot.get("score") if sweetspot else None,
         "best_source_video_id": sweetspot.get("video_id") if sweetspot else None,
         "best_source_video_minutes": sweetspot.get("minutes") if sweetspot else None,
+        "_email_candidate_descriptions": recent_video_descriptions,
     }
 
 
@@ -685,26 +734,57 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
         return {"icp_fit": None, "icp_reason": "OpenAI is not configured."}
     channel_title = str(row.get("channel_title") or "")
     channel_description = str(row.get("channel_description") or "")[:1400]
+    recent_video_titles = row.get("recent_video_titles") or []
+    if not isinstance(recent_video_titles, list):
+        recent_video_titles = []
+    recent_video_titles_text = "; ".join(str(title or "").strip() for title in recent_video_titles[:5] if str(title or "").strip())
+    subscriber_count = row.get("subscriber_count")
+    longform_60d = row.get("longform_last_60d")
+    shorts_15d = row.get("shorts_last_15d")
     sweetspot_score = row.get("sweetspot_score")
     sweetspot_minutes = row.get("best_source_video_minutes")
-    source_signal = (
-        f"Best recent source-video sweet-spot score: {sweetspot_score}; minutes: {sweetspot_minutes}. "
-        "Score is based on recent video duration suitability for making demo Shorts. "
-        "All recent videos under 5 minutes, missing suitable videos, or only videos over 35 minutes is a weak Minti fit signal, but not a hard exclusion. "
-        "If the score is missing/null or very low, explicitly mention weak demo-source material in the reason."
-    )
     prompt = (
-        "Decide if this YouTube creator channel fits the target niche.\n"
-        "Return JSON only: {\"icp_fit\":true|false,\"reason\":\"one short sentence\"}.\n\n"
-        f"Niche: {niche}\n"
+        "Decide if this channel fits the target. Return JSON only:\n"
+        "{\"icp_fit\":true|false,\"reason\":\"one short sentence\"}.\n\n"
+        "INCLUDE (icp_fit true) when most hold:\n"
+        "- A single identifiable person's channel (personal brand; name/description points to a human)\n"
+        "- Talking-to-camera long-form educational / teaching / guidance content\n"
+        "- An independent creator growing their channel (educator, coach, consultant, therapist, faith/spiritual guide, expert). Selling a product is NOT required.\n"
+        "- Content is in English.\n\n"
+        "EXCLUDE (icp_fit false) if ANY hold:\n"
+        "- Company, organization, official body, .org/advocacy group\n"
+        "- TV channel, news outlet, media brand (e.g. BBC, TED)\n"
+        "- Agency-managed big brand; multi-host / corporate / brand account\n"
+        "- Podcast network, production company\n"
+        "- Faceless, compilation, music, gaming, kids, reaction content\n"
+        "- Not a personal brand and only a generic/role email (press@, podcast@, info@, ...@a-company)\n"
+        "- Content language is not English (e.g. Turkish, Spanish)\n\n"
         f"Channel title: {channel_title}\n"
-        f"Channel description: {channel_description}\n"
-        f"{source_signal}"
+        f"Description: {channel_description}\n"
+        f"Recent video titles: {recent_video_titles_text}\n"
+        f"Subscribers: {subscriber_count} | Longform last 60d: {longform_60d} | Shorts last 15d: {shorts_15d}\n"
+        f"Demo sweet-spot score: {sweetspot_score} ({sweetspot_minutes} min)\n\n"
+        "Notes:\n"
+        "- Preferred audience is US / English-speaking; if you can't determine the country, do NOT exclude on that alone.\n"
+        "- If the sweet-spot score is missing/low, the demo-source material is weak — mention it in the reason.\n"
+        "- Very high subscriber counts usually mean a corporate/brand/agency channel — be skeptical unless there's clear evidence of a solo personal brand."
     )
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You classify creator-channel ICP fit for B2B lead discovery."},
+            {
+                "role": "system",
+                "content": (
+                    "You classify YouTube channels for B2B lead discovery. Target: solo, single-person, "
+                    "talking-to-camera creators trying to grow their channel / personal brand — educators, "
+                    "coaches, consultants, therapists, faith/spiritual guides, independent experts. Content "
+                    "language MUST be English and aimed mainly at a US / English-speaking audience. They do "
+                    "NOT need to sell anything — wanting to grow the channel is enough. Absolutely EXCLUDE: "
+                    "companies, organizations, TV/news channels, media brands, agency-managed big brands, "
+                    ".org/advocacy groups, podcast networks, production companies, multi-host/brand accounts, "
+                    "faceless/compilation/music/gaming/kids/reaction channels."
+                ),
+            },
             {"role": "user", "content": prompt},
         ],
         temperature=0.1,
@@ -713,7 +793,7 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
     try:
         payload = json.loads(content)
     except Exception:
-        return {"icp_fit": None, "icp_reason": content[:180] or "Could not parse ICP response."}
+        return {"icp_fit": None, "icp_reason": "parse_error"}
     reason = str(payload.get("reason") or "").strip()[:220]
     try:
         sweetspot_value = int(sweetspot_score)
@@ -721,8 +801,14 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
         sweetspot_value = None
     if (sweetspot_value is None or sweetspot_value <= 5) and "weak" not in reason.lower():
         reason = (reason + " Weak demo-source material from recent video durations.").strip()[:220]
+    raw_fit = payload.get("icp_fit")
+    if isinstance(raw_fit, bool):
+        icp_fit = raw_fit
+    else:
+        icp_fit = None
+        reason = reason or "parse_error"
     return {
-        "icp_fit": bool(payload.get("icp_fit")),
+        "icp_fit": icp_fit,
         "icp_reason": reason,
     }
 
@@ -886,11 +972,22 @@ def _json_sql_param(conn, placeholder: str = "?") -> str:
 
 
 def _lead_discovery_status(row: Dict[str, Any]) -> str:
+    if _hard_numeric_disqualification_reason(row):
+        return "disqualified"
+    if row.get("icp_fit") is False:
+        return "disqualified"
     if row.get("icp_fit") is True:
         return "icp_qualified"
-    if row.get("icp_fit") is False or row.get("eligible") is False:
-        return "disqualified"
     return "discovered"
+
+
+def _attach_lead_discovery_email(row: Dict[str, Any]) -> None:
+    creator_email, email_source = _resolve_creator_email_with_source(
+        row.get("channel_description"),
+        row.get("_email_candidate_descriptions") or [],
+    )
+    row["creator_email"] = creator_email
+    row["email_source"] = email_source
 
 
 def _persist_discovery_lead(row: Dict[str, Any]) -> str:
@@ -1681,14 +1778,24 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                 quota_counter=quota_counter,
                 min_longform_seconds=min_longform_seconds,
                 short_max_seconds=short_max_seconds,
+                resolve_email=False,
             )
             row["matched_keyword"] = candidate.get("matched_keyword")
             row["channel_url"] = f"https://www.youtube.com/channel/{channel_id}"
-            if ai_icp:
+            hard_gate_reason = _hard_numeric_disqualification_reason(row)
+            row["hard_gate_passed"] = hard_gate_reason is None
+            row["hard_gate_reason"] = hard_gate_reason or ""
+            if hard_gate_reason:
+                row["icp_fit"] = False
+                row["icp_reason"] = hard_gate_reason
+            elif ai_icp:
+                _attach_lead_discovery_email(row)
                 row.update(_classify_lead_discovery_icp(niche or candidate.get("matched_keyword") or "", row))
             else:
+                _attach_lead_discovery_email(row)
                 row["icp_fit"] = None
                 row["icp_reason"] = ""
+            row.pop("_email_candidate_descriptions", None)
             persistence_result = _persist_discovery_lead(row)
             if persistence_result in persistence_counts:
                 persistence_counts[persistence_result] += 1
