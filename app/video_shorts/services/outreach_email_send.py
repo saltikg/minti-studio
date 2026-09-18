@@ -229,10 +229,13 @@ def send_share_link_outreach_email(
     rendered = render_share_link_outreach_email(conn, share_link_id, stage=normalized_stage, language=language)
     rendered_email = rendered["email"]
     template_key = rendered_email["key"]
+    override_to_email = str(recipient_email_override or "").strip()
     previous_sent_at = rendered["followup_sent_at"] if normalized_stage == "followup" else rendered["emailed_at"]
     previous_template_key = rendered["followup_template_key"] if normalized_stage == "followup" else rendered["first_email_template_key"]
     sent_at_utc = _as_utc(previous_sent_at)
     if (
+        not override_to_email
+        and
         sent_at_utc
         and previous_template_key == template_key
         and not confirm_resend
@@ -250,7 +253,7 @@ def send_share_link_outreach_email(
     verified_sender = resend_sender_domain_verified(requested_from_email)
     outreach_from_email = requested_from_email if verified_sender else ""
     send_result = send_resend_email(
-        to_email=(str(recipient_email_override or "").strip() or rendered["recipient_email"]),
+        to_email=(override_to_email or rendered["recipient_email"]),
         subject=rendered_email["subject"],
         html=rendered_email["html"],
         text=rendered_email["text"],
@@ -260,6 +263,17 @@ def send_share_link_outreach_email(
         error_message="Outreach email could not be sent.",
     )
     provider_message_id = str(send_result.get("request_id") or "").strip()
+    if override_to_email:
+        return {
+            "ok": True,
+            "stage": normalized_stage,
+            "language": rendered_email["language"],
+            "template_key": template_key,
+            "provider_message_id": provider_message_id,
+            "from_email": requested_from_email if verified_sender else os.getenv("MAIL_FROM", ""),
+            "info_sender_verified": verified_sender,
+            "recipient_email_override": override_to_email,
+        }
     if normalized_stage == "followup":
         conn.execute(
             """
