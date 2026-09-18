@@ -83,6 +83,25 @@
       flex-direction: column;
       gap: 6px;
     }
+    .vs-admin-nav-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .vs-admin-nav-group + .vs-admin-nav-group {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .vs-admin-nav-heading {
+      padding: 0 12px 2px;
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
     .vs-admin-nav-link {
       display: flex;
       align-items: center;
@@ -101,6 +120,13 @@
       background: rgba(45, 212, 191, 0.14);
       color: #8ff3d8;
       border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .vs-admin-nav-link.is-secondary {
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 0.92rem;
+    }
+    .vs-admin-nav-link.is-secondary.is-active {
+      color: #8ff3d8;
     }
     .vs-admin-main {
       min-width: 0;
@@ -173,89 +199,104 @@
     <aside class="vs-admin-sidebar">
       <div class="vs-admin-sidebar-title">Admin</div>
       <nav class="vs-admin-nav" aria-label="Admin navigation">
-        <a
-          href="{{ url_for('video_shorts_bp.admin_leads') }}"
-          class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads' %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Leads</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_leads_pipeline_overview') }}"
-          class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads_pipeline_overview' %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Pipeline</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_lead_discovery_test_page') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/lead-discovery-test') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Lead Discovery Test</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/lead-pipeline') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Discovery Pipeline</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/outreach-emails') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Outreach Emails</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_users') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Customers</span>
-            {% if vs_admin_new_users_badge_count|int > 0 %}
-              <span class="vs-admin-nav-badge">{{ vs_admin_new_users_badge_count }}</span>
-            {% endif %}
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Autopilot customers</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_blog_articles') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/blog') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Blog</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_errors') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/errors') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Errors</span>
-          </span>
-        </a>
-        <a
-          href="{{ url_for('video_shorts_bp.admin_share_links') }}"
-          class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/share-links') %}is-active{% endif %}">
-          <span aria-hidden="true">●</span>
-          <span class="vs-admin-nav-label">
-            <span>Share links</span>
-          </span>
-        </a>
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Discovery</div>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/lead-pipeline') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Discovery Pipeline</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_lead_discovery_test_page') }}"
+            class="vs-admin-nav-link is-secondary {% if request.path.startswith('/video_shorts/admin/lead-discovery-test') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Lead Discovery Test</span>
+            </span>
+          </a>
+        </div>
+
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Outreach</div>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_leads') }}"
+            class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads' %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Leads</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_leads_pipeline_overview') }}"
+            class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads_pipeline_overview' %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Pipeline</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/outreach-emails') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Outreach Emails</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Autopilot customers</span>
+            </span>
+          </a>
+        </div>
+
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Customers</div>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_users') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/users') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Customers</span>
+              {% if vs_admin_new_users_badge_count|int > 0 %}
+                <span class="vs-admin-nav-badge">{{ vs_admin_new_users_badge_count }}</span>
+              {% endif %}
+            </span>
+          </a>
+        </div>
+
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Site</div>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_blog_articles') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/blog') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Blog</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_share_links') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/share-links') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Share links</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_errors') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/errors') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Errors</span>
+            </span>
+          </a>
+        </div>
       </nav>
     </aside>
 
