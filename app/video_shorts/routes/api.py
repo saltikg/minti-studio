@@ -714,9 +714,16 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
         payload = json.loads(content)
     except Exception:
         return {"icp_fit": None, "icp_reason": content[:180] or "Could not parse ICP response."}
+    reason = str(payload.get("reason") or "").strip()[:220]
+    try:
+        sweetspot_value = int(sweetspot_score)
+    except (TypeError, ValueError):
+        sweetspot_value = None
+    if (sweetspot_value is None or sweetspot_value <= 5) and "weak" not in reason.lower():
+        reason = (reason + " Weak demo-source material from recent video durations.").strip()[:220]
     return {
         "icp_fit": bool(payload.get("icp_fit")),
-        "icp_reason": str(payload.get("reason") or "").strip()[:220],
+        "icp_reason": reason,
     }
 
 
