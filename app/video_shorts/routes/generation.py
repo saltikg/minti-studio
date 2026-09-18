@@ -15178,6 +15178,7 @@ def admin_discovery_lead_pipeline():
     per_page = min(100, max(10, _request_int(request.args.get("per_page"), 50)))
     offset = (page - 1) * per_page
     wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
+    lead_filter = str(request.args.get("filter") or "").strip().lower()
     conn = get_db_readonly()
     try:
         discovery_columns = table_columns(conn, "discovery_leads")
@@ -15193,8 +15194,28 @@ def admin_discovery_lead_pipeline():
         seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
         automation = {"has_automation": False, "control": {}, "runs": []}
         total_pages = 1
+        filtered_total = 0
 
         if has_discovery:
+            has_promotion_columns = "autopilot_lead_id" in discovery_columns
+            sweetspot_score_sql = "sweetspot_score" if "sweetspot_score" in discovery_columns else "NULL"
+            best_source_video_minutes_sql = "best_source_video_minutes" if "best_source_video_minutes" in discovery_columns else "NULL"
+            autopilot_lead_id_sql = "autopilot_lead_id" if "autopilot_lead_id" in discovery_columns else "NULL"
+            promoted_to_autopilot_at_sql = "promoted_to_autopilot_at" if "promoted_to_autopilot_at" in discovery_columns else "NULL"
+            promotion_error_sql = "promotion_error" if "promotion_error" in discovery_columns else "NULL"
+            ready_filter_sql = ""
+            if lead_filter == "ready_to_promote":
+                if has_promotion_columns:
+                    ready_filter_sql = """
+                    WHERE icp_fit IS TRUE
+                      AND COALESCE(creator_email, '') <> ''
+                      AND COALESCE(autopilot_lead_id, '') = ''
+                    """
+                else:
+                    ready_filter_sql = """
+                    WHERE icp_fit IS TRUE
+                      AND COALESCE(creator_email, '') <> ''
+                    """
             for row in conn.execute(
                 """
                 SELECT COALESCE(status, 'discovered') AS status, COUNT(*)
@@ -15225,11 +15246,13 @@ def admin_discovery_lead_pipeline():
                 "pending_email_enrichment": int(total_row[3] or 0),
             }
             seed_summary["promoted_leads"] = int(total_row[4] or 0)
-            total_pages = max(1, int(math.ceil(totals["total"] / per_page))) if totals["total"] else 1
-            row_limit = totals["total"] if wants_csv else per_page
+            filtered_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}").fetchone()
+            filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
+            total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
+            row_limit = filtered_total if wants_csv else per_page
             row_offset = 0 if wants_csv else offset
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     id,
                     youtube_channel_id,
@@ -15252,9 +15275,19 @@ def admin_discovery_lead_pipeline():
                     email_enriched_at,
                     email_enrichment_error,
                     is_seed,
-                    promoted_at
+                    promoted_at,
+                    {sweetspot_score_sql} AS sweetspot_score,
+                    {best_source_video_minutes_sql} AS best_source_video_minutes,
+                    {autopilot_lead_id_sql} AS autopilot_lead_id,
+                    {promoted_to_autopilot_at_sql} AS promoted_to_autopilot_at,
+                    {promotion_error_sql} AS promotion_error
                 FROM discovery_leads
-                ORDER BY last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC
+                {ready_filter_sql}
+                ORDER BY
+                    sweetspot_score DESC NULLS LAST,
+                    last_discovered_at DESC NULLS LAST,
+                    last_seen_at DESC NULLS LAST,
+                    id DESC
                 LIMIT ? OFFSET ?
                 """,
                 [row_limit, row_offset],
@@ -15283,6 +15316,11 @@ def admin_discovery_lead_pipeline():
                     "email_enrichment_error": str(row[19] or ""),
                     "is_seed": bool(row[20]) if row[20] is not None else False,
                     "promoted_at": _format_datetime_pst(row[21]),
+                    "sweetspot_score": row[22],
+                    "best_source_video_minutes": row[23],
+                    "autopilot_lead_id": str(row[24] or ""),
+                    "promoted_to_autopilot_at": _format_datetime_pst(row[25]),
+                    "promotion_error": str(row[26] or ""),
                 }
                 for row in rows
             ]
@@ -15365,6 +15403,11 @@ def admin_discovery_lead_pipeline():
                 "email_enrichment_error",
                 "is_seed",
                 "promoted_at",
+                "sweetspot_score",
+                "best_source_video_minutes",
+                "autopilot_lead_id",
+                "promoted_to_autopilot_at",
+                "promotion_error",
             ]
             lines = [",".join(headers)]
             for lead in leads:
@@ -15387,6 +15430,8 @@ def admin_discovery_lead_pipeline():
         seed_summary=seed_summary,
         automation=automation,
         leads=leads,
+        lead_filter=lead_filter,
+        filtered_total=filtered_total,
         page=page,
         per_page=per_page,
         total_pages=total_pages,

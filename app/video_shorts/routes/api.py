@@ -70,6 +70,8 @@ LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT = 100
 LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT = 10
 LEAD_DISCOVERY_QUEUE_TAKE_MAX = 20
 SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
+DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
+DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -441,6 +443,7 @@ def diagnose_channel(
     if video_ids:
         _increment_enrichment_counter(quota_counter, (len(video_ids) + 49) // 50)
     stats_map = _fetch_video_details(video_ids)
+    sweetspot = _select_sweetspot_from_uploads(recent_uploads, stats_map)
 
     now_utc = datetime.now(timezone.utc)
     longform_last_60d = 0
@@ -505,6 +508,9 @@ def diagnose_channel(
         "shorts_color": "yellow" if shorts_last_15d >= 7 else "green",
         "shorts_window": "last_15_days",
         "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+        "sweetspot_score": sweetspot.get("score") if sweetspot else None,
+        "best_source_video_id": sweetspot.get("video_id") if sweetspot else None,
+        "best_source_video_minutes": sweetspot.get("minutes") if sweetspot else None,
     }
 
 
@@ -594,17 +600,105 @@ def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang
     return candidates, len(items)
 
 
+def _sweetspot_score_for_minutes(minutes: float) -> Optional[int]:
+    if minutes < 5:
+        return None
+    if minutes < 10:
+        return 60
+    if minutes < 15:
+        return 100
+    if minutes < 20:
+        return 85
+    if minutes < 25:
+        return 80
+    if minutes < 30:
+        return 55
+    if minutes < 35:
+        return 30
+    return 5
+
+
+def _select_sweetspot_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    best: Optional[Dict[str, Any]] = None
+    for index, item in enumerate((recent_uploads or [])[:5]):
+        video_id = str(item.get("video_id") or "").strip()
+        if not video_id:
+            continue
+        details = stats_map.get(video_id) or {}
+        try:
+            duration_seconds = float(details.get("duration_seconds") or 0)
+        except (TypeError, ValueError):
+            duration_seconds = 0
+        minutes = duration_seconds / 60.0 if duration_seconds > 0 else 0
+        score = _sweetspot_score_for_minutes(minutes)
+        if score is None:
+            continue
+        published_at = _parse_yt_timestamp(item.get("published_at"))
+        candidate = {
+            "video_id": video_id,
+            "canonical_url": f"https://www.youtube.com/watch?v={video_id}",
+            "minutes": round(minutes, 2),
+            "score": int(score),
+            "published_at": published_at,
+            "recent_index": index,
+        }
+        if best is None:
+            best = candidate
+            continue
+        best_dt = best.get("published_at")
+        candidate_dt = candidate.get("published_at")
+        if score > int(best.get("score") or 0):
+            best = candidate
+        elif score == int(best.get("score") or 0):
+            if candidate_dt and best_dt and candidate_dt > best_dt:
+                best = candidate
+            elif candidate_dt and not best_dt:
+                best = candidate
+            elif not candidate_dt and not best_dt and index < int(best.get("recent_index") or 999):
+                best = candidate
+    if not best:
+        return None
+    return {
+        "video_id": best["video_id"],
+        "canonical_url": best["canonical_url"],
+        "minutes": best["minutes"],
+        "score": best["score"],
+    }
+
+
+def select_source_video_for_channel(youtube_channel_id: str) -> Optional[Dict[str, Any]]:
+    clean_channel_id = str(youtube_channel_id or "").strip()
+    if not clean_channel_id:
+        return None
+    channel_meta = get_channel_metadata(f"https://www.youtube.com/channel/{clean_channel_id}")
+    uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
+    if not uploads_playlist_id:
+        return None
+    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=5)
+    video_ids = [str(item.get("video_id") or "").strip() for item in recent_uploads if str(item.get("video_id") or "").strip()]
+    stats_map = _fetch_video_details(video_ids)
+    return _select_sweetspot_from_uploads(recent_uploads, stats_map)
+
+
 def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, Any]:
     if not _openai_client:
         return {"icp_fit": None, "icp_reason": "OpenAI is not configured."}
     channel_title = str(row.get("channel_title") or "")
     channel_description = str(row.get("channel_description") or "")[:1400]
+    sweetspot_score = row.get("sweetspot_score")
+    sweetspot_minutes = row.get("best_source_video_minutes")
+    source_signal = (
+        f"Best recent source-video sweet-spot score: {sweetspot_score}; minutes: {sweetspot_minutes}. "
+        "Score is based on recent video duration suitability for making demo Shorts. "
+        "All recent videos under 5 minutes or over 35 minutes is a weak Minti fit signal, but not a hard exclusion."
+    )
     prompt = (
         "Decide if this YouTube creator channel fits the target niche.\n"
         "Return JSON only: {\"icp_fit\":true|false,\"reason\":\"one short sentence\"}.\n\n"
         f"Niche: {niche}\n"
         f"Channel title: {channel_title}\n"
-        f"Channel description: {channel_description}"
+        f"Channel description: {channel_description}\n"
+        f"{source_signal}"
     )
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
@@ -886,6 +980,26 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
         """
         result = conn.execute(insert_sql, params)
         inserted_row = result.fetchone()
+        optional_updates = []
+        optional_params: List[Any] = []
+        if "sweetspot_score" in columns:
+            optional_updates.append("sweetspot_score = ?")
+            optional_params.append(row.get("sweetspot_score"))
+        if "best_source_video_id" in columns:
+            optional_updates.append("best_source_video_id = ?")
+            optional_params.append(row.get("best_source_video_id"))
+        if "best_source_video_minutes" in columns:
+            optional_updates.append("best_source_video_minutes = ?")
+            optional_params.append(row.get("best_source_video_minutes"))
+        if optional_updates:
+            conn.execute(
+                f"""
+                UPDATE discovery_leads
+                SET {", ".join(optional_updates)}
+                WHERE youtube_channel_id = ?
+                """,
+                optional_params + [youtube_channel_id],
+            )
         conn.commit()
         return "inserted" if inserted_row and bool(inserted_row[0]) else "updated"
     except Exception:
@@ -1797,6 +1911,220 @@ def admin_discovery_promote_seed():
     finally:
         if conn:
             conn.close()
+
+
+def _short_promotion_error(exc: Exception) -> str:
+    return " ".join(str(exc or "Promotion failed.").strip().split())[:500] or "Promotion failed."
+
+
+@video_shorts_bp.route("/api/admin/discovery-promote-to-lead", methods=["POST"])
+def admin_discovery_promote_to_lead():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"promoted": [], "linked": [], "skipped": []})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("lead_ids") or payload.get("leadIds") or payload.get("ids") or []
+    if isinstance(raw_ids, (str, int)):
+        raw_ids = [raw_ids]
+    lead_ids: List[int] = []
+    seen_ids = set()
+    for raw_id in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            lead_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if lead_id > 0 and lead_id not in seen_ids:
+            seen_ids.add(lead_id)
+            lead_ids.append(lead_id)
+    if not lead_ids:
+        return jsonify(
+            {
+                "success": False,
+                "promoted": [],
+                "linked": [],
+                "skipped": [{"id": None, "reason": "Provide at least one discovery lead id."}],
+                "errors": [{"error": "bad_request", "message": "Provide lead_ids."}],
+            }
+        ), 400
+
+    promoted: List[Dict[str, Any]] = []
+    linked: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    required_columns = {
+        "autopilot_lead_id",
+        "promoted_to_autopilot_at",
+        "promoted_source_video_id",
+        "promotion_error",
+        "sweetspot_score",
+        "best_source_video_id",
+        "best_source_video_minutes",
+    }
+    conn = get_db()
+    try:
+        discovery_columns = table_columns(conn, "discovery_leads")
+        missing_columns = sorted(required_columns - set(discovery_columns))
+        if missing_columns:
+            return jsonify(
+                {
+                    "success": False,
+                    "promoted": [],
+                    "linked": [],
+                    "skipped": [],
+                    "errors": [{"error": "schema_missing", "message": f"Missing discovery_leads columns: {', '.join(missing_columns)}"}],
+                }
+            ), 500
+
+        for lead_id in lead_ids:
+            try:
+                row = conn.execute(
+                    """
+                    SELECT id, youtube_channel_id, channel_title, channel_description,
+                           subscriber_count, creator_name, creator_email, icp_fit,
+                           autopilot_lead_id
+                    FROM discovery_leads
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    [lead_id],
+                ).fetchone()
+                if not row:
+                    skipped.append({"id": lead_id, "reason": "not_found"})
+                    continue
+                lead = {
+                    "id": int(row[0]),
+                    "youtube_channel_id": str(row[1] or "").strip(),
+                    "channel_title": str(row[2] or "").strip(),
+                    "channel_description": str(row[3] or "").strip(),
+                    "subscriber_count": row[4],
+                    "creator_name": str(row[5] or "").strip(),
+                    "creator_email": str(row[6] or "").strip(),
+                    "icp_fit": bool(row[7]) if row[7] is not None else None,
+                    "autopilot_lead_id": str(row[8] or "").strip(),
+                }
+                if not lead["creator_email"]:
+                    skipped.append({"id": lead_id, "reason": "missing_email"})
+                    continue
+                if lead["icp_fit"] is not True:
+                    skipped.append({"id": lead_id, "reason": "icp_not_fit"})
+                    continue
+                if not lead["youtube_channel_id"]:
+                    skipped.append({"id": lead_id, "reason": "missing_channel_id"})
+                    continue
+
+                existing = conn.execute(
+                    """
+                    SELECT CAST(id AS VARCHAR), first_video_id
+                    FROM autopilot_leads
+                    WHERE youtube_channel_id = ?
+                    LIMIT 1
+                    """,
+                    [lead["youtube_channel_id"]],
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE discovery_leads
+                        SET autopilot_lead_id = ?,
+                            promoted_to_autopilot_at = COALESCE(promoted_to_autopilot_at, CURRENT_TIMESTAMP),
+                            promoted_source_video_id = COALESCE(promoted_source_video_id, ?),
+                            promotion_error = NULL
+                        WHERE id = ?
+                        """,
+                        [str(existing[0]), existing[1], lead_id],
+                    )
+                    conn.commit()
+                    linked.append({"id": lead_id, "autopilot_lead_id": str(existing[0]), "reason": "already_a_lead_linked"})
+                    continue
+
+                source = select_source_video_for_channel(lead["youtube_channel_id"])
+                if not source:
+                    conn.execute(
+                        "UPDATE discovery_leads SET promotion_error = ? WHERE id = ?",
+                        ["no_suitable_source_video", lead_id],
+                    )
+                    conn.commit()
+                    skipped.append({"id": lead_id, "reason": "no_suitable_source_video"})
+                    continue
+
+                meta = fetch_video_metadata(str(source["video_id"]))
+                if lead.get("channel_description"):
+                    meta["channel_description"] = lead["channel_description"]
+                autopilot = create_autopilot_lead_from_video(
+                    conn,
+                    meta=meta,
+                    video_id=str(source["video_id"]),
+                    canonical_url=str(source["canonical_url"]),
+                    creator_name=lead["creator_name"] or lead["channel_title"],
+                    creator_email=lead["creator_email"],
+                    subscriber_count=lead["subscriber_count"],
+                    discovery_owner_user_id=DISCOVERY_PROMOTION_OWNER_USER_ID,
+                    discovery_brand_id=DISCOVERY_PROMOTION_BRAND_ID,
+                )
+                conn.execute(
+                    """
+                    UPDATE discovery_leads
+                    SET autopilot_lead_id = ?,
+                        promoted_to_autopilot_at = CURRENT_TIMESTAMP,
+                        promoted_source_video_id = ?,
+                        promotion_error = NULL,
+                        sweetspot_score = ?,
+                        best_source_video_id = ?,
+                        best_source_video_minutes = ?
+                    WHERE id = ?
+                    """,
+                    [
+                        autopilot["lead_id"],
+                        autopilot["video_pk"],
+                        source.get("score"),
+                        source.get("video_id"),
+                        source.get("minutes"),
+                        lead_id,
+                    ],
+                )
+                conn.commit()
+                promoted.append(
+                    {
+                        "id": lead_id,
+                        "autopilot_lead_id": autopilot["lead_id"],
+                        "source_video_id": source.get("video_id"),
+                        "source_video_pk": autopilot["video_pk"],
+                        "source_video_minutes": source.get("minutes"),
+                        "sweetspot_score": source.get("score"),
+                    }
+                )
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                message = _short_promotion_error(exc)
+                try:
+                    conn.execute("UPDATE discovery_leads SET promotion_error = ? WHERE id = ?", [message, lead_id])
+                    conn.commit()
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                current_app.logger.exception("Discovery lead promotion failed id=%s", lead_id)
+                skipped.append({"id": lead_id, "reason": "promotion_failed"})
+                errors.append({"id": lead_id, "error": "promotion_failed", "message": message})
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "success": bool(promoted or linked or skipped) and not errors,
+            "promoted": promoted,
+            "linked": linked,
+            "skipped": skipped,
+            "errors": errors,
+        }
+    )
 
 
 @video_shorts_bp.route("/api/admin/seed-generate-keywords", methods=["POST"])

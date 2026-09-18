@@ -135,6 +135,26 @@
       width: 42px;
       min-width: 42px;
     }
+    .discovery-filter-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .discovery-filter-tabs a {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.72);
+      padding: 7px 10px;
+      text-decoration: none;
+      font-size: 0.84rem;
+      font-weight: 800;
+    }
+    .discovery-filter-tabs a.is-active {
+      border-color: rgba(45, 212, 191, 0.35);
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+    }
     .discovery-pager {
       display: flex;
       align-items: center;
@@ -163,7 +183,7 @@
     {% endif %}
 
     <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
-      <div class="discovery-muted">Sorted by last discovered time · persistent discovery store</div>
+      <div class="discovery-muted">Sorted by demo-source fit and last discovered time · persistent discovery store</div>
       <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', format='csv') }}" class="btn btn-sm btn-outline-info">Download CSV</a>
     </div>
 
@@ -405,15 +425,25 @@
       <div class="discovery-muted mb-3">keyword_queue table is not available yet.</div>
     {% endif %}
 
+    <div class="discovery-filter-tabs">
+      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}">All leads</a>
+      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', filter='ready_to_promote') }}">Ready to promote</a>
+      {% if lead_filter %}
+        <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
+      {% endif %}
+    </div>
+
     <div class="discovery-table-wrap">
       <table class="discovery-table">
         <thead>
           <tr>
             <th class="discovery-select-cell">Seed</th>
+            <th>Promote</th>
             <th>Channel</th>
             <th>Subscribers</th>
             <th>Longform 60d</th>
             <th>Shorts 15d</th>
+            <th>Sweet spot</th>
             <th>ICP</th>
             <th>Email</th>
             <th>Confidence</th>
@@ -422,6 +452,7 @@
             <th>Website</th>
             <th>Tier</th>
             <th>Status</th>
+            <th>Minti lead</th>
             <th>Email enriched</th>
             <th>Last seen</th>
           </tr>
@@ -439,6 +470,16 @@
                   {% endif %}
                 {% endif %}
               </td>
+              <td>
+                {% if lead.autopilot_lead_id %}
+                  <span class="discovery-status email_enriched">promoted</span>
+                {% elif lead.creator_email and lead.icp_fit is true %}
+                  <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}">Promote</button>
+                {% else %}
+                  <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Promote</button>
+                {% endif %}
+                <div class="discovery-muted promote-real-lead-status" data-lead-id="{{ lead.id }}"></div>
+              </td>
               <td class="discovery-channel">
                 <a href="{{ lead.channel_url or ('https://www.youtube.com/channel/' ~ lead.youtube_channel_id) }}" target="_blank" rel="noopener">{{ lead.channel_title }}</a>
                 <div class="discovery-muted">{{ lead.youtube_channel_id }}</div>
@@ -449,6 +490,12 @@
               <td>{{ lead.subscriber_count or '' }}</td>
               <td>{{ lead.longform_last_60d or 0 }}</td>
               <td>{{ lead.shorts_last_15d or 0 }}</td>
+              <td>
+                {{ lead.sweetspot_score if lead.sweetspot_score is not none else '' }}
+                {% if lead.best_source_video_minutes %}
+                  <div class="discovery-muted">{{ "%.1f"|format(lead.best_source_video_minutes|float) }} min</div>
+                {% endif %}
+              </td>
               <td>{{ 'yes' if lead.icp_fit is true else ('no' if lead.icp_fit is false else '') }}</td>
               <td>{{ lead.creator_email or '' }}</td>
               <td>{{ lead.email_confidence if lead.email_confidence is not none else '' }}</td>
@@ -466,6 +513,14 @@
                   <div class="discovery-muted">{{ lead.email_enrichment_error }}</div>
                 {% endif %}
               </td>
+              <td>
+                {% if lead.autopilot_lead_id %}
+                  <div>{{ lead.autopilot_lead_id }}</div>
+                  <div class="discovery-muted">{{ lead.promoted_to_autopilot_at }}</div>
+                {% elif lead.promotion_error %}
+                  <div class="discovery-muted">{{ lead.promotion_error }}</div>
+                {% endif %}
+              </td>
               <td>{{ lead.email_enriched_at or '' }}</td>
               <td>
                 <div>{{ lead.last_seen_at or '' }}</div>
@@ -474,7 +529,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="15" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+              <td colspan="18" class="text-center text-white-50 py-4">No discovery leads yet.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -485,10 +540,10 @@
       <div>Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2">
         {% if page > 1 %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page-1, per_page=per_page) }}">Previous</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page-1, per_page=per_page, filter=lead_filter) }}">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page+1, per_page=per_page) }}">Next</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page+1, per_page=per_page, filter=lead_filter) }}">Next</a>
         {% endif %}
       </div>
     </div>
@@ -641,6 +696,39 @@
           }
         });
       }
+
+      document.querySelectorAll('.promote-real-lead-button').forEach((button) => {
+        button.addEventListener('click', async function () {
+          const leadId = button.getAttribute('data-lead-id');
+          const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
+          const confirmed = window.confirm('Creates a real lead and starts demo generation. This costs compute. Continue?');
+          if (!confirmed) return;
+          button.disabled = true;
+          if (rowStatus) rowStatus.textContent = 'Promoting...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', { lead_ids: [leadId] });
+            const promoted = data.promoted || [];
+            const linked = data.linked || [];
+            const skipped = data.skipped || [];
+            if (promoted.length) {
+              const item = promoted[0];
+              if (rowStatus) rowStatus.textContent = `Promoted ${item.autopilot_lead_id}; ${item.source_video_minutes} min. Refresh to see pipeline state.`;
+            } else if (linked.length) {
+              const item = linked[0];
+              if (rowStatus) rowStatus.textContent = `Linked existing lead ${item.autopilot_lead_id}.`;
+            } else if (skipped.length) {
+              if (rowStatus) rowStatus.textContent = `Skipped: ${skipped[0].reason}`;
+              button.disabled = false;
+            } else {
+              if (rowStatus) rowStatus.textContent = 'No lead was promoted.';
+              button.disabled = false;
+            }
+          } catch (error) {
+            if (rowStatus) rowStatus.textContent = error.message || 'Promotion failed.';
+            button.disabled = false;
+          }
+        });
+      });
 
       const seedKeywordButton = document.getElementById('seedKeywordButton');
       const seedKeywordStatus = document.getElementById('seedKeywordStatus');
