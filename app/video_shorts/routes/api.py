@@ -1417,15 +1417,7 @@ def admin_youtube_channel_diagnose():
         return jsonify({"error": "server_error", "message": "Unexpected server error."}), 500
 
 
-@video_shorts_bp.route("/api/admin/lead-discovery-test", methods=["POST"])
-def admin_lead_discovery_test():
-    current_user = getattr(g, "vs_current_user", None)
-    if not current_user:
-        return jsonify({"success": False, "errors": [{"error": "unauthorized", "message": "Admin session required."}]}), 401
-    if (current_user.get("role") or "").strip().lower() != "admin":
-        return jsonify({"success": False, "errors": [{"error": "forbidden", "message": "Admin access required."}]}), 403
-
-    payload = request.get_json(silent=True) or {}
+def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
     niche = " ".join(str(payload.get("niche") or "").strip().split())
     supplied_keywords = _normalize_discovery_keywords(payload.get("keywords"))
     use_queue = bool(payload.get("use_queue"))
@@ -1476,19 +1468,17 @@ def admin_lead_discovery_test():
         try:
             conn = get_db()
             if not table_columns(conn, "keyword_queue"):
-                return jsonify(
-                    {
-                        "success": False,
-                        "keywords": [],
-                        "queue_mode": True,
-                        "queue_taken": 0,
-                        "keyword_found_counts": {},
-                        "search_calls": 0,
-                        "enrichment_read_calls": 0,
-                        "results": [],
-                        "errors": [{"error": "keyword_queue_missing", "message": "keyword_queue table is not available."}],
-                    }
-                ), 500
+                return {
+                    "success": False,
+                    "keywords": [],
+                    "queue_mode": True,
+                    "queue_taken": 0,
+                    "keyword_found_counts": {},
+                    "search_calls": 0,
+                    "enrichment_read_calls": 0,
+                    "results": [],
+                    "errors": [{"error": "keyword_queue_missing", "message": "keyword_queue table is not available."}],
+                }, 500
             queue_keyword_items = _load_queue_keywords(conn, take_n)
         finally:
             if conn:
@@ -1497,46 +1487,40 @@ def admin_lead_discovery_test():
         max_keywords = max(max_keywords, len(supplied_keywords))
 
     if not use_queue and not niche and not supplied_keywords:
-        return jsonify(
-            {
-                "success": False,
-                "keywords": [],
-                "search_calls": 0,
-                "enrichment_read_calls": 0,
-                "results": [],
-                "errors": [{"error": "bad_request", "message": "Provide a niche or keywords."}],
-            }
-        ), 400
+        return {
+            "success": False,
+            "keywords": [],
+            "search_calls": 0,
+            "enrichment_read_calls": 0,
+            "results": [],
+            "errors": [{"error": "bad_request", "message": "Provide a niche or keywords."}],
+        }, 400
 
     try:
         keywords = supplied_keywords[:max_keywords] if use_queue else (supplied_keywords[:max_keywords] or _generate_lead_discovery_keywords(niche, max_keywords, lang))
     except Exception as exc:
         current_app.logger.exception("Lead discovery keyword generation failed")
-        return jsonify(
-            {
-                "success": False,
-                "keywords": [],
-                "search_calls": 0,
-                "enrichment_read_calls": 0,
-                "results": [],
-                "errors": [{"error": "keyword_generation_failed", "message": str(exc) or "Keyword generation failed."}],
-            }
-        ), 500
+        return {
+            "success": False,
+            "keywords": [],
+            "search_calls": 0,
+            "enrichment_read_calls": 0,
+            "results": [],
+            "errors": [{"error": "keyword_generation_failed", "message": str(exc) or "Keyword generation failed."}],
+        }, 500
     keywords = keywords[:max_keywords]
     if not keywords:
-        return jsonify(
-            {
-                "success": False,
-                "keywords": [],
-                "queue_mode": use_queue,
-                "queue_taken": 0,
-                "keyword_found_counts": {},
-                "search_calls": 0,
-                "enrichment_read_calls": 0,
-                "results": [],
-                "errors": [{"error": "no_keywords", "message": "No queued keywords are available." if use_queue else "No usable keywords were generated."}],
-            }
-        ), 400
+        return {
+            "success": False,
+            "keywords": [],
+            "queue_mode": use_queue,
+            "queue_taken": 0,
+            "keyword_found_counts": {},
+            "search_calls": 0,
+            "enrichment_read_calls": 0,
+            "results": [],
+            "errors": [{"error": "no_keywords", "message": "No queued keywords are available." if use_queue else "No usable keywords were generated."}],
+        }, 400
 
     search_calls = 0
     raw_search_items = 0
@@ -1631,25 +1615,35 @@ def admin_lead_discovery_test():
             if conn:
                 conn.close()
 
-    return jsonify(
-        {
-            "success": not errors or bool(results),
-            "keywords": keywords,
-            "search_calls": search_calls,
-            "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
-            "raw_search_items": raw_search_items,
-            "unique_channel_ids": len(candidates_by_channel),
-            "channels_enriched": channels_enriched,
-            "rows_returned": len(results),
-            "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
-            "persistence": persistence_counts,
-            "results": results,
-            "errors": errors,
-            "queue_mode": use_queue,
-            "queue_taken": len(queue_keyword_items),
-            "keyword_found_counts": keyword_found_counts,
-        }
-    )
+    return {
+        "success": not errors or bool(results),
+        "keywords": keywords,
+        "search_calls": search_calls,
+        "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
+        "raw_search_items": raw_search_items,
+        "unique_channel_ids": len(candidates_by_channel),
+        "channels_enriched": channels_enriched,
+        "rows_returned": len(results),
+        "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
+        "persistence": persistence_counts,
+        "results": results,
+        "errors": errors,
+        "queue_mode": use_queue,
+        "queue_taken": len(queue_keyword_items),
+        "keyword_found_counts": keyword_found_counts,
+    }, 200
+
+
+@video_shorts_bp.route("/api/admin/lead-discovery-test", methods=["POST"])
+def admin_lead_discovery_test():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"success": False, "errors": [{"error": "unauthorized", "message": "Admin session required."}]}), 401
+    if (current_user.get("role") or "").strip().lower() != "admin":
+        return jsonify({"success": False, "errors": [{"error": "forbidden", "message": "Admin access required."}]}), 403
+
+    response_payload, status = run_lead_discovery_payload(request.get_json(silent=True) or {})
+    return jsonify(response_payload), status
 
 
 @video_shorts_bp.route("/api/admin/discovery-promote-seed", methods=["POST"])
@@ -2033,6 +2027,76 @@ def admin_discovery_enrich_emails():
             "errors": [],
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/discovery-automation/toggle", methods=["POST"])
+def admin_discovery_automation_toggle():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"control": {}})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        from app.video_shorts.services.discovery_automation import update_discovery_automation_control
+
+        control = update_discovery_automation_control(
+            {
+                "enabled": bool(payload.get("enabled")),
+                "paused_reason": payload.get("paused_reason") or "",
+            }
+        )
+        return jsonify({"success": True, "control": control, "errors": []})
+    except Exception as exc:
+        current_app.logger.exception("Discovery automation toggle failed")
+        return jsonify({"success": False, "control": {}, "errors": [{"error": "automation_toggle_failed", "message": str(exc)}]}), 500
+
+
+@video_shorts_bp.route("/api/admin/discovery-automation/caps", methods=["POST"])
+def admin_discovery_automation_caps():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"control": {}})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        from app.video_shorts.services.discovery_automation import update_discovery_automation_control
+
+        control = update_discovery_automation_control(
+            {
+                "runs_per_day": payload.get("runs_per_day"),
+                "offpeak_hours_pt": payload.get("offpeak_hours_pt"),
+                "max_keywords_per_cycle": payload.get("max_keywords_per_cycle"),
+                "max_results_per_keyword": payload.get("max_results_per_keyword"),
+                "max_channels_enriched_per_cycle": payload.get("max_channels_enriched_per_cycle"),
+                "max_trakk_per_cycle": payload.get("max_trakk_per_cycle"),
+            }
+        )
+        return jsonify({"success": True, "control": control, "errors": []})
+    except Exception as exc:
+        current_app.logger.exception("Discovery automation caps update failed")
+        return jsonify({"success": False, "control": {}, "errors": [{"error": "automation_caps_failed", "message": str(exc)}]}), 500
+
+
+@video_shorts_bp.route("/api/admin/discovery-automation/run-now", methods=["POST"])
+def admin_discovery_automation_run_now():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"run_id": None, "result": {}})
+        return jsonify(payload), status
+
+    try:
+        from app.video_shorts.services.discovery_automation import run_discovery_automation_cycle
+
+        result = run_discovery_automation_cycle(manual=True, require_enabled=False)
+        return jsonify({"success": bool(result.get("success")), **result, "errors": [] if result.get("success") else [{"error": "automation_run_failed", "message": result.get("error") or result.get("reason") or "Run did not complete."}]})
+    except Exception as exc:
+        current_app.logger.exception("Discovery automation run-now failed")
+        return jsonify({"success": False, "run_id": None, "result": {}, "errors": [{"error": "automation_run_failed", "message": str(exc)}]}), 500
 
 
 @video_shorts_bp.route("/api/admin/lead-discovery-seed-keywords", methods=["POST"])

@@ -125,6 +125,12 @@
       font-weight: 850;
       margin: 0 0 10px;
     }
+    .discovery-automation-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(96px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
     .discovery-select-cell {
       width: 42px;
       min-width: 42px;
@@ -140,9 +146,11 @@
     @media (max-width: 991.98px) {
       .discovery-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .discovery-action-grid { grid-template-columns: 1fr; }
+      .discovery-automation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 575.98px) {
       .discovery-summary-grid { grid-template-columns: 1fr; }
+      .discovery-automation-grid { grid-template-columns: 1fr; }
       .discovery-pager { align-items: flex-start; flex-direction: column; }
     }
   </style>
@@ -157,6 +165,60 @@
     <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
       <div class="discovery-muted">Sorted by last discovered time · persistent discovery store</div>
       <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', format='csv') }}" class="btn btn-sm btn-outline-info">Download CSV</a>
+    </div>
+
+    {% set automation_control = automation.control or {} %}
+    <div class="discovery-action-bar">
+      <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+        <div>
+          <div class="discovery-summary-label">Discovery automation</div>
+          {% if automation.has_automation %}
+            <div class="discovery-muted">
+              Status: {{ 'enabled' if automation_control.enabled else 'disabled' }}
+              · Next: {{ automation_control.next_run_at_label or 'not scheduled' }}
+              · Last: {{ automation_control.last_finished_at_label or 'never' }}
+            </div>
+          {% else %}
+            <div class="discovery-muted">Automation tables are not available yet.</div>
+          {% endif %}
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <button id="automationToggleButton" type="button" class="btn btn-sm {{ 'btn-warning' if automation_control.enabled else 'btn-outline-warning' }}" {% if not automation.has_automation %}disabled{% endif %}>
+            {{ 'Disable automation' if automation_control.enabled else 'Enable automation' }}
+          </button>
+          <button id="automationRunNowButton" type="button" class="btn btn-sm btn-outline-info" {% if not automation.has_automation %}disabled{% endif %}>Run one cycle now</button>
+          <button id="automationCapsButton" type="button" class="btn btn-sm btn-outline-light" {% if not automation.has_automation %}disabled{% endif %}>Save caps</button>
+        </div>
+      </div>
+      {% if automation.has_automation %}
+        <div class="discovery-automation-grid">
+          <div>
+            <label for="automationRunsPerDay" class="form-label mb-1">Runs/day</label>
+            <input id="automationRunsPerDay" class="form-control form-control-sm" type="number" min="1" max="24" value="{{ automation_control.runs_per_day or 1 }}">
+          </div>
+          <div>
+            <label for="automationHours" class="form-label mb-1">PT hours</label>
+            <input id="automationHours" class="form-control form-control-sm" type="text" value="{{ (automation_control.offpeak_hours_pt or [1,2,3,4])|join(',') }}">
+          </div>
+          <div>
+            <label for="automationKeywords" class="form-label mb-1">Keywords</label>
+            <input id="automationKeywords" class="form-control form-control-sm" type="number" min="1" max="10" value="{{ automation_control.max_keywords_per_cycle or 1 }}">
+          </div>
+          <div>
+            <label for="automationResults" class="form-label mb-1">Results/key</label>
+            <input id="automationResults" class="form-control form-control-sm" type="number" min="1" max="40" value="{{ automation_control.max_results_per_keyword or 15 }}">
+          </div>
+          <div>
+            <label for="automationChannels" class="form-label mb-1">Enrich cap</label>
+            <input id="automationChannels" class="form-control form-control-sm" type="number" min="1" max="150" value="{{ automation_control.max_channels_enriched_per_cycle or 15 }}">
+          </div>
+          <div>
+            <label for="automationTrakk" class="form-label mb-1">Trakk cap</label>
+            <input id="automationTrakk" class="form-control form-control-sm" type="number" min="0" max="20" value="{{ automation_control.max_trakk_per_cycle or 5 }}">
+          </div>
+        </div>
+      {% endif %}
+      <div id="automationStatus" class="discovery-muted mt-2">{{ automation_control.paused_reason or '' }}</div>
     </div>
 
     <div class="discovery-action-bar">
@@ -281,6 +343,55 @@
             {% else %}
               <tr>
                 <td colspan="6" class="text-center text-white-50 py-4">No queued keywords yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    {% if automation.has_automation %}
+      <div class="discovery-table-wrap mb-4">
+        <table class="discovery-table">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Status</th>
+              <th>Keywords</th>
+              <th>Search</th>
+              <th>Reads</th>
+              <th>Leads</th>
+              <th>ICP</th>
+              <th>Enrich job</th>
+              <th>Cost</th>
+              <th>Finished</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in automation.runs %}
+              <tr>
+                <td>
+                  #{{ run.id }}
+                  <div class="discovery-muted">{{ run.started_at_label }}</div>
+                </td>
+                <td>
+                  <span class="discovery-status {{ run.status }}">{{ run.status }}</span>
+                  {% if run.error %}
+                    <div class="discovery-muted">{{ run.error }}</div>
+                  {% endif %}
+                </td>
+                <td>{{ run.keywords_used }}</td>
+                <td>{{ run.search_calls }}</td>
+                <td>{{ run.enrichment_read_calls }}</td>
+                <td>{{ run.leads_discovered }}</td>
+                <td>{{ run.leads_icp_qualified }}</td>
+                <td>{{ run.enrich_job_id }}</td>
+                <td>${{ "%.3f"|format(run.trakk_estimated_cost or 0) }}</td>
+                <td>{{ run.finished_at_label }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="10" class="text-center text-white-50 py-4">No automation runs yet.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -431,6 +542,82 @@
           throw new Error(message);
         }
         return data;
+      }
+
+      const automationStatus = document.getElementById('automationStatus');
+      const automationToggleButton = document.getElementById('automationToggleButton');
+      const automationCapsButton = document.getElementById('automationCapsButton');
+      const automationRunNowButton = document.getElementById('automationRunNowButton');
+      let automationEnabled = {{ ((automation.control or {}).enabled if automation.has_automation else false)|tojson }};
+
+      function readAutomationCaps() {
+        const hours = String(document.getElementById('automationHours')?.value || '1,2,3,4')
+          .split(',')
+          .map((value) => parseInt(value.trim(), 10))
+          .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+        return {
+          runs_per_day: parseInt(document.getElementById('automationRunsPerDay')?.value || '1', 10) || 1,
+          offpeak_hours_pt: hours.length ? hours : [1, 2, 3, 4],
+          max_keywords_per_cycle: parseInt(document.getElementById('automationKeywords')?.value || '1', 10) || 1,
+          max_results_per_keyword: parseInt(document.getElementById('automationResults')?.value || '15', 10) || 15,
+          max_channels_enriched_per_cycle: parseInt(document.getElementById('automationChannels')?.value || '15', 10) || 15,
+          max_trakk_per_cycle: parseInt(document.getElementById('automationTrakk')?.value || '5', 10) || 5
+        };
+      }
+
+      if (automationToggleButton && automationStatus) {
+        automationToggleButton.addEventListener('click', async function () {
+          automationToggleButton.disabled = true;
+          const nextEnabled = !automationEnabled;
+          automationStatus.textContent = nextEnabled ? 'Enabling automation...' : 'Disabling automation...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_automation_toggle") }}', {
+              enabled: nextEnabled,
+              paused_reason: nextEnabled ? '' : 'Disabled from Lead Pipeline'
+            });
+            automationEnabled = Boolean(data.control && data.control.enabled);
+            automationStatus.textContent = automationEnabled ? 'Automation enabled.' : 'Automation disabled.';
+            automationToggleButton.textContent = automationEnabled ? 'Disable automation' : 'Enable automation';
+            automationToggleButton.classList.toggle('btn-warning', automationEnabled);
+            automationToggleButton.classList.toggle('btn-outline-warning', !automationEnabled);
+          } catch (error) {
+            automationStatus.textContent = error.message || 'Automation toggle failed.';
+          } finally {
+            automationToggleButton.disabled = false;
+          }
+        });
+      }
+
+      if (automationCapsButton && automationStatus) {
+        automationCapsButton.addEventListener('click', async function () {
+          automationCapsButton.disabled = true;
+          automationStatus.textContent = 'Saving automation caps...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_automation_caps") }}', readAutomationCaps());
+            const control = data.control || {};
+            automationStatus.textContent = `Caps saved. Keywords ${control.max_keywords_per_cycle}; enrich cap ${control.max_channels_enriched_per_cycle}; trakk ${control.max_trakk_per_cycle}.`;
+          } catch (error) {
+            automationStatus.textContent = error.message || 'Could not save caps.';
+          } finally {
+            automationCapsButton.disabled = false;
+          }
+        });
+      }
+
+      if (automationRunNowButton && automationStatus) {
+        automationRunNowButton.addEventListener('click', async function () {
+          automationRunNowButton.disabled = true;
+          automationStatus.textContent = 'Running one automation cycle...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_automation_run_now") }}', {});
+            const result = data.result || {};
+            automationStatus.textContent = `Run ${data.run_id || ''} done. Keywords ${(result.keywords || []).join(', ') || 'none'}; rows ${result.rows_returned || 0}; ICP ${result.icp_qualified_count || 0}; enrich job ${result.enrich_job_id || 'none'}. Refresh to see the run table.`;
+          } catch (error) {
+            automationStatus.textContent = error.message || 'Automation run failed.';
+          } finally {
+            automationRunNowButton.disabled = false;
+          }
+        });
       }
 
       const promoteButton = document.getElementById('promoteSeedButton');

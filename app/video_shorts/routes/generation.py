@@ -299,6 +299,7 @@ from app.video_shorts.services.lead_pipeline import (
     record_lead_pipeline_event,
     record_lead_pipeline_event_for_scope,
 )
+from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
@@ -15190,6 +15191,7 @@ def admin_discovery_lead_pipeline():
         leads: List[Dict[str, Any]] = []
         keyword_queue_rows: List[Dict[str, Any]] = []
         seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
+        automation = {"has_automation": False, "control": {}, "runs": []}
         total_pages = 1
 
         if has_discovery:
@@ -15326,6 +15328,19 @@ def admin_discovery_lead_pipeline():
             seed_row = conn.execute("SELECT COUNT(*) FROM seed_channel_profiles").fetchone()
             seed_summary["seed_profiles"] = int((seed_row[0] if seed_row else 0) or 0)
 
+        try:
+            automation = load_discovery_automation_dashboard()
+            control = automation.get("control") or {}
+            for key in ("next_run_at", "last_started_at", "last_finished_at", "lock_expires_at", "updated_at"):
+                if key in control:
+                    control[f"{key}_label"] = _format_datetime_pst(control.get(key))
+            for run in automation.get("runs") or []:
+                run["started_at_label"] = _format_datetime_pst(run.get("started_at"))
+                run["finished_at_label"] = _format_datetime_pst(run.get("finished_at"))
+        except Exception:
+            current_app.logger.exception("Could not load discovery automation dashboard")
+            automation = {"has_automation": False, "control": {}, "runs": []}
+
         if wants_csv:
             headers = [
                 "id",
@@ -15370,6 +15385,7 @@ def admin_discovery_lead_pipeline():
         keyword_summary=keyword_summary,
         keyword_queue_rows=keyword_queue_rows,
         seed_summary=seed_summary,
+        automation=automation,
         leads=leads,
         page=page,
         per_page=per_page,

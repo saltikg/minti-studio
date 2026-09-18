@@ -66,6 +66,7 @@ from app.video_shorts.services.render_jobs import (
     update_job_result,
 )
 from app.video_shorts.services.discovery_email_enrichment import enrich_discovery_email_batch
+from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
 from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
@@ -1390,6 +1391,11 @@ def run_worker_loop() -> None:
                     processed_any = True
             except Exception:
                 app.logger.exception("Approved lead auto-schedule polling failed")
+            try:
+                if process_due_discovery_automation_cycle():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("Discovery automation polling failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
                 if process_next_job(app, worker_id):
                     processed_any = True
