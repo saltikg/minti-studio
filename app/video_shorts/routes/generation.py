@@ -15193,6 +15193,7 @@ def admin_discovery_lead_pipeline():
         keyword_queue_rows: List[Dict[str, Any]] = []
         seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
         automation = {"has_automation": False, "control": {}, "runs": []}
+        trakk_usage = {"used_today": 0, "daily_cap": 50}
         total_pages = 1
         filtered_total = 0
 
@@ -15210,11 +15211,23 @@ def admin_discovery_lead_pipeline():
                     WHERE icp_fit IS TRUE
                       AND COALESCE(creator_email, '') <> ''
                       AND COALESCE(autopilot_lead_id, '') = ''
+                      AND COALESCE(status, '') <> 'already_lead'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM autopilot_leads al
+                          WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+                      )
                     """
                 else:
                     ready_filter_sql = """
                     WHERE icp_fit IS TRUE
                       AND COALESCE(creator_email, '') <> ''
+                      AND COALESCE(status, '') <> 'already_lead'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM autopilot_leads al
+                          WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+                      )
                     """
             for row in conn.execute(
                 """
@@ -15379,6 +15392,22 @@ def admin_discovery_lead_pipeline():
         except Exception:
             current_app.logger.exception("Could not load discovery automation dashboard")
             automation = {"has_automation": False, "control": {}, "runs": []}
+        try:
+            control = automation.get("control") or {}
+            trakk_usage["daily_cap"] = int(control.get("max_trakk_per_day") if control.get("max_trakk_per_day") is not None else 50)
+            if has_discovery and "enrichment_attempted_at" in discovery_columns:
+                used_row = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM discovery_leads
+                    WHERE enrichment_attempted_at >= ?
+                      AND COALESCE(email_source, '') IN ('', 'trakk')
+                    """,
+                    [datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)],
+                ).fetchone()
+                trakk_usage["used_today"] = int((used_row[0] if used_row else 0) or 0)
+        except Exception:
+            current_app.logger.exception("Could not load trakk daily usage")
 
         if wants_csv:
             headers = [
@@ -15430,6 +15459,7 @@ def admin_discovery_lead_pipeline():
         keyword_queue_rows=keyword_queue_rows,
         seed_summary=seed_summary,
         automation=automation,
+        trakk_usage=trakk_usage,
         leads=leads,
         lead_filter=lead_filter,
         filtered_total=filtered_total,

@@ -3,13 +3,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from flask import current_app
 
 from app.video_shorts.services.db import get_db, table_columns
-from app.video_shorts.services.render_jobs import JOB_TYPE_ENRICH_DISCOVERY_EMAILS, enqueue_worker_job
 
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
@@ -104,22 +102,26 @@ def _row_to_control(row: Any) -> Dict[str, Any]:
         "max_results_per_keyword": _parse_int(row[6], 15, minimum=1, maximum=40),
         "max_channels_enriched_per_cycle": _parse_int(row[7], 15, minimum=1, maximum=150),
         "max_trakk_per_cycle": _parse_int(row[8], 5, minimum=0, maximum=20),
-        "next_run_at": row[9],
-        "last_started_at": row[10],
-        "last_finished_at": row[11],
-        "lock_expires_at": row[12],
-        "updated_at": row[13],
+        "max_trakk_per_day": _parse_int(row[9] if len(row) > 14 else 50, 50, minimum=0, maximum=500),
+        "next_run_at": row[10] if len(row) > 14 else row[9],
+        "last_started_at": row[11] if len(row) > 14 else row[10],
+        "last_finished_at": row[12] if len(row) > 14 else row[11],
+        "lock_expires_at": row[13] if len(row) > 14 else row[12],
+        "updated_at": row[14] if len(row) > 14 else row[13],
     }
 
 
 def _select_control(conn) -> Dict[str, Any]:
     if not table_columns(conn, CONTROL_TABLE):
         return {}
+    columns = table_columns(conn, CONTROL_TABLE)
+    max_trakk_per_day_sql = "max_trakk_per_day" if "max_trakk_per_day" in columns else "50"
     row = conn.execute(
-        """
+        f"""
         SELECT id, enabled, paused_reason, offpeak_hours_pt_json, runs_per_day,
                max_keywords_per_cycle, max_results_per_keyword,
                max_channels_enriched_per_cycle, max_trakk_per_cycle,
+               {max_trakk_per_day_sql},
                next_run_at, last_started_at, last_finished_at, lock_expires_at, updated_at
         FROM discovery_automation_control
         WHERE id = 1
@@ -191,8 +193,12 @@ def update_discovery_automation_control(updates: Dict[str, Any]) -> Dict[str, An
             maximum=150,
         )
         max_trakk = _parse_int(updates.get("max_trakk_per_cycle", current.get("max_trakk_per_cycle")), 5, minimum=0, maximum=20)
+        max_trakk_per_day = _parse_int(updates.get("max_trakk_per_day", current.get("max_trakk_per_day")), 50, minimum=0, maximum=500)
+        columns = table_columns(conn, CONTROL_TABLE)
+        daily_cap_assignment = ", max_trakk_per_day = ?" if "max_trakk_per_day" in columns else ""
+        daily_cap_param = [max_trakk_per_day] if "max_trakk_per_day" in columns else []
         conn.execute(
-            """
+            f"""
             UPDATE discovery_automation_control
             SET enabled = ?,
                 paused_reason = ?,
@@ -201,11 +207,12 @@ def update_discovery_automation_control(updates: Dict[str, Any]) -> Dict[str, An
                 max_keywords_per_cycle = ?,
                 max_results_per_keyword = ?,
                 max_channels_enriched_per_cycle = ?,
-                max_trakk_per_cycle = ?,
+                max_trakk_per_cycle = ?
+                {daily_cap_assignment},
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
             """,
-            [enabled, paused_reason, runs_per_day, _json_hours(hours), max_keywords, max_results, max_channels, max_trakk],
+            [enabled, paused_reason, runs_per_day, _json_hours(hours), max_keywords, max_results, max_channels, max_trakk, *daily_cap_param],
         )
         conn.commit()
         return _select_control(conn)
@@ -364,19 +371,9 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
             raise RuntimeError((result.get("errors") or [{}])[0].get("message") or "Discovery run failed.")
 
         icp_count = sum(1 for row in result.get("results") or [] if row.get("icp_fit") is True)
-        batch_size = min(int(control.get("max_trakk_per_cycle") or 0), icp_count)
-        enrich_job_id = ""
-        if batch_size > 0:
-            enqueue_result = enqueue_worker_job(
-                user_id="system",
-                job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
-                payload={"batch_size": batch_size},
-                input_hash=f"discovery-automation-email-enrich:{uuid4()}",
-                max_attempts=1,
-                priority=30,
-            )
-            enrich_job_id = str((enqueue_result.get("job") or {}).get("id") or "")
-        result["enrich_job_id"] = enrich_job_id
+        auto_trakk = result.get("auto_trakk") or {}
+        batch_size = int(auto_trakk.get("batch_size") or 0)
+        result["enrich_job_id"] = str(auto_trakk.get("job_id") or "")
         result["trakk_estimated_cost"] = batch_size * 0.005
         result["icp_qualified_count"] = icp_count
 

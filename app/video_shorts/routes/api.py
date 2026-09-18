@@ -1212,6 +1212,115 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
             conn.close()
 
 
+def _utc_day_start_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+
+def _trakk_daily_usage(conn) -> Dict[str, Any]:
+    control_columns = table_columns(conn, "discovery_automation_control")
+    lead_columns = table_columns(conn, "discovery_leads")
+    enabled = False
+    cap = 50
+    cycle_cap = 5
+    if control_columns:
+        cap_sql = "max_trakk_per_day" if "max_trakk_per_day" in control_columns else "50"
+        cycle_cap_sql = "max_trakk_per_cycle" if "max_trakk_per_cycle" in control_columns else "5"
+        row = conn.execute(
+            f"""
+            SELECT enabled, {cap_sql}, {cycle_cap_sql}
+            FROM discovery_automation_control
+            WHERE id = 1
+            LIMIT 1
+            """
+        ).fetchone()
+        enabled = bool(row and row[0])
+        try:
+            cap = max(0, int(row[1] if row and row[1] is not None else 50))
+        except (TypeError, ValueError):
+            cap = 50
+        try:
+            cycle_cap = max(0, int(row[2] if row and row[2] is not None else 5))
+        except (TypeError, ValueError):
+            cycle_cap = 5
+    used = 0
+    if "enrichment_attempted_at" in lead_columns:
+        used_row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM discovery_leads
+            WHERE enrichment_attempted_at >= ?
+              AND COALESCE(email_source, '') IN ('', 'trakk')
+            """,
+            [_utc_day_start_naive()],
+        ).fetchone()
+        used = int((used_row[0] if used_row else 0) or 0)
+    return {"enabled": enabled, "cap": cap, "cycle_cap": cycle_cap, "used": used, "remaining": max(0, cap - used)}
+
+
+def _enqueue_auto_trakk_if_needed(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    candidate_count = sum(
+        1
+        for row in results
+        if row.get("icp_fit") is True
+        and not str(row.get("creator_email") or "").strip()
+        and str(row.get("status") or "") != "already_lead"
+        and not row.get("already_lead")
+    )
+    payload: Dict[str, Any] = {
+        "enabled": False,
+        "candidate_count": candidate_count,
+        "used_today": 0,
+        "daily_cap": 50,
+        "cycle_cap": 5,
+        "remaining_today": 0,
+        "enqueued": False,
+        "job_id": None,
+        "batch_size": 0,
+        "reason": "",
+    }
+    if candidate_count <= 0:
+        payload["reason"] = "no_icp_qualified_no_email"
+        return payload
+    conn = None
+    try:
+        conn = get_db_readonly()
+        usage = _trakk_daily_usage(conn)
+    finally:
+        if conn:
+            conn.close()
+    payload.update(
+        {
+            "enabled": bool(usage.get("enabled")),
+            "used_today": int(usage.get("used") or 0),
+            "daily_cap": int(usage.get("cap") or 0),
+            "cycle_cap": int(usage.get("cycle_cap") or 0),
+            "remaining_today": int(usage.get("remaining") or 0),
+        }
+    )
+    if not payload["enabled"]:
+        payload["reason"] = "automation_disabled"
+        return payload
+    if payload["remaining_today"] <= 0:
+        payload["reason"] = "trakk_daily_cap_reached"
+        current_app.logger.info("trakk_daily_cap_reached used=%s cap=%s", payload["used_today"], payload["daily_cap"])
+        return payload
+    if payload["cycle_cap"] <= 0:
+        payload["reason"] = "trakk_cycle_cap_zero"
+        return payload
+    batch_size = min(5, candidate_count, payload["remaining_today"], payload["cycle_cap"])
+    enqueue_result = enqueue_worker_job(
+        user_id="system",
+        job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+        payload={"batch_size": batch_size, "auto": True, "daily_cap": payload["daily_cap"]},
+        input_hash=f"discovery-auto-email-enrich:{uuid4()}",
+        max_attempts=1,
+        priority=25,
+    )
+    job = enqueue_result.get("job") or {}
+    payload.update({"enqueued": True, "job_id": job.get("id"), "batch_size": batch_size, "reason": "enqueued"})
+    return payload
+
+
 def _load_emailed_seed_sources(conn) -> List[Dict[str, Any]]:
     has_scheduled = bool(table_columns(conn, "outreach_scheduled_emails"))
     scheduled_union = ""
@@ -2097,6 +2206,8 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
             if conn:
                 conn.close()
 
+    auto_trakk = _enqueue_auto_trakk_if_needed(results)
+
     return {
         "success": not errors or bool(results),
         "keywords": keywords,
@@ -2114,6 +2225,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         "queue_mode": use_queue,
         "queue_taken": len(queue_keyword_items),
         "keyword_found_counts": keyword_found_counts,
+        "auto_trakk": auto_trakk,
     }, 200
 
 
@@ -2701,6 +2813,12 @@ def admin_discovery_enrich_emails():
             FROM discovery_leads
             WHERE status IN ('icp_qualified', 'email_failed')
               AND COALESCE(creator_email, '') = ''
+              AND COALESCE(autopilot_lead_id, '') = ''
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM autopilot_leads al
+                  WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+              )
             """
         ).fetchone()
         pending_count = int((pending_row[0] if pending_row else 0) or 0)
@@ -2774,6 +2892,7 @@ def admin_discovery_automation_caps():
                 "max_results_per_keyword": payload.get("max_results_per_keyword"),
                 "max_channels_enriched_per_cycle": payload.get("max_channels_enriched_per_cycle"),
                 "max_trakk_per_cycle": payload.get("max_trakk_per_cycle"),
+                "max_trakk_per_day": payload.get("max_trakk_per_day"),
             }
         )
         return jsonify({"success": True, "control": control, "errors": []})

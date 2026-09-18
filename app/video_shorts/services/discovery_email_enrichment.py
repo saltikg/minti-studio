@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from app.video_shorts.services.apify_enrich import apify_trakk_enrich
-from app.video_shorts.services.db import get_db
+from app.video_shorts.services.db import get_db, table_columns
 
 
 DEFAULT_BATCH_SIZE = 5
 MAX_BATCH_SIZE = 20
 ENRICHMENT_TIMEOUT_SECONDS = 240
+DEFAULT_DAILY_TRAKK_CAP = 50
+logger = logging.getLogger(__name__)
 
 
 def _coerce_batch_size(value: Any) -> int:
@@ -27,15 +31,66 @@ def _channel_url(channel_id: str, channel_url: str | None = None) -> str:
     return f"https://www.youtube.com/channel/{channel_id}" if channel_id else ""
 
 
-def _claim_leads(conn, batch_size: int) -> List[Dict[str, Any]]:
+def _utc_day_start() -> datetime:
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+
+def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
+    control_columns = table_columns(conn, "discovery_automation_control")
+    if not control_columns:
+        return False, DEFAULT_DAILY_TRAKK_CAP, 0, 0
+    max_trakk_per_day_sql = "max_trakk_per_day" if "max_trakk_per_day" in control_columns else str(DEFAULT_DAILY_TRAKK_CAP)
+    row = conn.execute(
+        f"""
+        SELECT enabled, {max_trakk_per_day_sql}
+        FROM discovery_automation_control
+        WHERE id = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    enabled = bool(row and row[0])
+    daily_cap = max(0, int(row[1] if row and row[1] is not None else DEFAULT_DAILY_TRAKK_CAP))
+    lead_columns = table_columns(conn, "discovery_leads")
+    if "enrichment_attempted_at" not in lead_columns:
+        return enabled, daily_cap, 0, daily_cap
+    used_row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM discovery_leads
+        WHERE enrichment_attempted_at >= ?
+          AND COALESCE(email_source, '') IN ('', 'trakk')
+        """,
+        [_utc_day_start()],
+    ).fetchone()
+    used = int((used_row[0] if used_row else 0) or 0)
+    return enabled, daily_cap, used, max(0, daily_cap - used)
+
+
+def _claim_leads(conn, batch_size: int, *, auto: bool = False) -> List[Dict[str, Any]]:
+    if auto:
+        enabled, daily_cap, used, remaining = _auto_trakk_remaining(conn)
+        if not enabled:
+            logger.info("trakk_auto_enrich_disabled")
+            return []
+        if remaining <= 0:
+            logger.info("trakk_daily_cap_reached used=%s cap=%s", used, daily_cap)
+            return []
+        batch_size = min(batch_size, remaining)
+    statuses_sql = "('icp_qualified')" if auto else "('icp_qualified', 'email_failed')"
     if getattr(conn, "backend_name", "") == "postgres":
         rows = conn.execute(
-            """
+            f"""
             WITH candidates AS (
                 SELECT id
                 FROM discovery_leads
-                WHERE status IN ('icp_qualified', 'email_failed')
+                WHERE status IN {statuses_sql}
                   AND COALESCE(creator_email, '') = ''
+                  AND COALESCE(autopilot_lead_id, '') = ''
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM autopilot_leads al
+                      WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+                  )
                 ORDER BY last_discovered_at DESC NULLS LAST, id DESC
                 LIMIT ?
                 FOR UPDATE SKIP LOCKED
@@ -52,11 +107,17 @@ def _claim_leads(conn, batch_size: int) -> List[Dict[str, Any]]:
         ).fetchall()
     else:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, youtube_channel_id, channel_url
             FROM discovery_leads
-            WHERE status IN ('icp_qualified', 'email_failed')
+            WHERE status IN {statuses_sql}
               AND COALESCE(creator_email, '') = ''
+              AND COALESCE(autopilot_lead_id, '') = ''
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM autopilot_leads al
+                  WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+              )
             ORDER BY last_discovered_at DESC, id DESC
             LIMIT ?
             """,
@@ -153,10 +214,11 @@ def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
 def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = payload or {}
     batch_size = _coerce_batch_size(payload.get("batch_size"))
+    auto = bool(payload.get("auto"))
 
     conn = get_db()
     try:
-        claimed = _claim_leads(conn, batch_size)
+        claimed = _claim_leads(conn, batch_size, auto=auto)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -165,7 +227,7 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
         conn.close()
 
     if not claimed:
-        return {"claimed": 0, "enriched": 0, "failed": 0, "cost_estimate": 0.0}
+        return {"claimed": 0, "enriched": 0, "failed": 0, "cost_estimate": 0.0, "auto": auto}
 
     urls = [_channel_url(row["youtube_channel_id"], row.get("channel_url")) for row in claimed]
     urls = [url for url in urls if url]
@@ -207,4 +269,5 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
         "enriched": enriched,
         "failed": failed,
         "cost_estimate": round(len(claimed) * 0.005, 3),
+        "auto": auto,
     }
