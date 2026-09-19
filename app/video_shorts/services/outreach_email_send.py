@@ -229,12 +229,17 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
           sl.followup_sent,
           sl.followup_sent_at,
           sl.followup_template_key,
+          COALESCE(NULLIF(yv.title, ''), NULLIF(gv.source_video_id, '')) AS source_video_title,
           COALESCE(sl.archived, false) AS archived,
           sl.autopilot_lead_id
         FROM short_share_links sl
         LEFT JOIN autopilot_leads l
           ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
          AND CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
+        LEFT JOIN shorts_generated_videos gv
+          ON CAST(gv.id AS VARCHAR) = CAST(sl.generated_video_id AS VARCHAR)
+        LEFT JOIN youtube_videos yv
+          ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
         WHERE sl.id = ?
         LIMIT 1
         """,
@@ -248,17 +253,19 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
     recipient_email = str(row[3] or "").strip()
     if not recipient_email or "@" not in recipient_email:
         raise ValueError("missing_recipient_email")
-    if bool(row[11]):
+    if bool(row[12]):
         raise ValueError("share_link_archived")
     share_url = _share_public_url(token)
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
     recipient_name = str(row[2] or "").strip()
+    source_video_title = str(row[11] or "").strip()
     rendered_email = render_outreach_email(
         stage=normalized_stage,
         language=normalized_language,
         recipient_name=recipient_name,
         share_url=share_url,
         trial_days=trial_days,
+        video_title=source_video_title,
     )
     return {
         "row": row,
@@ -266,6 +273,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         "recipient_name": recipient_name,
         "share_url": share_url,
         "trial_days": trial_days,
+        "video_title": source_video_title,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
             stage=normalized_stage,
@@ -273,6 +281,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
             recipient_name=recipient_name,
             share_url=share_url,
             trial_days=trial_days,
+            video_title=source_video_title,
         ),
         "emailed_at": row[6],
         "first_email_template_key": str(row[7] or "").strip(),
@@ -392,7 +401,7 @@ def send_share_link_outreach_email(
             """,
             [provider_message_id or None, template_key, share_link_id],
         )
-    lead_id = str(rendered["row"][12] or "").strip()
+    lead_id = str(rendered["row"][13] or "").strip()
     if lead_id:
         record_lead_pipeline_event(
             conn,

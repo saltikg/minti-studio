@@ -9764,6 +9764,7 @@ def admin_share_link_email_preview(share_link_id: int):
                 "clipboard_text": rendered["clipboard_text"],
                 "share_url": rendered["share_url"],
                 "trial_days": rendered["trial_days"],
+                "video_title": rendered.get("video_title") or "",
             }
         )
     except LookupError:

@@ -28,13 +28,14 @@ I'm the founder of Minti Studio, based in San Francisco. Instead of explaining w
 
 I turned one of your recent videos into a Short - here's how it came out:
 
+[video_title]
 [link]
 
 Here's the idea: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to YouTube, Instagram, and Facebook, every month.
 
-Your first month is on us - 15 Shorts, made and published for you, free.
+Your first month is on us - 15 Shorts, made and published for you, free. After that it's a flat $20/month - no credits to count, no surprise bills, cancel anytime. You always know exactly what it costs.
 
-Take a look at your Short, and tap "Watch all Shorts" to start. Or reply with any questions.
+Take a look at your Short, and tap "Let us do it for you" to start. Or reply with any questions.
 
 Best,
 Gokhan Saltik
@@ -50,13 +51,14 @@ San Francisco'da Minti Studio adında bir video platformu geliştiriyoruz. Ne ya
 
 Kanalınızdaki videonuzdan, sizin için hazırladığımız kısa bir örnek:
 
+[video_title]
 [link]
 
 Buradaki örnekte uzun videonuzun içinden kısa videoya uygun bir bölüm Minti ile seçilerek altyazılı, dikey bir videoya dönüştürüldü.
 
 Minti klip üretmekle kalmıyor - YouTube, Instagram ve Facebook'a yayınlıyor; yorumları yönetiyor ve hepsinin performansını tek yerden karşılaştırıyorsunuz.
 
-Kendi videolarınızla denemek isterseniz, örnek sayfasındaki "Watch all Shorts" butonuna basmanız yeterli. [trial] ücretsiz erişim otomatik olarak tanımlanıyor.
+Kendi videolarınızla denemek isterseniz, örnek sayfasındaki "Let us do it for you" butonuna basmanız yeterli. [trial] ücretsiz erişim otomatik olarak tanımlanıyor.
 
 Herhangi bir sorunuz olursa memnuniyetle yardımcı olurum.
 
@@ -70,15 +72,18 @@ mintistudio.com""",
         subject="A hands-off way to grow your channel - first month free",
         text="""Hi [Name],
 
-Did you get the Short we made from your video? [link]
+Did you get the Short we made from your video?
+
+[video_title]
+[link]
 
 Here's the thing - even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
 
 So here's the simpler version: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to your channels, every month.
 
-Your first month is on us - 15 Shorts, made and published for you, free.
+Your first month is on us - 15 Shorts, made and published for you, free. After that it's a flat $20/month - no credits to count, no surprise bills, cancel anytime. You always know exactly what it costs.
 
-Take a look at your Short, and tap "Watch all Shorts" to start.
+Take a look at your Short, and tap "Let us do it for you" to start.
 
 Best,
 Gokhan""",
@@ -88,9 +93,12 @@ Gokhan""",
         subject="Videonuzdan yaptığım Short'u gördünüz mü?",
         text="""Merhaba [Name],
 
-Videonuzdan yaptığım Short gözden kaçmış olabilir. İşte burada: [link]
+Videonuzdan yaptığım Short gözden kaçmış olabilir. İşte burada:
 
-Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz - o sayfada "Watch all Shorts" butonuna dokunmanız yeterli. [trial] ücretsiz, kayıt yok.
+[video_title]
+[link]
+
+Devam etmek isterseniz, kendi Short'larınızı aynı şekilde oluşturabilirsiniz - o sayfada "Let us do it for you" butonuna dokunmanız yeterli. [trial] ücretsiz, kayıt yok.
 
 İyi çalışmalar,
 Gokhan""",
@@ -115,19 +123,17 @@ def outreach_template_key(*, stage: object, language: object) -> str:
 def _simple_html_email(*, subject: str, body_text: str) -> str:
     paragraphs = []
     for block in body_text.split("\n\n"):
-        escaped = html.escape(block).replace("\n", "<br>")
-        paragraphs.append(f'<p style="margin:0 0 16px;">{escaped}</p>')
-    rendered_body = "\n".join(paragraphs)
-    return f"""
-    <div style="margin:0;padding:0;background:#f6f8fb;">
-      <div style="max-width:600px;margin:0 auto;padding:28px 16px;font-family:Arial,sans-serif;color:#101828;line-height:1.58;">
-        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;padding:26px 24px;">
-          <div style="font-size:20px;font-weight:800;margin:0 0 18px;">{html.escape(subject)}</div>
-          {rendered_body}
-        </div>
-      </div>
-    </div>
-    """.strip()
+        escaped_lines = []
+        for line in str(block or "").split("\n"):
+            raw_line = line.strip()
+            if raw_line.startswith(("http://", "https://")):
+                safe_url = html.escape(raw_line, quote=True)
+                escaped_lines.append(f'<a href="{safe_url}">{safe_url}</a>')
+            else:
+                escaped_lines.append(html.escape(line))
+        escaped = "<br>".join(escaped_lines)
+        paragraphs.append(f"<p>{escaped}</p>")
+    return "\n".join(paragraphs)
 
 
 def render_outreach_email(
@@ -137,6 +143,7 @@ def render_outreach_email(
     recipient_name: object,
     share_url: str,
     trial_days: object,
+    video_title: object = "",
 ) -> dict[str, str]:
     normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
@@ -144,10 +151,13 @@ def render_outreach_email(
     template = OUTREACH_EMAIL_TEMPLATES.get(key) or OUTREACH_EMAIL_TEMPLATES["FIRST_EN"]
     safe_name = str(recipient_name or "").strip() or ("there" if normalized_language == "EN" else "Merhaba")
     trial_phrase = trial_duration_text(trial_days, normalized_language)
+    safe_video_title = str(video_title or "").strip()
     text = (
         template.text.replace("[Name]", safe_name)
         .replace("[link]", str(share_url or "").strip())
         .replace("[trial]", trial_phrase)
+        .replace("[video_title]\n", f"{safe_video_title}\n" if safe_video_title else "")
+        .replace("[video_title]", safe_video_title)
     )
     return {
         "key": template.key,
@@ -166,6 +176,7 @@ def render_outreach_clipboard_text(
     recipient_name: object,
     share_url: str,
     trial_days: object,
+    video_title: object = "",
 ) -> str:
     rendered = render_outreach_email(
         stage=stage,
@@ -173,5 +184,6 @@ def render_outreach_clipboard_text(
         recipient_name=recipient_name,
         share_url=share_url,
         trial_days=trial_days,
+        video_title=video_title,
     )
     return f"Subject: {rendered['subject']}\n\n{rendered['text']}"
