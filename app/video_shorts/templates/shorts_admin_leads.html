@@ -57,6 +57,10 @@
     .admin-leads-discovery-feedback.is-success { color:#8ff3d8; }
     .admin-leads-discovery-feedback.is-error { color:#fca5a5; }
     .admin-leads-select-cell { width:38px; }
+    .admin-leads-email-state { display:inline-flex; align-items:center; width:max-content; margin-top:6px; padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:rgba(255,255,255,.66); font-size:.78rem; font-weight:700; }
+    .admin-leads-email-state.never-attempted { border-color:rgba(45,212,191,.28); background:rgba(45,212,191,.1); color:#8ff3d8; }
+    .admin-leads-email-state.attempted-no-email { border-color:rgba(245,158,11,.32); background:rgba(245,158,11,.1); color:#f8cc7a; }
+    .admin-leads-email-state.has-email { border-color:rgba(34,197,94,.32); background:rgba(34,197,94,.1); color:#bbf7d0; }
     .admin-leads-sort-link { color:rgba(255,255,255,.72); text-decoration:none; display:inline-flex; gap:5px; align-items:center; }
     .admin-leads-sort-link:hover, .admin-leads-sort-link:focus { color:#8ff3d8; text-decoration:none; }
     .admin-leads-sort-arrow { color:#8ff3d8; font-size:.82rem; }
@@ -222,6 +226,15 @@
                     <span>No email — discovery</span>
                     <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-discovery-email-edit="{{ lead.id }}" aria-label="Add email" title="Add email"><i class="bi bi-pencil" aria-hidden="true"></i></button>
                   </div>
+                  <div class="admin-leads-email-state {{ lead.email_state|replace('_', '-') }}">
+                    {% if lead.email_state == 'attempted_no_email' %}
+                      Attempted no email{% if lead.email_enrichment_attempted_at %} · {{ lead.email_enrichment_attempted_at }}{% endif %}
+                    {% elif lead.email_state == 'has_email' %}
+                      Has email
+                    {% else %}
+                      Never attempted
+                    {% endif %}
+                  </div>
                   <form method="post" action="{{ url_for('video_shorts_bp.admin_provision_discovery_lead_email', lead_id=lead.id) }}" class="admin-leads-email-form" data-discovery-email-form="{{ lead.id }}">
                     <input type="email" name="creator_email" class="form-control form-control-sm" placeholder="creator@example.com" aria-label="Creator email" required>
                     <button type="submit" class="btn btn-sm btn-primary">Save</button>
@@ -341,7 +354,19 @@
                 {% elif not lead.has_owner and not lead.converted %}
                   <div class="d-grid gap-2">
                     {% if not lead.creator_email and lead.youtube_channel_id %}
-                      <button type="button" class="btn btn-sm btn-outline-info" data-discovery-find-email="{{ lead.id }}">Find email</button>
+                      {% if lead.email_state == 'attempted_no_email' %}
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-warning"
+                          data-discovery-find-email="{{ lead.id }}"
+                          data-discovery-retry="true"
+                          data-discovery-attempted-at="{{ lead.email_enrichment_attempted_at }}"
+                          title="Already attempted{% if lead.email_enrichment_attempted_at %} {{ lead.email_enrichment_attempted_at }}{% endif %}; retrying costs another lookup.">
+                          Retry trakk
+                        </button>
+                      {% else %}
+                        <button type="button" class="btn btn-sm btn-outline-info" data-discovery-find-email="{{ lead.id }}">Find email</button>
+                      {% endif %}
                     {% endif %}
                     <span class="admin-leads-muted">Discovery only</span>
                   </div>
@@ -481,7 +506,7 @@
         enrichmentFeedback.classList.remove("is-success", "is-error");
         if (kind) enrichmentFeedback.classList.add(kind);
       };
-      const enqueueDiscoveryEmailLookup = async (leadIds, triggerButton = null) => {
+      const enqueueDiscoveryEmailLookup = async (leadIds, triggerButton = null, options = {}) => {
         const endpoint = enrichmentPanel?.dataset.enrichUrl || "";
         const ids = Array.from(new Set((leadIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
         if (!endpoint || !ids.length) {
@@ -499,14 +524,14 @@
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-            body: JSON.stringify({ lead_ids: ids }),
+            body: JSON.stringify({ lead_ids: ids, retry: Boolean(options.retry) }),
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || !data.ok) {
             throw new Error(data.error || `HTTP ${response.status}`);
           }
           setEnrichmentFeedback(
-            `Queued ${data.enqueued_count} lookup${data.enqueued_count === 1 ? "" : "s"} · job ${data.job_id || "queued"} · trakk ${data.trakk_used_today}/${data.trakk_daily_cap}`,
+            `Enqueued ${data.enqueued_count || 0}, skipped ${data.skipped_count || 0} already-attempted/solved/ineligible · job ${data.job_id || "none"} · trakk ${data.trakk_used_today}/${data.trakk_daily_cap}`,
             "is-success"
           );
         } catch (error) {
@@ -530,7 +555,13 @@
       });
       document.querySelectorAll("[data-discovery-find-email]").forEach((button) => {
         button.addEventListener("click", () => {
-          enqueueDiscoveryEmailLookup([button.dataset.discoveryFindEmail], button);
+          const isRetry = button.dataset.discoveryRetry === "true";
+          if (isRetry) {
+            const attemptedAt = button.dataset.discoveryAttemptedAt || "before";
+            const ok = window.confirm(`This lead was already attempted ${attemptedAt} and will cost another trakk lookup. Retry anyway?`);
+            if (!ok) return;
+          }
+          enqueueDiscoveryEmailLookup([button.dataset.discoveryFindEmail], button, { retry: isRetry });
         });
       });
       document.querySelectorAll("[data-watch-page-create]").forEach((button) => {

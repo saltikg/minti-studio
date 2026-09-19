@@ -13584,6 +13584,11 @@ def _load_admin_lead_records(
             l.created_at,
             l.converted_at,
             {pipeline_state_sql} AS pipeline_state,
+            l.creator_website,
+            l.email_confidence,
+            l.email_source,
+            l.email_enrichment_error,
+            l.email_enrichment_attempted_at,
             c.channel_name,
             v.title,
             v.video_id,
@@ -13604,7 +13609,10 @@ def _load_admin_lead_records(
     items: List[Dict[str, Any]] = []
     for row in rows:
         has_owner = bool(str(row[6] or "").strip() and str(row[7] or "").strip())
-        generated_count = int(row[17] or 0)
+        generated_count = int(row[22] or 0)
+        email_enrichment_attempted_at = row[16]
+        email_enrichment_error = str(row[15] or "").strip()
+        email_state = "has_email" if str(row[3] or "").strip() else "attempted_no_email" if email_enrichment_attempted_at else "never_attempted"
         items.append(
             {
                 "id": str(row[0] or ""),
@@ -13622,30 +13630,36 @@ def _load_admin_lead_records(
                 "created_at_pst": _format_datetime_pst(row[9]),
                 "converted_at_pst": _format_datetime_pst(row[10]),
                 "pipeline_state": str(row[11] or "new").strip().lower() or "new",
-                "channel_name": str(row[12] or "").strip() or "YouTube channel",
-                "video_title": str(row[13] or "").strip() or "Source video unavailable",
-                "youtube_video_id": str(row[14] or "").strip(),
-                "thumbnail_url": str(row[15] or "").strip(),
-                "download_status": str(row[16] or "").strip().lower() or "pending",
+                "creator_website": str(row[12] or "").strip(),
+                "email_confidence": row[13],
+                "email_source": str(row[14] or "").strip(),
+                "email_enrichment_error": email_enrichment_error,
+                "email_enrichment_attempted_at": _format_datetime_pst(email_enrichment_attempted_at),
+                "email_state": email_state,
+                "channel_name": str(row[17] or "").strip() or "YouTube channel",
+                "video_title": str(row[18] or "").strip() or "Source video unavailable",
+                "youtube_video_id": str(row[19] or "").strip(),
+                "thumbnail_url": str(row[20] or "").strip(),
+                "download_status": str(row[21] or "").strip().lower() or "pending",
                 "generated_short_count": generated_count,
                 "generation_label": f"{generated_count} short{'s' if generated_count != 1 else ''} generated",
-                "email_sent": bool(row[18]),
-                "converted": bool(row[10]) or str(row[19] or "").strip().lower() == "autopilot",
-                "watch_share_link_id": int(row[20]) if row[20] is not None else None,
-                "watch_share_token": str(row[21] or "").strip(),
-                "watch_share_url": _share_public_url(str(row[21] or "").strip()) if str(row[21] or "").strip() else "",
-                "watch_preview_url": _share_preview_url(str(row[21] or "").strip()) if str(row[21] or "").strip() else "",
-                "watch_generated_video_id": str(row[22] or "").strip(),
-                "watch_entry_score": _score_from_generated_raw_plan_entry(row[23]),
-                "watch_emailed_at": row[24],
-                "watch_emailed_at_pst": _format_datetime_pst(row[24]),
-                "watch_emailed": bool(row[24]),
-                "watch_schedule_id": int(row[25]) if row[25] is not None else None,
-                "watch_schedule_stage": str(row[26] or "").strip(),
-                "watch_schedule_language": str(row[27] or "").strip().upper(),
-                "watch_scheduled_at": row[28],
-                "watch_scheduled_at_pst": _format_datetime_pst(row[28]),
-                "watch_schedule_status": str(row[29] or "").strip(),
+                "email_sent": bool(row[23]),
+                "converted": bool(row[10]) or str(row[24] or "").strip().lower() == "autopilot",
+                "watch_share_link_id": int(row[25]) if row[25] is not None else None,
+                "watch_share_token": str(row[26] or "").strip(),
+                "watch_share_url": _share_public_url(str(row[26] or "").strip()) if str(row[26] or "").strip() else "",
+                "watch_preview_url": _share_preview_url(str(row[26] or "").strip()) if str(row[26] or "").strip() else "",
+                "watch_generated_video_id": str(row[27] or "").strip(),
+                "watch_entry_score": _score_from_generated_raw_plan_entry(row[28]),
+                "watch_emailed_at": row[29],
+                "watch_emailed_at_pst": _format_datetime_pst(row[29]),
+                "watch_emailed": bool(row[29]),
+                "watch_schedule_id": int(row[30]) if row[30] is not None else None,
+                "watch_schedule_stage": str(row[31] or "").strip(),
+                "watch_schedule_language": str(row[32] or "").strip().upper(),
+                "watch_scheduled_at": row[33],
+                "watch_scheduled_at_pst": _format_datetime_pst(row[33]),
+                "watch_schedule_status": str(row[34] or "").strip(),
             }
         )
     return items, total_count
@@ -15803,6 +15817,7 @@ def admin_enqueue_autopilot_discovery_email_enrichment():
         raw_ids = payload.getlist("lead_ids") if hasattr(payload, "getlist") else []
     if isinstance(raw_ids, str):
         raw_ids = [raw_ids]
+    force_retry = str(payload.get("retry") or "").strip().lower() in {"1", "true", "yes", "on"}
     lead_ids = []
     raw_id_list = raw_ids if isinstance(raw_ids, list) else []
     for raw_id in raw_id_list:
@@ -15831,22 +15846,69 @@ def admin_enqueue_autopilot_discovery_email_enrichment():
         placeholders = ", ".join("?" for _ in lead_ids)
         rows = conn.execute(
             f"""
-            SELECT CAST(id AS VARCHAR)
+            SELECT
+                CAST(id AS VARCHAR),
+                COALESCE(creator_email, ''),
+                COALESCE(youtube_channel_id, ''),
+                COALESCE(user_id, ''),
+                COALESCE(brand_id, ''),
+                email_enrichment_attempted_at,
+                COALESCE(email_enrichment_error, '')
             FROM autopilot_leads
             WHERE CAST(id AS VARCHAR) IN ({placeholders})
-              AND COALESCE(creator_email, '') = ''
-              AND COALESCE(youtube_channel_id, '') <> ''
-              AND (COALESCE(user_id, '') = '' OR COALESCE(brand_id, '') = '')
             """,
             lead_ids,
         ).fetchall()
-        valid_ids = [str(row[0]) for row in rows]
+        selected_by_id = {str(row[0]): row for row in rows}
+        valid_ids = []
+        skipped_already_has_email = 0
+        skipped_already_attempted = 0
+        skipped_ineligible = 0
+        for lead_id in lead_ids:
+            row = selected_by_id.get(lead_id)
+            if not row:
+                skipped_ineligible += 1
+                continue
+            creator_email = str(row[1] or "").strip()
+            youtube_channel_id = str(row[2] or "").strip()
+            user_id_value = str(row[3] or "").strip()
+            brand_id_value = str(row[4] or "").strip()
+            attempted_at = row[5]
+            if creator_email:
+                skipped_already_has_email += 1
+                continue
+            if not youtube_channel_id or (user_id_value and brand_id_value):
+                skipped_ineligible += 1
+                continue
+            if attempted_at and not force_retry:
+                skipped_already_attempted += 1
+                continue
+            valid_ids.append(lead_id)
         trakk_enabled, trakk_daily_cap, trakk_used_today, trakk_remaining = _auto_trakk_remaining(conn)
     finally:
         conn.close()
 
     if not valid_ids:
-        return jsonify({"ok": False, "error": "No selected rows are eligible for email enrichment."}), 400
+        return jsonify(
+            {
+                "ok": True,
+                "enqueued": False,
+                "job_id": None,
+                "job_kind": "none",
+                "requested_count": len(lead_ids),
+                "eligible_count": 0,
+                "enqueued_count": 0,
+                "skipped_count": skipped_already_has_email + skipped_already_attempted + skipped_ineligible,
+                "skipped_already_has_email": skipped_already_has_email,
+                "skipped_already_attempted": skipped_already_attempted,
+                "skipped_ineligible": skipped_ineligible,
+                "trakk_used_today": trakk_used_today,
+                "trakk_daily_cap": trakk_daily_cap,
+                "trakk_remaining_after_enqueue": trakk_remaining,
+                "cost_estimate": 0.0,
+                "message": "No selected rows are eligible for email enrichment.",
+            }
+        )
     if not trakk_enabled:
         return jsonify(
             {
@@ -15867,6 +15929,7 @@ def admin_enqueue_autopilot_discovery_email_enrichment():
         ), 409
 
     limited_ids = valid_ids[:trakk_remaining]
+    skipped_daily_cap = max(0, len(valid_ids) - len(limited_ids))
     current_user = getattr(g, "vs_current_user", {}) or {}
     current_user_id = current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
     user_id = str(current_user_id or "admin")
@@ -15889,6 +15952,11 @@ def admin_enqueue_autopilot_discovery_email_enrichment():
             "requested_count": len(lead_ids),
             "eligible_count": len(valid_ids),
             "enqueued_count": len(limited_ids),
+            "skipped_count": skipped_already_has_email + skipped_already_attempted + skipped_ineligible + skipped_daily_cap,
+            "skipped_already_has_email": skipped_already_has_email,
+            "skipped_already_attempted": skipped_already_attempted,
+            "skipped_ineligible": skipped_ineligible,
+            "skipped_daily_cap": skipped_daily_cap,
             "trakk_used_today": trakk_used_today,
             "trakk_daily_cap": trakk_daily_cap,
             "trakk_remaining_after_enqueue": max(0, trakk_remaining - len(limited_ids)),
