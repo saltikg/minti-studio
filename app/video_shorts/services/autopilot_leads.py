@@ -2,22 +2,40 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from app.video_shorts.config import DEFAULT_USER_PLAN_ID
+from app.video_shorts.config import (
+    DEFAULT_SUB_FONT_KEY,
+    DEFAULT_SUB_FONT_SIZE,
+    DEFAULT_SUBTITLE_BG_ALPHA,
+    DEFAULT_SUBTITLE_BG_COLOR,
+    DEFAULT_SUBTITLE_TEXT_ALPHA,
+    DEFAULT_SUBTITLE_TEXT_COLOR,
+    DEFAULT_TITLE_FONT_SIZE,
+    DEFAULT_TITLE_MARGIN,
+    DEFAULT_USER_PLAN_ID,
+    DEFAULT_VIDEO_OVERLAY_OFFSET,
+    STYLE_TEMPLATES,
+    SUB_MARGIN_DEFAULT,
+)
 from app.video_shorts.services.brands import create_brand, ensure_brand_schema
 from app.video_shorts.services.db import (
     _schema_management_enabled,
     ensure_auth_user_schema,
     ensure_channel_owner_schema,
     ensure_storage_user_schema,
+    ensure_user_preferences_schema,
     table_columns,
 )
 
 AUTOPILOT_LEADS_TABLE = "autopilot_leads"
 LOCAL_UPLOADS_CHANNEL_NAME = "Local uploads"
+SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
+BOLD_POP_STYLE_TEMPLATE_KEY = "opus"
+BOLD_POP_SUBTITLE_PRESET = "opus"
 
 
 class AutopilotLeadSchemaUnavailable(RuntimeError):
@@ -91,6 +109,120 @@ def _require_autopilot_leads_table(conn) -> None:
         raise AutopilotLeadSchemaUnavailable(
             "Autopilot leads are unavailable until the database migration is applied."
         )
+
+
+def _bold_pop_template() -> Dict[str, Any]:
+    return next(
+        (
+            template
+            for template in STYLE_TEMPLATES
+            if str(template.get("key") or "").strip() == BOLD_POP_STYLE_TEMPLATE_KEY
+        ),
+        {},
+    )
+
+
+def _bold_pop_video_style_values() -> Dict[str, Any]:
+    template = _bold_pop_template()
+    return {
+        "title_font_key": str(template.get("title_font_key") or "montserrat_black"),
+        "title_font_size": int(template.get("title_font_size") or DEFAULT_TITLE_FONT_SIZE),
+        "subtitle_font_key": DEFAULT_SUB_FONT_KEY,
+        "subtitle_font_size": DEFAULT_SUB_FONT_SIZE,
+        "subtitle_margin": SUB_MARGIN_DEFAULT,
+        "subtitle_style": "karaoke",
+        "subtitle_preset": BOLD_POP_SUBTITLE_PRESET,
+        "title_margin": DEFAULT_TITLE_MARGIN,
+        "title_line_spacing": -4,
+        "title_bg_color": str(template.get("title_bg_color") or "#14532D"),
+        "title_bg_alpha": int(template.get("title_bg_alpha") if template.get("title_bg_alpha") is not None else 0),
+        "title_text_color": str(template.get("title_text_color") or "#FFFFFF"),
+        "subtitle_text_color": DEFAULT_SUBTITLE_TEXT_COLOR,
+        "subtitle_bg_color": DEFAULT_SUBTITLE_BG_COLOR,
+        "subtitle_bg_alpha": DEFAULT_SUBTITLE_BG_ALPHA,
+        "subtitle_text_alpha": DEFAULT_SUBTITLE_TEXT_ALPHA,
+        "show_title": True,
+        "show_subtitle": True,
+        "subscribe_overlay_enabled": True,
+        "visual_mode": "video",
+        "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
+    }
+
+
+def _bold_pop_short_editor_defaults() -> Dict[str, Any]:
+    style = _bold_pop_video_style_values()
+    return {
+        "font": style["title_font_key"],
+        "sub_font": style["subtitle_font_key"],
+        "title_font_size": style["title_font_size"],
+        "sub_font_size": style["subtitle_font_size"],
+        "sub_margin": style["subtitle_margin"],
+        "subtitle_style": style["subtitle_style"],
+        "subtitle_preset": style["subtitle_preset"],
+        "title_margin": style["title_margin"],
+        "title_line_spacing": style["title_line_spacing"],
+        "title_bg_color": style["title_bg_color"],
+        "title_bg_alpha": style["title_bg_alpha"],
+        "title_text_color": style["title_text_color"],
+        "subtitle_text_color": style["subtitle_text_color"],
+        "subtitle_text_alpha": style["subtitle_text_alpha"],
+        "subtitle_bg_color": style["subtitle_bg_color"],
+        "subtitle_bg_alpha": style["subtitle_bg_alpha"],
+        "video_overlay_offset": style["video_overlay_offset"],
+        "enable_subscribe_overlay": style["subscribe_overlay_enabled"],
+        "show_title": style["show_title"],
+        "show_subtitle": style["show_subtitle"],
+        "visual_mode": style["visual_mode"],
+    }
+
+
+def _stamp_bold_pop_video_style(conn, video_pk: Any) -> None:
+    if video_pk in (None, ""):
+        return
+    video_columns = table_columns(conn, "youtube_videos")
+    assignments = []
+    params = []
+    for column, value in _bold_pop_video_style_values().items():
+        if column in video_columns:
+            assignments.append(f"{column} = ?")
+            params.append(value)
+    if not assignments:
+        return
+    params.append(video_pk)
+    conn.execute(
+        f"""
+        UPDATE youtube_videos
+        SET {", ".join(assignments)}
+        WHERE id = ?
+        """,
+        params,
+    )
+
+
+def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return
+    ensure_user_preferences_schema(conn)
+    conn.execute(
+        """
+        DELETE FROM shorts_user_preferences
+        WHERE user_id = ? AND preference_key = ?
+        """,
+        [clean_owner, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY],
+    )
+    conn.execute(
+        """
+        INSERT INTO shorts_user_preferences (id, user_id, preference_key, preference_value, updated_at)
+        VALUES (?, ?, ?, ?, now())
+        """,
+        [
+            str(uuid4()),
+            clean_owner,
+            SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY,
+            json.dumps(_bold_pop_short_editor_defaults(), ensure_ascii=False, sort_keys=True),
+        ],
+    )
 
 
 def autopilot_leads_table_ready(conn) -> bool:
@@ -400,6 +532,7 @@ def provision_discovery_lead_email(
     owner = _provision_or_reuse_lead_owner(conn, email=email, channel_name=channel_name)
     owner_user_id = owner["user_id"]
     brand_id = owner["brand_id"]
+    _save_bold_pop_short_editor_defaults(conn, owner_user_id)
     local_bucket_channel_id = _get_or_create_local_uploads_channel(
         conn,
         owner_user_id=owner_user_id,
@@ -433,6 +566,7 @@ def provision_discovery_lead_email(
             source_video_id,
         ],
     )
+    _stamp_bold_pop_video_style(conn, source_video_id)
     lead_columns = table_columns(conn, AUTOPILOT_LEADS_TABLE)
     pipeline_state = "downloaded" if _source_video_ready_for_planning(conn, source_video_id) else "new"
     pipeline_assignment = ", pipeline_state = ?" if "pipeline_state" in lead_columns else ""
@@ -508,6 +642,7 @@ def create_autopilot_lead_from_video(
             owner = _provision_or_reuse_lead_owner(conn, email=email, channel_name=channel_name)
             owner_user_id = owner["user_id"]
             brand_id = owner["brand_id"]
+        _save_bold_pop_short_editor_defaults(conn, owner_user_id)
 
     if not owner_user_id or not brand_id:
         raise ValueError("No discovery brand is available for this lead.")
@@ -547,6 +682,7 @@ def create_autopilot_lead_from_video(
                 existing_lead[4],
             ],
         )
+        _stamp_bold_pop_video_style(conn, existing_lead[4])
 
     video_row = conn.execute(
         """
@@ -569,6 +705,8 @@ def create_autopilot_lead_from_video(
             [channel_id, local_bucket_channel_id, creator_name, email or None, video_pk, owner_user_id, brand_id],
         )
         already_exists = True
+        if email:
+            _stamp_bold_pop_video_style(conn, video_pk)
     else:
         conn.execute(
             """
@@ -609,6 +747,8 @@ def create_autopilot_lead_from_video(
             ).fetchone()[0]
         )
         already_exists = False
+        if email:
+            _stamp_bold_pop_video_style(conn, video_pk)
 
     if existing_lead:
         lead_id = str(existing_lead[0])
