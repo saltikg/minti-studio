@@ -4916,16 +4916,36 @@ def _lead_source_video_ready_for_planning(video_pk: int, video_id: str) -> bool:
 
 def _recent_source_not_ready_bounce_count(conn, lead_id: str, *, video_pk: int, window_minutes: int = 30) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(window_minutes))
+    baseline = conn.execute(
+        """
+        SELECT MAX(created_at)
+        FROM lead_pipeline_events
+        WHERE CAST(lead_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND created_at >= ?
+          AND CAST(detail AS VARCHAR) LIKE ?
+          AND (
+              event_type IN ('download_completed', 'transcript_completed')
+              OR (
+                  event_type = 'auto_download_enqueued'
+                  AND CAST(detail AS VARCHAR) LIKE ?
+              )
+          )
+        """,
+        [lead_id, cutoff, f'%"video_pk": {int(video_pk)}%', f'%"job_type": "{JOB_TYPE_TRANSCRIBE_UPLOAD}"%'],
+    ).fetchone()
+    baseline_at = baseline[0] if baseline else None
+    if not baseline_at:
+        return 0
     row = conn.execute(
         """
         SELECT COUNT(*)
         FROM lead_pipeline_events
         WHERE CAST(lead_id AS VARCHAR) = CAST(? AS VARCHAR)
           AND event_type = 'auto_plan_waiting_for_source_ready'
-          AND created_at >= ?
+          AND created_at > ?
           AND CAST(detail AS VARCHAR) LIKE ?
         """,
-        [lead_id, cutoff, f'%"video_pk": {int(video_pk)}%'],
+        [lead_id, baseline_at, f'%"video_pk": {int(video_pk)}%'],
     ).fetchone()
     return int((row[0] if row else 0) or 0)
 
