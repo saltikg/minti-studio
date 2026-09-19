@@ -46,6 +46,7 @@ from app.video_shorts.services.quick_short_flow import (
 )
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
+    JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
@@ -65,6 +66,7 @@ from app.video_shorts.services.render_jobs import (
     requeue_timed_out_jobs,
     update_job_result,
 )
+from app.video_shorts.services.autopilot_email_enrichment import enrich_autopilot_discovery_email_batch
 from app.video_shorts.services.discovery_email_enrichment import enrich_discovery_email_batch
 from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
@@ -1302,6 +1304,8 @@ def process_next_job(app, worker_id: str) -> bool:
             result = _execute_instagram_comment_webhook_job(app, job)
         elif job.get("type") == JOB_TYPE_ENRICH_DISCOVERY_EMAILS:
             result = enrich_discovery_email_batch(job.get("payload") or {})
+        elif job.get("type") == JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS:
+            result = enrich_autopilot_discovery_email_batch(job.get("payload") or {})
         else:
             result = _execute_render_job(app, job)
         mark_job_done(job["id"], result)

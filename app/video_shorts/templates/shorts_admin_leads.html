@@ -51,6 +51,12 @@
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
+    .admin-leads-discovery-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; padding:12px 14px; border:1px solid rgba(255,255,255,.1); border-radius:8px; background:rgba(255,255,255,.04); }
+    .admin-leads-discovery-actions-main { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .admin-leads-discovery-feedback { color:rgba(255,255,255,.62); font-size:.86rem; }
+    .admin-leads-discovery-feedback.is-success { color:#8ff3d8; }
+    .admin-leads-discovery-feedback.is-error { color:#fca5a5; }
+    .admin-leads-select-cell { width:38px; }
     .admin-leads-sort-link { color:rgba(255,255,255,.72); text-decoration:none; display:inline-flex; gap:5px; align-items:center; }
     .admin-leads-sort-link:hover, .admin-leads-sort-link:focus { color:#8ff3d8; text-decoration:none; }
     .admin-leads-sort-arrow { color:#8ff3d8; font-size:.82rem; }
@@ -129,9 +135,24 @@
 
     <div class="admin-leads-table-wrap">
       <div class="admin-leads-summary small mb-3">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · {{ per_page }} per page</div>
+      {% if lead_type == 'discovery' %}
+        <div
+          class="admin-leads-discovery-actions"
+          data-discovery-enrichment-panel
+          data-enrich-url="{{ url_for('video_shorts_bp.admin_enqueue_autopilot_discovery_email_enrichment') }}">
+          <div class="admin-leads-discovery-actions-main">
+            <button type="button" class="btn btn-sm btn-outline-light" data-discovery-select-all>Select all</button>
+            <button type="button" class="btn btn-sm btn-outline-info" data-discovery-bulk-enrich>Find emails for selected</button>
+          </div>
+          <div class="admin-leads-discovery-feedback" data-discovery-enrich-feedback>
+            trakk today: {{ trakk_usage.used_today }} / {{ trakk_usage.daily_cap }}{% if not trakk_usage.enabled %} · disabled{% endif %}
+          </div>
+        </div>
+      {% endif %}
       <table class="admin-leads-table">
         <thead>
           <tr>
+            {% if lead_type == 'discovery' %}<th class="admin-leads-select-cell"></th>{% endif %}
             <th>Channel</th>
             <th>First source video</th>
             <th>Lead type</th>
@@ -169,6 +190,13 @@
           {% for lead in leads %}
             {% set source_video_is_youtube = lead.youtube_video_id and not lead.youtube_video_id.startswith('local_') %}
             <tr>
+              {% if lead_type == 'discovery' %}
+                <td class="admin-leads-select-cell">
+                  {% if not lead.has_owner and not lead.creator_email and lead.youtube_channel_id %}
+                    <input type="checkbox" class="form-check-input" value="{{ lead.id }}" data-discovery-lead-checkbox aria-label="Select {{ lead.channel_name }}">
+                  {% endif %}
+                </td>
+              {% endif %}
               <td>
                 <strong>
                   {% if lead.youtube_channel_id %}
@@ -306,14 +334,19 @@
                     </div>
                   </div>
                 {% elif not lead.has_owner and not lead.converted %}
-                  <span class="admin-leads-muted">Discovery only</span>
+                  <div class="d-grid gap-2">
+                    {% if not lead.creator_email and lead.youtube_channel_id %}
+                      <button type="button" class="btn btn-sm btn-outline-info" data-discovery-find-email="{{ lead.id }}">Find email</button>
+                    {% endif %}
+                    <span class="admin-leads-muted">Discovery only</span>
+                  </div>
                 {% else %}
                   <span class="admin-leads-muted">{{ 'Customer' if lead.converted else 'Discovery only' }}</span>
                 {% endif %}
               </td>
             </tr>
           {% else %}
-            <tr><td colspan="10" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
+            <tr><td colspan="{{ 11 if lead_type == 'discovery' else 10 }}" class="text-center text-muted py-4">No outreach leads yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -433,6 +466,66 @@
               button.textContent = originalText;
             }
           }
+        });
+      });
+      const enrichmentPanel = document.querySelector("[data-discovery-enrichment-panel]");
+      const enrichmentFeedback = document.querySelector("[data-discovery-enrich-feedback]");
+      const setEnrichmentFeedback = (message, kind = "") => {
+        if (!enrichmentFeedback) return;
+        enrichmentFeedback.textContent = message || "";
+        enrichmentFeedback.classList.remove("is-success", "is-error");
+        if (kind) enrichmentFeedback.classList.add(kind);
+      };
+      const enqueueDiscoveryEmailLookup = async (leadIds, triggerButton = null) => {
+        const endpoint = enrichmentPanel?.dataset.enrichUrl || "";
+        const ids = Array.from(new Set((leadIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+        if (!endpoint || !ids.length) {
+          setEnrichmentFeedback("Select at least one discovery lead.", "is-error");
+          return;
+        }
+        const originalText = triggerButton?.textContent || "";
+        if (triggerButton) {
+          triggerButton.disabled = true;
+          triggerButton.textContent = "Enqueuing...";
+        }
+        setEnrichmentFeedback("Enqueuing trakk email lookup...");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+            body: JSON.stringify({ lead_ids: ids }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+          }
+          setEnrichmentFeedback(
+            `Queued ${data.enqueued_count} lookup${data.enqueued_count === 1 ? "" : "s"} · job ${data.job_id || "queued"} · trakk ${data.trakk_used_today}/${data.trakk_daily_cap}`,
+            "is-success"
+          );
+        } catch (error) {
+          setEnrichmentFeedback(error.message || "Email lookup could not be enqueued.", "is-error");
+        } finally {
+          if (triggerButton) {
+            triggerButton.disabled = false;
+            triggerButton.textContent = originalText;
+          }
+        }
+      };
+      document.querySelector("[data-discovery-select-all]")?.addEventListener("click", (event) => {
+        const checkboxes = Array.from(document.querySelectorAll("[data-discovery-lead-checkbox]"));
+        const shouldCheck = checkboxes.some((checkbox) => !checkbox.checked);
+        checkboxes.forEach((checkbox) => { checkbox.checked = shouldCheck; });
+        event.currentTarget.textContent = shouldCheck ? "Clear selection" : "Select all";
+      });
+      document.querySelector("[data-discovery-bulk-enrich]")?.addEventListener("click", (event) => {
+        const ids = Array.from(document.querySelectorAll("[data-discovery-lead-checkbox]:checked")).map((checkbox) => checkbox.value);
+        enqueueDiscoveryEmailLookup(ids, event.currentTarget);
+      });
+      document.querySelectorAll("[data-discovery-find-email]").forEach((button) => {
+        button.addEventListener("click", () => {
+          enqueueDiscoveryEmailLookup([button.dataset.discoveryFindEmail], button);
         });
       });
       document.querySelectorAll("[data-watch-page-create]").forEach((button) => {

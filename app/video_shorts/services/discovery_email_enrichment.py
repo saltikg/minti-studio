@@ -53,6 +53,7 @@ def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
     lead_columns = table_columns(conn, "discovery_leads")
     if "enrichment_attempted_at" not in lead_columns:
         return enabled, daily_cap, 0, daily_cap
+    discovery_used = 0
     used_row = conn.execute(
         """
         SELECT COUNT(*)
@@ -62,7 +63,21 @@ def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
         """,
         [_utc_day_start()],
     ).fetchone()
-    used = int((used_row[0] if used_row else 0) or 0)
+    discovery_used = int((used_row[0] if used_row else 0) or 0)
+    autopilot_used = 0
+    autopilot_columns = table_columns(conn, "autopilot_leads")
+    if "email_enrichment_attempted_at" in autopilot_columns:
+        autopilot_row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM autopilot_leads
+            WHERE email_enrichment_attempted_at >= ?
+              AND COALESCE(email_source, '') IN ('', 'trakk')
+            """,
+            [_utc_day_start()],
+        ).fetchone()
+        autopilot_used = int((autopilot_row[0] if autopilot_row else 0) or 0)
+    used = discovery_used + autopilot_used
     return enabled, daily_cap, used, max(0, daily_cap - used)
 
 

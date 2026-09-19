@@ -300,6 +300,7 @@ from app.video_shorts.services.lead_pipeline import (
     record_lead_pipeline_event_for_scope,
 )
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
+from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
@@ -315,12 +316,14 @@ from app.video_shorts.services.youtube_oauth import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
+    JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_RENDER_SHORT,
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
     enqueue_admin_proxy_transcript_job,
+    enqueue_worker_job,
     enqueue_job,
     enqueue_render_job,
     get_job,
@@ -14950,6 +14953,7 @@ def admin_leads():
             limit=per_page,
             offset=(page - 1) * per_page,
         )
+        trakk_enabled, trakk_daily_cap, trakk_used_today, trakk_remaining = _auto_trakk_remaining(conn)
     finally:
         conn.close()
     return render_template(
@@ -14970,6 +14974,12 @@ def admin_leads():
         per_page=per_page,
         total_leads=total_leads,
         total_pages=total_pages,
+        trakk_usage={
+            "enabled": trakk_enabled,
+            "daily_cap": trakk_daily_cap,
+            "used_today": trakk_used_today,
+            "remaining": trakk_remaining,
+        },
     )
 
 
@@ -15474,6 +15484,7 @@ def admin_discovery_lead_pipeline():
 def admin_provision_discovery_lead_email(lead_id: str):
     """Attach contact email to one discovery lead and provision its owner scope."""
     email = str(request.form.get("creator_email") or "").strip()
+    wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest" or request.is_json
     conn = get_db()
     try:
         result = provision_discovery_lead_email(
@@ -15481,15 +15492,38 @@ def admin_provision_discovery_lead_email(lead_id: str):
             lead_id=lead_id,
             creator_email=email,
         )
+        lead_columns = table_columns(conn, "autopilot_leads")
+        manual_assignments = []
+        manual_params = []
+        if "email_source" in lead_columns:
+            manual_assignments.append("email_source = ?")
+            manual_params.append("manual")
+        if "email_enrichment_error" in lead_columns:
+            manual_assignments.append("email_enrichment_error = NULL")
+        if manual_assignments:
+            conn.execute(
+                f"""
+                UPDATE autopilot_leads
+                SET {", ".join(manual_assignments)}
+                WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+                """,
+                [*manual_params, lead_id],
+            )
         conn.commit()
     except ValueError as exc:
         conn.rollback()
+        if wants_json:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         flash(str(exc), "error")
     except Exception:
         conn.rollback()
         current_app.logger.exception("Failed to provision discovery lead %s", lead_id)
+        if wants_json:
+            return jsonify({"ok": False, "error": "Could not provision this discovery lead."}), 500
         flash("Could not provision this discovery lead. No changes were made.", "error")
     else:
+        if wants_json:
+            return jsonify({"ok": True, "creator_email": result["creator_email"], "lead_id": result["lead_id"]})
         flash(
             f"Lead provisioned for {result['creator_email']}. Its source video now belongs to that lead's brand.",
             "success",
@@ -15497,6 +15531,110 @@ def admin_provision_discovery_lead_email(lead_id: str):
     finally:
         conn.close()
     return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/leads/discovery-email-enrichment", methods=["POST"])
+@require_admin
+def admin_enqueue_autopilot_discovery_email_enrichment():
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
+    raw_ids = payload.get("lead_ids")
+    if raw_ids is None:
+        raw_ids = payload.getlist("lead_ids") if hasattr(payload, "getlist") else []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    lead_ids = []
+    raw_id_list = raw_ids if isinstance(raw_ids, list) else []
+    for raw_id in raw_id_list:
+        lead_id = str(raw_id or "").strip()
+        if lead_id and lead_id not in lead_ids:
+            lead_ids.append(lead_id)
+    if not lead_ids:
+        return jsonify({"ok": False, "error": "Select at least one discovery lead."}), 400
+
+    conn = get_db_readonly()
+    try:
+        lead_columns = table_columns(conn, "autopilot_leads")
+        missing_columns = [
+            column
+            for column in (
+                "creator_website",
+                "email_confidence",
+                "email_source",
+                "email_enrichment_error",
+                "email_enrichment_attempted_at",
+            )
+            if column not in lead_columns
+        ]
+        if missing_columns:
+            return jsonify({"ok": False, "error": f"Missing schema columns: {', '.join(missing_columns)}"}), 500
+        placeholders = ", ".join("?" for _ in lead_ids)
+        rows = conn.execute(
+            f"""
+            SELECT CAST(id AS VARCHAR)
+            FROM autopilot_leads
+            WHERE CAST(id AS VARCHAR) IN ({placeholders})
+              AND COALESCE(creator_email, '') = ''
+              AND COALESCE(youtube_channel_id, '') <> ''
+              AND (COALESCE(user_id, '') = '' OR COALESCE(brand_id, '') = '')
+            """,
+            lead_ids,
+        ).fetchall()
+        valid_ids = [str(row[0]) for row in rows]
+        trakk_enabled, trakk_daily_cap, trakk_used_today, trakk_remaining = _auto_trakk_remaining(conn)
+    finally:
+        conn.close()
+
+    if not valid_ids:
+        return jsonify({"ok": False, "error": "No selected rows are eligible for email enrichment."}), 400
+    if not trakk_enabled:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Trakk automation is disabled by the discovery kill switch.",
+                "trakk_used_today": trakk_used_today,
+                "trakk_daily_cap": trakk_daily_cap,
+            }
+        ), 409
+    if trakk_remaining <= 0:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Daily trakk cap has been reached.",
+                "trakk_used_today": trakk_used_today,
+                "trakk_daily_cap": trakk_daily_cap,
+            }
+        ), 409
+
+    limited_ids = valid_ids[:trakk_remaining]
+    current_user = getattr(g, "vs_current_user", {}) or {}
+    current_user_id = current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
+    user_id = str(current_user_id or "admin")
+    input_hash = sha256(f"autopilot-discovery-trakk:{time.time()}:{','.join(limited_ids)}".encode("utf-8")).hexdigest()
+    job_result = enqueue_worker_job(
+        user_id=user_id,
+        job_type=JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
+        payload={"lead_ids": limited_ids, "batch_size": len(limited_ids)},
+        input_hash=input_hash,
+        max_attempts=1,
+        priority=70,
+    )
+    job = job_result.get("job") or {}
+    return jsonify(
+        {
+            "ok": True,
+            "enqueued": True,
+            "job_id": job.get("id"),
+            "job_kind": job_result.get("kind"),
+            "requested_count": len(lead_ids),
+            "eligible_count": len(valid_ids),
+            "enqueued_count": len(limited_ids),
+            "trakk_used_today": trakk_used_today,
+            "trakk_daily_cap": trakk_daily_cap,
+            "trakk_remaining_after_enqueue": max(0, trakk_remaining - len(limited_ids)),
+            "cost_estimate": round(len(limited_ids) * 0.005, 3),
+        }
+    )
 
 
 @video_shorts_bp.route("/admin/leads/<lead_id>/recipient-name", methods=["POST"])
