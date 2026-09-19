@@ -797,6 +797,22 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 [video_pk],
             )
             conn.commit()
+            try:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="transcript_completed",
+                    to_state="downloaded",
+                    detail={
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "job_id": job.get("id"),
+                        "source": "transcribe_upload",
+                    },
+                )
+            except Exception as exc:
+                app.logger.warning("Failed to record lead transcript event video_pk=%s job_id=%s: %s", video_pk, job.get("id"), exc)
         finally:
             conn.close()
         if source_key and brand_id:

@@ -319,6 +319,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_RENDER_SHORT,
+    JOB_TYPE_TRANSCRIBE_UPLOAD,
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
@@ -4858,6 +4859,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                     "video_id": video_id,
                     "job_id": enqueue_row.get("job_id"),
                     "enqueue_kind": enqueue_kind,
+                    "job_type": enqueue_row.get("job_type") or JOB_TYPE_INGEST_YOUTUBE,
                 },
             )
             conn_event.commit()
@@ -4912,9 +4914,50 @@ def _lead_source_video_ready_for_planning(video_pk: int, video_id: str) -> bool:
         conn.close()
 
 
+def _recent_source_not_ready_bounce_count(conn, lead_id: str, *, video_pk: int, window_minutes: int = 30) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(window_minutes))
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM lead_pipeline_events
+        WHERE CAST(lead_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND event_type = 'auto_plan_waiting_for_source_ready'
+          AND created_at >= ?
+          AND CAST(detail AS VARCHAR) LIKE ?
+        """,
+        [lead_id, cutoff, f'%"video_pk": {int(video_pk)}%'],
+    ).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
 def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, from_state: str, reason: str) -> None:
     conn = get_db()
     try:
+        bounce_count = _recent_source_not_ready_bounce_count(conn, lead_id, video_pk=video_pk)
+        if bounce_count >= 5:
+            record_lead_pipeline_event(
+                conn,
+                lead_id=lead_id,
+                event_type="auto_plan_source_not_ready_stuck",
+                to_state="failed",
+                detail={
+                    "mechanism": "cron_poll",
+                    "reason": "transcript_missing_no_progress",
+                    "last_reason": reason,
+                    "bounce_count": bounce_count,
+                    "window_minutes": 30,
+                    "video_pk": video_pk,
+                    "video_id": video_id,
+                },
+            )
+            conn.commit()
+            current_app.logger.warning(
+                "Lead autoplan stopped after repeated source-not-ready bounces lead_id=%s video_pk=%s reason=%s",
+                lead_id,
+                video_pk,
+                reason,
+            )
+            return
         record_lead_pipeline_event(
             conn,
             lead_id=lead_id,
@@ -4944,6 +4987,35 @@ def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, 
         raise
     finally:
         conn.close()
+
+
+def _enqueue_admin_operation_transcribe_source_job(scope: Dict[str, str], row: Any) -> Dict[str, Any]:
+    video_pk = int(row[0])
+    video_id = str(row[1] or "").strip()
+    duration_seconds = row[3]
+    job_input_hash = sha256(
+        f"admin-operation-transcribe-source:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")
+    ).hexdigest()
+    enqueue_result = enqueue_job(
+        user_id=scope["owner_user_id"],
+        job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
+        payload={
+            "quick_session_id": "",
+            "video_pk": video_pk,
+            "video_id": video_id,
+            "duration_seconds": duration_seconds,
+            "brand_id": scope["brand_id"],
+        },
+        input_hash=job_input_hash,
+        max_attempts=3,
+    )
+    job = enqueue_result.get("job") or {}
+    return {
+        "video_id": video_id,
+        "job_id": job.get("id"),
+        "enqueue_kind": enqueue_result.get("kind"),
+        "job_type": JOB_TYPE_TRANSCRIBE_UPLOAD,
+    }
 
 
 def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = AUTOPILOT_PLAN_TIMEOUT_SECONDS) -> bool:
@@ -16513,8 +16585,10 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
         and transcript_status == "done"
         and _admin_workspace_preview_ready(video_id)
     )
-    if ready_for_generate or (download_status == "downloaded" and not source_is_youtube):
+    if ready_for_generate:
         return {"video_id": video_id, "job_id": None, "enqueue_kind": "already_downloaded"}
+    if download_status == "downloaded" and not source_is_youtube:
+        return _enqueue_admin_operation_transcribe_source_job(scope, row)
     job_input_hash = sha256(
         f"admin-operation-youtube-ingest:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")
     ).hexdigest()
