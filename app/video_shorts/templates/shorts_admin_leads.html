@@ -8,7 +8,7 @@
 
 {% block extra_styles %}
   <style>
-    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(7,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
+    .admin-leads-toolbar { display:grid; grid-template-columns:minmax(220px,1fr) repeat(8,minmax(120px,.35fr)) auto; gap:12px; align-items:end; margin-bottom:20px; }
     .admin-leads-toolbar-actions { display:flex; gap:8px; align-items:end; }
     .admin-leads-modal .modal-content { border:1px solid rgba(45,212,191,.24); border-radius:18px; background:#0b131c; color:rgba(255,255,255,.92); }
     .admin-leads-modal .modal-header, .admin-leads-modal .modal-footer { border-color:rgba(255,255,255,.09); }
@@ -49,7 +49,9 @@
     .admin-leads-preview-subject { color:#8ff3d8; font-weight:800; margin-bottom:12px; }
     .admin-leads-preview-body { white-space:pre-wrap; color:rgba(255,255,255,.86); line-height:1.5; }
     .admin-leads-pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:18px; }
+    .admin-leads-pagination.is-top { margin-top:0; margin-bottom:14px; }
     .admin-leads-pagination-links { display:flex; gap:8px; flex-wrap:wrap; }
+    .admin-leads-page-ellipsis { display:inline-flex; align-items:center; padding:0 4px; color:rgba(255,255,255,.5); }
     .admin-leads-summary { color:rgba(255,255,255,.92); }
     .admin-leads-discovery-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; padding:12px 14px; border:1px solid rgba(255,255,255,.1); border-radius:8px; background:rgba(255,255,255,.04); }
     .admin-leads-discovery-actions-main { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -123,6 +125,14 @@
         </select>
       </div>
       <div>
+        <label for="admin-leads-state" class="form-label mb-2">State</label>
+        <select id="admin-leads-state" name="state" class="form-select" multiple size="4">
+          {% for option in state_options %}
+            <option value="{{ option.value }}" {% if option.value in selected_states %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
         <label for="admin-leads-subscriber-min" class="form-label mb-2">Subscribers</label>
         <input id="admin-leads-subscriber-min" type="number" name="subscriber_min" value="{{ subscriber_min if subscriber_min is not none else '' }}" min="0" step="1" class="form-control" placeholder="Min">
       </div>
@@ -153,6 +163,26 @@
           </div>
         </div>
       {% endif %}
+      <div class="admin-leads-pagination is-top">
+        <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
+        <div class="admin-leads-pagination-links">
+          {% if previous_page_url %}
+            <a href="{{ previous_page_url }}" class="btn btn-sm btn-outline-light">Previous</a>
+          {% endif %}
+          {% for page_link in page_links %}
+            {% if page_link.ellipsis %}
+              <span class="admin-leads-page-ellipsis">…</span>
+            {% elif page_link.active %}
+              <span class="btn btn-sm btn-primary disabled">{{ page_link.page }}</span>
+            {% else %}
+              <a href="{{ page_link.url }}" class="btn btn-sm btn-outline-light">{{ page_link.page }}</a>
+            {% endif %}
+          {% endfor %}
+          {% if next_page_url %}
+            <a href="{{ next_page_url }}" class="btn btn-sm btn-outline-light">Next</a>
+          {% endif %}
+        </div>
+      </div>
       <table class="admin-leads-table">
         <thead>
           <tr>
@@ -165,7 +195,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='generation', dir=next_generation_dir, page=1) }}">
+                href="{{ sort_generation_url }}">
                 <span>Generation</span>
                 {% if sort_key == 'generation' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -173,7 +203,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='email_sent', dir=next_email_sent_dir, page=1) }}">
+                href="{{ sort_email_sent_url }}">
                 <span>Email sent</span>
                 {% if sort_key == 'email_sent' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -182,7 +212,7 @@
             <th>
               <a
                 class="admin-leads-sort-link"
-                href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort='created', dir=next_created_dir, page=1) }}">
+                href="{{ sort_created_url }}">
                 <span>Created</span>
                 {% if sort_key == 'created' %}<span class="admin-leads-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
               </a>
@@ -385,11 +415,20 @@
     <div class="admin-leads-pagination">
       <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-leads-pagination-links">
-        {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% if previous_page_url %}
+          <a href="{{ previous_page_url }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
-        {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_leads', q=search_query, lead_type=lead_type, download=download_filter, email_sent=email_sent_filter, scheduled=scheduled_filter, generated=generated_filter, subscriber_min=subscriber_min, subscriber_max=subscriber_max, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% for page_link in page_links %}
+          {% if page_link.ellipsis %}
+            <span class="admin-leads-page-ellipsis">…</span>
+          {% elif page_link.active %}
+            <span class="btn btn-sm btn-primary disabled">{{ page_link.page }}</span>
+          {% else %}
+            <a href="{{ page_link.url }}" class="btn btn-sm btn-outline-light">{{ page_link.page }}</a>
+          {% endif %}
+        {% endfor %}
+        {% if next_page_url %}
+          <a href="{{ next_page_url }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>

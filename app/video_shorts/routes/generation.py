@@ -13292,6 +13292,69 @@ def _format_compact_number(value: Any) -> str:
     return str(parsed)
 
 
+def _normalize_pipeline_state_filters(raw_states: Any) -> List[str]:
+    if raw_states is None:
+        values: List[Any] = []
+    elif isinstance(raw_states, (list, tuple)):
+        values = list(raw_states)
+    else:
+        values = [raw_states]
+    normalized: List[str] = []
+    for raw_state in values:
+        state = str(raw_state or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if not state or not re.match(r"^[a-z0-9_]+$", state):
+            continue
+        if state not in normalized:
+            normalized.append(state)
+        if len(normalized) >= 20:
+            break
+    return normalized
+
+
+def _pipeline_state_label(state: str) -> str:
+    normalized = str(state or "").strip().lower() or "new"
+    return PIPELINE_STATE_LABELS.get(normalized, normalized.replace("_", " ").title())
+
+
+def _load_admin_lead_state_options(conn, selected_states: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    selected_states = selected_states or []
+    states: List[str] = []
+    for state in PIPELINE_STATE_LABELS:
+        if state not in states:
+            states.append(state)
+    if autopilot_leads_table_ready(conn) and "pipeline_state" in table_columns(conn, "autopilot_leads"):
+        rows = conn.execute(
+            """
+            SELECT DISTINCT COALESCE(pipeline_state, 'new') AS pipeline_state
+            FROM autopilot_leads
+            ORDER BY pipeline_state
+            """
+        ).fetchall()
+        for row in rows:
+            state = str(row[0] or "new").strip().lower() or "new"
+            if state and state not in states:
+                states.append(state)
+    for state in selected_states:
+        if state not in states:
+            states.append(state)
+    return [{"value": state, "label": _pipeline_state_label(state)} for state in states]
+
+
+def _pagination_page_numbers(page: int, total_pages: int) -> List[Optional[int]]:
+    if total_pages <= 9:
+        return list(range(1, total_pages + 1))
+    visible = {1, 2, total_pages - 1, total_pages, page - 1, page, page + 1}
+    visible = {p for p in visible if 1 <= p <= total_pages}
+    numbers: List[Optional[int]] = []
+    previous = 0
+    for page_number in sorted(visible):
+        if previous and page_number > previous + 1:
+            numbers.append(None)
+        numbers.append(page_number)
+        previous = page_number
+    return numbers
+
+
 def _load_admin_lead_records(
     conn,
     *,
@@ -13300,6 +13363,7 @@ def _load_admin_lead_records(
     email_sent_filter: str = "",
     scheduled_filter: str = "",
     generated_filter: str = "",
+    state_filters: Optional[List[str]] = None,
     sort_key: str = "created",
     sort_dir: str = "desc",
     search_query: str = "",
@@ -13327,6 +13391,7 @@ def _load_admin_lead_records(
     normalized_generated_filter = (generated_filter or "").strip().lower()
     if normalized_generated_filter not in {"0", "1-5", "5+"}:
         normalized_generated_filter = ""
+    normalized_state_filters = _normalize_pipeline_state_filters(state_filters or [])
     normalized_sort_key = (sort_key or "created").strip().lower()
     if normalized_sort_key not in {"generation", "email_sent", "created"}:
         normalized_sort_key = "created"
@@ -13533,6 +13598,10 @@ def _load_admin_lead_records(
         where_parts.append(f"{generated_count_sql} BETWEEN 1 AND 5")
     elif normalized_generated_filter == "5+":
         where_parts.append(f"{generated_count_sql} > 5")
+    if normalized_state_filters:
+        placeholders = ", ".join("?" for _ in normalized_state_filters)
+        where_parts.append(f"{pipeline_state_sql} IN ({placeholders})")
+        params.extend(normalized_state_filters)
     if subscriber_min is not None:
         where_parts.append("l.subscriber_count >= ?")
         params.append(subscriber_min)
@@ -15105,6 +15174,7 @@ def admin_leads():
     email_sent_filter = (request.args.get("email_sent") or "").strip().lower()
     scheduled_filter = (request.args.get("scheduled") or "").strip().lower()
     generated_filter = (request.args.get("generated") or "").strip().lower()
+    selected_states = _normalize_pipeline_state_filters(request.args.getlist("state"))
     sort_key = (request.args.get("sort") or "created").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     search_query = (request.args.get("q") or "").strip()
@@ -15115,7 +15185,7 @@ def admin_leads():
     except (TypeError, ValueError):
         requested_page = 1
     page = max(1, requested_page)
-    per_page = 50
+    per_page = 30
     conn = get_db_readonly()
     try:
         _items, total_leads = _load_admin_lead_records(
@@ -15125,6 +15195,7 @@ def admin_leads():
             email_sent_filter=email_sent_filter,
             scheduled_filter=scheduled_filter,
             generated_filter=generated_filter,
+            state_filters=selected_states,
             sort_key=sort_key,
             sort_dir=sort_dir,
             search_query=search_query,
@@ -15142,6 +15213,7 @@ def admin_leads():
             email_sent_filter=email_sent_filter,
             scheduled_filter=scheduled_filter,
             generated_filter=generated_filter,
+            state_filters=selected_states,
             sort_key=sort_key,
             sort_dir=sort_dir,
             search_query=search_query,
@@ -15150,20 +15222,73 @@ def admin_leads():
             limit=per_page,
             offset=(page - 1) * per_page,
         )
+        state_options = _load_admin_lead_state_options(conn, selected_states)
         trakk_enabled, trakk_daily_cap, trakk_used_today, trakk_remaining = _auto_trakk_remaining(conn)
     finally:
         conn.close()
+    lead_type_context = lead_type if lead_type in {"real", "discovery"} else ""
+    download_context = download_filter if download_filter in {"downloaded", "not_downloaded"} else ""
+    email_sent_context = email_sent_filter if email_sent_filter in {"sent", "not_sent"} else ""
+    scheduled_context = scheduled_filter if scheduled_filter in {"scheduled", "not_scheduled"} else ""
+    generated_context = generated_filter if generated_filter in {"0", "1-5", "5+"} else ""
+    sort_key_context = sort_key if sort_key in {"generation", "email_sent", "created"} else "created"
+    sort_dir_context = sort_dir if sort_dir in {"asc", "desc"} else "desc"
+
+    def _admin_leads_url(**overrides: Any) -> str:
+        params: Dict[str, Any] = {
+            "q": search_query,
+            "lead_type": lead_type_context,
+            "download": download_context,
+            "email_sent": email_sent_context,
+            "scheduled": scheduled_context,
+            "generated": generated_context,
+            "sort": sort_key_context,
+            "dir": sort_dir_context,
+        }
+        if selected_states:
+            params["state"] = selected_states
+        if subscriber_min is not None:
+            params["subscriber_min"] = subscriber_min
+        if subscriber_max is not None:
+            params["subscriber_max"] = subscriber_max
+        params.update(overrides)
+        cleaned: Dict[str, Any] = {}
+        for key, value in params.items():
+            if isinstance(value, list):
+                if value:
+                    cleaned[key] = value
+            elif value is not None and value != "":
+                cleaned[key] = value
+        query = urlencode(cleaned, doseq=True)
+        base_url = url_for("video_shorts_bp.admin_leads")
+        return f"{base_url}?{query}" if query else base_url
+
+    page_numbers = _pagination_page_numbers(page, total_pages)
+    page_links = [
+        {
+            "page": page_number,
+            "url": _admin_leads_url(page=page_number) if page_number is not None else "",
+            "active": page_number == page,
+            "ellipsis": page_number is None,
+        }
+        for page_number in page_numbers
+    ]
     return render_template(
         "shorts_admin_leads.html",
         admin_title="Leads",
         leads=leads,
-        lead_type=lead_type if lead_type in {"real", "discovery"} else "",
-        download_filter=download_filter if download_filter in {"downloaded", "not_downloaded"} else "",
-        email_sent_filter=email_sent_filter if email_sent_filter in {"sent", "not_sent"} else "",
-        scheduled_filter=scheduled_filter if scheduled_filter in {"scheduled", "not_scheduled"} else "",
-        generated_filter=generated_filter if generated_filter in {"0", "1-5", "5+"} else "",
-        sort_key=sort_key if sort_key in {"generation", "email_sent", "created"} else "created",
-        sort_dir=sort_dir if sort_dir in {"asc", "desc"} else "desc",
+        lead_type=lead_type_context,
+        download_filter=download_context,
+        email_sent_filter=email_sent_context,
+        scheduled_filter=scheduled_context,
+        generated_filter=generated_context,
+        selected_states=selected_states,
+        state_options=state_options,
+        sort_key=sort_key_context,
+        sort_dir=sort_dir_context,
+        sort_generation_url=_admin_leads_url(sort="generation", dir="asc" if sort_key_context != "generation" or sort_dir_context == "desc" else "desc", page=1),
+        sort_email_sent_url=_admin_leads_url(sort="email_sent", dir="asc" if sort_key_context != "email_sent" or sort_dir_context == "desc" else "desc", page=1),
+        sort_created_url=_admin_leads_url(sort="created", dir="asc" if sort_key_context != "created" or sort_dir_context == "desc" else "desc", page=1),
         search_query=search_query,
         subscriber_min=subscriber_min,
         subscriber_max=subscriber_max,
@@ -15171,6 +15296,9 @@ def admin_leads():
         per_page=per_page,
         total_leads=total_leads,
         total_pages=total_pages,
+        page_links=page_links,
+        previous_page_url=_admin_leads_url(page=page - 1) if page > 1 else "",
+        next_page_url=_admin_leads_url(page=page + 1) if page < total_pages else "",
         trakk_usage={
             "enabled": trakk_enabled,
             "daily_cap": trakk_daily_cap,
@@ -15246,16 +15374,43 @@ def _pipeline_event_step(event_type: str) -> str:
 @video_shorts_bp.route("/admin/leads/pipeline", methods=["GET"])
 @require_admin
 def admin_leads_pipeline_overview():
-    limit = 300
+    selected_states = _normalize_pipeline_state_filters(request.args.getlist("state"))
+    try:
+        requested_page = int(request.args.get("page") or 1)
+    except (TypeError, ValueError):
+        requested_page = 1
+    page = max(1, requested_page)
+    per_page = 30
     conn = get_db_readonly()
     try:
         lead_columns = table_columns(conn, "autopilot_leads")
         event_columns = table_columns(conn, "lead_pipeline_events")
+        state_options = _load_admin_lead_state_options(conn, selected_states)
         if "pipeline_state" not in lead_columns or not event_columns:
             leads = []
+            total_leads = 0
+            total_pages = 1
         else:
+            where_parts = ["l.converted_at IS NULL"]
+            params: List[Any] = []
+            if selected_states:
+                placeholders = ", ".join("?" for _ in selected_states)
+                where_parts.append(f"COALESCE(l.pipeline_state, 'new') IN ({placeholders})")
+                params.extend(selected_states)
+            where_sql = " AND ".join(where_parts)
+            total_row = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM autopilot_leads l
+                WHERE {where_sql}
+                """,
+                params,
+            ).fetchone()
+            total_leads = int((total_row[0] if total_row else 0) or 0)
+            total_pages = max(1, (total_leads + per_page - 1) // per_page)
+            page = min(page, total_pages)
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     CAST(l.id AS VARCHAR),
                     l.creator_name,
@@ -15276,11 +15431,11 @@ def admin_leads_pipeline_overview():
                     ) AS last_activity_at
                 FROM autopilot_leads l
                 LEFT JOIN youtube_videos v ON v.id = l.first_video_id
-                WHERE l.converted_at IS NULL
+                WHERE {where_sql}
                 ORDER BY last_activity_at DESC NULLS LAST, l.created_at DESC NULLS LAST, l.id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                [limit],
+                [*params, per_page, (page - 1) * per_page],
             ).fetchall()
             lead_ids = [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
             events_by_lead: Dict[str, List[Any]] = {lead_id: [] for lead_id in lead_ids}
@@ -15356,13 +15511,40 @@ def admin_leads_pipeline_overview():
     finally:
         conn.close()
 
+    def _pipeline_overview_url(**overrides: Any) -> str:
+        params: Dict[str, Any] = {}
+        if selected_states:
+            params["state"] = selected_states
+        params.update(overrides)
+        cleaned = {key: value for key, value in params.items() if value not in ("", None, [])}
+        query = urlencode(cleaned, doseq=True)
+        base_url = url_for("video_shorts_bp.admin_leads_pipeline_overview")
+        return f"{base_url}?{query}" if query else base_url
+
+    page_numbers = _pagination_page_numbers(page, total_pages)
+    page_links = [
+        {
+            "page": page_number,
+            "url": _pipeline_overview_url(page=page_number) if page_number is not None else "",
+            "active": page_number == page,
+            "ellipsis": page_number is None,
+        }
+        for page_number in page_numbers
+    ]
     return render_template(
         "shorts_admin_pipeline_overview.html",
         admin_title="Pipeline Overview",
         leads=leads,
         steps=PIPELINE_OVERVIEW_STEPS,
-        total_leads=len(leads),
-        limit=limit,
+        total_leads=total_leads,
+        selected_states=selected_states,
+        state_options=state_options,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+        page_links=page_links,
+        previous_page_url=_pipeline_overview_url(page=page - 1) if page > 1 else "",
+        next_page_url=_pipeline_overview_url(page=page + 1) if page < total_pages else "",
     )
 
 

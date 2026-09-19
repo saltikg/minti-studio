@@ -13,6 +13,38 @@
       font-size: 0.9rem;
       margin-bottom: 14px;
     }
+    .pipeline-overview-toolbar {
+      display: flex;
+      align-items: end;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .pipeline-overview-toolbar .form-select {
+      min-width: 220px;
+    }
+    .pipeline-overview-pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 16px 0 0;
+    }
+    .pipeline-overview-pagination.is-top {
+      margin: 0 0 14px;
+    }
+    .pipeline-overview-pagination-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pipeline-overview-page-ellipsis {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 4px;
+      color: rgba(255, 255, 255, 0.5);
+    }
     .pipeline-overview-wrap {
       overflow-x: auto;
     }
@@ -101,8 +133,42 @@
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
     <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
-      <div class="pipeline-overview-meta">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} shown · latest {{ limit }} · Pacific time</div>
+      <div class="pipeline-overview-meta">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · {{ per_page }} per page · Pacific time</div>
       <a href="{{ url_for('video_shorts_bp.admin_leads') }}" class="btn btn-sm btn-outline-light">Leads</a>
+    </div>
+
+    <form method="get" class="pipeline-overview-toolbar">
+      <div>
+        <label for="pipeline-overview-state" class="form-label mb-2">State</label>
+        <select id="pipeline-overview-state" name="state" class="form-select" multiple size="5">
+          {% for option in state_options %}
+            <option value="{{ option.value }}" {% if option.value in selected_states %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="{{ url_for('video_shorts_bp.admin_leads_pipeline_overview') }}" class="btn btn-outline-light">Reset</a>
+    </form>
+
+    <div class="pipeline-overview-pagination is-top">
+      <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
+      <div class="pipeline-overview-pagination-links">
+        {% if previous_page_url %}
+          <a href="{{ previous_page_url }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% for page_link in page_links %}
+          {% if page_link.ellipsis %}
+            <span class="pipeline-overview-page-ellipsis">…</span>
+          {% elif page_link.active %}
+            <span class="btn btn-sm btn-primary disabled">{{ page_link.page }}</span>
+          {% else %}
+            <a href="{{ page_link.url }}" class="btn btn-sm btn-outline-light">{{ page_link.page }}</a>
+          {% endif %}
+        {% endfor %}
+        {% if next_page_url %}
+          <a href="{{ next_page_url }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
     </div>
 
     <div class="pipeline-overview-wrap">
@@ -151,6 +217,27 @@
           {% endfor %}
         </tbody>
       </table>
+    </div>
+
+    <div class="pipeline-overview-pagination">
+      <div class="text-muted small">Page {{ page }} of {{ total_pages }}</div>
+      <div class="pipeline-overview-pagination-links">
+        {% if previous_page_url %}
+          <a href="{{ previous_page_url }}" class="btn btn-sm btn-outline-light">Previous</a>
+        {% endif %}
+        {% for page_link in page_links %}
+          {% if page_link.ellipsis %}
+            <span class="pipeline-overview-page-ellipsis">…</span>
+          {% elif page_link.active %}
+            <span class="btn btn-sm btn-primary disabled">{{ page_link.page }}</span>
+          {% else %}
+            <a href="{{ page_link.url }}" class="btn btn-sm btn-outline-light">{{ page_link.page }}</a>
+          {% endif %}
+        {% endfor %}
+        {% if next_page_url %}
+          <a href="{{ next_page_url }}" class="btn btn-sm btn-outline-light">Next</a>
+        {% endif %}
+      </div>
     </div>
   </section>
 {% endblock %}
