@@ -4752,7 +4752,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                 conn_fail.close()
             continue
 
-        if download_status == "downloaded" and transcript_status == "done":
+        if _lead_source_video_ready_for_planning(video_pk, video_id):
             conn_ready = get_db()
             try:
                 record_lead_pipeline_event(
@@ -4873,6 +4873,79 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
     return processed_any
 
 
+def _lead_source_video_ready_for_planning(video_pk: int, video_id: str) -> bool:
+    if not video_pk or not video_id:
+        return False
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT COALESCE(download_status, ''), COALESCE(transcript_status, '')
+            FROM youtube_videos
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [int(video_pk)],
+        ).fetchone()
+        if not row:
+            return False
+        download_status = str(row[0] or "").strip().lower()
+        transcript_status = str(row[1] or "").strip().lower()
+        if download_status != "downloaded" or transcript_status != "done":
+            return False
+        transcript_row = conn.execute(
+            """
+            SELECT 1
+            FROM youtube_transcripts
+            WHERE video_id = ?
+              AND (
+                  COALESCE(full_text, '') <> ''
+                  OR segments_json IS NOT NULL
+                  OR whisper_segments_json IS NOT NULL
+              )
+            LIMIT 1
+            """,
+            [video_id],
+        ).fetchone()
+        return bool(transcript_row)
+    finally:
+        conn.close()
+
+
+def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, from_state: str, reason: str) -> None:
+    conn = get_db()
+    try:
+        record_lead_pipeline_event(
+            conn,
+            lead_id=lead_id,
+            event_type="auto_plan_waiting_for_source_ready",
+            detail={
+                "mechanism": "cron_poll",
+                "reason": reason,
+                "reset_to_state": "new",
+                "from_state": from_state,
+                "video_pk": video_pk,
+                "video_id": video_id,
+            },
+            update_state=False,
+        )
+        conn.execute(
+            """
+            UPDATE autopilot_leads
+            SET pipeline_state = 'new'
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND COALESCE(pipeline_state, 'new') IN ('downloaded', 'planning')
+            """,
+            [lead_id],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = AUTOPILOT_PLAN_TIMEOUT_SECONDS) -> bool:
     conn = get_db()
     processed_any = False
@@ -4888,7 +4961,9 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                 CAST(l.brand_id AS VARCHAR),
                 l.first_video_id,
                 COALESCE(l.pipeline_state, 'new'),
-                v.video_id
+                v.video_id,
+                COALESCE(v.download_status, ''),
+                COALESCE(v.transcript_status, '')
             FROM autopilot_leads l
             JOIN youtube_videos v ON v.id = l.first_video_id
             WHERE l.converted_at IS NULL
@@ -4920,6 +4995,22 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
         video_pk = int(row[3])
         pipeline_state = str(row[4] or "new").strip().lower()
         video_id = str(row[5] or "").strip()
+        download_status = str(row[6] or "").strip().lower()
+        transcript_status = str(row[7] or "").strip().lower()
+
+        if not _lead_source_video_ready_for_planning(video_pk, video_id):
+            _route_lead_back_to_download(
+                lead_id,
+                video_pk=video_pk,
+                video_id=video_id,
+                from_state=pipeline_state,
+                reason=(
+                    f"source_not_ready download_status={download_status or 'unknown'} "
+                    f"transcript_status={transcript_status or 'unknown'}"
+                ),
+            )
+            processed_any = True
+            continue
 
         if pipeline_state == "planning":
             started_at = None
@@ -15528,6 +15619,83 @@ def admin_provision_discovery_lead_email(lead_id: str):
             f"Lead provisioned for {result['creator_email']}. Its source video now belongs to that lead's brand.",
             "success",
         )
+    finally:
+        conn.close()
+    return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/leads/<lead_id>/retry-plan", methods=["POST"])
+@require_admin
+def admin_retry_lead_plan(lead_id: str):
+    """Move a failed real lead with a ready source back to the planning queue."""
+    wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest" or request.is_json
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                CAST(l.user_id AS VARCHAR),
+                CAST(l.brand_id AS VARCHAR),
+                l.first_video_id,
+                COALESCE(l.pipeline_state, 'new'),
+                v.video_id
+            FROM autopilot_leads l
+            JOIN youtube_videos v ON v.id = l.first_video_id
+            WHERE CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [lead_id],
+        ).fetchone()
+        if not row:
+            raise ValueError("Lead not found.")
+        owner_user_id = str(row[1] or "").strip()
+        brand_id = str(row[2] or "").strip()
+        video_pk = int(row[3] or 0)
+        pipeline_state = str(row[4] or "new").strip().lower()
+        video_id = str(row[5] or "").strip()
+        if not owner_user_id or not brand_id:
+            raise ValueError("Only provisioned real leads can be retried.")
+        if pipeline_state != "failed":
+            raise ValueError("Only failed leads can be retried from here.")
+        if not _lead_source_video_ready_for_planning(video_pk, video_id):
+            raise ValueError("The source video is not ready yet. Download/transcribe it first.")
+        record_lead_pipeline_event(
+            conn,
+            lead_id=lead_id,
+            event_type="failed_plan_retry_queued",
+            detail={
+                "mechanism": "admin",
+                "reset_to_state": "downloaded",
+                "video_pk": video_pk,
+                "video_id": video_id,
+            },
+            update_state=False,
+        )
+        conn.execute(
+            """
+            UPDATE autopilot_leads
+            SET pipeline_state = 'downloaded'
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            """,
+            [lead_id],
+        )
+        conn.commit()
+    except ValueError as exc:
+        conn.rollback()
+        if wants_json:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        flash(str(exc), "error")
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to retry lead plan %s", lead_id)
+        if wants_json:
+            return jsonify({"ok": False, "error": "Could not queue plan retry."}), 500
+        flash("Could not queue plan retry.", "error")
+    else:
+        if wants_json:
+            return jsonify({"ok": True, "lead_id": lead_id, "pipeline_state": "downloaded"})
+        flash("Plan retry queued. The worker will re-check the ready source and plan it.", "success")
     finally:
         conn.close()
     return redirect(url_for("video_shorts_bp.admin_leads"))

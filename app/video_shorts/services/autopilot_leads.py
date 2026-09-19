@@ -108,6 +108,44 @@ def _normalize_email(value: str | None) -> str:
 _LEAD_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
+def _source_video_ready_for_planning(conn, video_pk: Any) -> bool:
+    try:
+        parsed_video_pk = int(video_pk)
+    except (TypeError, ValueError):
+        return False
+    row = conn.execute(
+        """
+        SELECT video_id, COALESCE(download_status, ''), COALESCE(transcript_status, '')
+        FROM youtube_videos
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [parsed_video_pk],
+    ).fetchone()
+    if not row:
+        return False
+    video_id = str(row[0] or "").strip()
+    download_status = str(row[1] or "").strip().lower()
+    transcript_status = str(row[2] or "").strip().lower()
+    if download_status != "downloaded" or transcript_status != "done" or not video_id:
+        return False
+    transcript_row = conn.execute(
+        """
+        SELECT 1
+        FROM youtube_transcripts
+        WHERE video_id = ?
+          AND (
+              COALESCE(full_text, '') <> ''
+              OR segments_json IS NOT NULL
+              OR whisper_segments_json IS NOT NULL
+          )
+        LIMIT 1
+        """,
+        [video_id],
+    ).fetchone()
+    return bool(transcript_row)
+
+
 def _get_or_create_local_uploads_channel(conn, *, owner_user_id: str, brand_id: str) -> int:
     row = conn.execute(
         """
@@ -395,19 +433,23 @@ def provision_discovery_lead_email(
             source_video_id,
         ],
     )
+    lead_columns = table_columns(conn, AUTOPILOT_LEADS_TABLE)
+    pipeline_state = "downloaded" if _source_video_ready_for_planning(conn, source_video_id) else "new"
+    pipeline_assignment = ", pipeline_state = ?" if "pipeline_state" in lead_columns else ""
     conn.execute(
         f"""
         UPDATE {AUTOPILOT_LEADS_TABLE}
-        SET creator_email = ?, user_id = ?, brand_id = ?, channel_id = ?
+        SET creator_email = ?, user_id = ?, brand_id = ?, channel_id = ?{pipeline_assignment}
         WHERE id = ?
         """,
-        [email, owner_user_id, brand_id, channel_id, lead_id],
+        [email, owner_user_id, brand_id, channel_id, *([pipeline_state] if pipeline_assignment else []), lead_id],
     )
     return {
         "lead_id": lead_id,
         "owner_user_id": owner_user_id,
         "brand_id": brand_id,
         "creator_email": email,
+        "pipeline_state": pipeline_state,
     }
 
 
