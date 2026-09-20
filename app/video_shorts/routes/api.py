@@ -558,6 +558,7 @@ def diagnose_channel(
         "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
         "sweetspot_score": sweetspot.get("score") if sweetspot else None,
         "best_source_video_id": sweetspot.get("video_id") if sweetspot else None,
+        "best_source_video_title": sweetspot.get("title") if sweetspot else None,
         "best_source_video_minutes": sweetspot.get("minutes") if sweetspot else None,
         "_email_candidate_descriptions": recent_video_descriptions,
     }
@@ -669,6 +670,37 @@ def _sweetspot_score_for_minutes(minutes: float) -> Optional[int]:
 
 def _select_sweetspot_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     best: Optional[Dict[str, Any]] = None
+    for candidate in _sweetspot_candidates_from_uploads(recent_uploads, stats_map):
+        score = candidate.get("score")
+        if score is None:
+            continue
+        if best is None:
+            best = candidate
+            continue
+        best_dt = best.get("published_at")
+        candidate_dt = candidate.get("published_at")
+        if int(score or 0) > int(best.get("score") or 0):
+            best = candidate
+        elif int(score or 0) == int(best.get("score") or 0):
+            if candidate_dt and best_dt and candidate_dt > best_dt:
+                best = candidate
+            elif candidate_dt and not best_dt:
+                best = candidate
+            elif not candidate_dt and not best_dt and int(candidate.get("recent_index") or 999) < int(best.get("recent_index") or 999):
+                best = candidate
+    if not best:
+        return None
+    return {
+        "video_id": best["video_id"],
+        "title": best.get("title") or "",
+        "canonical_url": best["canonical_url"],
+        "minutes": best["minutes"],
+        "score": best["score"],
+    }
+
+
+def _sweetspot_candidates_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
     for index, item in enumerate((recent_uploads or [])[:5]):
         video_id = str(item.get("video_id") or "").strip()
         if not video_id:
@@ -680,39 +712,21 @@ def _select_sweetspot_from_uploads(recent_uploads: List[Dict[str, Any]], stats_m
             duration_seconds = 0
         minutes = duration_seconds / 60.0 if duration_seconds > 0 else 0
         score = _sweetspot_score_for_minutes(minutes)
-        if score is None:
-            continue
         published_at = _parse_yt_timestamp(item.get("published_at"))
-        candidate = {
-            "video_id": video_id,
-            "canonical_url": f"https://www.youtube.com/watch?v={video_id}",
-            "minutes": round(minutes, 2),
-            "score": int(score),
-            "published_at": published_at,
-            "recent_index": index,
-        }
-        if best is None:
-            best = candidate
-            continue
-        best_dt = best.get("published_at")
-        candidate_dt = candidate.get("published_at")
-        if score > int(best.get("score") or 0):
-            best = candidate
-        elif score == int(best.get("score") or 0):
-            if candidate_dt and best_dt and candidate_dt > best_dt:
-                best = candidate
-            elif candidate_dt and not best_dt:
-                best = candidate
-            elif not candidate_dt and not best_dt and index < int(best.get("recent_index") or 999):
-                best = candidate
-    if not best:
-        return None
-    return {
-        "video_id": best["video_id"],
-        "canonical_url": best["canonical_url"],
-        "minutes": best["minutes"],
-        "score": best["score"],
-    }
+        candidates.append(
+            {
+                "video_id": video_id,
+                "title": str(details.get("title") or item.get("title") or "").strip(),
+                "canonical_url": f"https://www.youtube.com/watch?v={video_id}",
+                "minutes": round(minutes, 2),
+                "duration_seconds": int(duration_seconds or 0),
+                "score": int(score) if score is not None else None,
+                "published_at": published_at,
+                "published_at_raw": str(item.get("published_at") or "").strip(),
+                "recent_index": index,
+            }
+        )
+    return candidates
 
 
 def select_source_video_for_channel(youtube_channel_id: str) -> Optional[Dict[str, Any]]:
@@ -727,6 +741,27 @@ def select_source_video_for_channel(youtube_channel_id: str) -> Optional[Dict[st
     video_ids = [str(item.get("video_id") or "").strip() for item in recent_uploads if str(item.get("video_id") or "").strip()]
     stats_map = _fetch_video_details(video_ids)
     return _select_sweetspot_from_uploads(recent_uploads, stats_map)
+
+
+def select_source_video_candidates_for_channel(youtube_channel_id: str) -> Dict[str, Any]:
+    clean_channel_id = str(youtube_channel_id or "").strip()
+    if not clean_channel_id:
+        return {"auto_pick": None, "candidates": []}
+    channel_meta = get_channel_metadata(f"https://www.youtube.com/channel/{clean_channel_id}")
+    uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
+    if not uploads_playlist_id:
+        return {"auto_pick": None, "candidates": []}
+    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=5)
+    video_ids = [str(item.get("video_id") or "").strip() for item in recent_uploads if str(item.get("video_id") or "").strip()]
+    stats_map = _fetch_video_details(video_ids)
+    candidates = _sweetspot_candidates_from_uploads(recent_uploads, stats_map)
+    auto_pick = _select_sweetspot_from_uploads(recent_uploads, stats_map)
+    auto_video_id = str((auto_pick or {}).get("video_id") or "")
+    for candidate in candidates:
+        candidate["is_auto_pick"] = bool(auto_video_id and candidate.get("video_id") == auto_video_id)
+        candidate["is_eligible"] = candidate.get("score") is not None
+        candidate.pop("published_at", None)
+    return {"auto_pick": auto_pick, "candidates": candidates}
 
 
 def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -2471,6 +2506,17 @@ def admin_discovery_promote_to_lead():
                 "errors": [{"error": "bad_request", "message": "Provide lead_ids."}],
             }
         ), 400
+    selected_source_by_lead: Dict[int, str] = {}
+    raw_source_map = payload.get("source_video_ids") or payload.get("sourceVideoIds") or {}
+    if isinstance(raw_source_map, dict):
+        for raw_lead_id, raw_video_id in raw_source_map.items():
+            try:
+                mapped_lead_id = int(raw_lead_id)
+            except (TypeError, ValueError):
+                continue
+            selected_source_by_lead[mapped_lead_id] = str(raw_video_id or "").strip()
+    elif len(lead_ids) == 1:
+        selected_source_by_lead[lead_ids[0]] = str(payload.get("source_video_id") or payload.get("sourceVideoId") or "").strip()
 
     promoted: List[Dict[str, Any]] = []
     linked: List[Dict[str, Any]] = []
@@ -2562,7 +2608,28 @@ def admin_discovery_promote_to_lead():
                     linked.append({"id": lead_id, "autopilot_lead_id": str(existing[0]), "reason": "already_a_lead_linked"})
                     continue
 
-                source = select_source_video_for_channel(lead["youtube_channel_id"])
+                selected_source_video_id = selected_source_by_lead.get(lead_id) or ""
+                source = None
+                if selected_source_video_id:
+                    source_options = select_source_video_candidates_for_channel(lead["youtube_channel_id"])
+                    source = next(
+                        (
+                            candidate
+                            for candidate in source_options.get("candidates") or []
+                            if str(candidate.get("video_id") or "").strip() == selected_source_video_id
+                        ),
+                        None,
+                    )
+                    if not source:
+                        conn.execute(
+                            "UPDATE discovery_leads SET promotion_error = ? WHERE id = ?",
+                            ["selected_source_video_not_recent", lead_id],
+                        )
+                        conn.commit()
+                        skipped.append({"id": lead_id, "reason": "selected_source_video_not_recent"})
+                        continue
+                else:
+                    source = select_source_video_for_channel(lead["youtube_channel_id"])
                 if not source:
                     conn.execute(
                         "UPDATE discovery_leads SET promotion_error = ? WHERE id = ?",
@@ -2613,6 +2680,7 @@ def admin_discovery_promote_to_lead():
                         "id": lead_id,
                         "autopilot_lead_id": autopilot["lead_id"],
                         "source_video_id": source.get("video_id"),
+                        "source_video_title": source.get("title"),
                         "source_video_pk": autopilot["video_pk"],
                         "source_video_minutes": source.get("minutes"),
                         "sweetspot_score": source.get("score"),
@@ -2810,6 +2878,54 @@ def admin_lead_discovery_enrich_emails():
             "errors": errors,
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/discovery-source-video-candidates", methods=["POST"])
+def admin_discovery_source_video_candidates():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        payload.update({"lead": {}, "auto_pick": None, "candidates": []})
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    lead_id = _coerce_int_param(payload.get("lead_id"), 0, minimum=0, maximum=2_147_483_647)
+    if not lead_id:
+        return jsonify({"success": False, "lead": {}, "auto_pick": None, "candidates": [], "errors": [{"error": "bad_request", "message": "lead_id is required."}]}), 400
+
+    conn = None
+    try:
+        conn = get_db_readonly()
+        row = conn.execute(
+            """
+            SELECT id, youtube_channel_id, channel_title, creator_email, icp_fit, autopilot_lead_id
+            FROM discovery_leads
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [lead_id],
+        ).fetchone()
+    finally:
+        if conn:
+            conn.close()
+    if not row:
+        return jsonify({"success": False, "lead": {}, "auto_pick": None, "candidates": [], "errors": [{"error": "not_found", "message": "Discovery lead not found."}]}), 404
+    lead = {
+        "id": int(row[0]),
+        "youtube_channel_id": str(row[1] or "").strip(),
+        "channel_title": str(row[2] or "").strip(),
+        "creator_email": str(row[3] or "").strip(),
+        "icp_fit": bool(row[4]) if row[4] is not None else None,
+        "autopilot_lead_id": str(row[5] or "").strip(),
+    }
+    if not lead["youtube_channel_id"]:
+        return jsonify({"success": False, "lead": lead, "auto_pick": None, "candidates": [], "errors": [{"error": "missing_channel_id", "message": "This lead has no YouTube channel id."}]}), 400
+    try:
+        source_options = select_source_video_candidates_for_channel(lead["youtube_channel_id"])
+        return jsonify({"success": True, "lead": lead, **source_options, "errors": []})
+    except Exception as exc:
+        current_app.logger.exception("Discovery source video candidates failed lead_id=%s", lead_id)
+        return jsonify({"success": False, "lead": lead, "auto_pick": None, "candidates": [], "errors": [{"error": "source_candidates_failed", "message": str(exc) or "Could not load source videos."}]}), 500
 
 
 @video_shorts_bp.route("/api/admin/discovery-enrich-emails", methods=["POST"])

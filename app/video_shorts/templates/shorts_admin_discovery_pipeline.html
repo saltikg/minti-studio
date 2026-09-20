@@ -189,6 +189,39 @@
       margin-top: 16px;
       color: rgba(255, 255, 255, 0.62);
     }
+    .source-picker-panel {
+      display: none;
+      min-width: 320px;
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.96);
+      white-space: normal;
+    }
+    .source-picker-panel.is-open {
+      display: block;
+    }
+    .source-picker-option {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .source-picker-option:last-child {
+      border-bottom: 0;
+    }
+    .source-picker-title {
+      color: rgba(255, 255, 255, 0.92);
+      font-weight: 800;
+      line-height: 1.25;
+    }
+    .source-picker-meta {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 0.78rem;
+      margin-top: 2px;
+    }
     @media (max-width: 991.98px) {
       .discovery-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .discovery-action-grid { grid-template-columns: 1fr; }
@@ -523,6 +556,7 @@
                 {% if lead.autopilot_lead_id %}
                   <span class="discovery-status email_enriched">promoted</span>
                 {% elif lead.creator_email and lead.icp_fit is true and lead.status not in ['already_lead', 'dismissed'] %}
+                  <button type="button" class="btn btn-sm btn-outline-light choose-source-video-button" data-lead-id="{{ lead.id }}">Choose video</button>
                   <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}">Promote</button>
                 {% else %}
                   <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Promote</button>
@@ -534,6 +568,9 @@
                 {% endif %}
                 <div class="discovery-muted promote-real-lead-status" data-lead-id="{{ lead.id }}"></div>
                 <div class="discovery-muted discovery-dismiss-status" data-lead-id="{{ lead.id }}"></div>
+                <div class="source-picker-panel" data-source-picker-panel="{{ lead.id }}">
+                  <div class="discovery-muted">Loading recent videos...</div>
+                </div>
               </td>
               <td>
                 <span class="discovery-status {{ lead.status }}">{{ lead.status }}</span>
@@ -555,9 +592,18 @@
               <td>{{ lead.longform_last_60d or 0 }}</td>
               <td>{{ lead.shorts_last_15d or 0 }}</td>
               <td>
-                {{ lead.sweetspot_score if lead.sweetspot_score is not none else '' }}
-                {% if lead.best_source_video_minutes %}
-                  <div class="discovery-muted">{{ "%.1f"|format(lead.best_source_video_minutes|float) }} min</div>
+                {% if lead.source_video_id or lead.source_video_title %}
+                  <div class="fw-semibold">{{ lead.source_video_title or lead.source_video_id }}</div>
+                  {% if lead.source_video_id %}
+                    <div class="discovery-muted">{{ lead.source_video_id }}</div>
+                  {% endif %}
+                {% else %}
+                  {{ lead.sweetspot_score if lead.sweetspot_score is not none else '' }}
+                {% endif %}
+                {% if lead.source_video_minutes %}
+                  <div class="discovery-muted">{{ "%.1f"|format(lead.source_video_minutes|float) }} min{% if lead.source_video_score is not none %} · score {{ lead.source_video_score }}{% endif %}</div>
+                {% elif lead.source_video_score is not none %}
+                  <div class="discovery-muted">score {{ lead.source_video_score }}</div>
                 {% endif %}
               </td>
               <td>{{ 'yes' if lead.icp_fit is true else ('no' if lead.icp_fit is false else '') }}</td>
@@ -756,22 +802,101 @@
         });
       }
 
+      const selectedSourceVideos = new Map();
+
+      function sourceCandidateLabel(candidate) {
+        const minutes = Number(candidate.minutes || 0);
+        const score = candidate.score === null || candidate.score === undefined ? 'ignored' : `score ${candidate.score}`;
+        return `${minutes ? `${minutes.toFixed(1)} min` : 'duration unknown'} · ${score}${candidate.is_auto_pick ? ' · auto-pick' : ''}`;
+      }
+
+      function renderSourcePicker(panel, leadId, data) {
+        const candidates = data.candidates || [];
+        if (!candidates.length) {
+          panel.innerHTML = '<div class="discovery-muted">No recent candidate videos found.</div>';
+          return;
+        }
+        const autoPick = data.auto_pick || {};
+        const selected = selectedSourceVideos.get(String(leadId)) || autoPick.video_id || candidates[0].video_id || '';
+        selectedSourceVideos.set(String(leadId), selected);
+        const html = [
+          '<div class="discovery-muted mb-2">Pick the source video before promoting. Demo generation starts only after Promote.</div>',
+          ...candidates.map((candidate) => {
+            const videoId = String(candidate.video_id || '');
+            const checked = videoId === selected ? 'checked' : '';
+            const disabled = videoId ? '' : 'disabled';
+            const title = String(candidate.title || videoId || 'Untitled video')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+            return `
+              <label class="source-picker-option">
+                <input type="radio" name="source-video-${leadId}" value="${videoId}" ${checked} ${disabled}>
+                <span>
+                  <span class="source-picker-title">${title}</span>
+                  <span class="source-picker-meta">${videoId} · ${sourceCandidateLabel(candidate)}</span>
+                </span>
+              </label>
+            `;
+          })
+        ].join('');
+        panel.innerHTML = html;
+        panel.querySelectorAll('input[type="radio"]').forEach((input) => {
+          input.addEventListener('change', () => {
+            selectedSourceVideos.set(String(leadId), input.value);
+            const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
+            const candidate = candidates.find((item) => String(item.video_id || '') === input.value) || {};
+            if (rowStatus) rowStatus.textContent = `Selected source: ${candidate.title || input.value}`;
+          });
+        });
+      }
+
+      document.querySelectorAll('.choose-source-video-button').forEach((button) => {
+        button.addEventListener('click', async function () {
+          const leadId = button.getAttribute('data-lead-id');
+          const panel = document.querySelector(`.source-picker-panel[data-source-picker-panel="${leadId}"]`);
+          const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
+          if (!panel) return;
+          if (panel.classList.contains('is-open')) {
+            panel.classList.remove('is-open');
+            return;
+          }
+          panel.classList.add('is-open');
+          panel.innerHTML = '<div class="discovery-muted">Loading recent videos...</div>';
+          button.disabled = true;
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_source_video_candidates") }}', { lead_id: leadId });
+            renderSourcePicker(panel, leadId, data);
+          } catch (error) {
+            panel.innerHTML = `<div class="discovery-muted">${error.message || 'Could not load recent videos.'}</div>`;
+            if (rowStatus) rowStatus.textContent = error.message || 'Could not load recent videos.';
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
+
       document.querySelectorAll('.promote-real-lead-button').forEach((button) => {
         button.addEventListener('click', async function () {
           const leadId = button.getAttribute('data-lead-id');
           const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-          const confirmed = window.confirm('Creates a real lead and starts demo generation. This costs compute. Continue?');
+          const selectedSourceVideoId = selectedSourceVideos.get(String(leadId)) || '';
+          const sourceNote = selectedSourceVideoId ? `\n\nSelected source video: ${selectedSourceVideoId}` : '\n\nNo manual source selected; auto-pick will be used.';
+          const confirmed = window.confirm(`Creates a real lead and starts demo generation. This costs compute.${sourceNote}\n\nContinue?`);
           if (!confirmed) return;
           button.disabled = true;
           if (rowStatus) rowStatus.textContent = 'Promoting...';
           try {
-            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', { lead_ids: [leadId] });
+            const payload = { lead_ids: [leadId] };
+            if (selectedSourceVideoId) payload.source_video_id = selectedSourceVideoId;
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', payload);
             const promoted = data.promoted || [];
             const linked = data.linked || [];
             const skipped = data.skipped || [];
             if (promoted.length) {
               const item = promoted[0];
-              if (rowStatus) rowStatus.textContent = `Promoted ${item.autopilot_lead_id}; ${item.source_video_minutes} min. Refresh to see pipeline state.`;
+              if (rowStatus) rowStatus.textContent = `Promoted ${item.autopilot_lead_id}; ${item.source_video_title || item.source_video_id || ''}; ${item.source_video_minutes} min. Refresh to see pipeline state.`;
             } else if (linked.length) {
               const item = linked[0];
               if (rowStatus) rowStatus.textContent = `Linked existing lead ${item.autopilot_lead_id}.`;

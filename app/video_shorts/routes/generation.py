@@ -15642,6 +15642,19 @@ def admin_discovery_lead_pipeline():
             promoted_to_autopilot_at_sql = "promoted_to_autopilot_at" if "promoted_to_autopilot_at" in discovery_columns else "NULL"
             promotion_error_sql = "promotion_error" if "promotion_error" in discovery_columns else "NULL"
             dismissed_at_sql = "dismissed_at" if "dismissed_at" in discovery_columns else "NULL"
+            best_source_video_id_sql = "best_source_video_id" if "best_source_video_id" in discovery_columns else "NULL"
+            promoted_source_video_id_sql = "promoted_source_video_id" if "promoted_source_video_id" in discovery_columns else "NULL"
+            raw_json_sql = "raw_json" if "raw_json" in discovery_columns else "NULL"
+            promoted_source_video_title_sql = (
+                "(SELECT yv.title FROM youtube_videos yv WHERE yv.id = discovery_leads.promoted_source_video_id LIMIT 1)"
+                if "promoted_source_video_id" in discovery_columns
+                else "NULL"
+            )
+            promoted_source_youtube_video_id_sql = (
+                "(SELECT yv.video_id FROM youtube_videos yv WHERE yv.id = discovery_leads.promoted_source_video_id LIMIT 1)"
+                if "promoted_source_video_id" in discovery_columns
+                else "NULL"
+            )
             ready_filter_sql = ""
             if lead_filter == "ready_to_promote":
                 if has_promotion_columns:
@@ -15734,7 +15747,12 @@ def admin_discovery_lead_pipeline():
                     {autopilot_lead_id_sql} AS autopilot_lead_id,
                     {promoted_to_autopilot_at_sql} AS promoted_to_autopilot_at,
                     {promotion_error_sql} AS promotion_error,
-                    {dismissed_at_sql} AS dismissed_at
+                    {dismissed_at_sql} AS dismissed_at,
+                    {best_source_video_id_sql} AS best_source_video_id,
+                    {promoted_source_video_id_sql} AS promoted_source_video_id,
+                    {promoted_source_video_title_sql} AS promoted_source_video_title,
+                    {promoted_source_youtube_video_id_sql} AS promoted_source_youtube_video_id,
+                    {raw_json_sql} AS raw_json
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY
@@ -15746,8 +15764,25 @@ def admin_discovery_lead_pipeline():
                 """,
                 [row_limit, row_offset],
             ).fetchall()
-            leads = [
-                {
+            leads = []
+            for row in rows:
+                raw_payload: Dict[str, Any] = {}
+                try:
+                    raw_value = row[32]
+                    if isinstance(raw_value, dict):
+                        raw_payload = raw_value
+                    elif raw_value:
+                        raw_payload = json.loads(str(raw_value))
+                except Exception:
+                    raw_payload = {}
+                promoted_source_video_title = str(row[30] or "").strip()
+                best_source_video_title = str(raw_payload.get("best_source_video_title") or "").strip()
+                source_video_title = promoted_source_video_title or best_source_video_title
+                source_video_id = str(row[31] or row[28] or "").strip()
+                source_video_minutes = row[23]
+                source_video_score = row[22]
+                leads.append(
+                    {
                     "id": row[0],
                     "youtube_channel_id": str(row[1] or ""),
                     "channel_url": str(row[2] or ""),
@@ -15776,9 +15811,14 @@ def admin_discovery_lead_pipeline():
                     "promoted_to_autopilot_at": _format_datetime_pst(row[25]),
                     "promotion_error": str(row[26] or ""),
                     "dismissed_at": _format_datetime_pst(row[27]),
+                    "best_source_video_id": str(row[28] or ""),
+                    "promoted_source_video_id": row[29],
+                    "source_video_id": source_video_id,
+                    "source_video_title": source_video_title,
+                    "source_video_minutes": source_video_minutes,
+                    "source_video_score": source_video_score,
                 }
-                for row in rows
-            ]
+                )
 
         if has_keywords:
             keyword_row = conn.execute(
@@ -15881,6 +15921,10 @@ def admin_discovery_lead_pipeline():
                 "promoted_to_autopilot_at",
                 "promotion_error",
                 "dismissed_at",
+                "source_video_id",
+                "source_video_title",
+                "source_video_minutes",
+                "source_video_score",
             ]
             lines = [",".join(headers)]
             for lead in leads:
