@@ -518,6 +518,70 @@ def test_priority_claims_paid_before_free(monkeypatch, tmp_path):
     assert second["user_id"] == free_user
 
 
+def test_discovery_render_waits_behind_customer_job(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "discovery_waits_for_customer.duckdb")
+    discovery_user = str(uuid4())
+    customer_user = str(uuid4())
+    _insert_user(discovery_user, "plan_100gb")
+    _insert_user(customer_user, "plan_free")
+
+    discovery_payload = {
+        **_payload(1, "discovery-video"),
+        "job_origin": render_jobs.DISCOVERY_JOB_ORIGIN,
+    }
+    discovery_job = render_jobs.enqueue_render_job(
+        user_id=discovery_user,
+        payload=discovery_payload,
+        input_hash=_input_hash("discovery-video"),
+        priority=render_jobs.DISCOVERY_JOB_PRIORITY,
+    )
+    customer_job = render_jobs.enqueue_render_job(
+        user_id=customer_user,
+        payload=_payload(2, "customer-video"),
+        input_hash=_input_hash("customer-video"),
+    )
+
+    first = render_jobs.claim_next_job("worker-customer-first")
+    render_jobs.mark_job_done(first["id"], {"status": "created"})
+    second = render_jobs.claim_next_job("worker-discovery-second")
+
+    assert discovery_job["job"]["priority"] == render_jobs.DISCOVERY_JOB_PRIORITY
+    assert customer_job["job"]["priority"] == 0
+    assert first["id"] == customer_job["job"]["id"]
+    assert second["id"] == discovery_job["job"]["id"]
+
+
+def test_discovery_render_not_claimed_while_customer_processing(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "discovery_waits_while_customer_processing.duckdb")
+    discovery_user = str(uuid4())
+    customer_user = str(uuid4())
+    _insert_user(discovery_user, "plan_100gb")
+    _insert_user(customer_user, "plan_free")
+
+    customer_job = render_jobs.enqueue_render_job(
+        user_id=customer_user,
+        payload=_payload(1, "customer-processing"),
+        input_hash=_input_hash("customer-processing"),
+    )
+    claimed_customer = render_jobs.claim_next_job("worker-customer-processing")
+    discovery_job = render_jobs.enqueue_render_job(
+        user_id=discovery_user,
+        payload={
+            **_payload(2, "discovery-waiting"),
+            "job_origin": render_jobs.DISCOVERY_JOB_ORIGIN,
+        },
+        input_hash=_input_hash("discovery-waiting"),
+        priority=render_jobs.DISCOVERY_JOB_PRIORITY,
+    )
+    claimed_discovery = render_jobs.claim_next_job("worker-should-wait")
+
+    queued_discovery = render_jobs.get_job(discovery_job["job"]["id"], user_id=discovery_user)
+    assert claimed_customer["id"] == customer_job["job"]["id"]
+    assert claimed_discovery is None
+    assert queued_discovery["status"] == "queued"
+    assert queued_discovery["attempts"] == 0
+
+
 def test_claim_is_atomic_under_concurrency(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "claim_atomic.duckdb")
     user_id = str(uuid4())

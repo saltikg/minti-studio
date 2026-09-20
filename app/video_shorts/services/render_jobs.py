@@ -26,6 +26,8 @@ JOB_TYPE_PUBLISH_SHORT = "publish_short"
 JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK = "instagram_comment_webhook"
 JOB_TYPE_ENRICH_DISCOVERY_EMAILS = "enrich_discovery_emails"
 JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS = "enrich_autopilot_discovery_emails"
+DISCOVERY_JOB_ORIGIN = "discovery_demo"
+DISCOVERY_JOB_PRIORITY = -100
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_PROCESSING = "processing"
 JOB_STATUS_DONE = "done"
@@ -213,6 +215,29 @@ def _fetch_plan_settings(conn, user_id: str) -> Dict[str, Any]:
         "max_concurrent_jobs": max(1, int(row[1] or 1)),
         "plan_id": row[2] or None,
     }
+
+
+def _payload_origin_sql(conn, alias: str = "") -> str:
+    column = f"{alias}.payload_json" if alias else "payload_json"
+    if getattr(conn, "backend_name", "") == "postgres":
+        return f"COALESCE({column}->>'job_origin', '')"
+    return f"COALESCE(json_extract_string({column}, '$.job_origin'), '')"
+
+
+def _discovery_job_clause(conn, alias: str = "") -> str:
+    return f"{_payload_origin_sql(conn, alias)} = '{DISCOVERY_JOB_ORIGIN}'"
+
+
+def _customer_active_exists_sql(conn) -> str:
+    discovery_clause = _discovery_job_clause(conn, "active_jobs")
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM {JOBS_TABLE} active_jobs
+            WHERE active_jobs.status IN (?, ?)
+              AND NOT ({discovery_clause})
+        )
+    """
 
 
 def _count_user_processing(conn, user_id: str) -> int:
@@ -435,6 +460,7 @@ def enqueue_job(
     payload: Dict[str, Any],
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
@@ -460,6 +486,7 @@ def enqueue_job(
             return {"kind": "existing", "job": existing_active}
 
         plan = _fetch_plan_settings(conn, user_id)
+        job_priority = plan["render_priority"] if priority is None else int(priority)
 
         job_id = str(uuid4())
         payload_json = _serialize_json(payload) or "{}"
@@ -485,7 +512,7 @@ def enqueue_job(
                 user_id,
                 job_type,
                 JOB_STATUS_QUEUED,
-                plan["render_priority"],
+                job_priority,
                 payload_json,
                 input_hash,
                 max(1, int(max_attempts or DEFAULT_MAX_ATTEMPTS)),
@@ -653,6 +680,8 @@ def enqueue_admin_proxy_transcript_job(
     brand_id: str,
     video_pk: int,
     acting_admin_id: str,
+    job_origin: Optional[str] = None,
+    priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Atomically reserve a source for proxy audio transcription and enqueue it.
 
@@ -735,19 +764,22 @@ def enqueue_admin_proxy_transcript_job(
             "duration_seconds": source_row[2],
             "previous_download_status": previous_status,
         }
+        if job_origin:
+            payload["job_origin"] = str(job_origin)
         conn.execute(
             f"""
             INSERT INTO {JOBS_TABLE} (
                 id, user_id, type, status, priority, payload_json, input_hash,
                 attempts, max_attempts, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, 0, {_json_value_sql(conn)}, ?, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, {_json_value_sql(conn)}, ?, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             [
                 job_id,
                 owner_user_id,
                 JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
                 JOB_STATUS_QUEUED,
+                int(priority or 0),
                 _serialize_json(payload) or "{}",
                 input_hash,
             ],
@@ -773,6 +805,7 @@ def enqueue_render_job(
     payload: Dict[str, Any],
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     return enqueue_job(
         user_id=user_id,
@@ -780,6 +813,7 @@ def enqueue_render_job(
         payload=payload,
         input_hash=input_hash,
         max_attempts=max_attempts,
+        priority=priority,
     )
 
 
@@ -794,17 +828,28 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
             job_type_clause = "AND type = ?"
             params.append(job_type)
         if backend_name == "postgres":
+            discovery_clause = _discovery_job_clause(conn)
+            customer_active_exists = _customer_active_exists_sql(conn)
             row = conn.execute(
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
                 WHERE status = ?
                   {job_type_clause}
+                  AND NOT (
+                    {discovery_clause}
+                    AND {customer_active_exists}
+                  )
                 ORDER BY priority DESC, created_at ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 """,
-                [JOB_STATUS_QUEUED, *params],
+                [
+                    JOB_STATUS_QUEUED,
+                    *params,
+                    JOB_STATUS_QUEUED,
+                    JOB_STATUS_PROCESSING,
+                ],
             ).fetchone()
             if not row:
                 conn.commit()
@@ -843,16 +888,27 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
             return _row_to_job(updated) if updated else None
 
         with _duckdb_claim_lock:
+            discovery_clause = _discovery_job_clause(conn)
+            customer_active_exists = _customer_active_exists_sql(conn)
             row = conn.execute(
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
                 WHERE status = ?
                   {job_type_clause}
+                  AND NOT (
+                    {discovery_clause}
+                    AND {customer_active_exists}
+                  )
                 ORDER BY priority DESC, created_at ASC
                 LIMIT 1
                 """,
-                [JOB_STATUS_QUEUED, *params],
+                [
+                    JOB_STATUS_QUEUED,
+                    *params,
+                    JOB_STATUS_QUEUED,
+                    JOB_STATUS_PROCESSING,
+                ],
             ).fetchone()
             if not row:
                 conn.commit()

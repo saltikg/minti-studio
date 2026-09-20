@@ -316,6 +316,8 @@ from app.video_shorts.services.youtube_oauth import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
+    DISCOVERY_JOB_ORIGIN,
+    DISCOVERY_JOB_PRIORITY,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_RENDER_SHORT,
@@ -5013,21 +5015,26 @@ def _enqueue_admin_operation_transcribe_source_job(scope: Dict[str, str], row: A
     video_pk = int(row[0])
     video_id = str(row[1] or "").strip()
     duration_seconds = row[3]
+    is_discovery_demo = _is_discovery_demo_scope(scope["owner_user_id"], scope["brand_id"], video_pk)
+    payload = {
+        "quick_session_id": "",
+        "video_pk": video_pk,
+        "video_id": video_id,
+        "duration_seconds": duration_seconds,
+        "brand_id": scope["brand_id"],
+    }
+    if is_discovery_demo:
+        payload["job_origin"] = DISCOVERY_JOB_ORIGIN
     job_input_hash = sha256(
         f"admin-operation-transcribe-source:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")
     ).hexdigest()
     enqueue_result = enqueue_job(
         user_id=scope["owner_user_id"],
         job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
-        payload={
-            "quick_session_id": "",
-            "video_pk": video_pk,
-            "video_id": video_id,
-            "duration_seconds": duration_seconds,
-            "brand_id": scope["brand_id"],
-        },
+        payload=payload,
         input_hash=job_input_hash,
         max_attempts=3,
+        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
     )
     job = enqueue_result.get("job") or {}
     return {
@@ -5368,6 +5375,46 @@ def _enqueue_selected_lead_render(
             "job_id": payload.get("job_id"),
             "message": payload.get("message"),
         }
+
+
+def _is_discovery_demo_scope(owner_user_id: str, brand_id: str, video_pk: Optional[int] = None) -> bool:
+    clean_owner = str(owner_user_id or "").strip()
+    clean_brand = str(brand_id or "").strip()
+    if not clean_owner or not clean_brand:
+        return False
+    conn = get_db_readonly()
+    try:
+        if not autopilot_leads_table_ready(conn):
+            return False
+        video_clause = ""
+        params: List[Any] = [clean_owner, clean_brand]
+        if video_pk is not None:
+            video_clause = "AND first_video_id = ?"
+            params.append(int(video_pk))
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM autopilot_leads
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND converted_at IS NULL
+              {video_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        current_app.logger.debug(
+            "Could not resolve discovery demo scope owner=%s brand=%s video_pk=%s",
+            clean_owner,
+            clean_brand,
+            video_pk,
+            exc_info=True,
+        )
+        return False
+    finally:
+        conn.close()
 
 
 def process_planned_lead_autogenerate(
@@ -16863,19 +16910,24 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
     job_input_hash = sha256(
         f"admin-operation-youtube-ingest:{scope['owner_user_id']}:{scope['brand_id']}:{video_pk}:{video_id}".encode("utf-8")
     ).hexdigest()
+    is_discovery_demo = _is_discovery_demo_scope(scope["owner_user_id"], scope["brand_id"], int(video_pk))
+    payload = {
+        "quick_session_id": "",
+        "video_pk": int(video_pk),
+        "video_id": video_id,
+        "video_url": video_url,
+        "duration_seconds": row[3],
+        "brand_id": scope["brand_id"],
+    }
+    if is_discovery_demo:
+        payload["job_origin"] = DISCOVERY_JOB_ORIGIN
     enqueue_result = enqueue_job(
         user_id=scope["owner_user_id"],
         job_type=JOB_TYPE_INGEST_YOUTUBE,
-        payload={
-            "quick_session_id": "",
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "video_url": video_url,
-            "duration_seconds": row[3],
-            "brand_id": scope["brand_id"],
-        },
+        payload=payload,
         input_hash=job_input_hash,
         max_attempts=6,
+        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
     )
     job = enqueue_result.get("job") or {}
     return {
@@ -16999,11 +17051,14 @@ def admin_operation_proxy_transcribe_lead_video(brand_id: str, video_pk: int):
     """Queue proxy audio transcription without altering the full-video downloader."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
     _require_active_lead_workspace(scope)
+    is_discovery_demo = _is_discovery_demo_scope(scope["owner_user_id"], scope["brand_id"], video_pk)
     enqueue_result = enqueue_admin_proxy_transcript_job(
         owner_user_id=str(scope["owner_user_id"]),
         brand_id=str(scope["brand_id"]),
         video_pk=video_pk,
         acting_admin_id=str(scope["acting_admin_id"]),
+        job_origin=DISCOVERY_JOB_ORIGIN if is_discovery_demo else None,
+        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
     )
     kind = str(enqueue_result.get("kind") or "")
     if kind == "not_found":
@@ -22424,10 +22479,14 @@ def autoclip_video(video_pk):
                 "end": end,
                 "options": job_options,
             }
+            is_discovery_demo = _is_discovery_demo_scope(target_owner_user_id, brand_id, int(video_pk))
+            if is_discovery_demo:
+                payload["job_origin"] = DISCOVERY_JOB_ORIGIN
             enqueue_result = enqueue_render_job(
                 user_id=str(target_owner_user_id),
                 payload=payload,
                 input_hash=input_hash,
+                priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
             )
             kind = enqueue_result.get("kind")
             job = enqueue_result.get("job") or {}
@@ -22441,6 +22500,7 @@ def autoclip_video(video_pk):
                         user_id=str(target_owner_user_id),
                         payload=payload,
                         input_hash=input_hash,
+                        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
                     )
                     kind = enqueue_result.get("kind")
                     job = enqueue_result.get("job") or {}
