@@ -13035,6 +13035,35 @@ def _load_admin_outreach_emails(
             return None
         return max(0, int((now_utc - dt_value.astimezone(timezone.utc)).total_seconds() // 86400))
 
+    def _days_until(value: Any) -> int | None:
+        dt_value = _as_aware_utc(value)
+        if not dt_value:
+            return None
+        return max(0, int((dt_value.astimezone(timezone.utc) - now_utc).total_seconds() // 86400))
+
+    def _send_timing_label(*, sent_at: Any, scheduled_at: Any, status: str) -> str:
+        if sent_at:
+            days = _days_since(sent_at)
+            if days is None:
+                return "sent"
+            if days == 0:
+                return "sent today"
+            if days == 1:
+                return "sent 1 day ago"
+            return f"sent {days} days ago"
+        if scheduled_at:
+            days = _days_until(scheduled_at)
+            if days is None:
+                return "scheduled"
+            if days == 0:
+                return "scheduled today"
+            if days == 1:
+                return "scheduled tomorrow"
+            return f"scheduled in {days} days"
+        if status == "scheduled":
+            return "scheduled"
+        return ""
+
     def _sort_timestamp(value: Any) -> float:
         dt_value = _as_aware_utc(value)
         if not dt_value:
@@ -13101,6 +13130,11 @@ def _load_admin_outreach_emails(
         latest_send_share_link_id = int(row[17]) if row[17] is not None else None
         cancel_share_link_id = latest_send_share_link_id
         cancel_schedule_id = int(row[16]) if row[16] is not None else None
+        send_timing_label = _send_timing_label(
+            sent_at=row[26] or row[9],
+            scheduled_at=row[20] or row[10],
+            status=effective_status,
+        )
         if not is_cancelled_latest:
             for period_key, period_start in periods.items():
                 if _in_period(row[9], period_start):
@@ -13152,6 +13186,7 @@ def _load_admin_outreach_emails(
                 "error_short": (error_text[:120] + "...") if len(error_text) > 120 else error_text,
                 "latest_sent_at_for_row": row[26],
                 "latest_sent_at_for_row_pst": _format_datetime_pst(row[26]),
+                "send_timing_label": send_timing_label,
                 "period_send_date": send_date,
                 "visit_count": visit_count,
                 "repeat_visited": repeat_visited,

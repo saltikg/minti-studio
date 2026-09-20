@@ -301,7 +301,7 @@
               </td>
               <td>
                 <div>{{ item.latest_sent_at_for_row_pst or item.latest_scheduled_at_pst or '—' }}</div>
-                {% if item.latest_provider_message_id %}<div class="admin-outreach-muted">{{ item.latest_provider_message_id }}</div>{% endif %}
+                {% if item.send_timing_label %}<div class="admin-outreach-muted">{{ item.send_timing_label }}</div>{% endif %}
               </td>
               <td>{{ item.days_since_first_email if item.days_since_first_email is not none else '—' }}</td>
               <td>
