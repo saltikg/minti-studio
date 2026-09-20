@@ -3587,8 +3587,10 @@
                   class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
                   id="clip-schedule-all-btn"
                   data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
-                  {% if not youtube_connected %}
-                    disabled title="Connect YouTube first"
+                  data-instagram-connected="{{ '1' if instagram_connected else '0' }}"
+                  data-facebook-connected="{{ '1' if facebook_connected else '0' }}"
+                  {% if not (youtube_connected or instagram_connected or facebook_connected) %}
+                    disabled title="Connect a publishing platform first"
                   {% elif schedule_all_ns.count == 0 %}
                     disabled title="No created clips to schedule yet — use Create clips first."
                   {% endif %}>
@@ -4010,13 +4012,13 @@
                                 data-facebook-mode="{{ row.facebook_mode or '' }}"
                                 data-facebook-publish-at="{{ row.facebook_publish_at or '' }}"
                                 data-button-label="{% if row.publish_status == 'scheduled' %}Update schedule{% elif row.publish_status == 'uploaded' %}Update upload{% else %}Schedule & publish{% endif %}"
-                                {% if not youtube_connected %}disabled title="YouTube connection not set up"{% endif %}>
+                                {% if not (youtube_connected or instagram_connected or facebook_connected) %}disabled title="No publishing platform connected"{% endif %}>
                                 <i class="bi bi-youtube"></i>
                                 Schedule
                               </button>
-                              {% if not youtube_connected %}
+                              {% if not (youtube_connected or instagram_connected or facebook_connected) %}
                                 <div class="small text-warning mt-2">
-                                  Connect YouTube in
+                                  Connect a publishing platform in
                                   <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Connections</a>
                                   to enable scheduling.
                                 </div>
@@ -4221,7 +4223,7 @@
                   </div>
                   <div class="d-flex align-items-center gap-3 flex-wrap">
                     <div class="form-check form-switch text-white-50">
-                      <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" checked>
+                      <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% else %}disabled{% endif %}>
                       <label class="form-check-label small" for="youtubeEnableToggle">Enabled</label>
                     </div>
                     <span class="badge text-white bg-success" id="youtubeStatusBadge">Now</span>
@@ -4272,12 +4274,18 @@
                 </div>
                 <div class="card-body pt-0">
                   <div class="mb-3">
+                    {% if not instagram_connected %}
+                      <div class="small text-warning mb-2">
+                        Instagram is not connected. Please connect it in
+                        <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Social Connect</a>.
+                      </div>
+                    {% endif %}
                     <div class="form-check form-switch">
-                      <input class="form-check-input" type="checkbox" role="switch" id="instagramReelToggle" name="schedule_instagram_reel">
+                      <input class="form-check-input" type="checkbox" role="switch" id="instagramReelToggle" name="schedule_instagram_reel" {% if not instagram_connected %}disabled{% endif %}>
                       <label class="form-check-label" for="instagramReelToggle">Share as Reel</label>
                     </div>
                     <div class="form-check form-switch mt-2">
-                      <input class="form-check-input" type="checkbox" role="switch" id="instagramFeedToggle" name="schedule_instagram_feed">
+                      <input class="form-check-input" type="checkbox" role="switch" id="instagramFeedToggle" name="schedule_instagram_feed" {% if not instagram_connected %}disabled{% endif %}>
                       <label class="form-check-label" for="instagramFeedToggle">Share as feed video</label>
                     </div>
                     <div class="form-check mt-2">
@@ -8408,6 +8416,12 @@ const scheduleAllState = {
   running: false,
 };
 
+const connectedPublishPlatforms = {
+  youtube: {{ youtube_connected | tojson }},
+  instagram: {{ instagram_connected | tojson }},
+  facebook: {{ facebook_connected | tojson }},
+};
+
 const scheduleAllElements = () => ({
   button: document.getElementById("clip-schedule-all-btn"),
   modal: document.getElementById("scheduleAllClipsModal"),
@@ -8536,11 +8550,13 @@ const updateScheduleAllButtonState = () => {
   if (!button) {
     return;
   }
-  const youtubeConnected = button.dataset.youtubeConnected === "1";
+  const hasConnectedPlatform = button.dataset.youtubeConnected === "1" ||
+    button.dataset.instagramConnected === "1" ||
+    button.dataset.facebookConnected === "1";
   const eligibleCount = getScheduleAllEligibleClips().length;
-  button.disabled = scheduleAllState.running || !youtubeConnected || eligibleCount === 0;
-  if (!youtubeConnected) {
-    button.title = "Connect YouTube first";
+  button.disabled = scheduleAllState.running || !hasConnectedPlatform || eligibleCount === 0;
+  if (!hasConnectedPlatform) {
+    button.title = "Connect a publishing platform first";
   } else if (!eligibleCount) {
     button.title = "No created clips to schedule yet — use Create clips first.";
   } else {
@@ -8618,7 +8634,7 @@ const markClipAsScheduled = (clip, publishAt) => {
   }
 };
 
-const scheduleOneClipToYoutube = async (clip, publishAt) => {
+const scheduleOneClipToConnectedPlatforms = async (clip, publishAt) => {
   const uploadForm = document.getElementById("youtube-upload-form");
   const uploadUrl = uploadForm?.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
   const body = new URLSearchParams();
@@ -8627,8 +8643,18 @@ const scheduleOneClipToYoutube = async (clip, publishAt) => {
   body.set("video_pk", "{{ video.id }}");
   body.set("title", clip.title || "");
   body.set("description", clip.description || "");
-  body.set("youtube_enabled", "on");
   body.set("publish_at", publishAt);
+  if (connectedPublishPlatforms.youtube) {
+    body.set("youtube_enabled", "on");
+  }
+  if (connectedPublishPlatforms.instagram) {
+    body.set("schedule_instagram_reel", "on");
+    body.set("instagram_mode", "sync");
+  }
+  if (connectedPublishPlatforms.facebook) {
+    body.set("schedule_facebook_reel", "on");
+    body.set("facebook_mode", "sync");
+  }
   const response = await fetch(uploadUrl, {
     method: "POST",
     body,
@@ -8678,7 +8704,7 @@ const runScheduleAllClips = async () => {
   for (const [index, clip] of clips.entries()) {
     const publishAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
     try {
-      await scheduleOneClipToYoutube(clip, publishAt);
+      await scheduleOneClipToConnectedPlatforms(clip, publishAt);
       scheduledCount += 1;
       markClipAsScheduled(clip, publishAt);
       setScheduleAllFeedback(`Scheduled ${scheduledCount} of ${clips.length} clips…`, "text-white-50");
@@ -9473,7 +9499,7 @@ const youtubeModalContext = (() => {
   if (modalEl) {
     modalEl.addEventListener("show.bs.modal", () => {
       if (youtubeEnableToggle) {
-        youtubeEnableToggle.checked = true;
+        youtubeEnableToggle.checked = connectedPublishPlatforms.youtube;
       }
       syncYoutubeState();
     });
@@ -9582,7 +9608,7 @@ const instagramModalControls = (() => {
     updateBadge(enabled, mode);
   };
   const reset = () => {
-    reelToggle.checked = false;
+    reelToggle.checked = connectedPublishPlatforms.instagram && !reelToggle.disabled;
     feedToggle.checked = false;
     modeRadios.forEach((radio) => {
       radio.checked = radio.value === "sync";
@@ -9819,7 +9845,7 @@ const facebookModalControls = (() => {
     updateBadge(enabled, mode);
   };
   const reset = () => {
-    reelToggle.checked = false;
+    reelToggle.checked = connectedPublishPlatforms.facebook && !reelToggle.disabled;
     feedToggle.checked = false;
     modeRadios.forEach((radio) => {
       radio.checked = radio.value === "sync";
