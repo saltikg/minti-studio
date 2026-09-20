@@ -1412,6 +1412,11 @@ def run_worker_loop() -> None:
             except Exception:
                 app.logger.exception("Approved lead auto-schedule polling failed")
             try:
+                if generation.process_due_youtube_publish_reconcile():
+                    processed_any = True
+            except Exception:
+                app.logger.exception("YouTube publish reconcile polling failed")
+            try:
                 if process_due_discovery_automation_cycle():
                     processed_any = True
             except Exception:

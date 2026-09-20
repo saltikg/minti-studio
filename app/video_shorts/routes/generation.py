@@ -7124,6 +7124,216 @@ def _refresh_plan_publish_status_from_youtube(video_id: str, entries: List[Dict[
     )
 
 
+_YOUTUBE_PUBLISH_RECONCILE_LAST_RUN_TS = 0.0
+_YOUTUBE_PUBLISH_RECONCILE_INTERVAL_SECONDS = 20 * 60
+_YOUTUBE_PUBLISH_RECONCILE_BATCH_SIZE = 200
+_YOUTUBE_PUBLISH_RECONCILE_API_BATCH_SIZE = 50
+
+
+def _mark_generated_youtube_video_published(
+    conn,
+    *,
+    generated_video_id: Any,
+    source_video_id: str,
+    clip_filename: str,
+    youtube_video_id: str,
+    published_at: str,
+) -> bool:
+    if not generated_video_id:
+        return False
+    conn.execute(
+        """
+        UPDATE shorts_generated_videos
+           SET publish_status = 'published',
+               published_at = COALESCE(published_at, ?),
+               youtube_published_at = COALESCE(youtube_published_at, ?),
+               primary_publish_platform = COALESCE(primary_publish_platform, 'youtube'),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+        """,
+        [published_at, published_at, generated_video_id],
+    )
+
+    if not source_video_id:
+        return True
+    try:
+        entries = _load_plan_entries(source_video_id)
+    except Exception:
+        current_app.logger.exception(
+            "YouTube publish reconcile could not load plan source_video_id=%s",
+            source_video_id,
+        )
+        return True
+    if not entries:
+        return True
+
+    changed = False
+    clean_clip = str(clip_filename or "").strip()
+    clean_youtube_id = str(youtube_video_id or "").strip()
+    for entry in entries:
+        entry_clip = str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()
+        entry_youtube_id = str(entry.get("yt_video_id") or entry.get("youtube_video_id") or "").strip()
+        if (clean_clip and entry_clip == clean_clip) or (clean_youtube_id and entry_youtube_id == clean_youtube_id):
+            entry["publish_status"] = "published"
+            entry["yt_status"] = "published"
+            if clean_youtube_id and not entry.get("yt_video_id"):
+                entry["yt_video_id"] = clean_youtube_id
+            changed = True
+            break
+    if changed:
+        try:
+            _write_plan_entries(source_video_id, entries)
+        except Exception:
+            current_app.logger.exception(
+                "YouTube publish reconcile could not write plan source_video_id=%s",
+                source_video_id,
+            )
+    return True
+
+
+def reconcile_overdue_youtube_publish_statuses(
+    *,
+    limit: int = _YOUTUBE_PUBLISH_RECONCILE_BATCH_SIZE,
+) -> Dict[str, int]:
+    limit = max(1, min(int(limit or _YOUTUBE_PUBLISH_RECONCILE_BATCH_SIZE), 500))
+    conn = get_db()
+    checked = 0
+    updated = 0
+    skipped_token = 0
+    missing = 0
+    private_or_processing = 0
+    api_calls = 0
+    try:
+        rows = conn.execute(
+            """
+            SELECT id,
+                   CAST(user_id AS VARCHAR),
+                   CAST(brand_id AS VARCHAR),
+                   CAST(source_video_id AS VARCHAR),
+                   clip_filename,
+                   youtube_video_id,
+                   planned_publish_at
+              FROM shorts_generated_videos
+             WHERE lower(coalesce(publish_status, '')) = 'scheduled'
+               AND planned_publish_at IS NOT NULL
+               AND planned_publish_at <= now()
+               AND youtube_video_id IS NOT NULL
+             ORDER BY planned_publish_at ASC
+             LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        if not rows:
+            return {
+                "checked": 0,
+                "updated": 0,
+                "skipped_token": 0,
+                "missing": 0,
+                "private_or_processing": 0,
+                "api_calls": 0,
+            }
+
+        grouped: Dict[Tuple[str, str], List[Any]] = {}
+        for row in rows:
+            user_id = str(row[1] or "").strip()
+            brand_id = str(row[2] or "").strip()
+            grouped.setdefault((user_id, brand_id), []).append(row)
+
+        published_at = datetime.utcnow().replace(microsecond=0).isoformat()
+        for (user_id, brand_id), group_rows in grouped.items():
+            if not user_id or not has_refresh_token(user_id=user_id, brand_id=brand_id or None):
+                skipped_token += len(group_rows)
+                current_app.logger.info(
+                    "YouTube publish reconcile skipped owner user_id=%s brand_id=%s rows=%s missing_token=1",
+                    user_id or "-",
+                    brand_id or "-",
+                    len(group_rows),
+                )
+                continue
+            by_youtube_id: Dict[str, List[Any]] = {}
+            youtube_ids: List[str] = []
+            for row in group_rows:
+                youtube_id = str(row[5] or "").strip()
+                if not youtube_id:
+                    continue
+                if youtube_id not in by_youtube_id:
+                    youtube_ids.append(youtube_id)
+                by_youtube_id.setdefault(youtube_id, []).append(row)
+
+            for start in range(0, len(youtube_ids), _YOUTUBE_PUBLISH_RECONCILE_API_BATCH_SIZE):
+                batch_ids = youtube_ids[start : start + _YOUTUBE_PUBLISH_RECONCILE_API_BATCH_SIZE]
+                api_calls += 1
+                try:
+                    statuses = fetch_video_statuses(batch_ids, user_id=user_id, brand_id=brand_id or None)
+                except Exception:
+                    current_app.logger.exception(
+                        "YouTube publish reconcile API failed user_id=%s brand_id=%s batch_size=%s",
+                        user_id,
+                        brand_id or "-",
+                        len(batch_ids),
+                    )
+                    continue
+                for youtube_id in batch_ids:
+                    status = statuses.get(youtube_id) or {}
+                    if not status:
+                        missing += len(by_youtube_id.get(youtube_id) or [])
+                        continue
+                    privacy_status = str(status.get("privacyStatus") or "").strip().lower()
+                    upload_status = str(status.get("uploadStatus") or "").strip().lower()
+                    rows_for_video = by_youtube_id.get(youtube_id) or []
+                    checked += len(rows_for_video)
+                    if privacy_status not in {"public", "unlisted"} or upload_status != "processed":
+                        private_or_processing += len(rows_for_video)
+                        continue
+                    for row in rows_for_video:
+                        if _mark_generated_youtube_video_published(
+                            conn,
+                            generated_video_id=row[0],
+                            source_video_id=str(row[3] or "").strip(),
+                            clip_filename=str(row[4] or "").strip(),
+                            youtube_video_id=youtube_id,
+                            published_at=published_at,
+                        ):
+                            updated += 1
+        conn.commit()
+        if checked or updated or skipped_token:
+            current_app.logger.info(
+                "YouTube publish reconcile checked=%s updated=%s skipped_token=%s missing=%s private_or_processing=%s api_calls=%s",
+                checked,
+                updated,
+                skipped_token,
+                missing,
+                private_or_processing,
+                api_calls,
+            )
+        return {
+            "checked": checked,
+            "updated": updated,
+            "skipped_token": skipped_token,
+            "missing": missing,
+            "private_or_processing": private_or_processing,
+            "api_calls": api_calls,
+        }
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def process_due_youtube_publish_reconcile(*, force: bool = False) -> bool:
+    global _YOUTUBE_PUBLISH_RECONCILE_LAST_RUN_TS
+    now = time.time()
+    if not force and (now - _YOUTUBE_PUBLISH_RECONCILE_LAST_RUN_TS) < _YOUTUBE_PUBLISH_RECONCILE_INTERVAL_SECONDS:
+        return False
+    _YOUTUBE_PUBLISH_RECONCILE_LAST_RUN_TS = now
+    result = reconcile_overdue_youtube_publish_statuses(limit=_YOUTUBE_PUBLISH_RECONCILE_BATCH_SIZE)
+    return bool(int(result.get("checked") or 0) or int(result.get("updated") or 0) or int(result.get("skipped_token") or 0))
+
+
 def _build_display_timing(start: Any, end: Any, plan_start: Any = None, plan_end: Any = None) -> Dict[str, Optional[str]]:
     display_start = _to_float(plan_start if plan_start is not None else start)
     display_end = _to_float(plan_end if plan_end is not None else end)
