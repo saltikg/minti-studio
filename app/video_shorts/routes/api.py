@@ -2507,8 +2507,8 @@ def admin_discovery_promote_to_lead():
             }
         ), 400
     selected_source_by_lead: Dict[int, str] = {}
-    raw_source_map = payload.get("source_video_ids") or payload.get("sourceVideoIds") or {}
-    if isinstance(raw_source_map, dict):
+    raw_source_map = payload.get("source_video_ids") or payload.get("sourceVideoIds")
+    if isinstance(raw_source_map, dict) and raw_source_map:
         for raw_lead_id, raw_video_id in raw_source_map.items():
             try:
                 mapped_lead_id = int(raw_lead_id)
