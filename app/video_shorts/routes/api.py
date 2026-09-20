@@ -999,6 +999,28 @@ def _lead_discovery_existing_lead(conn, youtube_channel_id: str) -> Optional[Dic
     return None
 
 
+def _lead_discovery_dismissed(conn, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
+    channel_id = str(youtube_channel_id or "").strip()
+    if not channel_id:
+        return None
+    discovery_columns = table_columns(conn, "discovery_leads")
+    if "youtube_channel_id" not in discovery_columns or "status" not in discovery_columns:
+        return None
+    row = conn.execute(
+        """
+        SELECT id, status
+        FROM discovery_leads
+        WHERE youtube_channel_id = ?
+          AND status = 'dismissed'
+        LIMIT 1
+        """,
+        [channel_id],
+    ).fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "status": str(row[1] or "dismissed")}
+
+
 def _persist_already_lead_discovery_row(channel_id: str, matched_keyword: str, existing_lead: Dict[str, Any]) -> str:
     clean_channel_id = str(channel_id or "").strip()
     if not clean_channel_id:
@@ -1166,7 +1188,7 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
                 email_source_url = COALESCE(NULLIF(EXCLUDED.email_source_url, ''), discovery_leads.email_source_url),
                 matched_keyword = COALESCE(NULLIF(EXCLUDED.matched_keyword, ''), discovery_leads.matched_keyword),
                 status = CASE
-                    WHEN discovery_leads.status IN ('email_enriched', 'contacted', 'converted', 'archived') THEN discovery_leads.status
+                    WHEN discovery_leads.status IN ('dismissed', 'email_enriched', 'contacted', 'converted', 'archived') THEN discovery_leads.status
                     WHEN discovery_leads.status = 'icp_qualified' AND EXCLUDED.status = 'discovered' THEN discovery_leads.status
                     ELSE EXCLUDED.status
                 END,
@@ -2105,14 +2127,18 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
     enrichment_candidates = list(candidates_by_channel.values())[:max_channels_enriched]
     channels_enriched = 0
     already_lead_skipped = 0
+    dismissed_skipped = 0
     for candidate in enrichment_candidates:
         channel_id = candidate["channel_id"]
         try:
             existing_lead = None
+            dismissed_lead = None
             conn = None
             try:
                 conn = get_db_readonly()
                 existing_lead = _lead_discovery_existing_lead(conn, channel_id)
+                if not existing_lead:
+                    dismissed_lead = _lead_discovery_dismissed(conn, channel_id)
             finally:
                 if conn:
                     conn.close()
@@ -2131,6 +2157,20 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                         "already_lead": True,
                         "already_lead_source": existing_lead.get("source"),
                         "autopilot_lead_id": existing_lead.get("autopilot_lead_id"),
+                    }
+                )
+                continue
+            if dismissed_lead:
+                dismissed_skipped += 1
+                matched_keyword = str(candidate.get("matched_keyword") or "").strip()
+                results.append(
+                    {
+                        "channel_id": channel_id,
+                        "channel_url": f"https://www.youtube.com/channel/{channel_id}",
+                        "matched_keyword": matched_keyword,
+                        "status": "dismissed",
+                        "dismissed": True,
+                        "discovery_lead_id": dismissed_lead.get("id"),
                     }
                 )
                 continue
@@ -2217,6 +2257,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         "unique_channel_ids": len(candidates_by_channel),
         "channels_enriched": channels_enriched,
         "already_lead_skipped": already_lead_skipped,
+        "dismissed_skipped": dismissed_skipped,
         "rows_returned": len(results),
         "rows_passing_default_thresholds": sum(1 for row in results if _passes_default_thresholds(row)),
         "persistence": persistence_counts,
@@ -2846,6 +2887,152 @@ def admin_discovery_enrich_emails():
             "errors": [],
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/discovery-dismiss-lead", methods=["POST"])
+def admin_discovery_dismiss_lead():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    lead_id = _coerce_int_param(payload.get("lead_id"), 0, minimum=0, maximum=2_147_483_647)
+    if not lead_id:
+        return jsonify({"success": False, "errors": [{"error": "bad_request", "message": "lead_id is required."}]}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        if "dismissed_at" not in columns:
+            return jsonify(
+                {
+                    "success": False,
+                    "errors": [{"error": "schema_missing", "message": "Missing discovery_leads.dismissed_at. Run the manual ALTER first."}],
+                }
+            ), 500
+        row = conn.execute(
+            """
+            UPDATE discovery_leads
+            SET status = 'dismissed',
+                dismissed_at = CURRENT_TIMESTAMP,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            RETURNING id, youtube_channel_id, channel_title, status, dismissed_at
+            """,
+            [lead_id],
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return jsonify({"success": False, "errors": [{"error": "not_found", "message": "Discovery lead not found."}]}), 404
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "lead": {
+                    "id": row[0],
+                    "youtube_channel_id": str(row[1] or ""),
+                    "channel_title": str(row[2] or ""),
+                    "status": str(row[3] or "dismissed"),
+                    "dismissed_at": str(row[4] or ""),
+                },
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Discovery lead dismiss failed lead_id=%s", lead_id)
+        return jsonify({"success": False, "errors": [{"error": "dismiss_failed", "message": str(exc) or "Dismiss failed."}]}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+@video_shorts_bp.route("/api/admin/discovery-restore-lead", methods=["POST"])
+def admin_discovery_restore_lead():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        return jsonify(payload), status
+
+    payload = request.get_json(silent=True) or {}
+    lead_id = _coerce_int_param(payload.get("lead_id"), 0, minimum=0, maximum=2_147_483_647)
+    if not lead_id:
+        return jsonify({"success": False, "errors": [{"error": "bad_request", "message": "lead_id is required."}]}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        columns = table_columns(conn, "discovery_leads")
+        if "dismissed_at" not in columns:
+            return jsonify(
+                {
+                    "success": False,
+                    "errors": [{"error": "schema_missing", "message": "Missing discovery_leads.dismissed_at. Run the manual ALTER first."}],
+                }
+            ), 500
+        existing = conn.execute(
+            """
+            SELECT creator_email, icp_fit
+            FROM discovery_leads
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [lead_id],
+        ).fetchone()
+        if not existing:
+            return jsonify({"success": False, "errors": [{"error": "not_found", "message": "Discovery lead not found."}]}), 404
+        icp_value = existing[1]
+        icp_true = icp_value is True or str(icp_value).strip().lower() in {"1", "t", "true", "yes"}
+        icp_false = icp_value is False or str(icp_value).strip().lower() in {"0", "f", "false", "no"}
+        if str(existing[0] or "").strip():
+            restore_status = "email_enriched"
+        elif icp_true:
+            restore_status = "icp_qualified"
+        elif icp_false:
+            restore_status = "disqualified"
+        else:
+            restore_status = "discovered"
+        row = conn.execute(
+            """
+            UPDATE discovery_leads
+            SET status = ?,
+                dismissed_at = NULL,
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            RETURNING id, youtube_channel_id, channel_title, status
+            """,
+            [restore_status, lead_id],
+        ).fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "lead": {
+                    "id": row[0],
+                    "youtube_channel_id": str(row[1] or ""),
+                    "channel_title": str(row[2] or ""),
+                    "status": str(row[3] or restore_status),
+                },
+                "errors": [],
+            }
+        )
+    except Exception as exc:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Discovery lead restore failed lead_id=%s", lead_id)
+        return jsonify({"success": False, "errors": [{"error": "restore_failed", "message": str(exc) or "Restore failed."}]}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @video_shorts_bp.route("/api/admin/discovery-automation/toggle", methods=["POST"])

@@ -15641,6 +15641,7 @@ def admin_discovery_lead_pipeline():
             autopilot_lead_id_sql = "autopilot_lead_id" if "autopilot_lead_id" in discovery_columns else "NULL"
             promoted_to_autopilot_at_sql = "promoted_to_autopilot_at" if "promoted_to_autopilot_at" in discovery_columns else "NULL"
             promotion_error_sql = "promotion_error" if "promotion_error" in discovery_columns else "NULL"
+            dismissed_at_sql = "dismissed_at" if "dismissed_at" in discovery_columns else "NULL"
             ready_filter_sql = ""
             if lead_filter == "ready_to_promote":
                 if has_promotion_columns:
@@ -15648,7 +15649,7 @@ def admin_discovery_lead_pipeline():
                     WHERE icp_fit IS TRUE
                       AND COALESCE(creator_email, '') <> ''
                       AND COALESCE(autopilot_lead_id, '') = ''
-                      AND COALESCE(status, '') <> 'already_lead'
+                      AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
                       AND NOT EXISTS (
                           SELECT 1
                           FROM autopilot_leads al
@@ -15659,13 +15660,15 @@ def admin_discovery_lead_pipeline():
                     ready_filter_sql = """
                     WHERE icp_fit IS TRUE
                       AND COALESCE(creator_email, '') <> ''
-                      AND COALESCE(status, '') <> 'already_lead'
+                      AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
                       AND NOT EXISTS (
                           SELECT 1
                           FROM autopilot_leads al
                           WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
                       )
                     """
+            elif lead_filter == "dismissed":
+                ready_filter_sql = "WHERE COALESCE(status, '') = 'dismissed'"
             for row in conn.execute(
                 """
                 SELECT COALESCE(status, 'discovered') AS status, COUNT(*)
@@ -15730,7 +15733,8 @@ def admin_discovery_lead_pipeline():
                     {best_source_video_minutes_sql} AS best_source_video_minutes,
                     {autopilot_lead_id_sql} AS autopilot_lead_id,
                     {promoted_to_autopilot_at_sql} AS promoted_to_autopilot_at,
-                    {promotion_error_sql} AS promotion_error
+                    {promotion_error_sql} AS promotion_error,
+                    {dismissed_at_sql} AS dismissed_at
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY
@@ -15771,6 +15775,7 @@ def admin_discovery_lead_pipeline():
                     "autopilot_lead_id": str(row[24] or ""),
                     "promoted_to_autopilot_at": _format_datetime_pst(row[25]),
                     "promotion_error": str(row[26] or ""),
+                    "dismissed_at": _format_datetime_pst(row[27]),
                 }
                 for row in rows
             ]
@@ -15875,6 +15880,7 @@ def admin_discovery_lead_pipeline():
                 "autopilot_lead_id",
                 "promoted_to_autopilot_at",
                 "promotion_error",
+                "dismissed_at",
             ]
             lines = [",".join(headers)]
             for lead in leads:

@@ -105,6 +105,11 @@
       background: rgba(148, 163, 184, 0.14);
       color: #e2e8f0;
     }
+    .discovery-status.dismissed {
+      border-color: rgba(148, 163, 184, 0.28);
+      background: rgba(15, 23, 42, 0.42);
+      color: #cbd5e1;
+    }
     .keyword-select-cell {
       width: 38px;
       text-align: center;
@@ -361,6 +366,10 @@
         <div class="discovery-summary-label">Keyword searches</div>
         <div class="discovery-summary-value">{{ keyword_summary.searched }}</div>
       </div>
+      <div class="discovery-summary-item">
+        <div class="discovery-summary-label">Dismissed</div>
+        <div class="discovery-summary-value">{{ status_counts.get('dismissed', 0) }}</div>
+      </div>
     </div>
 
     {% if has_keywords %}
@@ -467,6 +476,7 @@
     <div class="discovery-filter-tabs">
       <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}">All leads</a>
       <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', filter='ready_to_promote') }}">Ready to promote</a>
+      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', filter='dismissed') }}">Dismissed</a>
       {% if lead_filter %}
         <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
       {% endif %}
@@ -512,15 +522,24 @@
               <td>
                 {% if lead.autopilot_lead_id %}
                   <span class="discovery-status email_enriched">promoted</span>
-                {% elif lead.creator_email and lead.icp_fit is true and lead.status != 'already_lead' %}
+                {% elif lead.creator_email and lead.icp_fit is true and lead.status not in ['already_lead', 'dismissed'] %}
                   <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}">Promote</button>
                 {% else %}
                   <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Promote</button>
                 {% endif %}
+                {% if lead.status == 'dismissed' %}
+                  <button type="button" class="btn btn-sm btn-outline-light mt-1 restore-discovery-lead-button" data-lead-id="{{ lead.id }}">Restore</button>
+                {% elif not lead.autopilot_lead_id and not lead.is_seed %}
+                  <button type="button" class="btn btn-sm btn-outline-warning mt-1 dismiss-discovery-lead-button" data-lead-id="{{ lead.id }}">Dismiss</button>
+                {% endif %}
                 <div class="discovery-muted promote-real-lead-status" data-lead-id="{{ lead.id }}"></div>
+                <div class="discovery-muted discovery-dismiss-status" data-lead-id="{{ lead.id }}"></div>
               </td>
               <td>
                 <span class="discovery-status {{ lead.status }}">{{ lead.status }}</span>
+                {% if lead.dismissed_at %}
+                  <div class="discovery-muted">Dismissed {{ lead.dismissed_at }}</div>
+                {% endif %}
                 {% if lead.email_enrichment_error %}
                   <div class="discovery-muted">{{ lead.email_enrichment_error }}</div>
                 {% endif %}
@@ -765,6 +784,43 @@
             }
           } catch (error) {
             if (rowStatus) rowStatus.textContent = error.message || 'Promotion failed.';
+            button.disabled = false;
+          }
+        });
+      });
+
+      document.querySelectorAll('.dismiss-discovery-lead-button').forEach((button) => {
+        button.addEventListener('click', async function () {
+          const leadId = button.getAttribute('data-lead-id');
+          const rowStatus = document.querySelector(`.discovery-dismiss-status[data-lead-id="${leadId}"]`);
+          const confirmed = window.confirm('Dismiss this lead? It will stay in discovery_leads for dedup, but leave Ready to promote.');
+          if (!confirmed) return;
+          button.disabled = true;
+          if (rowStatus) rowStatus.textContent = 'Dismissing...';
+          try {
+            await postJson('{{ url_for("video_shorts_bp.admin_discovery_dismiss_lead") }}', { lead_id: leadId });
+            if (rowStatus) rowStatus.textContent = 'Dismissed. Refreshing...';
+            window.location.reload();
+          } catch (error) {
+            if (rowStatus) rowStatus.textContent = error.message || 'Dismiss failed.';
+            button.disabled = false;
+          }
+        });
+      });
+
+      document.querySelectorAll('.restore-discovery-lead-button').forEach((button) => {
+        button.addEventListener('click', async function () {
+          const leadId = button.getAttribute('data-lead-id');
+          const rowStatus = document.querySelector(`.discovery-dismiss-status[data-lead-id="${leadId}"]`);
+          button.disabled = true;
+          if (rowStatus) rowStatus.textContent = 'Restoring...';
+          try {
+            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_restore_lead") }}', { lead_id: leadId });
+            const restoredStatus = data.lead && data.lead.status ? data.lead.status : 'restored';
+            if (rowStatus) rowStatus.textContent = `Restored as ${restoredStatus}. Refreshing...`;
+            window.location.reload();
+          } catch (error) {
+            if (rowStatus) rowStatus.textContent = error.message || 'Restore failed.';
             button.disabled = false;
           }
         });
