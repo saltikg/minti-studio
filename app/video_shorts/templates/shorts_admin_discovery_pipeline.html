@@ -133,6 +133,67 @@
       padding: 14px;
       margin-bottom: 18px;
     }
+    .discovery-trend-panel {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .discovery-trend-canvas {
+      position: relative;
+      min-height: 280px;
+    }
+    .discovery-compact-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .discovery-compact-stat {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      color: rgba(255, 255, 255, 0.78);
+      display: inline-flex;
+      gap: 8px;
+      align-items: baseline;
+      padding: 7px 10px;
+      font-size: 0.84rem;
+      font-weight: 800;
+    }
+    .discovery-compact-stat strong {
+      color: rgba(255, 255, 255, 0.95);
+      font-size: 1rem;
+    }
+    .discovery-main-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin: 8px 0 16px;
+      padding-bottom: 8px;
+    }
+    .discovery-main-tab {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      color: rgba(255, 255, 255, 0.72);
+      padding: 8px 12px;
+      font-size: 0.86rem;
+      font-weight: 850;
+    }
+    .discovery-main-tab.is-active {
+      border-color: rgba(45, 212, 191, 0.38);
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
+    }
+    [data-pipeline-panel] {
+      display: none;
+    }
+    [data-pipeline-panel].is-active {
+      display: block;
+    }
     .discovery-action-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(240px, 1fr));
@@ -246,7 +307,35 @@
       <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', format='csv') }}" class="btn btn-sm btn-outline-info">Download CSV</a>
     </div>
 
+    <div class="discovery-trend-panel">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+        <div>
+          <div class="discovery-summary-label">30-day discovery trend</div>
+          <div class="discovery-muted">Keyword searches from automation runs · qualified leads by first-seen date</div>
+        </div>
+      </div>
+      <div class="discovery-trend-canvas">
+        <canvas id="discoveryTrendChart" aria-label="Discovery trend chart"></canvas>
+      </div>
+    </div>
+
+    <div class="discovery-compact-strip">
+      <span class="discovery-compact-stat">Total leads <strong>{{ totals.total }}</strong></span>
+      <span class="discovery-compact-stat">ICP fit <strong>{{ totals.icp_fit }}</strong></span>
+      <span class="discovery-compact-stat">Ready <strong>{{ ready_to_promote_count }}</strong></span>
+      <span class="discovery-compact-stat">Dismissed <strong>{{ status_counts.get('dismissed', 0) }}</strong></span>
+      <span class="discovery-compact-stat">Queued keywords <strong>{{ keyword_summary.queued }}</strong></span>
+      <span class="discovery-compact-stat">trakk today <strong>{{ trakk_usage.used_today }} / {{ trakk_usage.daily_cap }}</strong></span>
+    </div>
+
+    <div class="discovery-main-tabs" role="tablist" aria-label="Discovery pipeline sections">
+      <button type="button" class="discovery-main-tab" data-pipeline-tab="keywords">Keywords</button>
+      <button type="button" class="discovery-main-tab" data-pipeline-tab="leads">Leads</button>
+      <button type="button" class="discovery-main-tab" data-pipeline-tab="settings">Settings &amp; Runs</button>
+    </div>
+
     {% set automation_control = automation.control or {} %}
+    <div data-pipeline-panel="settings">
     <div class="discovery-action-bar">
       <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
         <div>
@@ -343,69 +432,11 @@
         <div id="queueDiscoveryStatus" class="discovery-muted mt-2"></div>
       </div>
     </div>
-
-    <div class="discovery-summary-grid">
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Total leads</div>
-        <div class="discovery-summary-value">{{ totals.total }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">With email</div>
-        <div class="discovery-summary-value">{{ totals.with_email }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">ICP fit</div>
-        <div class="discovery-summary-value">{{ totals.icp_fit }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Keywords queued</div>
-        <div class="discovery-summary-value">{{ keyword_summary.queued }}</div>
-      </div>
-    </div>
-
-    <div class="discovery-summary-grid">
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Discovered</div>
-        <div class="discovery-summary-value">{{ status_counts.get('discovered', 0) }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">ICP qualified</div>
-        <div class="discovery-summary-value">{{ status_counts.get('icp_qualified', 0) }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Disqualified</div>
-        <div class="discovery-summary-value">{{ status_counts.get('disqualified', 0) }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Email enriching</div>
-        <div class="discovery-summary-value">{{ status_counts.get('email_enriching', 0) }}</div>
-      </div>
-    </div>
-
-    <div class="discovery-summary-grid">
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Email enriched</div>
-        <div class="discovery-summary-value">{{ status_counts.get('email_enriched', 0) }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Email failed</div>
-        <div class="discovery-summary-value">{{ status_counts.get('email_failed', 0) }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Pending enrich</div>
-        <div class="discovery-summary-value">{{ totals.pending_email_enrichment }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Keyword searches</div>
-        <div class="discovery-summary-value">{{ keyword_summary.searched }}</div>
-      </div>
-      <div class="discovery-summary-item">
-        <div class="discovery-summary-label">Dismissed</div>
-        <div class="discovery-summary-value">{{ status_counts.get('dismissed', 0) }}</div>
-      </div>
     </div>
 
     {% if has_keywords %}
+      <div data-pipeline-panel="keywords">
+      <div class="discovery-muted mb-3">Keyword queue: {{ keyword_summary.total }} total · {{ keyword_summary.queued }} queued · {{ keyword_summary.searched }} searched</div>
       <div class="keyword-bulk-actions">
         <button id="deleteSelectedKeywordsButton" type="button" class="btn btn-sm btn-outline-danger">Delete selected</button>
         <button id="deleteSearchedKeywordsButton" type="button" class="btn btn-sm btn-outline-warning">Delete all searched</button>
@@ -449,9 +480,11 @@
           </tbody>
         </table>
       </div>
+      </div>
     {% endif %}
 
     {% if automation.has_automation %}
+      <div data-pipeline-panel="settings">
       <div class="discovery-table-wrap mb-4">
         <table class="discovery-table">
           <thead>
@@ -498,18 +531,20 @@
           </tbody>
         </table>
       </div>
+      </div>
     {% endif %}
 
-    {% if has_keywords %}
-      <div class="discovery-muted mb-3">Keyword queue: {{ keyword_summary.total }} total · {{ keyword_summary.queued }} queued · {{ keyword_summary.searched }} searched</div>
-    {% else %}
+    {% if not has_keywords %}
+      <div data-pipeline-panel="keywords">
       <div class="discovery-muted mb-3">keyword_queue table is not available yet.</div>
+      </div>
     {% endif %}
 
+    <div data-pipeline-panel="leads">
     <div class="discovery-filter-tabs">
-      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline') }}">All leads</a>
-      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', filter='ready_to_promote') }}">Ready to promote</a>
-      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', filter='dismissed') }}">Dismissed</a>
+      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads') }}">All leads</a>
+      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='ready_to_promote') }}">Ready to promote</a>
+      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='dismissed') }}">Dismissed</a>
       {% if lead_filter %}
         <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
       {% endif %}
@@ -644,18 +679,129 @@
       <div>Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2">
         {% if page > 1 %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page-1, per_page=per_page, filter=lead_filter) }}">Previous</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page-1, per_page=per_page, filter=lead_filter) }}">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', page=page+1, per_page=per_page, filter=lead_filter) }}">Next</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page+1, per_page=per_page, filter=lead_filter) }}">Next</a>
         {% endif %}
       </div>
+    </div>
     </div>
   </section>
 {% endblock %}
 
 {% block extra_scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script>
+    (function () {
+      const activeTab = {{ active_pipeline_tab|tojson }};
+      const tabButtons = Array.from(document.querySelectorAll('[data-pipeline-tab]'));
+      const panels = Array.from(document.querySelectorAll('[data-pipeline-panel]'));
+
+      function showTab(tabName, updateUrl) {
+        const resolved = ['keywords', 'leads', 'settings'].includes(tabName) ? tabName : 'leads';
+        tabButtons.forEach((button) => {
+          const isActive = button.getAttribute('data-pipeline-tab') === resolved;
+          button.classList.toggle('is-active', isActive);
+          button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle('is-active', panel.getAttribute('data-pipeline-panel') === resolved);
+        });
+        if (updateUrl && window.history && window.URL) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('tab', resolved);
+          window.history.replaceState({}, '', url.toString());
+        }
+      }
+
+      tabButtons.forEach((button) => {
+        button.addEventListener('click', () => showTab(button.getAttribute('data-pipeline-tab'), true));
+      });
+      showTab(activeTab, false);
+    })();
+
+    (function () {
+      const canvas = document.getElementById('discoveryTrendChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const trend = {{ trend_series|tojson }};
+      const labels = trend.dates || [];
+      const searches = trend.keyword_searches || [];
+      const qualified = trend.qualified_leads || [];
+      new Chart(canvas, {
+        data: {
+          labels,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Qualified leads/day',
+              data: qualified,
+              yAxisID: 'qualified',
+              backgroundColor: 'rgba(45, 212, 191, 0.34)',
+              borderColor: 'rgba(45, 212, 191, 0.78)',
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 18
+            },
+            {
+              type: 'line',
+              label: 'Keywords searched/day',
+              data: searches,
+              yAxisID: 'searches',
+              borderColor: '#fbbf24',
+              backgroundColor: 'rgba(251, 191, 36, 0.12)',
+              pointBackgroundColor: '#fbbf24',
+              pointRadius: 2.5,
+              borderWidth: 2,
+              tension: 0.32
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              labels: { color: 'rgba(255, 255, 255, 0.72)', boxWidth: 12, boxHeight: 12 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15, 23, 42, 0.96)',
+              borderColor: 'rgba(255, 255, 255, 0.12)',
+              borderWidth: 1
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              ticks: {
+                color: 'rgba(255, 255, 255, 0.52)',
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 8
+              }
+            },
+            qualified: {
+              type: 'linear',
+              position: 'left',
+              beginAtZero: true,
+              ticks: { color: 'rgba(255, 255, 255, 0.58)', precision: 0 },
+              grid: { color: 'rgba(255, 255, 255, 0.08)' },
+              title: { display: true, text: 'Qualified leads', color: 'rgba(255, 255, 255, 0.58)' }
+            },
+            searches: {
+              type: 'linear',
+              position: 'right',
+              beginAtZero: true,
+              ticks: { color: 'rgba(255, 255, 255, 0.58)', precision: 0 },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'Keyword searches', color: 'rgba(255, 255, 255, 0.58)' }
+            }
+          }
+        }
+      });
+    })();
+
     (function () {
       const button = document.getElementById('emailEnrichButton');
       const batchInput = document.getElementById('emailEnrichBatchSize');

@@ -15861,12 +15861,20 @@ def admin_discovery_lead_pipeline():
     offset = (page - 1) * per_page
     wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
     lead_filter = str(request.args.get("filter") or "").strip().lower()
+    active_pipeline_tab = str(request.args.get("tab") or "leads").strip().lower()
+    if active_pipeline_tab not in {"keywords", "leads", "settings"}:
+        active_pipeline_tab = "leads"
     conn = get_db_readonly()
     try:
         discovery_columns = table_columns(conn, "discovery_leads")
         keyword_columns = table_columns(conn, "keyword_queue")
         has_discovery = bool(discovery_columns)
         has_keywords = bool(keyword_columns)
+        trend_series: Dict[str, Any] = {
+            "dates": [],
+            "keyword_searches": [],
+            "qualified_leads": [],
+        }
 
         status_counts: Dict[str, int] = {}
         totals = {"total": 0, "with_email": 0, "icp_fit": 0, "pending_email_enrichment": 0}
@@ -15878,6 +15886,14 @@ def admin_discovery_lead_pipeline():
         trakk_usage = {"used_today": 0, "daily_cap": 50}
         total_pages = 1
         filtered_total = 0
+        ready_to_promote_count = 0
+
+        today = datetime.now(timezone.utc).date()
+        trend_dates = [today - timedelta(days=offset_days) for offset_days in range(29, -1, -1)]
+        trend_series["dates"] = [day.isoformat() for day in trend_dates]
+        trend_searches = {day.isoformat(): 0 for day in trend_dates}
+        trend_qualified = {day.isoformat(): 0 for day in trend_dates}
+        trend_start = datetime.combine(trend_dates[0], datetime.min.time())
 
         if has_discovery:
             has_promotion_columns = "autopilot_lead_id" in discovery_columns
@@ -15900,31 +15916,32 @@ def admin_discovery_lead_pipeline():
                 if "promoted_source_video_id" in discovery_columns
                 else "NULL"
             )
+            if has_promotion_columns:
+                ready_to_promote_sql = """
+                WHERE icp_fit IS TRUE
+                  AND COALESCE(creator_email, '') <> ''
+                  AND COALESCE(autopilot_lead_id, '') = ''
+                  AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM autopilot_leads al
+                      WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+                  )
+                """
+            else:
+                ready_to_promote_sql = """
+                WHERE icp_fit IS TRUE
+                  AND COALESCE(creator_email, '') <> ''
+                  AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM autopilot_leads al
+                      WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
+                  )
+                """
             ready_filter_sql = ""
             if lead_filter == "ready_to_promote":
-                if has_promotion_columns:
-                    ready_filter_sql = """
-                    WHERE icp_fit IS TRUE
-                      AND COALESCE(creator_email, '') <> ''
-                      AND COALESCE(autopilot_lead_id, '') = ''
-                      AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM autopilot_leads al
-                          WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
-                      )
-                    """
-                else:
-                    ready_filter_sql = """
-                    WHERE icp_fit IS TRUE
-                      AND COALESCE(creator_email, '') <> ''
-                      AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM autopilot_leads al
-                          WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
-                      )
-                    """
+                ready_filter_sql = ready_to_promote_sql
             elif lead_filter == "dismissed":
                 ready_filter_sql = "WHERE COALESCE(status, '') = 'dismissed'"
             for row in conn.execute(
@@ -15957,6 +15974,21 @@ def admin_discovery_lead_pipeline():
                 "pending_email_enrichment": int(total_row[3] or 0),
             }
             seed_summary["promoted_leads"] = int(total_row[4] or 0)
+            ready_to_promote_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_to_promote_sql}").fetchone()
+            ready_to_promote_count = int((ready_to_promote_row[0] if ready_to_promote_row else 0) or 0)
+            if "first_seen_at" in discovery_columns and "icp_fit" in discovery_columns:
+                for row in conn.execute(
+                    """
+                    SELECT CAST(first_seen_at AS DATE), COUNT(*)
+                    FROM discovery_leads
+                    WHERE first_seen_at >= ?
+                      AND icp_fit IS TRUE
+                    GROUP BY 1
+                    """,
+                    [trend_start],
+                ).fetchall():
+                    if row[0]:
+                        trend_qualified[str(row[0])] = int(row[1] or 0)
             filtered_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}").fetchone()
             filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
             total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
@@ -16103,6 +16135,21 @@ def admin_discovery_lead_pipeline():
                 for row in keyword_rows
             ]
 
+        if table_columns(conn, "discovery_automation_runs"):
+            for row in conn.execute(
+                """
+                SELECT CAST(started_at AS DATE), COALESCE(SUM(search_calls), 0)
+                FROM discovery_automation_runs
+                WHERE started_at >= ?
+                GROUP BY 1
+                """,
+                [trend_start],
+            ).fetchall():
+                if row[0]:
+                    trend_searches[str(row[0])] = int(row[1] or 0)
+        trend_series["keyword_searches"] = [trend_searches[day] for day in trend_series["dates"]]
+        trend_series["qualified_leads"] = [trend_qualified[day] for day in trend_series["dates"]]
+
         if table_columns(conn, "seed_channel_profiles"):
             seed_row = conn.execute("SELECT COUNT(*) FROM seed_channel_profiles").fetchone()
             seed_summary["seed_profiles"] = int((seed_row[0] if seed_row else 0) or 0)
@@ -16189,11 +16236,14 @@ def admin_discovery_lead_pipeline():
         totals=totals,
         keyword_summary=keyword_summary,
         keyword_queue_rows=keyword_queue_rows,
+        trend_series=trend_series,
         seed_summary=seed_summary,
         automation=automation,
         trakk_usage=trakk_usage,
         leads=leads,
         lead_filter=lead_filter,
+        active_pipeline_tab=active_pipeline_tab,
+        ready_to_promote_count=ready_to_promote_count,
         filtered_total=filtered_total,
         page=page,
         per_page=per_page,
