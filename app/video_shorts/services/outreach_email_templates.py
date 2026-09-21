@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -117,7 +118,7 @@ OUTREACH_BUCKET_FOLLOWUP_TEMPLATES: dict[str, OutreachEmailTemplate] = {
     "SENT_NO_VISIT_SEQ2_EN": OutreachEmailTemplate(
         key="SENT_NO_VISIT_SEQ2_EN",
         subject="The Short I made from your video",
-        text="""Hi [Name], last week I turned one of your videos into a Short - it might've slipped past you. Takes 30 seconds to see: [link].
+        text="""Hi [Name], a little while back I turned one of your videos into a Short - it might've slipped past you. Takes 30 seconds to see: [link].
 
 Not for you? Just reply and I'll stop.""",
     ),
@@ -149,6 +150,86 @@ No reply and I won't email again.""",
         text="""Hi [Name], looks like you've come back to your Shorts a few times - I'm happy to set the whole thing up for you, or hop on a quick call if that's easier. Just reply and we'll go from there.""",
     ),
 }
+
+
+_NAME_PREFIXES = {
+    "dr",
+    "doctor",
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "prof",
+    "professor",
+    "coach",
+    "by",
+}
+_NON_PERSON_FIRST_TOKENS = {
+    "a",
+    "an",
+    "admin",
+    "autism",
+    "customer",
+    "customerservice",
+    "feedback",
+    "god",
+    "hello",
+    "info",
+    "inquiries",
+    "media",
+    "pcfgstudy",
+    "speaking",
+    "sfu",
+    "support",
+    "team",
+    "the",
+    "to",
+}
+_NAME_SUFFIX_TOKENS = {
+    "astrologer",
+    "business",
+    "co",
+    "company",
+    "creator",
+    "inc",
+    "llc",
+    "official",
+    "psychic",
+    "team",
+}
+
+
+def outreach_greeting_name(recipient_name: object, *, language: object = "EN") -> str:
+    """Return a safe first name for outreach greetings, or a generic fallback."""
+    normalized_language = normalize_outreach_template_language(language)
+    fallback = "there"
+    raw_name = str(recipient_name or "").strip()
+    if not raw_name:
+        return fallback
+    candidate = re.split(r"\s[-|]\s|[-|]", raw_name, maxsplit=1)[0]
+    candidate = re.sub(r"\([^)]*\)", " ", candidate)
+    candidate = re.sub(r"[\[\]{}\"“”‘’]", " ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip(" ,.;:/")
+    if not candidate:
+        return fallback
+    tokens = [token.strip(" ,.;:/") for token in candidate.split() if token.strip(" ,.;:/")]
+    while tokens and tokens[0].strip(".").lower() in _NAME_PREFIXES:
+        tokens.pop(0)
+    while tokens and tokens[-1].strip(".").lower() in _NAME_SUFFIX_TOKENS:
+        tokens.pop()
+    if not tokens:
+        return fallback
+    first = tokens[0].strip(" ,.;:/")
+    first_key = first.strip(".").lower()
+    if first_key in _NON_PERSON_FIRST_TOKENS:
+        return fallback
+    if not re.fullmatch(r"[A-Za-z][A-Za-z'’]*", first):
+        return fallback
+    if first.isupper() and len(first) > 1:
+        return fallback
+    if normalized_language == "TR" and first_key == "merhaba":
+        return fallback
+    return first
 
 
 def normalize_outreach_template_language(value: object) -> OutreachLanguage:
@@ -201,7 +282,7 @@ def render_outreach_email(
     normalized_language = normalize_outreach_template_language(language)
     key = outreach_template_key(stage=normalized_stage, language=normalized_language)
     template = OUTREACH_EMAIL_TEMPLATES.get(key) or OUTREACH_EMAIL_TEMPLATES["FIRST_EN"]
-    safe_name = str(recipient_name or "").strip() or ("there" if normalized_language == "EN" else "Merhaba")
+    safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
     trial_phrase = trial_duration_text(trial_days, normalized_language)
     safe_video_title = str(video_title or "").strip()
     text = (
@@ -251,7 +332,7 @@ def render_bucket_followup_outreach_email(
     else:
         key = "SENT_NO_VISIT_SEQ3_EN" if normalized_sequence >= 3 else "SENT_NO_VISIT_SEQ2_EN"
     template = OUTREACH_BUCKET_FOLLOWUP_TEMPLATES[key]
-    safe_name = str(recipient_name or "").strip() or ("there" if normalized_language == "EN" else "Merhaba")
+    safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
     text = template.text.replace("[Name]", safe_name).replace("[link]", str(share_url or "").strip())
     return {
         "key": template.key,

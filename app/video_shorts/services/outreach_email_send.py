@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 from flask import current_app
@@ -33,7 +34,10 @@ OUTREACH_ZOHO_FROM_EMAIL = "info@mintistudio.com"
 OUTREACH_ZOHO_FROM_NAME = "Gokhan Saltik"
 OUTREACH_SEQUENCE_MAX_SENDS = 3
 OUTREACH_SEQUENCE_DAY_OFFSETS = {2: 3, 3: 7}
-OUTREACH_SEQUENCE_SPACING_MINUTES = 8
+OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
+OUTREACH_FIRST_TOUCH_SLOT_HOUR_PT = 9
+OUTREACH_FOLLOWUP_SLOT_HOUR_PT = 10
+OUTREACH_PACIFIC_ZONE = ZoneInfo("America/Los_Angeles")
 
 
 def ensure_outreach_scheduled_email_schema(conn) -> None:
@@ -733,20 +737,44 @@ def _sequence_slot_scheduled_at(
     else:
         anchor_at = _load_sequence_anchor_sent_at(conn, share_link_id=share_link_id, fallback_sent_at=current_sent_at)
         base_at = anchor_at + timedelta(days=OUTREACH_SEQUENCE_DAY_OFFSETS[3])
-    day_start = base_at.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
-    row = conn.execute(
-        """
-        SELECT COUNT(*)
-        FROM outreach_scheduled_emails
-        WHERE status IN ('scheduled', 'processing')
-          AND scheduled_at >= ?
-          AND scheduled_at < ?
-        """,
-        [day_start, day_end],
-    ).fetchone()
-    offset_count = int(row[0] or 0) if row else 0
-    return base_at + timedelta(minutes=OUTREACH_SEQUENCE_SPACING_MINUTES * offset_count)
+    now_pacific = datetime.now(timezone.utc).astimezone(OUTREACH_PACIFIC_ZONE)
+    day_cursor = _as_utc(base_at).astimezone(OUTREACH_PACIFIC_ZONE) if _as_utc(base_at) else now_pacific
+    for _ in range(370):
+        day_start_pacific = day_cursor.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_pacific = day_start_pacific + timedelta(days=1)
+        rows = conn.execute(
+            """
+            SELECT scheduled_at
+            FROM outreach_scheduled_emails
+            WHERE status IN ('scheduled', 'processing')
+              AND COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) >= 2
+              AND scheduled_at >= ?
+              AND scheduled_at < ?
+            """,
+            [
+                day_start_pacific.astimezone(timezone.utc),
+                day_end_pacific.astimezone(timezone.utc),
+            ],
+        ).fetchall()
+        occupied = set()
+        for row in rows:
+            scheduled_at = _as_utc(row[0])
+            if not scheduled_at:
+                continue
+            scheduled_pacific = scheduled_at.astimezone(OUTREACH_PACIFIC_ZONE)
+            occupied.add((scheduled_pacific.hour, scheduled_pacific.minute))
+        for minute in OUTREACH_SLOT_MINUTES:
+            slot_pacific = day_start_pacific.replace(
+                hour=OUTREACH_FOLLOWUP_SLOT_HOUR_PT,
+                minute=minute,
+            )
+            if slot_pacific <= now_pacific:
+                continue
+            if (slot_pacific.hour, slot_pacific.minute) in occupied:
+                continue
+            return slot_pacific.astimezone(timezone.utc)
+        day_cursor = day_start_pacific + timedelta(days=1)
+    raise RuntimeError("No outreach follow-up slot found in the next year.")
 
 
 def _active_or_completed_sequence_exists(conn, *, share_link_id: int, sequence_number: int) -> bool:
