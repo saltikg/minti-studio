@@ -7145,7 +7145,11 @@ def _mark_generated_youtube_video_published(
     conn.execute(
         """
         UPDATE shorts_generated_videos
-           SET publish_status = 'published',
+           SET publish_status = CASE
+                   WHEN lower(coalesce(publish_status, '')) IN ('', 'scheduled', 'uploaded')
+                   THEN 'published'
+                   ELSE publish_status
+               END,
                published_at = COALESCE(published_at, ?),
                youtube_published_at = COALESCE(youtube_published_at, ?),
                primary_publish_platform = COALESCE(primary_publish_platform, 'youtube'),
@@ -7215,10 +7219,11 @@ def reconcile_overdue_youtube_publish_statuses(
                    youtube_video_id,
                    planned_publish_at
               FROM shorts_generated_videos
-             WHERE lower(coalesce(publish_status, '')) = 'scheduled'
-               AND planned_publish_at IS NOT NULL
+             WHERE planned_publish_at IS NOT NULL
                AND planned_publish_at <= now()
                AND youtube_video_id IS NOT NULL
+               AND trim(CAST(youtube_video_id AS VARCHAR)) <> ''
+               AND youtube_published_at IS NULL
              ORDER BY planned_publish_at ASC
              LIMIT ?
             """,
