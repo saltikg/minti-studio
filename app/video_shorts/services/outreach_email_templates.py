@@ -9,6 +9,13 @@ from app.video_shorts.services.trial_copy import trial_duration_text
 
 OutreachLanguage = Literal["EN", "TR"]
 OutreachStage = Literal["first", "followup"]
+OutreachFollowupBucket = Literal[
+    "hot_repeat",
+    "watched_no_convert",
+    "visited_once",
+    "sent_no_visit",
+    "scheduled",
+]
 
 
 @dataclass(frozen=True)
@@ -106,12 +113,52 @@ Gokhan""",
 }
 
 
+OUTREACH_BUCKET_FOLLOWUP_TEMPLATES: dict[str, OutreachEmailTemplate] = {
+    "SENT_NO_VISIT_SEQ2_EN": OutreachEmailTemplate(
+        key="SENT_NO_VISIT_SEQ2_EN",
+        subject="The Short I made from your video",
+        text="""Hi [Name], last week I turned one of your videos into a Short - it might've slipped past you. Takes 30 seconds to see: [link].
+
+Not for you? Just reply and I'll stop.""",
+    ),
+    "SENT_NO_VISIT_SEQ3_EN": OutreachEmailTemplate(
+        key="SENT_NO_VISIT_SEQ3_EN",
+        subject="I'll close the loop on this",
+        text="""Hi [Name], last one from me - your Short is still up if you'd like a look: [link].
+
+No reply and I won't email again.""",
+    ),
+    "VISITED_ONCE_EN": OutreachEmailTemplate(
+        key="VISITED_ONCE_EN",
+        subject="The rest of your Shorts are ready",
+        text="""Hi [Name], thanks for checking out the Short. There are more from the same video, all ready - just tap "Watch all Shorts": [link].""",
+    ),
+    "WATCHED_NO_CONVERT_EN": OutreachEmailTemplate(
+        key="WATCHED_NO_CONVERT_EN",
+        subject="First month's on us - nothing for you to do",
+        text="""Hi [Name], connect your channel once and we handle the rest - finding the moments, captioning, publishing to YouTube, Instagram and Facebook. First month free, 15 Shorts, cancel anytime: [link].""",
+    ),
+    "HOT_REPEAT_EN": OutreachEmailTemplate(
+        key="HOT_REPEAT_EN",
+        subject="Want me to just get you started?",
+        text="""Hi [Name], looks like you've come back to your Shorts a few times - I'm happy to set the whole thing up for you, or hop on a quick call if that's easier. Just reply and we'll go from there.""",
+    ),
+}
+
+
 def normalize_outreach_template_language(value: object) -> OutreachLanguage:
     return "TR" if str(value or "").strip().upper() == "TR" else "EN"
 
 
 def normalize_outreach_template_stage(value: object) -> OutreachStage:
     return "followup" if str(value or "").strip().lower() == "followup" else "first"
+
+
+def normalize_outreach_followup_bucket(value: object) -> OutreachFollowupBucket:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"hot_repeat", "watched_no_convert", "visited_once", "sent_no_visit"}:
+        return normalized  # type: ignore[return-value]
+    return "scheduled"
 
 
 def outreach_template_key(*, stage: object, language: object) -> str:
@@ -163,6 +210,44 @@ def render_outreach_email(
         "key": template.key,
         "stage": normalized_stage,
         "language": normalized_language,
+        "subject": template.subject,
+        "text": text,
+        "html": _simple_html_email(subject=template.subject, body_text=text),
+    }
+
+
+def render_bucket_followup_outreach_email(
+    *,
+    bucket: object,
+    sequence_number: object,
+    language: object,
+    recipient_name: object,
+    share_url: str,
+) -> dict[str, str]:
+    normalized_language = normalize_outreach_template_language(language)
+    normalized_bucket = normalize_outreach_followup_bucket(bucket)
+    try:
+        normalized_sequence = int(sequence_number or 2)
+    except (TypeError, ValueError):
+        normalized_sequence = 2
+    if normalized_bucket == "sent_no_visit":
+        key = "SENT_NO_VISIT_SEQ3_EN" if normalized_sequence >= 3 else "SENT_NO_VISIT_SEQ2_EN"
+    elif normalized_bucket == "visited_once":
+        key = "VISITED_ONCE_EN"
+    elif normalized_bucket == "watched_no_convert":
+        key = "WATCHED_NO_CONVERT_EN"
+    elif normalized_bucket == "hot_repeat":
+        key = "HOT_REPEAT_EN"
+    else:
+        key = "SENT_NO_VISIT_SEQ3_EN" if normalized_sequence >= 3 else "SENT_NO_VISIT_SEQ2_EN"
+    template = OUTREACH_BUCKET_FOLLOWUP_TEMPLATES[key]
+    safe_name = str(recipient_name or "").strip() or ("there" if normalized_language == "EN" else "Merhaba")
+    text = template.text.replace("[Name]", safe_name).replace("[link]", str(share_url or "").strip())
+    return {
+        "key": template.key,
+        "stage": "followup",
+        "language": normalized_language,
+        "bucket": normalized_bucket,
         "subject": template.subject,
         "text": text,
         "html": _simple_html_email(subject=template.subject, body_text=text),

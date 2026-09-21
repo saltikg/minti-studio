@@ -145,6 +145,7 @@ from app.video_shorts.services.outreach_email_send import (
     schedule_outreach_email,
     send_share_link_outreach_email,
 )
+from app.video_shorts.services.outreach_followup_buckets import load_current_outreach_bucket
 from app.video_shorts.services.user_preferences import (
     load_user_preference,
     load_user_bool_preference,
@@ -12842,7 +12843,7 @@ def _load_admin_outreach_emails(
         return [], 0, empty_summary, "all", [], "all", "all", "", "", "", "", "", "bucket", "asc"
 
     normalized_status = str(status_filter or "all").strip().lower()
-    if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled"}:
+    if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled", "skipped"}:
         normalized_status = "all"
     bucket_keys = {"failed", "hot_repeat", "watched_no_convert", "visited_once", "sent_no_visit", "scheduled", "converted"}
     raw_bucket_values: list[str] = []
@@ -13316,22 +13317,7 @@ def _load_admin_outreach_emails(
         visit_count = int(row[30] or 0)
         repeat_visited = visit_count >= 2
         max_watched = float(row[33]) if row[33] is not None else 0.0
-        if any_failed:
-            bucket = "failed"
-        elif repeat_visited and not converted:
-            bucket = "hot_repeat"
-        elif max_watched >= 50 and not converted:
-            bucket = "watched_no_convert"
-        elif visit_count == 1 and not converted:
-            bucket = "visited_once"
-        elif any_sent and visit_count == 0 and not converted:
-            bucket = "sent_no_visit"
-        elif any_scheduled and not any_sent and not converted:
-            bucket = "scheduled"
-        elif converted:
-            bucket = "converted"
-        else:
-            bucket = "scheduled"
+        bucket = load_current_outreach_bucket(conn, int(row[1])) if row[1] is not None else "scheduled"
         effective_status = "failed" if any_failed else latest_status
         send_date = row[26] or row[20] or row[10] or row[9]
         is_cancelled_latest = effective_status == "cancelled"
@@ -13490,6 +13476,162 @@ def _load_admin_outreach_emails(
         filtered_items.sort(key=_sort_value, reverse=reverse)
     total_count = len(filtered_items)
     page_items = filtered_items[offset : offset + limit]
+
+    def _load_send_history(item: dict[str, Any]) -> list[dict[str, Any]]:
+        recipient_key = str(item.get("recipient_key") or "").strip()
+        if not recipient_key:
+            return []
+        link_rows = conn.execute(
+            f"""
+            SELECT
+              sl.id,
+              COALESCE(NULLIF(sl.language, ''), 'EN') AS language,
+              {sl_emailed_at_sql.replace('sl2.', 'sl.')} AS emailed_at,
+              {sl_first_provider_sql.replace('sl2.', 'sl.')} AS first_provider_message_id,
+              {sl_followup_sent_at_sql.replace('sl2.', 'sl.')} AS followup_sent_at,
+              {sl_followup_provider_sql.replace('sl2.', 'sl.')} AS followup_provider_message_id
+            FROM short_share_links sl
+            WHERE {sl_key_sql} = ?
+              AND {archived_filter_sql}
+            ORDER BY sl.created_at ASC NULLS LAST, sl.id ASC
+            """,
+            [recipient_key],
+        ).fetchall()
+        link_ids = [int(link_row[0]) for link_row in link_rows if link_row[0] is not None]
+        if not link_ids:
+            return []
+        history: list[dict[str, Any]] = []
+        scheduled_pairs: set[tuple[int, int]] = set()
+        sequence_sql = (
+            "COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END)"
+            if "sequence_number" in outreach_columns
+            else "CASE WHEN stage = 'first' THEN 1 ELSE 2 END"
+        )
+        bucket_sql = "bucket_at_send" if "bucket_at_send" in outreach_columns else "NULL"
+        parent_sql = "parent_send_id" if "parent_send_id" in outreach_columns else "NULL"
+        scheduled_rows = conn.execute(
+            f"""
+            SELECT
+              id,
+              share_link_id,
+              stage,
+              language,
+              scheduled_at,
+              status,
+              attempts,
+              max_attempts,
+              provider_message_id,
+              error,
+              sent_at,
+              created_at,
+              updated_at,
+              {sequence_sql} AS sequence_number,
+              {bucket_sql} AS bucket_at_send,
+              {parent_sql} AS parent_send_id
+            FROM outreach_scheduled_emails
+            WHERE CAST(share_link_id AS BIGINT) IN ({", ".join("?" for _ in link_ids)})
+            """,
+            link_ids,
+        ).fetchall()
+        for row in scheduled_rows:
+            share_link_id = int(row[1])
+            sequence_number = int(row[13] or (1 if str(row[2] or "") == "first" else 2))
+            scheduled_pairs.add((share_link_id, sequence_number))
+            error_text = str(row[9] or "").strip()
+            history.append(
+                {
+                    "id": int(row[0]),
+                    "share_link_id": share_link_id,
+                    "sequence_number": sequence_number,
+                    "slot_label": f"{sequence_number}/3",
+                    "stage": str(row[2] or "").strip(),
+                    "language": str(row[3] or "").strip().upper(),
+                    "scheduled_at": row[4],
+                    "scheduled_at_pst": _format_datetime_pst(row[4]),
+                    "status": str(row[5] or "").strip().lower(),
+                    "attempts": int(row[6] or 0),
+                    "max_attempts": int(row[7] or 0),
+                    "provider_message_id": str(row[8] or "").strip(),
+                    "error": error_text,
+                    "error_short": (error_text[:100] + "...") if len(error_text) > 100 else error_text,
+                    "sent_at": row[10],
+                    "sent_at_pst": _format_datetime_pst(row[10]),
+                    "created_at": row[11],
+                    "updated_at": row[12],
+                    "bucket_at_send": str(row[14] or "").strip(),
+                    "parent_send_id": int(row[15]) if row[15] is not None else None,
+                    "sort_at": row[10] or row[4] or row[12] or row[11],
+                }
+            )
+        for link_row in link_rows:
+            share_link_id = int(link_row[0])
+            language = str(link_row[1] or "").strip().upper()
+            emailed_at = link_row[2]
+            first_provider_message_id = str(link_row[3] or "").strip()
+            followup_sent_at = link_row[4]
+            followup_provider_message_id = str(link_row[5] or "").strip()
+            if emailed_at and (share_link_id, 1) not in scheduled_pairs:
+                history.append(
+                    {
+                        "id": None,
+                        "share_link_id": share_link_id,
+                        "sequence_number": 1,
+                        "slot_label": "1/3",
+                        "stage": "first",
+                        "language": language,
+                        "scheduled_at": None,
+                        "scheduled_at_pst": "",
+                        "status": "sent",
+                        "attempts": 0,
+                        "max_attempts": 0,
+                        "provider_message_id": first_provider_message_id,
+                        "error": "",
+                        "error_short": "",
+                        "sent_at": emailed_at,
+                        "sent_at_pst": _format_datetime_pst(emailed_at),
+                        "created_at": emailed_at,
+                        "updated_at": emailed_at,
+                        "bucket_at_send": "",
+                        "parent_send_id": None,
+                        "sort_at": emailed_at,
+                    }
+                )
+            if followup_sent_at and (share_link_id, 2) not in scheduled_pairs:
+                history.append(
+                    {
+                        "id": None,
+                        "share_link_id": share_link_id,
+                        "sequence_number": 2,
+                        "slot_label": "2/3",
+                        "stage": "followup",
+                        "language": language,
+                        "scheduled_at": None,
+                        "scheduled_at_pst": "",
+                        "status": "sent",
+                        "attempts": 0,
+                        "max_attempts": 0,
+                        "provider_message_id": followup_provider_message_id,
+                        "error": "",
+                        "error_short": "",
+                        "sent_at": followup_sent_at,
+                        "sent_at_pst": _format_datetime_pst(followup_sent_at),
+                        "created_at": followup_sent_at,
+                        "updated_at": followup_sent_at,
+                        "bucket_at_send": "",
+                        "parent_send_id": None,
+                        "sort_at": followup_sent_at,
+                    }
+                )
+        history.sort(key=lambda send: (_sort_timestamp(send.get("sort_at")), int(send.get("sequence_number") or 0)))
+        return history
+
+    for item in page_items:
+        send_history = _load_send_history(item)
+        item["send_history"] = send_history
+        item["sent_sequence_count"] = min(
+            3,
+            len([send for send in send_history if send.get("status") == "sent"]),
+        )
 
     return (
         page_items,

@@ -141,6 +141,7 @@
     .admin-outreach-pill.status-sent { background: rgba(45, 212, 191, 0.14); color: #8ff3d8; border: 1px solid rgba(45, 212, 191, 0.22); }
     .admin-outreach-pill.status-failed { background: rgba(248, 113, 113, 0.18); color: #fca5a5; border: 1px solid rgba(248, 113, 113, 0.26); }
     .admin-outreach-pill.status-cancelled { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.58); }
+    .admin-outreach-pill.status-skipped { background: rgba(251, 191, 36, 0.14); color: #fde68a; border: 1px solid rgba(251, 191, 36, 0.22); }
     .admin-outreach-bucket.failed { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
     .admin-outreach-bucket.hot_repeat { background: rgba(251, 191, 36, 0.18); color: #fde68a; }
     .admin-outreach-bucket.watched_no_convert { background: rgba(56, 189, 248, 0.18); color: #bae6fd; }
@@ -164,6 +165,40 @@
     .admin-outreach-actions a:focus,
     .admin-outreach-actions button:hover,
     .admin-outreach-actions button:focus { text-decoration: underline; }
+    .admin-outreach-history-row td { padding-top: 0; white-space: normal; }
+    .admin-outreach-history {
+      margin: 0 0 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.035);
+      overflow: hidden;
+    }
+    .admin-outreach-history summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      color: rgba(255, 255, 255, 0.78);
+      font-weight: 800;
+    }
+    .admin-outreach-history-table { width: 100%; }
+    .admin-outreach-history-table th,
+    .admin-outreach-history-table td {
+      padding: 9px 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      white-space: nowrap;
+      vertical-align: top;
+    }
+    .admin-outreach-history-table th {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.72rem;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .admin-outreach-history-error {
+      max-width: 280px;
+      white-space: normal;
+      color: #fca5a5;
+    }
     .admin-outreach-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
     .admin-outreach-feedback { min-height: 18px; margin-bottom: 12px; color: rgba(255, 255, 255, 0.62); font-size: 0.86rem; }
     .admin-outreach-feedback.is-error { color: #fca5a5; }
@@ -195,7 +230,7 @@
       <div>
         <label class="form-label mb-2" for="outreach-status">Status</label>
         <select id="outreach-status" name="status" class="form-select">
-          {% for status in ['all', 'scheduled', 'processing', 'sent', 'failed', 'cancelled'] %}
+          {% for status in ['all', 'scheduled', 'processing', 'sent', 'failed', 'cancelled', 'skipped'] %}
             <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status|capitalize }}</option>
           {% endfor %}
         </select>
@@ -295,6 +330,7 @@
               <td>
                 <span class="admin-outreach-pill status-{{ item.effective_status }}">{{ item.effective_status or '—' }}</span>
                 <div class="admin-outreach-muted">{{ item.latest_stage or '—' }}{% if item.latest_language %} · {{ item.latest_language }}{% endif %}</div>
+                <div class="admin-outreach-muted">sends: {{ item.sent_sequence_count }}/3</div>
                 {% if item.error %}
                   <div class="admin-outreach-error" title="{{ item.error }}">{{ item.error_short }}</div>
                 {% endif %}
@@ -332,6 +368,45 @@
                     <a href="{{ item.reschedule_url }}">Reschedule in Share Links</a>
                   {% endif %}
                 </div>
+              </td>
+            </tr>
+            <tr class="admin-outreach-history-row">
+              <td colspan="11">
+                <details class="admin-outreach-history">
+                  <summary>Send history</summary>
+                  <table class="admin-outreach-history-table">
+                    <thead>
+                      <tr>
+                        <th>Slot</th>
+                        <th>Stage</th>
+                        <th>Scheduled</th>
+                        <th>Sent</th>
+                        <th>Status</th>
+                        <th>Attempts</th>
+                        <th>Bucket at send</th>
+                        <th>Provider</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for send in item.send_history %}
+                        <tr>
+                          <td>{{ send.slot_label }}</td>
+                          <td>{{ send.stage or '—' }}{% if send.language %} · {{ send.language }}{% endif %}</td>
+                          <td>{{ send.scheduled_at_pst or '—' }}</td>
+                          <td>{{ send.sent_at_pst or '—' }}</td>
+                          <td><span class="admin-outreach-pill status-{{ send.status }}">{{ send.status or '—' }}</span></td>
+                          <td>{{ send.attempts }}/{{ send.max_attempts }}</td>
+                          <td>{{ send.bucket_at_send or '—' }}</td>
+                          <td>{{ send.provider_message_id or '—' }}</td>
+                          <td class="admin-outreach-history-error" title="{{ send.error }}">{{ send.error_short or '—' }}</td>
+                        </tr>
+                      {% else %}
+                        <tr><td colspan="9" class="admin-outreach-muted text-center">No send history.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </details>
               </td>
             </tr>
           {% else %}

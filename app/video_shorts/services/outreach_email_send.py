@@ -14,9 +14,11 @@ from flask import current_app
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.email_verification import send_resend_email
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event
+from app.video_shorts.services.outreach_followup_buckets import load_current_outreach_bucket
 from app.video_shorts.services.outreach_email_templates import (
     normalize_outreach_template_language,
     normalize_outreach_template_stage,
+    render_bucket_followup_outreach_email,
     render_outreach_clipboard_text,
     render_outreach_email,
 )
@@ -29,6 +31,9 @@ SCHEDULED_OUTREACH_BACKOFF_MINUTES = 5
 OUTREACH_RESEND_GUARD_MINUTES = 10
 OUTREACH_ZOHO_FROM_EMAIL = "info@mintistudio.com"
 OUTREACH_ZOHO_FROM_NAME = "Gokhan Saltik"
+OUTREACH_SEQUENCE_MAX_SENDS = 3
+OUTREACH_SEQUENCE_DAY_OFFSETS = {2: 3, 3: 7}
+OUTREACH_SEQUENCE_SPACING_MINUTES = 8
 
 
 def ensure_outreach_scheduled_email_schema(conn) -> None:
@@ -46,8 +51,11 @@ def ensure_outreach_scheduled_email_schema(conn) -> None:
             language VARCHAR NOT NULL,
             scheduled_at {scheduled_at_sql} NOT NULL,
             status VARCHAR NOT NULL DEFAULT 'scheduled',
+            sequence_number SMALLINT,
             attempts INTEGER NOT NULL DEFAULT 0,
             max_attempts INTEGER NOT NULL DEFAULT {SCHEDULED_OUTREACH_MAX_ATTEMPTS},
+            bucket_at_send VARCHAR,
+            parent_send_id BIGINT,
             provider_message_id VARCHAR,
             error TEXT,
             sent_at {timestamp_sql},
@@ -64,8 +72,11 @@ def ensure_outreach_scheduled_email_schema(conn) -> None:
         ("language", "VARCHAR"),
         ("scheduled_at", scheduled_at_sql),
         ("status", "VARCHAR"),
+        ("sequence_number", "SMALLINT"),
         ("attempts", "INTEGER DEFAULT 0"),
         ("max_attempts", f"INTEGER DEFAULT {SCHEDULED_OUTREACH_MAX_ATTEMPTS}"),
+        ("bucket_at_send", "VARCHAR"),
+        ("parent_send_id", "BIGINT"),
         ("recipient_email_override", "VARCHAR"),
         ("recipient_name_override", "VARCHAR"),
         ("provider_message_id", "VARCHAR"),
@@ -290,6 +301,16 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
     }
 
 
+def _normalize_outreach_sequence_number(value: object, *, stage: object = "first") -> int:
+    try:
+        sequence_number = int(value or 0)
+    except (TypeError, ValueError):
+        sequence_number = 0
+    if sequence_number <= 0:
+        sequence_number = 1 if normalize_outreach_template_stage(stage) == "first" else 2
+    return max(1, min(OUTREACH_SEQUENCE_MAX_SENDS, sequence_number))
+
+
 def _as_utc(value: Any) -> datetime | None:
     if not value:
         return None
@@ -313,10 +334,22 @@ def send_share_link_outreach_email(
     language: object,
     confirm_resend: bool = False,
     recipient_email_override: str = "",
+    sequence_number: object = None,
+    bucket_at_send: str = "",
 ) -> dict[str, Any]:
     normalized_stage = normalize_outreach_template_stage(stage)
+    normalized_sequence = _normalize_outreach_sequence_number(sequence_number, stage=normalized_stage)
     rendered = render_share_link_outreach_email(conn, share_link_id, stage=normalized_stage, language=language)
-    rendered_email = rendered["email"]
+    if normalized_stage == "followup":
+        rendered_email = render_bucket_followup_outreach_email(
+            bucket=bucket_at_send,
+            sequence_number=normalized_sequence,
+            language=language,
+            recipient_name=rendered["recipient_name"],
+            share_url=rendered["share_url"],
+        )
+    else:
+        rendered_email = rendered["email"]
     template_key = rendered_email["key"]
     override_to_email = str(recipient_email_override or "").strip()
     previous_sent_at = rendered["followup_sent_at"] if normalized_stage == "followup" else rendered["emailed_at"]
@@ -411,6 +444,8 @@ def send_share_link_outreach_email(
             detail={
                 "share_link_id": share_link_id,
                 "stage": normalized_stage,
+                "sequence_number": normalized_sequence,
+                "bucket_at_send": bucket_at_send,
                 "language": rendered_email["language"],
                 "template_key": template_key,
                 "provider_message_id": provider_message_id,
@@ -419,6 +454,8 @@ def send_share_link_outreach_email(
     return {
         "ok": True,
         "stage": normalized_stage,
+        "sequence_number": normalized_sequence,
+        "bucket_at_send": bucket_at_send,
         "language": rendered_email["language"],
         "template_key": template_key,
         "provider_message_id": provider_message_id,
@@ -436,10 +473,17 @@ def schedule_outreach_email(
     language: object,
     scheduled_at: datetime,
     created_by: str = "",
+    sequence_number: object = None,
+    parent_send_id: object = None,
 ) -> dict[str, Any]:
     ensure_outreach_scheduled_email_schema(conn)
     normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
+    normalized_sequence = _normalize_outreach_sequence_number(sequence_number, stage=normalized_stage)
+    try:
+        normalized_parent_send_id = int(parent_send_id) if parent_send_id is not None else None
+    except (TypeError, ValueError):
+        normalized_parent_send_id = None
     conn.execute(
         """
         UPDATE outreach_scheduled_emails
@@ -448,9 +492,10 @@ def schedule_outreach_email(
                updated_at = CURRENT_TIMESTAMP
          WHERE share_link_id = ?
            AND stage = ?
+           AND COALESCE(sequence_number, ?) = ?
            AND status IN ('scheduled', 'processing')
         """,
-        [share_link_id, normalized_stage],
+        [share_link_id, normalized_stage, normalized_sequence, normalized_sequence],
     )
     conn.execute(
         """
@@ -460,32 +505,36 @@ def schedule_outreach_email(
             language,
             scheduled_at,
             status,
+            sequence_number,
             attempts,
             max_attempts,
+            parent_send_id,
             created_by,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, 'scheduled', 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, 'scheduled', ?, 0, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         [
             share_link_id,
             normalized_stage,
             normalized_language,
             scheduled_at,
+            normalized_sequence,
             SCHEDULED_OUTREACH_MAX_ATTEMPTS,
+            normalized_parent_send_id,
             created_by or None,
         ],
     )
     row = conn.execute(
         """
-        SELECT id, share_link_id, stage, language, scheduled_at, status
+        SELECT id, share_link_id, stage, language, scheduled_at, status, sequence_number, parent_send_id
         FROM outreach_scheduled_emails
-        WHERE share_link_id = ? AND stage = ? AND status = 'scheduled'
+        WHERE share_link_id = ? AND stage = ? AND COALESCE(sequence_number, ?) = ? AND status = 'scheduled'
         ORDER BY id DESC
         LIMIT 1
         """,
-        [share_link_id, normalized_stage],
+        [share_link_id, normalized_stage, normalized_sequence, normalized_sequence],
     ).fetchone()
     return {
         "id": int(row[0]),
@@ -494,6 +543,8 @@ def schedule_outreach_email(
         "language": str(row[3] or ""),
         "scheduled_at": row[4],
         "status": str(row[5] or ""),
+        "sequence_number": int(row[6] or normalized_sequence),
+        "parent_send_id": int(row[7]) if row[7] is not None else None,
     }
 
 
@@ -531,14 +582,16 @@ def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
                  LIMIT 1
              )
              RETURNING id, share_link_id, stage, language, attempts, max_attempts,
-                       recipient_email_override, recipient_name_override
+                       recipient_email_override, recipient_name_override,
+                       sequence_number, parent_send_id
             """
         ).fetchone()
     else:
         row = conn.execute(
             """
             SELECT id, share_link_id, stage, language, attempts, max_attempts,
-                   recipient_email_override, recipient_name_override
+                   recipient_email_override, recipient_name_override,
+                   sequence_number, parent_send_id
             FROM outreach_scheduled_emails
             WHERE status = 'scheduled'
               AND scheduled_at <= CURRENT_TIMESTAMP
@@ -569,21 +622,178 @@ def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
         "max_attempts": int(row[5] or SCHEDULED_OUTREACH_MAX_ATTEMPTS),
         "recipient_email_override": str(row[6] or "").strip() if len(row) > 6 else "",
         "recipient_name_override": str(row[7] or "").strip() if len(row) > 7 else "",
+        "sequence_number": _normalize_outreach_sequence_number(row[8] if len(row) > 8 else None, stage=row[2]),
+        "parent_send_id": int(row[9]) if len(row) > 9 and row[9] is not None else None,
     }
 
 
-def mark_scheduled_outreach_sent(conn, *, schedule_id: int, provider_message_id: str = "") -> None:
+def mark_scheduled_outreach_sent(
+    conn,
+    *,
+    schedule_id: int,
+    provider_message_id: str = "",
+    bucket_at_send: str = "",
+    sequence_number: object = None,
+) -> None:
     conn.execute(
         """
         UPDATE outreach_scheduled_emails
            SET status = 'sent',
                provider_message_id = ?,
+               bucket_at_send = ?,
+               sequence_number = COALESCE(?, sequence_number),
                sent_at = CURRENT_TIMESTAMP,
                updated_at = CURRENT_TIMESTAMP,
                error = NULL
          WHERE id = ?
         """,
-        [provider_message_id or None, schedule_id],
+        [provider_message_id or None, bucket_at_send or None, sequence_number, schedule_id],
+    )
+
+
+def mark_scheduled_outreach_skipped(
+    conn,
+    *,
+    job: dict[str, Any],
+    bucket_at_send: str,
+    reason: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE outreach_scheduled_emails
+           SET status = 'skipped',
+               bucket_at_send = ?,
+               sequence_number = COALESCE(?, sequence_number),
+               error = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+        """,
+        [
+            bucket_at_send or None,
+            job.get("sequence_number"),
+            reason[:2000],
+            job["id"],
+        ],
+    )
+
+
+def _load_scheduled_outreach_sent_at(conn, schedule_id: int) -> datetime | None:
+    row = conn.execute(
+        """
+        SELECT sent_at
+        FROM outreach_scheduled_emails
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [schedule_id],
+    ).fetchone()
+    return _as_utc(row[0]) if row else None
+
+
+def _load_sequence_anchor_sent_at(conn, *, share_link_id: int, fallback_sent_at: datetime) -> datetime:
+    row = conn.execute(
+        """
+        SELECT sent_at
+        FROM outreach_scheduled_emails
+        WHERE share_link_id = ?
+          AND COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+          AND status = 'sent'
+          AND sent_at IS NOT NULL
+        ORDER BY sent_at ASC, id ASC
+        LIMIT 1
+        """,
+        [share_link_id],
+    ).fetchone()
+    anchored = _as_utc(row[0]) if row else None
+    if anchored:
+        return anchored
+    share_row = conn.execute(
+        """
+        SELECT emailed_at
+        FROM short_share_links
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [share_link_id],
+    ).fetchone()
+    anchored = _as_utc(share_row[0]) if share_row else None
+    return anchored or fallback_sent_at
+
+
+def _sequence_slot_scheduled_at(
+    conn,
+    *,
+    share_link_id: int,
+    sequence_number: int,
+    current_sent_at: datetime,
+) -> datetime:
+    if sequence_number == 2:
+        base_at = current_sent_at + timedelta(days=OUTREACH_SEQUENCE_DAY_OFFSETS[2])
+    else:
+        anchor_at = _load_sequence_anchor_sent_at(conn, share_link_id=share_link_id, fallback_sent_at=current_sent_at)
+        base_at = anchor_at + timedelta(days=OUTREACH_SEQUENCE_DAY_OFFSETS[3])
+    day_start = base_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM outreach_scheduled_emails
+        WHERE status IN ('scheduled', 'processing')
+          AND scheduled_at >= ?
+          AND scheduled_at < ?
+        """,
+        [day_start, day_end],
+    ).fetchone()
+    offset_count = int(row[0] or 0) if row else 0
+    return base_at + timedelta(minutes=OUTREACH_SEQUENCE_SPACING_MINUTES * offset_count)
+
+
+def _active_or_completed_sequence_exists(conn, *, share_link_id: int, sequence_number: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM outreach_scheduled_emails
+        WHERE share_link_id = ?
+          AND COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = ?
+          AND status IN ('scheduled', 'processing', 'sent', 'skipped')
+        LIMIT 1
+        """,
+        [share_link_id, sequence_number],
+    ).fetchone()
+    return bool(row)
+
+
+def _schedule_next_outreach_sequence(
+    conn,
+    *,
+    job: dict[str, Any],
+    sent_at: datetime,
+    bucket_at_send: str,
+) -> dict[str, Any] | None:
+    current_sequence = _normalize_outreach_sequence_number(job.get("sequence_number"), stage=job.get("stage"))
+    if current_sequence >= OUTREACH_SEQUENCE_MAX_SENDS or bucket_at_send == "converted":
+        return None
+    next_sequence = current_sequence + 1
+    if next_sequence > OUTREACH_SEQUENCE_MAX_SENDS:
+        return None
+    share_link_id = int(job["share_link_id"])
+    if _active_or_completed_sequence_exists(conn, share_link_id=share_link_id, sequence_number=next_sequence):
+        return None
+    scheduled_at = _sequence_slot_scheduled_at(
+        conn,
+        share_link_id=share_link_id,
+        sequence_number=next_sequence,
+        current_sent_at=sent_at,
+    )
+    return schedule_outreach_email(
+        conn,
+        share_link_id=share_link_id,
+        stage="followup",
+        language=job.get("language") or "EN",
+        scheduled_at=scheduled_at,
+        created_by="sequence_worker",
+        sequence_number=next_sequence,
+        parent_send_id=job["id"],
     )
 
 
@@ -650,6 +860,25 @@ def process_due_scheduled_outreach_email() -> bool:
         if not job:
             return False
         try:
+            current_bucket = load_current_outreach_bucket(conn, int(job["share_link_id"]))
+            if current_bucket == "converted":
+                mark_scheduled_outreach_skipped(
+                    conn,
+                    job=job,
+                    bucket_at_send=current_bucket,
+                    reason="converted_at_claim_time",
+                )
+                conn.commit()
+                return True
+            if current_bucket == "failed":
+                mark_scheduled_outreach_skipped(
+                    conn,
+                    job=job,
+                    bucket_at_send=current_bucket,
+                    reason="failed_bucket_transport_retry_only",
+                )
+                conn.commit()
+                return True
             result = send_share_link_outreach_email(
                 conn,
                 share_link_id=job["share_link_id"],
@@ -657,6 +886,8 @@ def process_due_scheduled_outreach_email() -> bool:
                 language=job["language"],
                 confirm_resend=False,
                 recipient_email_override=str(job.get("recipient_email_override") or ""),
+                sequence_number=job.get("sequence_number"),
+                bucket_at_send=current_bucket,
             )
             if not result.get("ok"):
                 if result.get("error") == "recently_sent":
@@ -664,7 +895,15 @@ def process_due_scheduled_outreach_email() -> bool:
                     conn.commit()
                     return True
                 raise RuntimeError(str(result.get("error") or "scheduled_send_not_sent"))
-            mark_scheduled_outreach_sent(conn, schedule_id=job["id"], provider_message_id=str(result.get("provider_message_id") or ""))
+            mark_scheduled_outreach_sent(
+                conn,
+                schedule_id=job["id"],
+                provider_message_id=str(result.get("provider_message_id") or ""),
+                bucket_at_send=current_bucket,
+                sequence_number=job.get("sequence_number"),
+            )
+            sent_at = _load_scheduled_outreach_sent_at(conn, int(job["id"])) or datetime.now(timezone.utc)
+            _schedule_next_outreach_sequence(conn, job=job, sent_at=sent_at, bucket_at_send=current_bucket)
             conn.commit()
             return True
         except Exception as exc:
