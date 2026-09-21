@@ -347,6 +347,7 @@ def send_share_link_outreach_email(
             language=language,
             recipient_name=rendered["recipient_name"],
             share_url=rendered["share_url"],
+            trial_days=rendered["trial_days"],
         )
     else:
         rendered_email = rendered["email"]

@@ -138,6 +138,11 @@ No reply and I won't email again.""",
         subject="First month's on us - nothing for you to do",
         text="""Hi [Name], connect your channel once and we handle the rest - finding the moments, captioning, publishing to YouTube, Instagram and Facebook. First month free, 15 Shorts, cancel anytime: [link].""",
     ),
+    "WATCHED_NO_CONVERT_2MO_EN": OutreachEmailTemplate(
+        key="WATCHED_NO_CONVERT_2MO_EN",
+        subject="Your complimentary access is still active",
+        text="""Hi [Name], connect your channel once and we handle the rest - finding the moments, captioning, publishing to YouTube, Instagram and Facebook. Your complimentary access is still active: [link].""",
+    ),
     "HOT_REPEAT_EN": OutreachEmailTemplate(
         key="HOT_REPEAT_EN",
         subject="Want me to just get you started?",
@@ -223,6 +228,7 @@ def render_bucket_followup_outreach_email(
     language: object,
     recipient_name: object,
     share_url: str,
+    trial_days: object = None,
 ) -> dict[str, str]:
     normalized_language = normalize_outreach_template_language(language)
     normalized_bucket = normalize_outreach_followup_bucket(bucket)
@@ -230,12 +236,16 @@ def render_bucket_followup_outreach_email(
         normalized_sequence = int(sequence_number or 2)
     except (TypeError, ValueError):
         normalized_sequence = 2
+    try:
+        normalized_trial_days = int(trial_days or 0)
+    except (TypeError, ValueError):
+        normalized_trial_days = 0
     if normalized_bucket == "sent_no_visit":
         key = "SENT_NO_VISIT_SEQ3_EN" if normalized_sequence >= 3 else "SENT_NO_VISIT_SEQ2_EN"
     elif normalized_bucket == "visited_once":
         key = "VISITED_ONCE_EN"
     elif normalized_bucket == "watched_no_convert":
-        key = "WATCHED_NO_CONVERT_EN"
+        key = "WATCHED_NO_CONVERT_2MO_EN" if normalized_trial_days >= 60 else "WATCHED_NO_CONVERT_EN"
     elif normalized_bucket == "hot_repeat":
         key = "HOT_REPEAT_EN"
     else:
