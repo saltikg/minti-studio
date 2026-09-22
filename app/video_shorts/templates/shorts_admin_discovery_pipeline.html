@@ -15,6 +15,15 @@
   </a>
 {%- endmacro %}
 
+{% macro lead_sort_link(key, label, default_dir='asc') -%}
+  <a
+    class="discovery-sort-link"
+    href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, per_page=per_page, lead_sort=key, lead_dir=(default_dir if lead_sort != key else ('asc' if lead_dir == 'desc' else 'desc'))) }}">
+    <span>{{ label }}</span>
+    {% if lead_sort == key %}<span class="discovery-sort-arrow">{{ '↑' if lead_dir == 'asc' else '↓' }}</span>{% endif %}
+  </a>
+{%- endmacro %}
+
 {% block extra_styles %}
   <style>
     .discovery-summary-grid {
@@ -567,9 +576,9 @@
 
     <div data-pipeline-panel="leads">
     <div class="discovery-filter-tabs">
-      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads') }}">All leads</a>
-      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='ready_to_promote') }}">Ready to promote</a>
-      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='dismissed') }}">Dismissed</a>
+      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">All leads</a>
+      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='ready_to_promote', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Ready to promote</a>
+      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='dismissed', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Dismissed</a>
       {% if lead_filter %}
         <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
       {% endif %}
@@ -581,12 +590,13 @@
           <tr>
             <th class="discovery-select-cell">Seed</th>
             <th>Promote</th>
-            <th>Status</th>
-            <th>Channel</th>
-            <th>Subscribers</th>
-            <th>Longform 60d</th>
-            <th>Shorts 15d</th>
-            <th>Sweet spot</th>
+            <th>{{ lead_sort_link('found', 'Found', 'desc') }}</th>
+            <th>{{ lead_sort_link('status', 'Status') }}</th>
+            <th>{{ lead_sort_link('channel', 'Channel') }}</th>
+            <th>{{ lead_sort_link('subscribers', 'Subscribers', 'desc') }}</th>
+            <th>{{ lead_sort_link('longform', 'Longform 60d', 'desc') }}</th>
+            <th>{{ lead_sort_link('shorts', 'Shorts 15d', 'desc') }}</th>
+            <th>{{ lead_sort_link('sweetspot', 'Sweet spot', 'desc') }}</th>
             <th>ICP</th>
             <th>Email</th>
             <th>Confidence</th>
@@ -632,6 +642,7 @@
                   <div class="discovery-muted">Loading recent videos...</div>
                 </div>
               </td>
+              <td>{{ lead.first_seen_at or '' }}</td>
               <td>
                 <span class="discovery-status {{ lead.status }}">{{ lead.status }}</span>
                 {% if lead.dismissed_at %}
@@ -693,7 +704,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="18" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+              <td colspan="19" class="text-center text-white-50 py-4">No discovery leads yet.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -704,10 +715,10 @@
       <div>Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2">
         {% if page > 1 %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page-1, per_page=per_page, filter=lead_filter) }}">Previous</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page-1, per_page=per_page, filter=lead_filter, lead_sort=lead_sort, lead_dir=lead_dir) }}">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page+1, per_page=per_page, filter=lead_filter) }}">Next</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page+1, per_page=per_page, filter=lead_filter, lead_sort=lead_sort, lead_dir=lead_dir) }}">Next</a>
         {% endif %}
       </div>
     </div>
@@ -759,7 +770,7 @@
           datasets: [
             {
               type: 'bar',
-              label: 'Qualified leads/day',
+              label: 'ICP-fit leads/day',
               data: qualified,
               yAxisID: 'qualified',
               backgroundColor: 'rgba(45, 212, 191, 0.34)',

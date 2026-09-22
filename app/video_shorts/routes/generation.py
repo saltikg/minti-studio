@@ -16284,6 +16284,12 @@ def admin_discovery_lead_pipeline():
     keyword_dir = str(request.args.get("keyword_dir") or "desc").strip().lower()
     if keyword_dir not in {"asc", "desc"}:
         keyword_dir = "desc"
+    lead_sort = str(request.args.get("lead_sort") or "found").strip().lower()
+    if lead_sort not in {"found", "status", "channel", "subscribers", "longform", "shorts", "sweetspot"}:
+        lead_sort = "found"
+    lead_dir = str(request.args.get("lead_dir") or "desc").strip().lower()
+    if lead_dir not in {"asc", "desc"}:
+        lead_dir = "desc"
     conn = get_db_readonly()
     try:
         discovery_columns = table_columns(conn, "discovery_leads")
@@ -16414,6 +16420,19 @@ def admin_discovery_lead_pipeline():
             total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
             row_limit = filtered_total if wants_csv else per_page
             row_offset = 0 if wants_csv else offset
+            lead_sort_sql_map = {
+                "found": "first_seen_at",
+                "status": "lower(COALESCE(status, ''))",
+                "channel": "lower(COALESCE(channel_title, youtube_channel_id, ''))",
+                "subscribers": "subscriber_count",
+                "longform": "longform_last_60d",
+                "shorts": "shorts_last_15d",
+                "sweetspot": "sweetspot_score",
+            }
+            lead_order_column = lead_sort_sql_map[lead_sort]
+            lead_order_direction = "ASC" if lead_dir == "asc" else "DESC"
+            lead_nulls = "NULLS FIRST" if lead_dir == "asc" else "NULLS LAST"
+            lead_tie_order = "last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC"
             rows = conn.execute(
                 f"""
                 SELECT
@@ -16432,6 +16451,7 @@ def admin_discovery_lead_pipeline():
                     website,
                     lead_tier,
                     status,
+                    first_seen_at,
                     last_seen_at,
                     last_discovered_at,
                     matched_keyword,
@@ -16452,11 +16472,7 @@ def admin_discovery_lead_pipeline():
                     {raw_json_sql} AS raw_json
                 FROM discovery_leads
                 {ready_filter_sql}
-                ORDER BY
-                    sweetspot_score DESC NULLS LAST,
-                    last_discovered_at DESC NULLS LAST,
-                    last_seen_at DESC NULLS LAST,
-                    id DESC
+                ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
                 LIMIT ? OFFSET ?
                 """,
                 [row_limit, row_offset],
@@ -16465,19 +16481,19 @@ def admin_discovery_lead_pipeline():
             for row in rows:
                 raw_payload: Dict[str, Any] = {}
                 try:
-                    raw_value = row[32]
+                    raw_value = row[33]
                     if isinstance(raw_value, dict):
                         raw_payload = raw_value
                     elif raw_value:
                         raw_payload = json.loads(str(raw_value))
                 except Exception:
                     raw_payload = {}
-                promoted_source_video_title = str(row[30] or "").strip()
+                promoted_source_video_title = str(row[31] or "").strip()
                 best_source_video_title = str(raw_payload.get("best_source_video_title") or "").strip()
                 source_video_title = promoted_source_video_title or best_source_video_title
-                source_video_id = str(row[31] or row[28] or "").strip()
-                source_video_minutes = row[23]
-                source_video_score = row[22]
+                source_video_id = str(row[32] or row[29] or "").strip()
+                source_video_minutes = row[24]
+                source_video_score = row[23]
                 leads.append(
                     {
                     "id": row[0],
@@ -16495,21 +16511,22 @@ def admin_discovery_lead_pipeline():
                     "website": str(row[12] or ""),
                     "lead_tier": str(row[13] or ""),
                     "status": str(row[14] or "discovered"),
-                    "last_seen_at": _format_datetime_pst(row[15]),
-                    "last_discovered_at": _format_datetime_pst(row[16]),
-                    "matched_keyword": str(row[17] or ""),
-                    "email_enriched_at": _format_datetime_pst(row[18]),
-                    "email_enrichment_error": str(row[19] or ""),
-                    "is_seed": bool(row[20]) if row[20] is not None else False,
-                    "promoted_at": _format_datetime_pst(row[21]),
-                    "sweetspot_score": row[22],
-                    "best_source_video_minutes": row[23],
-                    "autopilot_lead_id": str(row[24] or ""),
-                    "promoted_to_autopilot_at": _format_datetime_pst(row[25]),
-                    "promotion_error": str(row[26] or ""),
-                    "dismissed_at": _format_datetime_pst(row[27]),
-                    "best_source_video_id": str(row[28] or ""),
-                    "promoted_source_video_id": row[29],
+                    "first_seen_at": _format_datetime_pst(row[15]),
+                    "last_seen_at": _format_datetime_pst(row[16]),
+                    "last_discovered_at": _format_datetime_pst(row[17]),
+                    "matched_keyword": str(row[18] or ""),
+                    "email_enriched_at": _format_datetime_pst(row[19]),
+                    "email_enrichment_error": str(row[20] or ""),
+                    "is_seed": bool(row[21]) if row[21] is not None else False,
+                    "promoted_at": _format_datetime_pst(row[22]),
+                    "sweetspot_score": row[23],
+                    "best_source_video_minutes": row[24],
+                    "autopilot_lead_id": str(row[25] or ""),
+                    "promoted_to_autopilot_at": _format_datetime_pst(row[26]),
+                    "promotion_error": str(row[27] or ""),
+                    "dismissed_at": _format_datetime_pst(row[28]),
+                    "best_source_video_id": str(row[29] or ""),
+                    "promoted_source_video_id": row[30],
                     "source_video_id": source_video_id,
                     "source_video_title": source_video_title,
                     "source_video_minutes": source_video_minutes,
@@ -16631,6 +16648,7 @@ def admin_discovery_lead_pipeline():
                 "website",
                 "lead_tier",
                 "status",
+                "first_seen_at",
                 "last_seen_at",
                 "last_discovered_at",
                 "matched_keyword",
@@ -16677,6 +16695,8 @@ def admin_discovery_lead_pipeline():
         ready_to_promote_count=ready_to_promote_count,
         keyword_sort=keyword_sort,
         keyword_dir=keyword_dir,
+        lead_sort=lead_sort,
+        lead_dir=lead_dir,
         filtered_total=filtered_total,
         page=page,
         per_page=per_page,
