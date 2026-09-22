@@ -62,6 +62,7 @@ from app.video_shorts.services.render_jobs import (
     get_job,
     mark_job_done,
     mark_job_failed,
+    requeue_dead_local_worker_jobs,
     requeue_job,
     requeue_timed_out_jobs,
     update_job_result,
@@ -1384,6 +1385,7 @@ def run_worker_loop() -> None:
     app = create_app()
     with app.app_context():
         while True:
+            requeue_dead_local_worker_jobs()
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
             try:

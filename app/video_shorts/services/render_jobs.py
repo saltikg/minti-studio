@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import socket
 import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -1053,6 +1055,60 @@ def requeue_timed_out_jobs(*, timeout_seconds: int) -> Dict[str, int]:
             failed += 1
         else:
             requeue_job(job["id"], "Job timed out; requeued automatically.")
+            requeued += 1
+    return {"requeued": requeued, "failed": failed}
+
+
+def _local_dead_worker_job(row: Any, local_hostname: str) -> Optional[Dict[str, Any]]:
+    job = _row_to_job(row)
+    worker_id = str(job.get("worker_id") or "").strip()
+    if ":" not in worker_id:
+        return None
+    worker_host, worker_pid_text = worker_id.rsplit(":", 1)
+    if worker_host != local_hostname:
+        return None
+    try:
+        worker_pid = int(worker_pid_text)
+    except (TypeError, ValueError):
+        return None
+    try:
+        os.kill(worker_pid, 0)
+        return None
+    except ProcessLookupError:
+        return job
+    except PermissionError:
+        return None
+
+
+def requeue_dead_local_worker_jobs() -> Dict[str, int]:
+    """Recover processing jobs owned by worker PIDs that no longer exist on this host."""
+    local_hostname = socket.gethostname()
+    conn = get_db()
+    requeued = 0
+    failed = 0
+    try:
+        ensure_render_jobs_schema(conn)
+        rows = conn.execute(
+            f"""
+            {_job_select_sql()}
+            WHERE status = ?
+              AND worker_id IS NOT NULL
+            ORDER BY started_at IS NULL, started_at ASC, created_at ASC
+            """,
+            [JOB_STATUS_PROCESSING],
+        ).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+    for row in rows:
+        job = _local_dead_worker_job(row, local_hostname)
+        if not job:
+            continue
+        if job["attempts"] >= job["max_attempts"]:
+            mark_job_failed(job["id"], "Job worker exited and exhausted retries.")
+            failed += 1
+        else:
+            requeue_job(job["id"], "Job worker exited; requeued automatically.")
             requeued += 1
     return {"requeued": requeued, "failed": failed}
 
