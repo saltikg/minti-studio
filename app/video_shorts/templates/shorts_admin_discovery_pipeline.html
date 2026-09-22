@@ -100,17 +100,31 @@
       font-weight: 800;
     }
     .discovery-daily-keywords {
-      min-width: 360px;
-      max-width: 520px;
       color: rgba(255, 255, 255, 0.9);
       font-size: 0.86rem;
       line-height: 1.45;
+    }
+    .discovery-table.discovery-daily-table {
+      table-layout: fixed;
+    }
+    .discovery-table.discovery-daily-table th:first-child,
+    .discovery-table.discovery-daily-table td:first-child {
+      width: 120px;
+    }
+    .discovery-table.discovery-daily-table th:nth-child(2),
+    .discovery-table.discovery-daily-table td.discovery-daily-keywords {
+      width: 520px;
       white-space: normal;
       overflow-wrap: anywhere;
+      word-break: normal;
+    }
+    .discovery-table.discovery-daily-table th:nth-child(3),
+    .discovery-table.discovery-daily-table td.discovery-daily-counts {
+      width: 440px;
+      white-space: normal;
     }
     .discovery-daily-counts {
-      min-width: 320px;
-      white-space: normal;
+      min-width: 0;
     }
     .discovery-daily-count-line {
       color: rgba(255, 255, 255, 0.9);
@@ -390,7 +404,7 @@
     <div data-pipeline-panel="daily">
       <div class="discovery-muted mb-3">Daily keyword searches and lead outcomes for the last 30 days.</div>
       <div class="discovery-table-wrap mb-4">
-        <table class="discovery-table">
+        <table class="discovery-table discovery-daily-table">
           <thead>
             <tr>
               <th>Date</th>
