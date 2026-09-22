@@ -14038,6 +14038,74 @@ def _load_admin_lead_state_options(conn, selected_states: Optional[List[str]] = 
     return [{"value": state, "label": _pipeline_state_label(state)} for state in states]
 
 
+def _load_admin_leads_chart_series(conn, *, history_days: int = 7) -> Dict[str, Any]:
+    if not autopilot_leads_table_ready(conn):
+        return {"dates": [], "real_leads": [], "email_link_clicks": [], "history_days": history_days}
+
+    history_days = history_days if history_days in {7, 15, 30} else 7
+    today = datetime.now(PST_ZONE).date()
+    chart_dates = [today - timedelta(days=offset_days) for offset_days in range(history_days - 1, -1, -1)]
+    date_keys = [day.isoformat() for day in chart_dates]
+    real_lead_counts = {key: 0 for key in date_keys}
+    click_counts = {key: 0 for key in date_keys}
+    start_utc = datetime.combine(chart_dates[0], datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+    tomorrow_utc = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+
+    def _date_key(value: Any) -> str:
+        if not isinstance(value, datetime):
+            return ""
+        dt_value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt_value.astimezone(PST_ZONE).date().isoformat()
+
+    for row in conn.execute(
+        """
+        SELECT created_at
+        FROM autopilot_leads
+        WHERE user_id IS NOT NULL
+          AND brand_id IS NOT NULL
+          AND created_at >= ?
+          AND created_at < ?
+        """,
+        [start_utc, tomorrow_utc],
+    ).fetchall():
+        key = _date_key(row[0])
+        if key in real_lead_counts:
+            real_lead_counts[key] += 1
+
+    share_link_columns = table_columns(conn, "short_share_links")
+    user_event_columns = table_columns(conn, "user_events")
+    if share_link_columns and user_event_columns and "autopilot_lead_id" in share_link_columns:
+        seen_clicks: set[tuple[str, str]] = set()
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT
+              NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id,
+              ue.created_at
+            FROM short_share_links sl
+            JOIN user_events ue
+              ON {_share_link_event_join_sql(conn)}
+            WHERE ue.event_name = 'share_view'
+              AND NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+              AND ue.created_at >= ?
+              AND ue.created_at < ?
+            """,
+            [start_utc, tomorrow_utc],
+        ).fetchall():
+            lead_id = str(row[0] or "").strip()
+            key = _date_key(row[1])
+            click_key = (lead_id, key)
+            if lead_id and key in click_counts and click_key not in seen_clicks:
+                seen_clicks.add(click_key)
+                click_counts[key] += 1
+
+    return {
+        "dates": date_keys,
+        "real_leads": [real_lead_counts[key] for key in date_keys],
+        "email_link_clicks": [click_counts[key] for key in date_keys],
+        "history_days": history_days,
+    }
+
+
 def _pagination_page_numbers(page: int, total_pages: int) -> List[Optional[int]]:
     if total_pages <= 9:
         return list(range(1, total_pages + 1))
@@ -15888,6 +15956,11 @@ def admin_leads():
     subscriber_min = _parse_nonnegative_int(request.args.get("subscriber_min"))
     subscriber_max = _parse_nonnegative_int(request.args.get("subscriber_max"))
     try:
+        requested_chart_days = int(request.args.get("chart_days") or 7)
+    except (TypeError, ValueError):
+        requested_chart_days = 7
+    chart_days = requested_chart_days if requested_chart_days in {7, 15, 30} else 7
+    try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
         requested_page = 1
@@ -15930,6 +16003,7 @@ def admin_leads():
             offset=(page - 1) * per_page,
         )
         state_options = _load_admin_lead_state_options(conn, selected_states)
+        lead_chart_series = _load_admin_leads_chart_series(conn, history_days=chart_days)
         trakk_enabled, trakk_daily_cap, trakk_used_today, trakk_remaining = _auto_trakk_remaining(conn)
     finally:
         conn.close()
@@ -15951,6 +16025,7 @@ def admin_leads():
             "generated": generated_context,
             "sort": sort_key_context,
             "dir": sort_dir_context,
+            "chart_days": chart_days,
         }
         if selected_states:
             params["state"] = selected_states
@@ -15980,6 +16055,10 @@ def admin_leads():
         }
         for page_number in page_numbers
     ]
+    lead_chart_range_links = [
+        {"days": days, "label": label, "url": _admin_leads_url(chart_days=days, page=1)}
+        for days, label in ((7, "Last 7"), (15, "Last 15"), (30, "Last 30"))
+    ]
     return render_template(
         "shorts_admin_leads.html",
         admin_title="Leads",
@@ -15996,6 +16075,9 @@ def admin_leads():
         sort_generation_url=_admin_leads_url(sort="generation", dir="asc" if sort_key_context != "generation" or sort_dir_context == "desc" else "desc", page=1),
         sort_email_sent_url=_admin_leads_url(sort="email_sent", dir="asc" if sort_key_context != "email_sent" or sort_dir_context == "desc" else "desc", page=1),
         sort_created_url=_admin_leads_url(sort="created", dir="asc" if sort_key_context != "created" or sort_dir_context == "desc" else "desc", page=1),
+        chart_days=chart_days,
+        lead_chart_series=lead_chart_series,
+        lead_chart_range_links=lead_chart_range_links,
         search_query=search_query,
         subscriber_min=subscriber_min,
         subscriber_max=subscriber_max,

@@ -66,6 +66,12 @@
     .admin-leads-sort-link { color:rgba(255,255,255,.72); text-decoration:none; display:inline-flex; gap:5px; align-items:center; }
     .admin-leads-sort-link:hover, .admin-leads-sort-link:focus { color:#8ff3d8; text-decoration:none; }
     .admin-leads-sort-arrow { color:#8ff3d8; font-size:.82rem; }
+    .admin-leads-trend-panel { border:1px solid rgba(255,255,255,.1); border-radius:14px; background:rgba(255,255,255,.045); padding:14px; margin-bottom:18px; }
+    .admin-leads-trend-title { color:rgba(255,255,255,.68); font-size:.8rem; font-weight:850; letter-spacing:.08em; text-transform:uppercase; margin-bottom:4px; }
+    .admin-leads-trend-canvas { position:relative; min-height:280px; }
+    .admin-leads-range-tabs { display:inline-flex; flex-wrap:wrap; gap:8px; }
+    .admin-leads-range-tabs a { border:1px solid rgba(255,255,255,.12); border-radius:8px; color:rgba(255,255,255,.72); padding:7px 10px; text-decoration:none; font-size:.84rem; font-weight:800; }
+    .admin-leads-range-tabs a.is-active { border-color:rgba(45,212,191,.35); background:rgba(45,212,191,.14); color:#8ff3d8; }
     @media (max-width:991.98px) { .admin-leads-toolbar { grid-template-columns:1fr 1fr; } }
     @media (max-width:767.98px) { .admin-leads-toolbar, .admin-leads-modal-form { grid-template-columns:1fr; } }
   </style>
@@ -76,9 +82,31 @@
     {% set next_generation_dir = 'asc' if sort_key != 'generation' or sort_dir == 'desc' else 'desc' %}
     {% set next_email_sent_dir = 'asc' if sort_key != 'email_sent' or sort_dir == 'desc' else 'desc' %}
     {% set next_created_dir = 'asc' if sort_key != 'created' or sort_dir == 'desc' else 'desc' %}
+    <div class="admin-leads-trend-panel">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+        <div>
+          <div class="admin-leads-trend-title">Leads trend</div>
+          <div class="admin-leads-muted">Real leads by creation date and unique leads who opened an email link</div>
+        </div>
+        <div class="admin-leads-range-tabs" aria-label="Leads chart range">
+          {% for range_link in lead_chart_range_links %}
+            <a
+              class="{{ 'is-active' if chart_days == range_link.days else '' }}"
+              href="{{ range_link.url }}">
+              {{ range_link.label }}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="admin-leads-trend-canvas">
+        <canvas id="leadsTrendChart" aria-label="Leads trend chart"></canvas>
+      </div>
+    </div>
+
     <form method="get" class="admin-leads-toolbar">
       <input type="hidden" name="sort" value="{{ sort_key }}">
       <input type="hidden" name="dir" value="{{ sort_dir }}">
+      <input type="hidden" name="chart_days" value="{{ chart_days }}">
       <div>
         <label for="admin-leads-search" class="form-label mb-2">Search</label>
         <input id="admin-leads-search" type="search" name="q" value="{{ search_query }}" class="form-control" placeholder="Channel or creator">
@@ -479,7 +507,89 @@
 {% endblock %}
 
 {% block extra_scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script>
+    (function () {
+      const canvas = document.getElementById("leadsTrendChart");
+      if (!canvas || typeof Chart === "undefined") return;
+      const trend = {{ lead_chart_series|tojson }};
+      const labels = trend.dates || [];
+      const realLeads = trend.real_leads || [];
+      const emailLinkClicks = trend.email_link_clicks || [];
+      new Chart(canvas, {
+        data: {
+          labels,
+          datasets: [
+            {
+              type: "bar",
+              label: "Email link opens/day",
+              data: emailLinkClicks,
+              yAxisID: "opens",
+              backgroundColor: "rgba(45, 212, 191, 0.34)",
+              borderColor: "rgba(45, 212, 191, 0.78)",
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 18
+            },
+            {
+              type: "line",
+              label: "Real leads/day",
+              data: realLeads,
+              yAxisID: "leads",
+              borderColor: "#fbbf24",
+              backgroundColor: "rgba(251, 191, 36, 0.12)",
+              pointBackgroundColor: "#fbbf24",
+              pointRadius: 2.5,
+              borderWidth: 2,
+              tension: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: {
+              labels: { color: "rgba(255, 255, 255, 0.72)", boxWidth: 12, boxHeight: 12 }
+            },
+            tooltip: {
+              backgroundColor: "rgba(15, 23, 42, 0.96)",
+              borderColor: "rgba(255, 255, 255, 0.12)",
+              borderWidth: 1
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: "rgba(255, 255, 255, 0.06)" },
+              ticks: {
+                color: "rgba(255, 255, 255, 0.52)",
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 10
+              }
+            },
+            leads: {
+              type: "linear",
+              position: "left",
+              beginAtZero: true,
+              ticks: { color: "rgba(255, 255, 255, 0.58)", precision: 0 },
+              grid: { color: "rgba(255, 255, 255, 0.08)" },
+              title: { display: true, text: "Real leads", color: "rgba(255, 255, 255, 0.58)" }
+            },
+            opens: {
+              type: "linear",
+              position: "right",
+              beginAtZero: true,
+              ticks: { color: "rgba(255, 255, 255, 0.58)", precision: 0 },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: "Email link opens", color: "rgba(255, 255, 255, 0.58)" }
+            }
+          }
+        }
+      });
+    })();
+
     document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll("[data-discovery-email-edit]").forEach((button) => {
         button.addEventListener("click", () => {
