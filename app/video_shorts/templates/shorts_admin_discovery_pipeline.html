@@ -6,6 +6,15 @@
   <p>Persistent view of discovered YouTube channels. Discovery and queue controls land in later phases.</p>
 {% endblock %}
 
+{% macro keyword_sort_link(key, label) -%}
+  <a
+    class="discovery-sort-link"
+    href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='keywords', keyword_sort=key, keyword_dir=('asc' if keyword_sort != key or keyword_dir == 'desc' else 'desc')) }}">
+    <span>{{ label }}</span>
+    {% if keyword_sort == key %}<span class="discovery-sort-arrow">{{ '↑' if keyword_dir == 'asc' else '↓' }}</span>{% endif %}
+  </a>
+{%- endmacro %}
+
 {% block extra_styles %}
   <style>
     .discovery-summary-grid {
@@ -55,6 +64,22 @@
       font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
+    }
+    .discovery-sort-link {
+      color: rgba(255, 255, 255, 0.72);
+      display: inline-flex;
+      gap: 5px;
+      align-items: center;
+      text-decoration: none;
+    }
+    .discovery-sort-link:hover,
+    .discovery-sort-link:focus {
+      color: #8ff3d8;
+      text-decoration: none;
+    }
+    .discovery-sort-arrow {
+      color: #8ff3d8;
+      font-size: .82rem;
     }
     .discovery-channel {
       min-width: 260px;
@@ -447,12 +472,12 @@
           <thead>
             <tr>
               <th class="keyword-select-cell"><input id="selectAllKeywords" type="checkbox" aria-label="Select all keywords"></th>
-              <th>Keyword</th>
-              <th>Status</th>
-              <th>Source</th>
-              <th>Searches</th>
-              <th>Found</th>
-              <th>Last searched</th>
+              <th>{{ keyword_sort_link('keyword', 'Keyword') }}</th>
+              <th>{{ keyword_sort_link('status', 'Status') }}</th>
+              <th>{{ keyword_sort_link('source', 'Source') }}</th>
+              <th>{{ keyword_sort_link('searches', 'Searches') }}</th>
+              <th>{{ keyword_sort_link('found', 'Found') }}</th>
+              <th>{{ keyword_sort_link('last_searched', 'Last searched') }}</th>
               <th class="keyword-action-cell">Action</th>
             </tr>
           </thead>
@@ -753,7 +778,7 @@
               pointBackgroundColor: '#fbbf24',
               pointRadius: 2.5,
               borderWidth: 2,
-              tension: 0.32
+              tension: 0
             }
           ]
         },

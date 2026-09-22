@@ -16278,6 +16278,12 @@ def admin_discovery_lead_pipeline():
     active_pipeline_tab = str(request.args.get("tab") or "leads").strip().lower()
     if active_pipeline_tab not in {"keywords", "leads", "settings"}:
         active_pipeline_tab = "leads"
+    keyword_sort = str(request.args.get("keyword_sort") or "last_searched").strip().lower()
+    if keyword_sort not in {"keyword", "status", "source", "searches", "found", "last_searched"}:
+        keyword_sort = "last_searched"
+    keyword_dir = str(request.args.get("keyword_dir") or "desc").strip().lower()
+    if keyword_dir not in {"asc", "desc"}:
+        keyword_dir = "desc"
     conn = get_db_readonly()
     try:
         discovery_columns = table_columns(conn, "discovery_leads")
@@ -16512,6 +16518,17 @@ def admin_discovery_lead_pipeline():
                 )
 
         if has_keywords:
+            keyword_sort_sql_map = {
+                "keyword": "lower(keyword)",
+                "status": "lower(COALESCE(status, ''))",
+                "source": "lower(COALESCE(source, ''))",
+                "searches": "COALESCE(times_searched, 0)",
+                "found": "COALESCE(found_count, 0)",
+                "last_searched": "last_searched_at",
+            }
+            keyword_order_column = keyword_sort_sql_map[keyword_sort]
+            keyword_order_direction = "ASC" if keyword_dir == "asc" else "DESC"
+            keyword_nulls = "NULLS FIRST" if keyword_dir == "asc" else "NULLS LAST"
             keyword_row = conn.execute(
                 """
                 SELECT
@@ -16527,10 +16544,10 @@ def admin_discovery_lead_pipeline():
                 "searched": int(keyword_row[2] or 0),
             }
             keyword_rows = conn.execute(
-                """
+                f"""
                 SELECT id, keyword, source, status, priority, times_searched, found_count, last_searched_at, created_at
                 FROM keyword_queue
-                ORDER BY found_count DESC, priority ASC, created_at DESC
+                ORDER BY {keyword_order_column} {keyword_order_direction} {keyword_nulls}, priority ASC, created_at DESC
                 LIMIT 50
                 """
             ).fetchall()
@@ -16658,6 +16675,8 @@ def admin_discovery_lead_pipeline():
         lead_filter=lead_filter,
         active_pipeline_tab=active_pipeline_tab,
         ready_to_promote_count=ready_to_promote_count,
+        keyword_sort=keyword_sort,
+        keyword_dir=keyword_dir,
         filtered_total=filtered_total,
         page=page,
         per_page=per_page,
