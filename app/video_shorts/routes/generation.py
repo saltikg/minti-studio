@@ -12819,54 +12819,189 @@ def _parse_admin_date_filter(value: str, *, end_of_day: bool = False) -> datetim
     return parsed.astimezone(timezone.utc)
 
 
-def _load_outreach_sent_chart_series(conn) -> dict[str, Any]:
+def _load_outreach_sent_chart_series(conn, *, history_days: int = 7) -> dict[str, Any]:
     outreach_columns = table_columns(conn, "outreach_scheduled_emails")
     share_link_columns = table_columns(conn, "short_share_links")
+    user_event_columns = table_columns(conn, "user_events")
+    history_days = history_days if history_days in {7, 15, 30} else 7
     today = datetime.now(PST_ZONE).date()
-    chart_dates = [today - timedelta(days=offset_days) for offset_days in range(6, -1, -1)]
-    counts = {day.isoformat(): 0 for day in chart_dates}
-    start_utc = datetime.combine(chart_dates[0], datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+    history_dates = [today - timedelta(days=offset_days) for offset_days in range(history_days - 1, -1, -1)]
+    future_dates = [today + timedelta(days=offset_days) for offset_days in range(1, 8)]
+    chart_dates = [*history_dates, *future_dates]
+    sent_counts = {day.isoformat(): 0 for day in chart_dates}
+    visited_counts = {day.isoformat(): 0 for day in chart_dates}
+    scheduled_counts = {day.isoformat(): 0 for day in chart_dates}
+    start_utc = datetime.combine(history_dates[0], datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+    tomorrow_utc = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+    future_end_utc = datetime.combine(today + timedelta(days=8), datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+
+    def _date_key(value: Any) -> str:
+        if not isinstance(value, datetime):
+            return ""
+        dt_value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt_value.astimezone(PST_ZONE).date().isoformat()
+
+    seen_sends: set[tuple[str, int]] = set()
 
     if outreach_columns:
+        sequence_sql = (
+            "COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END)"
+            if "sequence_number" in outreach_columns
+            else "CASE WHEN stage = 'first' THEN 1 ELSE 2 END"
+        )
         for row in conn.execute(
-            """
-            SELECT sent_at
+            f"""
+            SELECT CAST(share_link_id AS VARCHAR), {sequence_sql} AS sequence_number, sent_at
             FROM outreach_scheduled_emails
             WHERE lower(COALESCE(status, '')) = 'sent'
               AND sent_at >= ?
+              AND sent_at < ?
             """,
-            [start_utc],
+            [start_utc, tomorrow_utc],
         ).fetchall():
-            sent_at = row[0]
-            if isinstance(sent_at, datetime):
-                key = (sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)).astimezone(PST_ZONE).date().isoformat()
-                if key in counts:
-                    counts[key] += 1
+            share_link_id = str(row[0] or "").strip()
+            try:
+                sequence_number = int(row[1] or 0)
+            except (TypeError, ValueError):
+                sequence_number = 0
+            key = _date_key(row[2])
+            dedupe_key = (share_link_id, sequence_number)
+            if share_link_id and sequence_number and key in sent_counts and dedupe_key not in seen_sends:
+                seen_sends.add(dedupe_key)
+                sent_counts[key] += 1
+
+        for row in conn.execute(
+            """
+            SELECT scheduled_at
+            FROM outreach_scheduled_emails
+            WHERE lower(COALESCE(status, '')) IN ('scheduled', 'processing')
+              AND scheduled_at >= ?
+              AND scheduled_at < ?
+            """,
+            [tomorrow_utc, future_end_utc],
+        ).fetchall():
+            key = _date_key(row[0])
+            if key in scheduled_counts:
+                scheduled_counts[key] += 1
 
     if share_link_columns:
-        sent_fields = []
         if "emailed_at" in share_link_columns:
-            sent_fields.append("emailed_at")
-        if "followup_sent_at" in share_link_columns:
-            sent_fields.append("followup_sent_at")
-        for field_name in sent_fields:
             for row in conn.execute(
-                f"""
-                SELECT {field_name}
+                """
+                SELECT CAST(id AS VARCHAR), emailed_at
                 FROM short_share_links
-                WHERE {field_name} >= ?
+                WHERE emailed_at >= ?
+                  AND emailed_at < ?
                 """,
-                [start_utc],
+                [start_utc, tomorrow_utc],
             ).fetchall():
-                sent_at = row[0]
-                if isinstance(sent_at, datetime):
-                    key = (sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)).astimezone(PST_ZONE).date().isoformat()
-                    if key in counts:
-                        counts[key] += 1
+                share_link_id = str(row[0] or "").strip()
+                key = _date_key(row[1])
+                dedupe_key = (share_link_id, 1)
+                if share_link_id and key in sent_counts and dedupe_key not in seen_sends:
+                    seen_sends.add(dedupe_key)
+                    sent_counts[key] += 1
+        if "followup_sent_at" in share_link_columns:
+            for row in conn.execute(
+                """
+                SELECT CAST(id AS VARCHAR), followup_sent_at
+                FROM short_share_links
+                WHERE followup_sent_at >= ?
+                  AND followup_sent_at < ?
+                """,
+                [start_utc, tomorrow_utc],
+            ).fetchall():
+                share_link_id = str(row[0] or "").strip()
+                key = _date_key(row[1])
+                dedupe_key = (share_link_id, 2)
+                if share_link_id and key in sent_counts and dedupe_key not in seen_sends:
+                    seen_sends.add(dedupe_key)
+                    sent_counts[key] += 1
+
+    if share_link_columns and user_event_columns:
+        has_archived = "archived" in share_link_columns
+        archived_filter_sql = "COALESCE(sl.archived, false) = false" if has_archived else "TRUE"
+        archived_filter_sl2_sql = "COALESCE(sl2.archived, false) = false" if has_archived else "TRUE"
+        sl_key_sql = "COALESCE(NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), ''), lower(COALESCE(NULLIF(sl.recipient_email, ''), CAST(sl.id AS VARCHAR))))"
+        sl2_key_sql = "COALESCE(NULLIF(CAST(sl2.autopilot_lead_id AS VARCHAR), ''), lower(COALESCE(NULLIF(sl2.recipient_email, ''), CAST(sl2.id AS VARCHAR))))"
+        share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
+        token_expr = _user_event_metadata_text_sql(conn, "token")
+        lead_expr = _user_event_metadata_text_sql(conn, "autopilot_lead_id")
+        visited_rows = conn.execute(
+            f"""
+            WITH ranked_links AS (
+                SELECT
+                  sl.id AS share_link_id,
+                  {sl_key_sql} AS recipient_key,
+                  sl.token,
+                  NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id,
+                  sl.created_at,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY {sl_key_sql}
+                    ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                  ) AS rn
+                FROM short_share_links sl
+                WHERE {archived_filter_sql}
+            ),
+            current_links AS (
+                SELECT *
+                FROM ranked_links
+                WHERE rn = 1
+            ),
+            recipient_links AS (
+                SELECT
+                  cl.recipient_key,
+                  sl2.id AS share_link_id,
+                  sl2.token,
+                  NULLIF(CAST(sl2.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id
+                FROM current_links cl
+                JOIN short_share_links sl2
+                  ON {sl2_key_sql} = cl.recipient_key
+                 AND {archived_filter_sl2_sql}
+            )
+            SELECT DISTINCT rl.recipient_key, ue.created_at
+            FROM recipient_links rl
+            JOIN user_events ue
+              ON (
+                (
+                  ue.event_name = 'share_view'
+                  AND (
+                    ({share_link_expr} IS NOT NULL AND {share_link_expr} = CAST(rl.share_link_id AS VARCHAR))
+                    OR ({share_link_expr} IS NULL AND {token_expr} = rl.token)
+                  )
+                )
+                OR (
+                  ue.event_name = 'lead_feed_view'
+                  AND (
+                    ({share_link_expr} IS NOT NULL AND {share_link_expr} = CAST(rl.share_link_id AS VARCHAR))
+                    OR (rl.autopilot_lead_id IS NOT NULL AND {lead_expr} = rl.autopilot_lead_id)
+                  )
+                )
+              )
+            WHERE ue.created_at >= ?
+              AND ue.created_at < ?
+            """,
+            [start_utc, tomorrow_utc],
+        ).fetchall()
+        seen_visits: set[tuple[str, str]] = set()
+        for row in visited_rows:
+            recipient_key = str(row[0] or "").strip()
+            key = _date_key(row[1])
+            visit_key = (recipient_key, key)
+            if recipient_key and key in visited_counts and visit_key not in seen_visits:
+                seen_visits.add(visit_key)
+                visited_counts[key] += 1
 
     return {
         "dates": [day.isoformat() for day in chart_dates],
-        "sent": [counts[day.isoformat()] for day in chart_dates],
+        "history_dates": [day.isoformat() for day in history_dates],
+        "future_dates": [day.isoformat() for day in future_dates],
+        "sent": [sent_counts[day.isoformat()] for day in chart_dates],
+        "visited": [visited_counts[day.isoformat()] for day in chart_dates],
+        "future_scheduled": [scheduled_counts[day.isoformat()] for day in chart_dates],
+        "today": today.isoformat(),
+        "history_days": history_days,
+        "today_index": len(history_dates) - 1,
     }
 
 
@@ -12886,6 +13021,7 @@ def _load_admin_outreach_emails(
     sort_dir: str = "asc",
     limit: int = 200,
     offset: int = 0,
+    chart_days: int = 7,
 ) -> tuple[list[dict[str, Any]], int, dict[str, Any], dict[str, Any], str, str, str, str, str, str, str, str, str, str, str]:
     outreach_columns = table_columns(conn, "outreach_scheduled_emails")
     share_link_columns = table_columns(conn, "short_share_links")
@@ -13763,7 +13899,7 @@ def _load_admin_outreach_emails(
         page_items,
         total_count,
         summary_counts,
-        _load_outreach_sent_chart_series(conn),
+        _load_outreach_sent_chart_series(conn, history_days=chart_days),
         normalized_status,
         normalized_buckets,
         normalized_visited,
@@ -15607,6 +15743,11 @@ def admin_outreach_emails():
     sort_key = (request.args.get("sort") or "bucket").strip().lower()
     sort_dir = (request.args.get("dir") or "asc").strip().lower()
     try:
+        requested_chart_days = int(request.args.get("chart_days") or 7)
+    except (TypeError, ValueError):
+        requested_chart_days = 7
+    chart_days = requested_chart_days if requested_chart_days in {7, 15, 30} else 7
+    try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
         requested_page = 1
@@ -15646,6 +15787,7 @@ def admin_outreach_emails():
             sort_dir=sort_dir,
             limit=per_page,
             offset=(page - 1) * per_page,
+            chart_days=chart_days,
         )
         total_pages = max(1, (total_items + per_page - 1) // per_page)
     finally:
@@ -15666,6 +15808,7 @@ def admin_outreach_emails():
         date_to=normalized_date_to,
         selected_period=normalized_period,
         selected_metric=normalized_metric,
+        chart_days=chart_days,
         sort_key=normalized_sort_key,
         sort_dir=normalized_sort_dir,
         page=page,

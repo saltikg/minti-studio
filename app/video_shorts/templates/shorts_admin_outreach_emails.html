@@ -20,7 +20,7 @@
 {% macro sort_link(key, label) -%}
 	  <a
 	    class="admin-outreach-sort-link"
-	    href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=key, dir=('asc' if sort_key != key or sort_dir == 'desc' else 'desc'), page=1) }}">
+	    href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, chart_days=chart_days, sort=key, dir=('asc' if sort_key != key or sort_dir == 'desc' else 'desc'), page=1) }}">
 	    <span>{{ label }}</span>
 	    {% if sort_key == key %}<span class="admin-outreach-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>{% endif %}
 	  </a>
@@ -46,10 +46,7 @@
     }
     .admin-outreach-toolbar select[multiple] { min-height: 96px; }
     .admin-outreach-periods {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(220px, 1fr));
-      gap: 12px;
-      margin-bottom: 18px;
+      display: none;
     }
     .admin-outreach-period-card {
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -78,7 +75,27 @@
       margin-bottom: 18px;
     }
     .admin-outreach-trend-canvas {
-      height: 230px;
+      position: relative;
+      min-height: 280px;
+    }
+    .admin-outreach-range-tabs {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .admin-outreach-range-tabs a {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.72);
+      padding: 7px 10px;
+      text-decoration: none;
+      font-size: 0.84rem;
+      font-weight: 800;
+    }
+    .admin-outreach-range-tabs a.is-active {
+      border-color: rgba(45, 212, 191, 0.35);
+      background: rgba(45, 212, 191, 0.14);
+      color: #8ff3d8;
     }
 	    .admin-outreach-kpi {
 	      display: block;
@@ -228,6 +245,27 @@
 
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
+    <div class="admin-outreach-trend-panel">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+        <div>
+          <div class="admin-outreach-period-title mb-1">Outreach trend</div>
+          <div class="admin-outreach-muted">Real sent emails, unique daily visitors, and upcoming scheduled sends</div>
+        </div>
+        <div class="admin-outreach-range-tabs" aria-label="Outreach chart range">
+          {% for days, label in [(7, 'Last 7'), (15, 'Last 15'), (30, 'Last 30')] %}
+            <a
+              class="{{ 'is-active' if chart_days == days else '' }}"
+              href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, chart_days=days, sort=sort_key, dir=sort_dir, page=1) }}">
+              {{ label }}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="admin-outreach-trend-canvas">
+        <canvas id="outreachSentTrendChart" aria-label="Outreach trend chart"></canvas>
+      </div>
+    </div>
+
     <form method="get" class="admin-outreach-toolbar">
       <div>
         <label class="form-label mb-2" for="outreach-bucket">Follow-up bucket</label>
@@ -276,6 +314,7 @@
       <div>
 	        <input type="hidden" name="sort" value="{{ sort_key }}">
 	        <input type="hidden" name="dir" value="{{ sort_dir }}">
+	        <input type="hidden" name="chart_days" value="{{ chart_days }}">
 	        {% if selected_period and selected_metric %}
 	          <input type="hidden" name="period" value="{{ selected_period }}">
 	          <input type="hidden" name="metric" value="{{ selected_metric }}">
@@ -284,35 +323,6 @@
 	        <a href="{{ url_for('video_shorts_bp.admin_outreach_emails') }}" class="btn btn-outline-light ms-2">Reset</a>
 	      </div>
     </form>
-
-    <div class="admin-outreach-periods" aria-label="Outreach period summary">
-      {% for key, label in [('today', 'Today'), ('week', 'This week'), ('month', 'This month')] %}
-        {% set period = summary_counts[key] %}
-	        <div class="admin-outreach-period-card">
-	          <div class="admin-outreach-period-title">{{ label }}</div>
-	          <div class="admin-outreach-period-grid">
-	            {{ kpi_link(key, 'sent', 'Sent', period.sent) }}
-	            {{ kpi_link(key, 'scheduled', 'Scheduled', period.scheduled) }}
-	            {{ kpi_link(key, 'visited', 'Visited', period.visited) }}
-	            {{ kpi_link(key, 'repeat', 'Repeat', period.repeat_visited) }}
-	            {{ kpi_link(key, 'converted', 'Converted', period.converted) }}
-	            {{ kpi_link(key, 'failed', 'Failed', period.failed) }}
-	          </div>
-	        </div>
-	      {% endfor %}
-	    </div>
-
-    <div class="admin-outreach-trend-panel">
-      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
-        <div>
-          <div class="admin-outreach-period-title mb-1">7-day outreach trend</div>
-          <div class="admin-outreach-muted">Daily sent outreach emails</div>
-        </div>
-      </div>
-      <div class="admin-outreach-trend-canvas">
-        <canvas id="outreachSentTrendChart" aria-label="Outreach sent trend chart"></canvas>
-      </div>
-    </div>
 
 	    <div class="admin-outreach-feedback" data-outreach-feedback></div>
 	    {% if selected_period and selected_metric %}
@@ -444,10 +454,10 @@
       <div class="admin-outreach-muted">Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2 flex-wrap">
 	        {% if page > 1 %}
-	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, chart_days=chart_days, sort=sort_key, dir=sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
 	        {% endif %}
 	        {% if page < total_pages %}
-	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+	          <a href="{{ url_for('video_shorts_bp.admin_outreach_emails', bucket=selected_buckets, status=selected_status, visited=selected_visited, converted=selected_converted, period=selected_period, metric=selected_metric, email=email_query, date_from=date_from, date_to=date_to, chart_days=chart_days, sort=sort_key, dir=sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
 	        {% endif %}
       </div>
     </div>
@@ -463,13 +473,51 @@
       const trend = {{ sent_chart_series|tojson }};
       const labels = trend.dates || [];
       const sent = trend.sent || [];
+      const visited = trend.visited || [];
+      const futureScheduled = trend.future_scheduled || [];
+      const todayIndex = Number.isInteger(trend.today_index) ? trend.today_index : labels.indexOf(trend.today);
+      const todayDividerPlugin = {
+        id: 'todayDivider',
+        afterDatasetsDraw(chart) {
+          const xScale = chart.scales.x;
+          const chartArea = chart.chartArea;
+          if (!xScale || !chartArea || todayIndex < 0 || todayIndex >= labels.length) return;
+          const x = xScale.getPixelForValue(todayIndex) + ((xScale.getPixelForValue(todayIndex + 1) - xScale.getPixelForValue(todayIndex)) / 2 || 0);
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x, chartArea.top);
+          ctx.lineTo(x, chartArea.bottom);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.58)';
+          ctx.font = '700 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillText('Today', x - 6, chartArea.top + 13);
+          ctx.restore();
+        }
+      };
       new Chart(canvas, {
         data: {
           labels,
           datasets: [
             {
+              type: 'bar',
+              label: 'Visited recipients/day',
+              data: visited,
+              yAxisID: 'visited',
+              backgroundColor: 'rgba(45, 212, 191, 0.34)',
+              borderColor: 'rgba(45, 212, 191, 0.78)',
+              borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 18
+            },
+            {
               type: 'line',
-              label: 'Sent emails/day',
+              label: 'Real sent emails/day',
               data: sent,
               yAxisID: 'sent',
               borderColor: '#fbbf24',
@@ -478,9 +526,23 @@
               pointRadius: 2.5,
               borderWidth: 2,
               tension: 0.32
+            },
+            {
+              type: 'line',
+              label: 'Future scheduled emails/day',
+              data: futureScheduled,
+              yAxisID: 'sent',
+              borderColor: '#93c5fd',
+              backgroundColor: 'rgba(147, 197, 253, 0.12)',
+              pointBackgroundColor: '#93c5fd',
+              pointRadius: 2.5,
+              borderWidth: 2,
+              borderDash: [5, 5],
+              tension: 0.32
             }
           ]
         },
+        plugins: [todayDividerPlugin],
         options: {
           responsive: true,
           maintainAspectRatio: false,
@@ -502,7 +564,7 @@
                 color: 'rgba(255, 255, 255, 0.52)',
                 maxRotation: 0,
                 autoSkip: true,
-                maxTicksLimit: 7
+                maxTicksLimit: 10
               }
             },
             sent: {
@@ -512,6 +574,14 @@
               ticks: { color: 'rgba(255, 255, 255, 0.58)', precision: 0 },
               grid: { color: 'rgba(255, 255, 255, 0.08)' },
               title: { display: true, text: 'Sent emails', color: 'rgba(255, 255, 255, 0.58)' }
+            },
+            visited: {
+              type: 'linear',
+              position: 'right',
+              beginAtZero: true,
+              ticks: { color: 'rgba(255, 255, 255, 0.58)', precision: 0 },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'Visited recipients', color: 'rgba(255, 255, 255, 0.58)' }
             }
           }
         }
