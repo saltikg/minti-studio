@@ -18,6 +18,7 @@
     .lead-workspace-title-link:hover { color:#fff; text-decoration:underline; }
     .lead-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .lead-workspace-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .lead-workspace-empty { color:#fff !important; }
     .lead-workspace-badge { display:inline-flex; padding:5px 9px; border-radius:999px; border:1px solid rgba(45,212,191,.22); background:rgba(45,212,191,.12); color:#8ff3d8; font-size:.82rem; font-weight:700; white-space:nowrap; }
     .lead-workspace-badge.awaiting-approval { border-color:rgba(59,130,246,.42); background:rgba(59,130,246,.18); color:#bfdbfe; }
     .lead-workspace-badge.approved { border-color:rgba(34,197,94,.38); background:rgba(34,197,94,.16); color:#bbf7d0; }
@@ -109,7 +110,7 @@
         </div>
       </article>
     {% else %}
-      <p class="text-muted mb-0">No source videos are scoped to this lead brand.</p>
+      <p class="lead-workspace-empty mb-0">No source videos are scoped to this lead brand.</p>
     {% endfor %}
   </section>
 {% endblock %}

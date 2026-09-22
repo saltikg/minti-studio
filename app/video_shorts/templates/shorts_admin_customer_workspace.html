@@ -17,6 +17,7 @@
     .customer-workspace-thumb, .customer-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
     .customer-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .customer-workspace-actions { display:flex; flex-direction:column; gap:5px; align-items:flex-start; min-width:116px; }
+    .customer-workspace-empty { color:#fff !important; }
     .workspace-download-detail { color:rgba(255,255,255,.58); font-size:.78rem; line-height:1.2; white-space:nowrap; }
     .workspace-download-state { display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
     .workspace-download-spinner { display:inline-block; width:.85em; height:.85em; margin-right:6px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:999px; vertical-align:-1px; animation:workspace-download-spin .75s linear infinite; }
@@ -71,7 +72,7 @@
         </div>
       </article>
     {% else %}
-      <p class="text-muted mb-0">No source videos are scoped to this customer brand.</p>
+      <p class="customer-workspace-empty mb-0">No source videos are scoped to this customer brand.</p>
     {% endfor %}
   </section>
 {% endblock %}
