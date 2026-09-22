@@ -80,7 +80,10 @@ from app.video_shorts.services.onboarding_magic_links import (
     normalize_outreach_language,
 )
 from app.video_shorts.services.user_events import track_event
-from app.video_shorts.services.autopilot_leads import autopilot_leads_table_ready
+from app.video_shorts.services.autopilot_leads import (
+    autopilot_leads_table_ready,
+    ensure_converted_autopilot_lead_for_activation,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     has_refresh_token,
@@ -2324,6 +2327,13 @@ def save_service_mode_choice():
                     WHERE CAST(user_id AS VARCHAR) = ?
                     """,
                     [current_user["id"]],
+                )
+                ensure_converted_autopilot_lead_for_activation(
+                    conn,
+                    user_id=current_user["id"],
+                    user_email=str(current_user.get("email") or current_user.get("username") or ""),
+                    user_name=str(current_user.get("name") or current_user.get("username") or ""),
+                    source=activation_source or "first_login_modal",
                 )
             if is_passwordless_user:
                 reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=current_user["id"])

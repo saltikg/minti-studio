@@ -233,6 +233,171 @@ def autopilot_leads_table_ready(conn) -> bool:
     return True
 
 
+def ensure_converted_autopilot_lead_for_activation(
+    conn,
+    *,
+    user_id: str,
+    user_email: str,
+    user_name: str = "",
+    source: str = "manual_autopilot_activation",
+) -> Dict[str, str]:
+    """Ensure direct Autopilot activations have a converted lead workspace anchor.
+
+    Lead-funnel conversions already have an ``autopilot_leads`` row. Direct customer
+    activations do not, but the admin customer workspace intentionally requires a
+    converted lead record so operations stay tied to a revalidated user/brand pair.
+    This creates that anchor without adding outreach/share attribution.
+    """
+    _require_autopilot_leads_table(conn)
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    ensure_brand_schema(conn)
+
+    clean_user_id = str(user_id or "").strip()
+    clean_email = _normalize_email(user_email)
+    clean_name = str(user_name or "").strip()
+    clean_source = str(source or "manual_autopilot_activation").strip() or "manual_autopilot_activation"
+    if not clean_user_id:
+        raise ValueError("User id is required.")
+
+    brand_row = conn.execute(
+        """
+        SELECT CAST(id AS VARCHAR), name
+        FROM shorts_brands
+        WHERE CAST(owner_user_id AS VARCHAR) = ?
+        ORDER BY COALESCE(is_default, FALSE) DESC, created_at ASC, id ASC
+        LIMIT 1
+        """,
+        [clean_user_id],
+    ).fetchone()
+    if brand_row:
+        brand_id = str(brand_row[0] or "").strip()
+        brand_name = str(brand_row[1] or "").strip() or "Autopilot customer"
+    else:
+        brand_name = clean_name or clean_email or "Autopilot customer"
+        brand = create_brand(conn, user_id=clean_user_id, name=f"{brand_name}'s Brand", make_default=True, commit=False)
+        brand_id = str(brand["id"])
+        brand_name = str(brand.get("name") or brand_name).strip() or "Autopilot customer"
+
+    if not brand_id:
+        raise ValueError("A customer brand is required.")
+
+    existing = conn.execute(
+        f"""
+        SELECT id, converted_at
+        FROM {AUTOPILOT_LEADS_TABLE}
+        WHERE CAST(user_id AS VARCHAR) = ?
+          AND CAST(brand_id AS VARCHAR) = ?
+        ORDER BY converted_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+        LIMIT 1
+        """,
+        [clean_user_id, brand_id],
+    ).fetchone()
+    if existing:
+        lead_id = str(existing[0] or "").strip()
+        conn.execute(
+            f"""
+            UPDATE {AUTOPILOT_LEADS_TABLE}
+            SET converted_at = COALESCE(converted_at, now()),
+                creator_email = COALESCE(NULLIF(creator_email, ''), ?),
+                creator_name = COALESCE(NULLIF(creator_name, ''), ?)
+            WHERE id = ?
+            """,
+            [clean_email or None, clean_name or brand_name, lead_id],
+        )
+        created = False
+    else:
+        lead_id = str(uuid4())
+        manual_channel_id = f"manual_activation:{clean_user_id}:{brand_id}"
+        lead_columns = table_columns(conn, AUTOPILOT_LEADS_TABLE)
+        columns = [
+            "id",
+            "creator_email",
+            "creator_name",
+            "subscriber_count",
+            "youtube_channel_id",
+            "channel_id",
+            "first_video_id",
+            "user_id",
+            "brand_id",
+            "created_at",
+            "converted_at",
+        ]
+        values = [
+            lead_id,
+            clean_email or None,
+            clean_name or brand_name,
+            None,
+            manual_channel_id,
+            None,
+            None,
+            clean_user_id,
+            brand_id,
+        ]
+        placeholders = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "now()", "now()"]
+        if "recipient_name" in lead_columns:
+            columns.insert(3, "recipient_name")
+            values.insert(3, clean_name or None)
+            placeholders.insert(3, "?")
+        if "pipeline_state" in lead_columns:
+            columns.append("pipeline_state")
+            values.append("new")
+            placeholders.append("?")
+        conn.execute(
+            f"""
+            INSERT INTO {AUTOPILOT_LEADS_TABLE} ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
+            """,
+            values,
+        )
+        created = True
+
+    _record_manual_activation_event(
+        conn,
+        lead_id=lead_id,
+        source=clean_source,
+        created=created,
+    )
+    return {
+        "lead_id": lead_id,
+        "owner_user_id": clean_user_id,
+        "brand_id": brand_id,
+        "created": "true" if created else "false",
+    }
+
+
+def _record_manual_activation_event(conn, *, lead_id: str, source: str, created: bool) -> None:
+    event_columns = table_columns(conn, "lead_pipeline_events")
+    if not {"lead_id", "event_type", "detail"}.issubset(event_columns):
+        return
+    detail = json.dumps(
+        {
+            "source": source,
+            "created_converted_lead": bool(created),
+            "attribution": "manual_activation_no_outreach_share",
+        },
+        sort_keys=True,
+    )
+    columns = ["lead_id", "event_type", "detail"]
+    placeholders = ["?", "?", "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"]
+    values: list[Any] = [lead_id, "manual_autopilot_activation", detail]
+    if "id" in event_columns:
+        columns.insert(0, "id")
+        placeholders.insert(0, "?")
+        values.insert(0, str(uuid4()))
+    if "to_state" in event_columns:
+        columns.append("to_state")
+        placeholders.append("?")
+        values.append("new")
+    conn.execute(
+        f"""
+        INSERT INTO lead_pipeline_events ({", ".join(columns)})
+        VALUES ({", ".join(placeholders)})
+        """,
+        values,
+    )
+
+
 def _normalize_email(value: str | None) -> str:
     return str(value or "").strip().lower()
 
