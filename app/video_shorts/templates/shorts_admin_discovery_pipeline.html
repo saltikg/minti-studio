@@ -99,6 +99,33 @@
       text-decoration: none;
       font-weight: 800;
     }
+    .discovery-daily-keywords {
+      min-width: 360px;
+      max-width: 520px;
+      white-space: normal;
+    }
+    .discovery-keyword-pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.045);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 0.8rem;
+      font-weight: 750;
+      margin: 0 6px 6px 0;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
+    .discovery-daily-counts {
+      min-width: 320px;
+      white-space: normal;
+    }
+    .discovery-daily-count-line {
+      color: rgba(255, 255, 255, 0.9);
+      font-weight: 850;
+      margin-bottom: 6px;
+    }
     .discovery-muted {
       color: rgba(255, 255, 255, 0.56);
       font-size: 0.82rem;
@@ -363,9 +390,69 @@
     </div>
 
     <div class="discovery-main-tabs" role="tablist" aria-label="Discovery pipeline sections">
+      <button type="button" class="discovery-main-tab" data-pipeline-tab="daily">Daily</button>
       <button type="button" class="discovery-main-tab" data-pipeline-tab="keywords">Keywords</button>
       <button type="button" class="discovery-main-tab" data-pipeline-tab="leads">Leads</button>
       <button type="button" class="discovery-main-tab" data-pipeline-tab="settings">Settings &amp; Runs</button>
+    </div>
+
+    <div data-pipeline-panel="daily">
+      <div class="discovery-muted mb-3">Daily keyword searches and lead outcomes for the last 30 days.</div>
+      <div class="discovery-table-wrap mb-4">
+        <table class="discovery-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Aranan kelimeler</th>
+              <th>Bulunan ve onaylanan lead</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in daily_discovery_rows %}
+              <tr>
+                <td>{{ row.date }}</td>
+                <td class="discovery-daily-keywords">
+                  {% for keyword in row.searched_keywords %}
+                    <span class="discovery-keyword-pill">{{ keyword }}</span>
+                  {% else %}
+                    <span class="discovery-muted">No keyword search</span>
+                  {% endfor %}
+                </td>
+                <td class="discovery-daily-counts">
+                  <div class="discovery-daily-count-line">
+                    Bulunan: {{ row.found_count }}
+                    {% if row.found_keywords %}
+                      <span class="discovery-muted">
+                        (
+                        {%- for keyword, count in row.found_keywords -%}
+                          {{ keyword }} {{ count }}{{ ', ' if not loop.last else '' }}
+                        {%- endfor -%}
+                        )
+                      </span>
+                    {% endif %}
+                  </div>
+                  <div class="discovery-daily-count-line">
+                    Onaylanan: {{ row.approved_count }}
+                    {% if row.approved_keywords %}
+                      <span class="discovery-muted">
+                        (
+                        {%- for keyword, count in row.approved_keywords -%}
+                          {{ keyword }} {{ count }}{{ ', ' if not loop.last else '' }}
+                        {%- endfor -%}
+                        )
+                      </span>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="3" class="text-center text-white-50 py-4">No daily discovery activity yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     {% set automation_control = automation.control or {} %}
@@ -735,7 +822,7 @@
       const panels = Array.from(document.querySelectorAll('[data-pipeline-panel]'));
 
       function showTab(tabName, updateUrl) {
-        const resolved = ['keywords', 'leads', 'settings'].includes(tabName) ? tabName : 'leads';
+        const resolved = ['daily', 'keywords', 'leads', 'settings'].includes(tabName) ? tabName : 'daily';
         tabButtons.forEach((button) => {
           const isActive = button.getAttribute('data-pipeline-tab') === resolved;
           button.classList.toggle('is-active', isActive);

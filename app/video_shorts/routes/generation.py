@@ -16357,9 +16357,9 @@ def admin_discovery_lead_pipeline():
     offset = (page - 1) * per_page
     wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
     lead_filter = str(request.args.get("filter") or "").strip().lower()
-    active_pipeline_tab = str(request.args.get("tab") or "leads").strip().lower()
-    if active_pipeline_tab not in {"keywords", "leads", "settings"}:
-        active_pipeline_tab = "leads"
+    active_pipeline_tab = str(request.args.get("tab") or "daily").strip().lower()
+    if active_pipeline_tab not in {"daily", "keywords", "leads", "settings"}:
+        active_pipeline_tab = "daily"
     keyword_sort = str(request.args.get("keyword_sort") or "last_searched").strip().lower()
     if keyword_sort not in {"keyword", "status", "source", "searches", "found", "last_searched"}:
         keyword_sort = "last_searched"
@@ -16389,6 +16389,7 @@ def admin_discovery_lead_pipeline():
         keyword_summary = {"total": 0, "queued": 0, "searched": 0}
         leads: List[Dict[str, Any]] = []
         keyword_queue_rows: List[Dict[str, Any]] = []
+        daily_discovery_rows: List[Dict[str, Any]] = []
         seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
         automation = {"has_automation": False, "control": {}, "runs": []}
         trakk_usage = {"used_today": 0, "daily_cap": 50}
@@ -16402,6 +16403,11 @@ def admin_discovery_lead_pipeline():
         trend_searches = {day.isoformat(): 0 for day in trend_dates}
         trend_qualified = {day.isoformat(): 0 for day in trend_dates}
         trend_start = datetime.combine(trend_dates[0], datetime.min.time())
+        daily_dates = [today - timedelta(days=offset_days) for offset_days in range(29, -1, -1)]
+        daily_start = datetime.combine(daily_dates[0], datetime.min.time())
+        daily_keyword_searches: Dict[str, set[str]] = {day.isoformat(): set() for day in daily_dates}
+        daily_found_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
+        daily_approved_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
 
         if has_discovery:
             has_promotion_columns = "autopilot_lead_id" in discovery_columns
@@ -16497,6 +16503,20 @@ def admin_discovery_lead_pipeline():
                 ).fetchall():
                     if row[0]:
                         trend_qualified[str(row[0])] = int(row[1] or 0)
+            if "first_seen_at" in discovery_columns:
+                for row in conn.execute(
+                    """
+                    SELECT CAST(first_seen_at AS DATE), COALESCE(NULLIF(matched_keyword, ''), 'unknown'), COUNT(*)
+                    FROM discovery_leads
+                    WHERE first_seen_at >= ?
+                    GROUP BY 1, 2
+                    """,
+                    [daily_start],
+                ).fetchall():
+                    day_key = str(row[0]) if row[0] else ""
+                    if day_key in daily_found_by_keyword:
+                        keyword = str(row[1] or "unknown")
+                        daily_found_by_keyword[day_key][keyword] = int(row[2] or 0)
             filtered_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}").fetchone()
             filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
             total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
@@ -16677,8 +16697,63 @@ def admin_discovery_lead_pipeline():
             ).fetchall():
                 if row[0]:
                     trend_searches[str(row[0])] = int(row[1] or 0)
+            for row in conn.execute(
+                """
+                SELECT CAST(started_at AS DATE), keywords_used
+                FROM discovery_automation_runs
+                WHERE started_at >= ?
+                  AND COALESCE(keywords_used, '') <> ''
+                ORDER BY started_at ASC, id ASC
+                """,
+                [daily_start],
+            ).fetchall():
+                day_key = str(row[0]) if row[0] else ""
+                if day_key not in daily_keyword_searches:
+                    continue
+                for keyword in str(row[1] or "").split(","):
+                    clean_keyword = keyword.strip()
+                    if clean_keyword:
+                        daily_keyword_searches[day_key].add(clean_keyword)
         trend_series["keyword_searches"] = [trend_searches[day] for day in trend_series["dates"]]
         trend_series["qualified_leads"] = [trend_qualified[day] for day in trend_series["dates"]]
+
+        if has_discovery and "autopilot_lead_id" in discovery_columns and table_columns(conn, "lead_pipeline_events"):
+            for row in conn.execute(
+                """
+                SELECT
+                    CAST(e.created_at AS DATE),
+                    COALESCE(NULLIF(dl.matched_keyword, ''), 'unknown'),
+                    COUNT(*)
+                FROM lead_pipeline_events e
+                JOIN autopilot_leads al
+                  ON CAST(al.id AS VARCHAR) = CAST(e.lead_id AS VARCHAR)
+                LEFT JOIN discovery_leads dl
+                  ON CAST(dl.autopilot_lead_id AS VARCHAR) = CAST(al.id AS VARCHAR)
+                WHERE e.created_at >= ?
+                  AND e.to_state = 'approved'
+                GROUP BY 1, 2
+                """,
+                [daily_start],
+            ).fetchall():
+                day_key = str(row[0]) if row[0] else ""
+                if day_key in daily_approved_by_keyword:
+                    keyword = str(row[1] or "unknown")
+                    daily_approved_by_keyword[day_key][keyword] = int(row[2] or 0)
+
+        for day in reversed(daily_dates):
+            day_key = day.isoformat()
+            found_keywords = daily_found_by_keyword[day_key]
+            approved_keywords = daily_approved_by_keyword[day_key]
+            daily_discovery_rows.append(
+                {
+                    "date": day_key,
+                    "searched_keywords": sorted(daily_keyword_searches[day_key], key=str.lower),
+                    "found_count": sum(found_keywords.values()),
+                    "found_keywords": sorted(found_keywords.items(), key=lambda item: (-item[1], item[0].lower())),
+                    "approved_count": sum(approved_keywords.values()),
+                    "approved_keywords": sorted(approved_keywords.items(), key=lambda item: (-item[1], item[0].lower())),
+                }
+            )
 
         if table_columns(conn, "seed_channel_profiles"):
             seed_row = conn.execute("SELECT COUNT(*) FROM seed_channel_profiles").fetchone()
@@ -16767,6 +16842,7 @@ def admin_discovery_lead_pipeline():
         totals=totals,
         keyword_summary=keyword_summary,
         keyword_queue_rows=keyword_queue_rows,
+        daily_discovery_rows=daily_discovery_rows,
         trend_series=trend_series,
         seed_summary=seed_summary,
         automation=automation,
