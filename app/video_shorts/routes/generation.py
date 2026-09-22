@@ -12841,7 +12841,7 @@ def _load_outreach_sent_chart_series(conn, *, history_days: int = 7) -> dict[str
         dt_value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
         return dt_value.astimezone(PST_ZONE).date().isoformat()
 
-    seen_sends: set[tuple[str, int]] = set()
+    seen_sends: set[tuple[str, int, str]] = set()
 
     if outreach_columns:
         sequence_sql = (
@@ -12865,7 +12865,7 @@ def _load_outreach_sent_chart_series(conn, *, history_days: int = 7) -> dict[str
             except (TypeError, ValueError):
                 sequence_number = 0
             key = _date_key(row[2])
-            dedupe_key = (share_link_id, sequence_number)
+            dedupe_key = (share_link_id, sequence_number, key)
             if share_link_id and sequence_number and key in sent_counts and dedupe_key not in seen_sends:
                 seen_sends.add(dedupe_key)
                 sent_counts[key] += 1
@@ -12897,7 +12897,7 @@ def _load_outreach_sent_chart_series(conn, *, history_days: int = 7) -> dict[str
             ).fetchall():
                 share_link_id = str(row[0] or "").strip()
                 key = _date_key(row[1])
-                dedupe_key = (share_link_id, 1)
+                dedupe_key = (share_link_id, 1, key)
                 if share_link_id and key in sent_counts and dedupe_key not in seen_sends:
                     seen_sends.add(dedupe_key)
                     sent_counts[key] += 1
@@ -12913,7 +12913,7 @@ def _load_outreach_sent_chart_series(conn, *, history_days: int = 7) -> dict[str
             ).fetchall():
                 share_link_id = str(row[0] or "").strip()
                 key = _date_key(row[1])
-                dedupe_key = (share_link_id, 2)
+                dedupe_key = (share_link_id, 2, key)
                 if share_link_id and key in sent_counts and dedupe_key not in seen_sends:
                     seen_sends.add(dedupe_key)
                     sent_counts[key] += 1
