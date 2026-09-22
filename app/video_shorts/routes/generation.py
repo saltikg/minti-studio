@@ -12819,6 +12819,57 @@ def _parse_admin_date_filter(value: str, *, end_of_day: bool = False) -> datetim
     return parsed.astimezone(timezone.utc)
 
 
+def _load_outreach_sent_chart_series(conn) -> dict[str, Any]:
+    outreach_columns = table_columns(conn, "outreach_scheduled_emails")
+    share_link_columns = table_columns(conn, "short_share_links")
+    today = datetime.now(PST_ZONE).date()
+    chart_dates = [today - timedelta(days=offset_days) for offset_days in range(6, -1, -1)]
+    counts = {day.isoformat(): 0 for day in chart_dates}
+    start_utc = datetime.combine(chart_dates[0], datetime.min.time(), tzinfo=PST_ZONE).astimezone(timezone.utc)
+
+    if outreach_columns:
+        for row in conn.execute(
+            """
+            SELECT sent_at
+            FROM outreach_scheduled_emails
+            WHERE lower(COALESCE(status, '')) = 'sent'
+              AND sent_at >= ?
+            """,
+            [start_utc],
+        ).fetchall():
+            sent_at = row[0]
+            if isinstance(sent_at, datetime):
+                key = (sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)).astimezone(PST_ZONE).date().isoformat()
+                if key in counts:
+                    counts[key] += 1
+
+    if share_link_columns:
+        sent_fields = []
+        if "emailed_at" in share_link_columns:
+            sent_fields.append("emailed_at")
+        if "followup_sent_at" in share_link_columns:
+            sent_fields.append("followup_sent_at")
+        for field_name in sent_fields:
+            for row in conn.execute(
+                f"""
+                SELECT {field_name}
+                FROM short_share_links
+                WHERE {field_name} >= ?
+                """,
+                [start_utc],
+            ).fetchall():
+                sent_at = row[0]
+                if isinstance(sent_at, datetime):
+                    key = (sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)).astimezone(PST_ZONE).date().isoformat()
+                    if key in counts:
+                        counts[key] += 1
+
+    return {
+        "dates": [day.isoformat() for day in chart_dates],
+        "sent": [counts[day.isoformat()] for day in chart_dates],
+    }
+
+
 def _load_admin_outreach_emails(
     conn,
     *,
@@ -12835,7 +12886,7 @@ def _load_admin_outreach_emails(
     sort_dir: str = "asc",
     limit: int = 200,
     offset: int = 0,
-) -> tuple[list[dict[str, Any]], int, dict[str, Any], str, str, str, str, str, str, str, str, str, str, str]:
+) -> tuple[list[dict[str, Any]], int, dict[str, Any], dict[str, Any], str, str, str, str, str, str, str, str, str, str, str]:
     outreach_columns = table_columns(conn, "outreach_scheduled_emails")
     share_link_columns = table_columns(conn, "short_share_links")
     user_event_columns = table_columns(conn, "user_events")
@@ -12845,7 +12896,7 @@ def _load_admin_outreach_emails(
             "week": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
             "month": {"sent": 0, "scheduled": 0, "visited": 0, "repeat_visited": 0, "converted": 0, "failed": 0},
         }
-        return [], 0, empty_summary, "all", [], "all", "all", "", "", "", "", "", "bucket", "asc"
+        return [], 0, empty_summary, {"dates": [], "sent": []}, "all", [], "all", "all", "", "", "", "", "", "bucket", "asc"
 
     normalized_status = str(status_filter or "all").strip().lower()
     if normalized_status not in {"all", "scheduled", "processing", "sent", "failed", "cancelled", "skipped"}:
@@ -13219,14 +13270,6 @@ def _load_admin_outreach_emails(
         )
     """
 
-    rows = conn.execute(
-        f"""
-        {base_cte_sql}
-        SELECT *
-        FROM recipient_rows
-        """
-    ).fetchall()
-
     now_utc = datetime.now(timezone.utc)
     now_pacific = now_utc.astimezone(PST_ZONE)
     today_start = now_pacific.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -13310,7 +13353,162 @@ def _load_admin_outreach_emails(
         "scheduled": 6,
         "converted": 7,
     }
+    bucket_case_sql = """
+        CASE
+          WHEN converted_at IS NOT NULL THEN 'converted'
+          WHEN COALESCE(any_failed, 0) = 1 THEN 'failed'
+          WHEN COALESCE(visit_count, 0) >= 2 THEN 'hot_repeat'
+          WHEN COALESCE(max_watched, 0) >= 50 THEN 'watched_no_convert'
+          WHEN COALESCE(visit_count, 0) = 1 THEN 'visited_once'
+          WHEN COALESCE(any_sent, 0) = 1 AND COALESCE(visit_count, 0) = 0 THEN 'sent_no_visit'
+          WHEN COALESCE(any_scheduled, 0) = 1 AND COALESCE(any_sent, 0) = 0 THEN 'scheduled'
+          ELSE 'scheduled'
+        END
+    """
+    effective_status_sql = "CASE WHEN COALESCE(any_failed, 0) = 1 THEN 'failed' ELSE lower(COALESCE(latest_status, '')) END"
+    period_send_date_sql = "COALESCE(latest_sent_at_for_row, latest_scheduled_at, latest_pending_scheduled_at, latest_sent_at, first_sent_at)"
+    scored_cte_sql = f"""
+        , scored_rows AS (
+            SELECT
+              recipient_rows.*,
+              {bucket_case_sql} AS bucket,
+              CASE {bucket_case_sql}
+                WHEN 'failed' THEN 1
+                WHEN 'hot_repeat' THEN 2
+                WHEN 'watched_no_convert' THEN 3
+                WHEN 'visited_once' THEN 4
+                WHEN 'sent_no_visit' THEN 5
+                WHEN 'scheduled' THEN 6
+                WHEN 'converted' THEN 7
+                ELSE 8
+              END AS bucket_priority,
+              {effective_status_sql} AS effective_status,
+              {period_send_date_sql} AS period_send_date
+            FROM recipient_rows
+        )
+    """
+
+    filter_parts: list[str] = []
+    filter_params: list[Any] = []
+    if normalized_status == "all":
+        filter_parts.append("effective_status != 'cancelled'")
+    else:
+        filter_parts.append("effective_status = ?")
+        filter_params.append(normalized_status)
+    if normalized_period and normalized_metric:
+        period_start_utc = periods[normalized_period].astimezone(timezone.utc)
+        if normalized_metric == "sent":
+            filter_parts.append("latest_sent_at >= ?")
+            filter_params.append(period_start_utc)
+        elif normalized_metric == "scheduled":
+            filter_parts.append("latest_pending_scheduled_at >= ?")
+            filter_params.append(period_start_utc)
+        elif normalized_metric == "visited":
+            filter_parts.append("last_visit >= ?")
+            filter_params.append(period_start_utc)
+        elif normalized_metric == "repeat":
+            filter_parts.append("visit_count >= 2 AND last_visit >= ?")
+            filter_params.append(period_start_utc)
+        elif normalized_metric == "converted":
+            filter_parts.append("converted_at >= ?")
+            filter_params.append(period_start_utc)
+        elif normalized_metric == "failed":
+            filter_parts.append("any_failed = 1 AND period_send_date >= ?")
+            filter_params.append(period_start_utc)
+    if normalized_buckets:
+        filter_parts.append(f"bucket IN ({', '.join('?' for _ in normalized_buckets)})")
+        filter_params.extend(normalized_buckets)
+    if normalized_visited == "yes":
+        filter_parts.append("visit_count > 0")
+    elif normalized_visited == "no":
+        filter_parts.append("visit_count = 0")
+    if normalized_converted == "yes":
+        filter_parts.append("converted_at IS NOT NULL")
+    elif normalized_converted == "no":
+        filter_parts.append("converted_at IS NULL")
+    if normalized_email:
+        filter_parts.append("lower(COALESCE(recipient_name, '') || ' ' || COALESCE(recipient_email, '')) LIKE ?")
+        filter_params.append(f"%{normalized_email}%")
+    if sent_from:
+        filter_parts.append("first_sent_at >= ?")
+        filter_params.append(sent_from)
+    if sent_to:
+        filter_parts.append("first_sent_at <= ?")
+        filter_params.append(sent_to)
+    filter_sql = "WHERE " + " AND ".join(f"({part})" for part in filter_parts) if filter_parts else ""
+    order_sql_by_key = {
+        "last_visit": "last_visit",
+        "visit_count": "visit_count",
+        "send_date": "COALESCE(latest_sent_at_for_row, latest_scheduled_at, first_sent_at)",
+        "max_watched": "max_watched",
+        "days_since_first_email": "first_sent_at",
+        "status": "effective_status",
+    }
+    if normalized_sort_key == "bucket":
+        order_sql = "bucket_priority ASC, last_visit DESC NULLS LAST"
+    else:
+        direction = "DESC" if normalized_sort_dir == "desc" else "ASC"
+        nulls = "NULLS LAST"
+        order_sql = f"{order_sql_by_key.get(normalized_sort_key, 'bucket_priority')} {direction} {nulls}"
+
+    count_row = conn.execute(
+        f"""
+        {base_cte_sql}
+        {scored_cte_sql}
+        SELECT COUNT(*)
+        FROM scored_rows
+        {filter_sql}
+        """,
+        filter_params,
+    ).fetchone()
+    total_count = int((count_row[0] if count_row else 0) or 0)
+    rows = conn.execute(
+        f"""
+        {base_cte_sql}
+        {scored_cte_sql}
+        SELECT *
+        FROM scored_rows
+        {filter_sql}
+        ORDER BY {order_sql}
+        LIMIT ? OFFSET ?
+        """,
+        [*filter_params, limit, offset],
+    ).fetchall()
+
+    summary_rows = conn.execute(
+        f"""
+        {base_cte_sql}
+        SELECT *
+        FROM recipient_rows
+        """
+    ).fetchall()
+
     items: list[dict[str, Any]] = []
+    for row in summary_rows:
+        latest_status = str(row[21] or "").strip().lower()
+        any_failed = bool(row[12])
+        any_scheduled = bool(row[13])
+        converted_at = row[7]
+        visit_count = int(row[30] or 0)
+        repeat_visited = visit_count >= 2
+        send_date = row[26] or row[20] or row[10] or row[9]
+        effective_status = "failed" if any_failed else latest_status
+        if effective_status == "cancelled":
+            continue
+        for period_key, period_start in periods.items():
+            if _in_period(row[9], period_start):
+                summary_counts[period_key]["sent"] += 1
+            if _in_period(row[10], period_start):
+                summary_counts[period_key]["scheduled"] += 1
+            if _in_period(row[32], period_start):
+                summary_counts[period_key]["visited"] += 1
+            if repeat_visited and _in_period(row[32], period_start):
+                summary_counts[period_key]["repeat_visited"] += 1
+            if _in_period(converted_at, period_start):
+                summary_counts[period_key]["converted"] += 1
+            if any_failed and _in_period(send_date, period_start):
+                summary_counts[period_key]["failed"] += 1
+
     for row in rows:
         recipient_email = str(row[4] or "").strip()
         latest_status = str(row[21] or "").strip().lower()
@@ -13322,7 +13520,7 @@ def _load_admin_outreach_emails(
         visit_count = int(row[30] or 0)
         repeat_visited = visit_count >= 2
         max_watched = float(row[33]) if row[33] is not None else 0.0
-        bucket = load_current_outreach_bucket(conn, int(row[1])) if row[1] is not None else "scheduled"
+        bucket = str(row[35] or "scheduled")
         effective_status = "failed" if any_failed else latest_status
         send_date = row[26] or row[20] or row[10] or row[9]
         is_cancelled_latest = effective_status == "cancelled"
@@ -13336,20 +13534,6 @@ def _load_admin_outreach_emails(
             scheduled_at=row[20] or row[10],
             status=effective_status,
         )
-        if not is_cancelled_latest:
-            for period_key, period_start in periods.items():
-                if _in_period(row[9], period_start):
-                    summary_counts[period_key]["sent"] += 1
-                if _in_period(row[10], period_start):
-                    summary_counts[period_key]["scheduled"] += 1
-                if _in_period(row[32], period_start):
-                    summary_counts[period_key]["visited"] += 1
-                if repeat_visited and _in_period(row[32], period_start):
-                    summary_counts[period_key]["repeat_visited"] += 1
-                if _in_period(converted_at, period_start):
-                    summary_counts[period_key]["converted"] += 1
-                if any_failed and _in_period(send_date, period_start):
-                    summary_counts[period_key]["failed"] += 1
         items.append(
             {
                 "recipient_key": str(row[0] or ""),
@@ -13417,70 +13601,7 @@ def _load_admin_outreach_emails(
             }
         )
 
-    def _passes_filters(item: dict[str, Any]) -> bool:
-        if normalized_status == "all" and item["effective_status"] == "cancelled":
-            return False
-        if normalized_period and normalized_metric:
-            period_start = periods[normalized_period]
-            if normalized_metric == "sent" and not _in_period(item["latest_sent_at"], period_start):
-                return False
-            if normalized_metric == "scheduled" and not _in_period(item["latest_pending_scheduled_at"], period_start):
-                return False
-            if normalized_metric == "visited" and not _in_period(item["last_visit"], period_start):
-                return False
-            if normalized_metric == "repeat" and not (item["repeat_visited"] and _in_period(item["last_visit"], period_start)):
-                return False
-            if normalized_metric == "converted" and not _in_period(item["converted_at"], period_start):
-                return False
-            if normalized_metric == "failed" and not (item["any_failed"] and _in_period(item["period_send_date"], period_start)):
-                return False
-        if normalized_status != "all" and item["effective_status"] != normalized_status:
-            return False
-        if normalized_buckets and item["bucket"] not in normalized_buckets:
-            return False
-        if normalized_visited == "yes" and item["visit_count"] <= 0:
-            return False
-        if normalized_visited == "no" and item["visit_count"] > 0:
-            return False
-        if normalized_converted == "yes" and not item["converted"]:
-            return False
-        if normalized_converted == "no" and item["converted"]:
-            return False
-        if normalized_email:
-            haystack = f"{item['recipient_name']} {item['recipient_email']}".lower()
-            if normalized_email not in haystack:
-                return False
-        first_sent = _as_aware_utc(item["first_sent_at"])
-        if sent_from and (not first_sent or first_sent < sent_from):
-            return False
-        if sent_to and (not first_sent or first_sent > sent_to):
-            return False
-        return True
-
-    filtered_items = [item for item in items if _passes_filters(item)]
-
-    def _sort_value(item: dict[str, Any]):
-        if normalized_sort_key == "last_visit":
-            return _sort_timestamp(item["last_visit"])
-        if normalized_sort_key == "visit_count":
-            return item["visit_count"]
-        if normalized_sort_key == "send_date":
-            return _sort_timestamp(item["latest_sent_at_for_row"] or item["latest_scheduled_at"] or item["first_sent_at"])
-        if normalized_sort_key == "max_watched":
-            return item["max_watched"]
-        if normalized_sort_key == "days_since_first_email":
-            return item["days_since_first_email"] if item["days_since_first_email"] is not None else -1
-        if normalized_sort_key == "status":
-            return item["effective_status"] or ""
-        return item["bucket_priority"]
-
-    reverse = normalized_sort_dir == "desc"
-    if normalized_sort_key == "bucket":
-        filtered_items.sort(key=lambda item: (item["bucket_priority"], -_sort_timestamp(item["last_visit"])), reverse=False)
-    else:
-        filtered_items.sort(key=_sort_value, reverse=reverse)
-    total_count = len(filtered_items)
-    page_items = filtered_items[offset : offset + limit]
+    page_items = items
 
     def _load_send_history(item: dict[str, Any]) -> list[dict[str, Any]]:
         recipient_key = str(item.get("recipient_key") or "").strip()
@@ -13642,6 +13763,7 @@ def _load_admin_outreach_emails(
         page_items,
         total_count,
         summary_counts,
+        _load_outreach_sent_chart_series(conn),
         normalized_status,
         normalized_buckets,
         normalized_visited,
@@ -15489,7 +15611,7 @@ def admin_outreach_emails():
     except (TypeError, ValueError):
         requested_page = 1
     page = max(1, requested_page)
-    per_page = 200
+    per_page = 50
 
     conn = get_db_readonly()
     try:
@@ -15497,6 +15619,7 @@ def admin_outreach_emails():
             emails,
             total_items,
             summary_counts,
+            sent_chart_series,
             normalized_status,
             normalized_buckets,
             normalized_visited,
@@ -15533,6 +15656,7 @@ def admin_outreach_emails():
         admin_title="Outreach Emails",
         emails=emails,
         summary_counts=summary_counts,
+        sent_chart_series=sent_chart_series,
         selected_status=normalized_status,
         selected_buckets=normalized_buckets,
         selected_visited=normalized_visited,
@@ -16036,7 +16160,7 @@ def admin_discovery_lead_pipeline():
         ready_to_promote_count = 0
 
         today = datetime.now(timezone.utc).date()
-        trend_dates = [today - timedelta(days=offset_days) for offset_days in range(29, -1, -1)]
+        trend_dates = [today - timedelta(days=offset_days) for offset_days in range(6, -1, -1)]
         trend_series["dates"] = [day.isoformat() for day in trend_dates]
         trend_searches = {day.isoformat(): 0 for day in trend_dates}
         trend_qualified = {day.isoformat(): 0 for day in trend_dates}

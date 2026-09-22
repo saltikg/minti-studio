@@ -70,6 +70,16 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
     }
+    .admin-outreach-trend-panel {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.045);
+      padding: 14px;
+      margin-bottom: 18px;
+    }
+    .admin-outreach-trend-canvas {
+      height: 230px;
+    }
 	    .admin-outreach-kpi {
 	      display: block;
 	      border-radius: 10px;
@@ -292,6 +302,18 @@
 	      {% endfor %}
 	    </div>
 
+    <div class="admin-outreach-trend-panel">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+        <div>
+          <div class="admin-outreach-period-title mb-1">7-day outreach trend</div>
+          <div class="admin-outreach-muted">Daily sent outreach emails</div>
+        </div>
+      </div>
+      <div class="admin-outreach-trend-canvas">
+        <canvas id="outreachSentTrendChart" aria-label="Outreach sent trend chart"></canvas>
+      </div>
+    </div>
+
 	    <div class="admin-outreach-feedback" data-outreach-feedback></div>
 	    {% if selected_period and selected_metric %}
 	      <div class="admin-outreach-muted mb-2">
@@ -433,7 +455,69 @@
 {% endblock %}
 
 {% block extra_scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script>
+    (function () {
+      const canvas = document.getElementById('outreachSentTrendChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const trend = {{ sent_chart_series|tojson }};
+      const labels = trend.dates || [];
+      const sent = trend.sent || [];
+      new Chart(canvas, {
+        data: {
+          labels,
+          datasets: [
+            {
+              type: 'line',
+              label: 'Sent emails/day',
+              data: sent,
+              yAxisID: 'sent',
+              borderColor: '#fbbf24',
+              backgroundColor: 'rgba(251, 191, 36, 0.12)',
+              pointBackgroundColor: '#fbbf24',
+              pointRadius: 2.5,
+              borderWidth: 2,
+              tension: 0.32
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              labels: { color: 'rgba(255, 255, 255, 0.72)', boxWidth: 12, boxHeight: 12 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15, 23, 42, 0.96)',
+              borderColor: 'rgba(255, 255, 255, 0.12)',
+              borderWidth: 1
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              ticks: {
+                color: 'rgba(255, 255, 255, 0.52)',
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 7
+              }
+            },
+            sent: {
+              type: 'linear',
+              position: 'left',
+              beginAtZero: true,
+              ticks: { color: 'rgba(255, 255, 255, 0.58)', precision: 0 },
+              grid: { color: 'rgba(255, 255, 255, 0.08)' },
+              title: { display: true, text: 'Sent emails', color: 'rgba(255, 255, 255, 0.58)' }
+            }
+          }
+        }
+      });
+    })();
+
     function setOutreachFeedback(message, kind = "") {
       const feedback = document.querySelector("[data-outreach-feedback]");
       if (!feedback) return;
