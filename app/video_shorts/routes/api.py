@@ -73,6 +73,7 @@ LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
 LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT = 100
 LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT = 10
 LEAD_DISCOVERY_QUEUE_TAKE_MAX = 20
+RESEARCH_INTERVAL_DAYS = 7
 SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
 DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
@@ -1813,7 +1814,7 @@ def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
         FROM keyword_queue
         WHERE status = 'queued'
           AND (next_run_at IS NULL OR next_run_at <= CURRENT_TIMESTAMP)
-        ORDER BY priority ASC, created_at ASC, id ASC
+        ORDER BY times_searched ASC, priority ASC, created_at ASC, id ASC
         LIMIT ?
         """,
         [take_n],
@@ -1832,17 +1833,26 @@ def _update_keyword_queue_after_run(conn, queue_keywords: List[Dict[str, Any]], 
     for item in queue_keywords:
         keyword = str(item.get("keyword") or "").strip()
         found_count = int(qualified_by_keyword.get(keyword.lower(), 0))
+        existing_row = conn.execute(
+            "SELECT found_count FROM keyword_queue WHERE id = ?",
+            [item["id"]],
+        ).fetchone()
+        lifetime_found_count = int((existing_row[0] if existing_row else 0) or 0) + found_count
+        requeue_at = (datetime.now(timezone.utc) + timedelta(days=RESEARCH_INTERVAL_DAYS)).replace(tzinfo=None)
+        next_status = "queued" if lifetime_found_count > 0 else "searched"
+        next_run_at = requeue_at if lifetime_found_count > 0 else None
         conn.execute(
             """
             UPDATE keyword_queue
             SET times_searched = times_searched + 1,
                 last_searched_at = CURRENT_TIMESTAMP,
                 found_count = found_count + ?,
-                status = 'searched',
+                status = ?,
+                next_run_at = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            [found_count, item["id"]],
+            [found_count, next_status, next_run_at, item["id"]],
         )
     return {str(item["keyword"]): int(qualified_by_keyword.get(str(item["keyword"]).lower(), 0)) for item in queue_keywords}
 
