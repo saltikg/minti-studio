@@ -425,12 +425,12 @@
                 </td>
                 <td class="discovery-daily-counts">
                   <div class="discovery-daily-count-line">
-                    Bulunan: {{ row.found_count }}
+                    Bulunan: {{ row.found_count }} ({{ row.found_icp_count }} ICP-fit)
                     {% if row.found_keywords %}
                       <span class="discovery-muted">
                         (
-                        {%- for keyword, count in row.found_keywords -%}
-                          {{ keyword }} {{ count }}{{ ', ' if not loop.last else '' }}
+                        {%- for keyword, count, icp_count in row.found_keywords -%}
+                          {{ keyword }} {{ count }} ({{ icp_count }}){{ ', ' if not loop.last else '' }}
                         {%- endfor -%}
                         )
                       </span>

@@ -16407,6 +16407,7 @@ def admin_discovery_lead_pipeline():
         daily_start = datetime.combine(daily_dates[0], datetime.min.time())
         daily_keyword_searches: Dict[str, set[str]] = {day.isoformat(): set() for day in daily_dates}
         daily_found_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
+        daily_found_icp_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
         daily_approved_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
 
         if has_discovery:
@@ -16506,7 +16507,11 @@ def admin_discovery_lead_pipeline():
             if "first_seen_at" in discovery_columns:
                 for row in conn.execute(
                     """
-                    SELECT CAST(first_seen_at AS DATE), COALESCE(NULLIF(matched_keyword, ''), 'unknown'), COUNT(*)
+                    SELECT
+                        CAST(first_seen_at AS DATE),
+                        COALESCE(NULLIF(matched_keyword, ''), 'unknown'),
+                        COUNT(*),
+                        SUM(CASE WHEN icp_fit IS TRUE THEN 1 ELSE 0 END)
                     FROM discovery_leads
                     WHERE first_seen_at >= ?
                     GROUP BY 1, 2
@@ -16517,6 +16522,7 @@ def admin_discovery_lead_pipeline():
                     if day_key in daily_found_by_keyword:
                         keyword = str(row[1] or "unknown")
                         daily_found_by_keyword[day_key][keyword] = int(row[2] or 0)
+                        daily_found_icp_by_keyword[day_key][keyword] = int(row[3] or 0)
             filtered_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}").fetchone()
             filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
             total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
@@ -16743,13 +16749,21 @@ def admin_discovery_lead_pipeline():
         for day in reversed(daily_dates):
             day_key = day.isoformat()
             found_keywords = daily_found_by_keyword[day_key]
+            found_icp_keywords = daily_found_icp_by_keyword[day_key]
             approved_keywords = daily_approved_by_keyword[day_key]
             daily_discovery_rows.append(
                 {
                     "date": day_key,
                     "searched_keywords": sorted(daily_keyword_searches[day_key], key=str.lower),
                     "found_count": sum(found_keywords.values()),
-                    "found_keywords": sorted(found_keywords.items(), key=lambda item: (-item[1], item[0].lower())),
+                    "found_icp_count": sum(found_icp_keywords.values()),
+                    "found_keywords": sorted(
+                        (
+                            (keyword, count, found_icp_keywords.get(keyword, 0))
+                            for keyword, count in found_keywords.items()
+                        ),
+                        key=lambda item: (-item[1], item[0].lower()),
+                    ),
                     "approved_count": sum(approved_keywords.values()),
                     "approved_keywords": sorted(approved_keywords.items(), key=lambda item: (-item[1], item[0].lower())),
                 }
