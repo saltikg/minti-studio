@@ -122,23 +122,59 @@ No reply and I won't email again.""",
     ),
     "VISITED_ONCE_EN": OutreachEmailTemplate(
         key="VISITED_ONCE_EN",
-        subject="The rest of your Shorts are ready",
-        text="""Hi [Name], thanks for checking out the Short. There are more from the same video, all ready - just tap "Watch all Shorts": [link].""",
+        subject="There are more Shorts inside",
+        text="""Hi [Name],
+
+Thanks for checking out the Short from [video_title] — there are more from the same video, all ready.
+
+Want them sent to you? Reply "yes" and we'll email them ready to post — you just publish. First month free, no account access.
+
+See them all here: [link]
+
+Best,
+Gokhan""",
     ),
     "WATCHED_NO_CONVERT_EN": OutreachEmailTemplate(
         key="WATCHED_NO_CONVERT_EN",
-        subject="First month's on us - nothing for you to do",
-        text="""Hi [Name], connect your channel once and we handle the rest - finding the moments, captioning, publishing to YouTube, Instagram and Facebook. First month free, 15 Shorts, cancel anytime: [link].""",
+        subject="Want the rest of your Shorts?",
+        text="""Hi [Name],
+
+You watched the Short we made from [video_title] — glad it landed. We turned the best moments into a set of ready-to-post Shorts for you.
+
+Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access, first month free.
+
+See them here: [link]
+
+Best,
+Gokhan""",
     ),
     "WATCHED_NO_CONVERT_2MO_EN": OutreachEmailTemplate(
         key="WATCHED_NO_CONVERT_2MO_EN",
-        subject="Your complimentary access is still active",
-        text="""Hi [Name], connect your channel once and we handle the rest - finding the moments, captioning, publishing to YouTube, Instagram and Facebook. Your complimentary access is still active: [link].""",
+        subject="Your Shorts are ready — extra month's on us",
+        text="""Hi [Name],
+
+You watched the Short we made from [video_title]. We turned the best moments into ready-to-post Shorts for you — and your complimentary access is still on, [trial] free.
+
+Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access needed.
+
+See them here: [link]
+
+Best,
+Gokhan""",
     ),
     "HOT_REPEAT_EN": OutreachEmailTemplate(
         key="HOT_REPEAT_EN",
-        subject="Want me to just get you started?",
-        text="""Hi [Name], looks like you've come back to your Shorts a few times - I'm happy to set the whole thing up for you, or hop on a quick call if that's easier. Just reply and we'll go from there.""",
+        subject="Ready when you are",
+        text="""Hi [Name],
+
+Looks like you came back for another look — happy to just get you started.
+
+Reply "yes" and we'll email you your Shorts ready to post — you just publish. First month free, no account access, cancel anytime.
+
+[link]
+
+Best,
+Gokhan""",
     ),
 }
 
@@ -301,6 +337,7 @@ def render_bucket_followup_outreach_email(
     recipient_name: object,
     share_url: str,
     trial_days: object = None,
+    video_title: object = "",
 ) -> dict[str, str]:
     normalized_language = normalize_outreach_template_language(language)
     normalized_bucket = normalize_outreach_followup_bucket(bucket)
@@ -324,7 +361,14 @@ def render_bucket_followup_outreach_email(
         key = "SENT_NO_VISIT_SEQ3_EN" if normalized_sequence >= 3 else "SENT_NO_VISIT_SEQ2_EN"
     template = OUTREACH_BUCKET_FOLLOWUP_TEMPLATES[key]
     safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
-    text = template.text.replace("[Name]", safe_name).replace("[link]", str(share_url or "").strip())
+    safe_video_title = str(video_title or "").strip() or "your video"
+    trial_phrase = trial_duration_text(trial_days, normalized_language)
+    text = (
+        template.text.replace("[Name]", safe_name)
+        .replace("[link]", str(share_url or "").strip())
+        .replace("[trial]", trial_phrase)
+        .replace("[video_title]", safe_video_title)
+    )
     return {
         "key": template.key,
         "stage": "followup",
