@@ -40,6 +40,58 @@ OUTREACH_FOLLOWUP_SLOT_HOUR_PT = 10
 OUTREACH_PACIFIC_ZONE = ZoneInfo("America/Los_Angeles")
 
 
+def normalize_outreach_recipient_email(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def is_recipient_declined(conn, recipient_email: object) -> bool:
+    normalized_email = normalize_outreach_recipient_email(recipient_email)
+    if not normalized_email:
+        return False
+    share_link_columns = table_columns(conn, "short_share_links")
+    if not {"recipient_email", "declined"}.issubset(share_link_columns):
+        return False
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM short_share_links
+        WHERE lower(trim(coalesce(recipient_email, ''))) = ?
+          AND COALESCE(declined, false) = true
+        LIMIT 1
+        """,
+        [normalized_email],
+    ).fetchone()
+    return bool(row)
+
+
+def load_share_link_recipient_email(conn, share_link_id: int) -> str:
+    share_link_columns = table_columns(conn, "short_share_links")
+    if "recipient_email" not in share_link_columns:
+        return ""
+    row = conn.execute(
+        """
+        SELECT recipient_email
+        FROM short_share_links
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [share_link_id],
+    ).fetchone()
+    return normalize_outreach_recipient_email(row[0] if row else "")
+
+
+def is_share_link_recipient_declined(
+    conn,
+    share_link_id: int,
+    *,
+    recipient_email_override: object = "",
+) -> bool:
+    recipient_email = normalize_outreach_recipient_email(recipient_email_override)
+    if not recipient_email:
+        recipient_email = load_share_link_recipient_email(conn, share_link_id)
+    return is_recipient_declined(conn, recipient_email)
+
+
 def ensure_outreach_scheduled_email_schema(conn) -> None:
     backend_name = getattr(conn, "backend_name", "")
     id_sql = "BIGSERIAL PRIMARY KEY" if backend_name == "postgres" else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -270,6 +322,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         raise ValueError("missing_recipient_email")
     if bool(row[12]):
         raise ValueError("share_link_archived")
+    if is_recipient_declined(conn, recipient_email):
+        raise ValueError("recipient_declined")
     share_url = _share_public_url(token)
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
     recipient_name = str(row[2] or "").strip()
@@ -482,6 +536,8 @@ def schedule_outreach_email(
     parent_send_id: object = None,
 ) -> dict[str, Any]:
     ensure_outreach_scheduled_email_schema(conn)
+    if is_share_link_recipient_declined(conn, share_link_id):
+        raise ValueError("recipient_declined")
     normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
     normalized_sequence = _normalize_outreach_sequence_number(sequence_number, stage=normalized_stage)
@@ -806,6 +862,8 @@ def _schedule_next_outreach_sequence(
     if next_sequence > OUTREACH_SEQUENCE_MAX_SENDS:
         return None
     share_link_id = int(job["share_link_id"])
+    if is_share_link_recipient_declined(conn, share_link_id):
+        return None
     if _active_or_completed_sequence_exists(conn, share_link_id=share_link_id, sequence_number=next_sequence):
         return None
     scheduled_at = _sequence_slot_scheduled_at(
@@ -889,6 +947,19 @@ def process_due_scheduled_outreach_email() -> bool:
         if not job:
             return False
         try:
+            if is_share_link_recipient_declined(
+                conn,
+                int(job["share_link_id"]),
+                recipient_email_override=str(job.get("recipient_email_override") or ""),
+            ):
+                mark_scheduled_outreach_skipped(
+                    conn,
+                    job=job,
+                    bucket_at_send="declined",
+                    reason="recipient_declined",
+                )
+                conn.commit()
+                return True
             current_bucket = load_current_outreach_bucket(conn, int(job["share_link_id"]))
             if current_bucket == "converted":
                 mark_scheduled_outreach_skipped(

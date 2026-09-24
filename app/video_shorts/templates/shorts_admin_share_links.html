@@ -67,6 +67,13 @@
     .admin-share-links-row.is-followup-eligible td:first-child {
       box-shadow: inset 4px 0 0 #f59e0b;
     }
+    .admin-share-links-row.is-declined td {
+      opacity: 0.58;
+      background: rgba(148, 163, 184, 0.08);
+    }
+    .admin-share-links-row.is-declined td:first-child {
+      box-shadow: inset 4px 0 0 rgba(148, 163, 184, 0.72);
+    }
     .admin-share-links-recipient {
       font-weight: 600;
     }
@@ -392,6 +399,7 @@
           <tr>
             <th>Sent</th>
             <th>Archive</th>
+            <th>Declined</th>
             <th>
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
@@ -445,7 +453,7 @@
         </thead>
         <tbody>
           {% for link in links %}
-            <tr class="admin-share-links-row {% if link.followup_eligible %}is-followup-eligible{% endif %}" data-share-link-id="{{ link.id }}" data-followup-eligible="{{ 'true' if link.followup_eligible else 'false' }}">
+            <tr class="admin-share-links-row {% if link.followup_eligible %}is-followup-eligible{% endif %} {% if link.declined %}is-declined{% endif %}" data-share-link-id="{{ link.id }}" data-followup-eligible="{{ 'true' if link.followup_eligible else 'false' }}">
               <td>
                 <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_emailed', share_link_id=link.id) }}">
                   <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
@@ -467,6 +475,20 @@
                     <input type="checkbox" name="archived" value="1" {% if link.archived %}checked{% endif %} data-archive-toggle>
                     <span class="admin-share-links-sent-label">
                       <span>{{ 'Archived' if link.archived else 'Active' }}</span>
+                    </span>
+                  </label>
+                </form>
+              </td>
+              <td>
+                <form method="post" action="{{ url_for('video_shorts_bp.admin_share_link_set_declined', share_link_id=link.id) }}" class="admin-share-links-declined-form">
+                  <input type="hidden" name="next" value="{{ request.full_path if request.query_string else request.path }}">
+                  <label class="admin-share-links-sent">
+                    <input type="checkbox" name="declined" value="1" {% if link.declined %}checked{% endif %} data-declined-toggle>
+                    <span class="admin-share-links-sent-label">
+                      <span>{{ 'Declined' if link.declined else 'Allowed' }}</span>
+                      {% if link.declined_at_pst %}
+                        <span class="admin-share-links-sent-time">{{ link.declined_at_pst }}</span>
+                      {% endif %}
                     </span>
                   </label>
                 </form>
@@ -628,7 +650,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="24" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="25" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -690,6 +712,14 @@
       if (label) {
         label.textContent = archived ? "Archived" : "Active";
       }
+    }
+
+    function setDeclinedLabel(row, declined) {
+      const label = row?.querySelector(".admin-share-links-declined-form .admin-share-links-sent-label span");
+      if (label) {
+        label.textContent = declined ? "Declined" : "Allowed";
+      }
+      row?.classList.toggle("is-declined", !!declined);
     }
 
     const emailPreviewCache = new Map();
@@ -773,22 +803,25 @@
       }
 
       const archiveToggle = event.target.closest("[data-archive-toggle]");
-      if (!archiveToggle) {
+      const declinedToggle = event.target.closest("[data-declined-toggle]");
+      if (!archiveToggle && !declinedToggle) {
         return;
       }
-      const form = archiveToggle.closest(".admin-share-links-archive-form");
-      const row = archiveToggle.closest(".admin-share-links-row");
+      const stateToggle = archiveToggle || declinedToggle;
+      const isDeclinedToggle = !!declinedToggle;
+      const form = stateToggle.closest(isDeclinedToggle ? ".admin-share-links-declined-form" : ".admin-share-links-archive-form");
+      const row = stateToggle.closest(".admin-share-links-row");
       const endpoint = form?.getAttribute("action") || "";
       if (!form || !row || !endpoint) {
         return;
       }
-      const previousChecked = !archiveToggle.checked;
-      archiveToggle.disabled = true;
+      const previousChecked = !stateToggle.checked;
+      stateToggle.disabled = true;
       setFollowupFeedback(row, "");
       try {
         const formData = new FormData();
-        if (archiveToggle.checked) {
-          formData.append("archived", "1");
+        if (stateToggle.checked) {
+          formData.append(isDeclinedToggle ? "declined" : "archived", "1");
         }
         const nextInput = form.querySelector('input[name="next"]');
         if (nextInput?.value) {
@@ -806,13 +839,23 @@
         if (!response.ok || !payload.ok) {
           throw new Error(payload.error || `HTTP ${response.status}`);
         }
-        setArchiveLabel(row, !!payload.archived);
+        if (isDeclinedToggle) {
+          setDeclinedLabel(row, !!payload.declined);
+          setFollowupFeedback(row, payload.declined ? "Recipient marked do-not-contact." : "Recipient allowed again.", "is-success");
+        } else {
+          setArchiveLabel(row, !!payload.archived);
+        }
       } catch (err) {
-        archiveToggle.checked = previousChecked;
-        setArchiveLabel(row, previousChecked);
-        setFollowupFeedback(row, "Archive state could not be updated.", "is-error");
+        stateToggle.checked = previousChecked;
+        if (isDeclinedToggle) {
+          setDeclinedLabel(row, previousChecked);
+          setFollowupFeedback(row, "Declined state could not be updated.", "is-error");
+        } else {
+          setArchiveLabel(row, previousChecked);
+          setFollowupFeedback(row, "Archive state could not be updated.", "is-error");
+        }
       } finally {
-        archiveToggle.disabled = false;
+        stateToggle.disabled = false;
       }
     });
 

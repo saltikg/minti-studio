@@ -141,6 +141,7 @@ from app.video_shorts.services.outreach_email_templates import normalize_outreac
 from app.video_shorts.services.outreach_email_send import (
     cancel_scheduled_outreach_email,
     ensure_outreach_scheduled_email_schema,
+    is_recipient_declined,
     render_share_link_outreach_email,
     schedule_outreach_email,
     send_share_link_outreach_email,
@@ -5825,6 +5826,18 @@ def process_approved_lead_autoschedule(*, limit: int = 1, now: Optional[datetime
                 processed_any = True
                 continue
 
+            if is_recipient_declined(conn_lead, lead["creator_email"]):
+                record_lead_pipeline_event(
+                    conn_lead,
+                    lead_id=lead["id"],
+                    event_type="email_schedule_skipped",
+                    to_state="approved",
+                    detail={"mechanism": "cron_poll", "reason": "recipient_declined"},
+                )
+                conn_lead.commit()
+                processed_any = True
+                continue
+
             record_lead_pipeline_event(
                 conn_lead,
                 lead_id=lead["id"],
@@ -9926,6 +9939,101 @@ def admin_share_link_set_archived(share_link_id: int):
     return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
 
 
+@video_shorts_bp.route("/admin/share-links/<int:share_link_id>/declined", methods=["POST"])
+@require_admin
+def admin_share_link_set_declined(share_link_id: int):
+    next_url = (request.form.get("next") or request.args.get("next") or "").strip()
+    checked_value = (request.form.get("declined") or "").strip().lower()
+    mark_declined = checked_value in {"1", "true", "yes", "on"}
+    wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest"
+
+    conn = get_db()
+    try:
+        if not _short_share_links_ready(conn):
+            if wants_json:
+                return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
+            flash("Share links are not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        share_link_columns = table_columns(conn, "short_share_links")
+        if "declined" not in share_link_columns or "declined_at" not in share_link_columns:
+            if wants_json:
+                return jsonify({"ok": False, "error": "declined_tracking_unavailable"}), 503
+            flash("Declined tracking is not available until the database migration is applied.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        row = conn.execute(
+            """
+            SELECT recipient_email
+            FROM short_share_links
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [share_link_id],
+        ).fetchone()
+        if not row:
+            if wants_json:
+                return jsonify({"ok": False, "error": "not_found"}), 404
+            abort(404)
+        recipient_email = str(row[0] or "").strip().lower()
+        if not recipient_email:
+            if wants_json:
+                return jsonify({"ok": False, "error": "missing_recipient_email"}), 400
+            flash("Declined state requires a recipient email.", "warning")
+            return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+        if mark_declined:
+            conn.execute(
+                """
+                UPDATE short_share_links
+                   SET declined = TRUE,
+                       declined_at = CURRENT_TIMESTAMP
+                 WHERE lower(trim(coalesce(recipient_email, ''))) = ?
+                """,
+                [recipient_email],
+            )
+            ensure_outreach_scheduled_email_schema(conn)
+            conn.execute(
+                """
+                UPDATE outreach_scheduled_emails
+                   SET status = 'cancelled',
+                       error = 'recipient_declined',
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE status = 'scheduled'
+                   AND share_link_id IN (
+                       SELECT id
+                       FROM short_share_links
+                       WHERE lower(trim(coalesce(recipient_email, ''))) = ?
+                   )
+                """,
+                [recipient_email],
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE short_share_links
+                   SET declined = FALSE,
+                       declined_at = NULL
+                 WHERE lower(trim(coalesce(recipient_email, ''))) = ?
+                """,
+                [recipient_email],
+            )
+        conn.commit()
+        if wants_json:
+            return jsonify({"ok": True, "declined": mark_declined})
+    except HTTPException:
+        raise
+    except Exception:
+        current_app.logger.exception("Failed to update declined for short_share_link id=%s", share_link_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if wants_json:
+            return jsonify({"ok": False, "error": "update_failed"}), 500
+        flash("Declined state could not be updated.", "danger")
+    finally:
+        conn.close()
+    return redirect(next_url or url_for("video_shorts_bp.admin_share_links"))
+
+
 @video_shorts_bp.route("/api/admin/share-links/<int:share_link_id>/followup-sent", methods=["POST"])
 def admin_share_link_set_followup_sent(share_link_id: int):
     current_user = getattr(g, "vs_current_user", None) or {}
@@ -10171,7 +10279,7 @@ def admin_share_link_schedule_email(share_link_id: int):
             return jsonify({"ok": False, "error": "share_links_unavailable"}), 503
         exists = conn.execute(
             """
-            SELECT 1
+            SELECT recipient_email
             FROM short_share_links
             WHERE id = ?
               AND COALESCE(archived, false) = false
@@ -10181,6 +10289,8 @@ def admin_share_link_schedule_email(share_link_id: int):
         ).fetchone()
         if not exists:
             return jsonify({"ok": False, "error": "not_found_or_archived"}), 404
+        if is_recipient_declined(conn, exists[0]):
+            return jsonify({"ok": False, "error": "recipient_declined"}), 400
         ensure_outreach_scheduled_email_schema(conn)
         created_by = str(current_user.get("id") or current_user.get("email") or "").strip()
         scheduled = schedule_outreach_email(
@@ -12209,6 +12319,8 @@ def _load_admin_share_links(
     outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
     has_emailed_at = "emailed_at" in share_link_columns
     has_archived = "archived" in share_link_columns
+    has_declined = "declined" in share_link_columns
+    has_declined_at = "declined_at" in share_link_columns
     has_language = "language" in share_link_columns
     has_trial_days = "trial_days" in share_link_columns
     has_followup_sent = "followup_sent" in share_link_columns
@@ -12453,6 +12565,8 @@ def _load_admin_share_links(
               COALESCE(NULLIF(sl.recipient_email, ''), '—') AS recipient_email,
               {("sl.emailed_at" if has_emailed_at else "NULL")} AS emailed_at,
               {("coalesce(sl.archived, false)" if has_archived else "FALSE")} AS archived,
+              {("coalesce(sl.declined, false)" if has_declined else "FALSE")} AS declined,
+              {("sl.declined_at" if has_declined_at else "NULL")} AS declined_at,
               {("sl.followup_sent" if has_followup_sent else "FALSE")} AS followup_sent,
               {("sl.followup_sent_at" if has_followup_sent_at else "NULL")} AS followup_sent_at,
               sl.created_at,
@@ -12479,6 +12593,8 @@ def _load_admin_share_links(
               sl.recipient_email,
               {("sl.emailed_at," if has_emailed_at else "")}
               {("sl.archived," if has_archived else "")}
+              {("sl.declined," if has_declined else "")}
+              {("sl.declined_at," if has_declined_at else "")}
               {("sl.followup_sent," if has_followup_sent else "")}
               {("sl.followup_sent_at," if has_followup_sent_at else "")}
               sl.created_at,
@@ -12661,7 +12777,9 @@ def _load_admin_share_links(
           lso.stage AS scheduled_stage,
           lso.language AS scheduled_language,
           lso.scheduled_at AS outreach_scheduled_at,
-          lso.status AS outreach_schedule_status
+          lso.status AS outreach_schedule_status,
+          sr.declined,
+          sr.declined_at
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -12695,7 +12813,7 @@ def _load_admin_share_links(
         trial_days = normalize_trial_days(row[4], default=LEGACY_SHARE_TRIAL_DAYS)
         language = normalize_outreach_language(row[3], default="EN")
         followup_eligible = False
-        if emailed_at and not followup_sent and (views_count > 0 or plays_count > 0):
+        if emailed_at and not followup_sent and not bool(row[38]) and (views_count > 0 or plays_count > 0):
             try:
                 emailed_at_utc = emailed_at if emailed_at.tzinfo else emailed_at.replace(tzinfo=timezone.utc)
             except AttributeError:
@@ -12709,6 +12827,8 @@ def _load_admin_share_links(
         outreach_schedule_language = str(row[35] or "").strip().upper()
         outreach_scheduled_at = row[36]
         outreach_schedule_status = str(row[37] or "").strip()
+        declined = bool(row[38])
+        declined_at = row[39]
         feed_cards_seen = []
         if bool(row[27]):
             feed_cards_seen.append("A")
@@ -12733,6 +12853,9 @@ def _load_admin_share_links(
                 "emailed_at_pst": _format_datetime_pst(emailed_at),
                 "emailed": bool(emailed_at),
                 "archived": archived,
+                "declined": declined,
+                "declined_at": declined_at,
+                "declined_at_pst": _format_datetime_pst(declined_at),
                 "followup_sent": followup_sent,
                 "followup_sent_at": followup_sent_at,
                 "followup_sent_at_pst": _format_datetime_pst(followup_sent_at),
