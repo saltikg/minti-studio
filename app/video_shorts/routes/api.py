@@ -1807,6 +1807,67 @@ def _insert_keywords_into_queue(conn, keywords: List[str], *, source: str = "see
     return {"newly_enqueued": inserted, "already_present": already_present}
 
 
+def count_eligible_keyword_queue(conn) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM keyword_queue
+        WHERE status = 'queued'
+          AND (next_run_at IS NULL OR next_run_at <= CURRENT_TIMESTAMP)
+        """
+    ).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
+def generate_seed_keywords_into_queue(conn) -> Dict[str, Any]:
+    pool = load_seed_pool(conn)
+    if not pool:
+        return {
+            "success": False,
+            "generated": 0,
+            "newly_enqueued": 0,
+            "already_present": 0,
+            "keywords": [],
+            "dropped_keywords": [],
+            "seed_pool_count": 0,
+            "errors": [{"error": "no_seed_pool", "message": "No seed profiles are available."}],
+        }
+    existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
+    profile_text = str((existing_profile or [None])[0] or "").strip()
+    generated_keywords = _generate_seed_search_keywords(pool)
+    filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
+    keywords = filter_result["kept"]
+    dropped_keywords = filter_result["dropped"]
+    queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
+    if existing_profile:
+        conn.execute(
+            """
+            UPDATE icp_profile
+            SET keywords_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            [json.dumps(keywords, ensure_ascii=False)],
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
+            VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            [profile_text, json.dumps(keywords, ensure_ascii=False)],
+        )
+    return {
+        "success": True,
+        "generated": len(keywords),
+        "newly_enqueued": int(queue_counts["newly_enqueued"]),
+        "already_present": int(queue_counts["already_present"]),
+        "keywords": keywords,
+        "dropped_keywords": dropped_keywords,
+        "seed_pool_count": len(pool),
+        "errors": [],
+    }
+
+
 def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
     rows = conn.execute(
         """
@@ -2738,55 +2799,11 @@ def admin_seed_generate_keywords():
     conn = None
     try:
         conn = get_db()
-        pool = load_seed_pool(conn)
-        if not pool:
-            return jsonify(
-                {
-                    "success": False,
-                    "generated": 0,
-                    "newly_enqueued": 0,
-                    "already_present": 0,
-                    "keywords": [],
-                    "errors": [{"error": "no_seed_pool", "message": "No seed profiles are available."}],
-                }
-            ), 404
-        existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
-        profile_text = str((existing_profile or [None])[0] or "").strip()
-        generated_keywords = _generate_seed_search_keywords(pool)
-        filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
-        keywords = filter_result["kept"]
-        dropped_keywords = filter_result["dropped"]
-        queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
-        if existing_profile:
-            conn.execute(
-                """
-                UPDATE icp_profile
-                SET keywords_json = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = 1
-                """,
-                [json.dumps(keywords, ensure_ascii=False)],
-            )
-        else:
-            conn.execute(
-                """
-                INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
-                VALUES (1, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                [profile_text, json.dumps(keywords, ensure_ascii=False)],
-            )
+        result = generate_seed_keywords_into_queue(conn)
+        if not result.get("success"):
+            return jsonify(result), 404
         conn.commit()
-        return jsonify(
-            {
-                "success": True,
-                "generated": len(keywords),
-                "newly_enqueued": int(queue_counts["newly_enqueued"]),
-                "already_present": int(queue_counts["already_present"]),
-                "keywords": keywords,
-                "dropped_keywords": dropped_keywords,
-                "seed_pool_count": len(pool),
-                "errors": [],
-            }
-        )
+        return jsonify(result)
     except Exception as exc:
         if conn:
             try:

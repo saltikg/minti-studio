@@ -14,6 +14,7 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 CONTROL_TABLE = "discovery_automation_control"
 RUNS_TABLE = "discovery_automation_runs"
 DEFAULT_LOCK_MINUTES = 45
+AUTO_GENERATE_COLUMN = "last_keyword_auto_generated_at"
 
 
 def _utc_now() -> datetime:
@@ -108,6 +109,7 @@ def _row_to_control(row: Any) -> Dict[str, Any]:
         "last_finished_at": row[12] if len(row) > 14 else row[11],
         "lock_expires_at": row[13] if len(row) > 14 else row[12],
         "updated_at": row[14] if len(row) > 14 else row[13],
+        "last_keyword_auto_generated_at": row[15] if len(row) > 15 else None,
     }
 
 
@@ -116,19 +118,134 @@ def _select_control(conn) -> Dict[str, Any]:
         return {}
     columns = table_columns(conn, CONTROL_TABLE)
     max_trakk_per_day_sql = "max_trakk_per_day" if "max_trakk_per_day" in columns else "50"
+    auto_generated_at_sql = AUTO_GENERATE_COLUMN if AUTO_GENERATE_COLUMN in columns else "NULL"
     row = conn.execute(
         f"""
         SELECT id, enabled, paused_reason, offpeak_hours_pt_json, runs_per_day,
                max_keywords_per_cycle, max_results_per_keyword,
                max_channels_enriched_per_cycle, max_trakk_per_cycle,
                {max_trakk_per_day_sql},
-               next_run_at, last_started_at, last_finished_at, lock_expires_at, updated_at
+               next_run_at, last_started_at, last_finished_at, lock_expires_at, updated_at,
+               {auto_generated_at_sql}
         FROM discovery_automation_control
         WHERE id = 1
         LIMIT 1
         """
     ).fetchone()
     return _row_to_control(row)
+
+
+def _same_pacific_day(value: Any, now_utc: datetime) -> bool:
+    generated_at = _as_utc(value)
+    if not generated_at:
+        return False
+    return generated_at.astimezone(PACIFIC_TZ).date() == now_utc.astimezone(PACIFIC_TZ).date()
+
+
+def _mark_keyword_auto_generated(conn) -> None:
+    conn.execute(
+        f"""
+        UPDATE discovery_automation_control
+        SET {AUTO_GENERATE_COLUMN} = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+        """
+    )
+
+
+def _mark_keyword_auto_generated_after_failure() -> None:
+    try:
+        conn = get_db()
+        try:
+            if AUTO_GENERATE_COLUMN in table_columns(conn, CONTROL_TABLE):
+                _mark_keyword_auto_generated(conn)
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        current_app.logger.exception("Failed to record discovery keyword auto-generation attempt after failure")
+
+
+def _maybe_auto_generate_seed_keywords(batch_size: int) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "eligible_before": 0,
+        "auto_generated": 0,
+        "auto_generated_total": 0,
+        "auto_generation_attempted": False,
+        "auto_generation_skipped": "",
+    }
+    conn = get_db()
+    try:
+        from app.video_shorts.routes.api import count_eligible_keyword_queue, generate_seed_keywords_into_queue
+
+        if not table_columns(conn, "keyword_queue"):
+            metadata["auto_generation_skipped"] = "keyword_queue_missing"
+            return metadata
+
+        eligible_before = count_eligible_keyword_queue(conn)
+        metadata["eligible_before"] = eligible_before
+        if eligible_before >= batch_size:
+            return metadata
+
+        control_columns = table_columns(conn, CONTROL_TABLE)
+        if AUTO_GENERATE_COLUMN not in control_columns:
+            metadata["auto_generation_skipped"] = "state_column_missing"
+            current_app.logger.warning(
+                "Discovery keyword auto-generation skipped: %s column is missing",
+                AUTO_GENERATE_COLUMN,
+            )
+            return metadata
+
+        row = conn.execute(
+            f"SELECT {AUTO_GENERATE_COLUMN} FROM discovery_automation_control WHERE id = 1"
+        ).fetchone()
+        if _same_pacific_day(row[0] if row else None, _utc_now()):
+            metadata["auto_generation_skipped"] = "already_attempted_today"
+            current_app.logger.info(
+                "Discovery keyword auto-generation skipped: already attempted today (eligible was %s)",
+                eligible_before,
+            )
+            return metadata
+
+        metadata["auto_generation_attempted"] = True
+        generation = generate_seed_keywords_into_queue(conn)
+        _mark_keyword_auto_generated(conn)
+        conn.commit()
+        auto_generated = int(generation.get("newly_enqueued") or 0)
+        metadata["auto_generated"] = auto_generated
+        metadata["auto_generated_total"] = int(generation.get("generated") or 0)
+        metadata["auto_generation_success"] = bool(generation.get("success"))
+        metadata["auto_generation_errors"] = generation.get("errors") or []
+        current_app.logger.info(
+            "Discovery keyword auto-generated %s keywords (eligible was %s)",
+            auto_generated,
+            eligible_before,
+        )
+        if not generation.get("success") or auto_generated <= 0:
+            current_app.logger.warning(
+                "Discovery keyword auto-generation returned no new keywords: generated=%s eligible_before=%s errors=%s",
+                metadata["auto_generated_total"],
+                eligible_before,
+                metadata["auto_generation_errors"],
+            )
+        return metadata
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        _mark_keyword_auto_generated_after_failure()
+        current_app.logger.exception(
+            "Discovery keyword auto-generation failed; continuing scheduled run with eligible queue"
+        )
+        metadata["auto_generation_attempted"] = True
+        metadata["auto_generation_failed"] = True
+        return metadata
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def load_discovery_automation_dashboard() -> Dict[str, Any]:
@@ -348,14 +465,16 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
 
         if not control:
             raise RuntimeError("Discovery automation control row is missing.")
+        batch_size = int(control.get("max_keywords_per_cycle") or 1)
+        auto_generation = _maybe_auto_generate_seed_keywords(batch_size)
         try:
             conn.close()
         except Exception:
             pass
         payload = {
             "use_queue": True,
-            "take_n": int(control.get("max_keywords_per_cycle") or 1),
-            "max_keywords": int(control.get("max_keywords_per_cycle") or 1),
+            "take_n": batch_size,
+            "max_keywords": batch_size,
             "max_results_per_keyword": int(control.get("max_results_per_keyword") or 15),
             "max_channels_enriched": int(control.get("max_channels_enriched_per_cycle") or 15),
             "ai_icp": True,
@@ -367,6 +486,9 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
         discovery_payload, status_code = run_lead_discovery_payload(payload)
         result = dict(discovery_payload)
         result["status_code"] = status_code
+        result["queue_eligible_before_auto_generate"] = int(auto_generation.get("eligible_before") or 0)
+        result["auto_generated_keywords"] = int(auto_generation.get("auto_generated") or 0)
+        result["auto_generation"] = auto_generation
         if status_code >= 500:
             raise RuntimeError((result.get("errors") or [{}])[0].get("message") or "Discovery run failed.")
 
