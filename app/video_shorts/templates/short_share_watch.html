@@ -158,13 +158,13 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        margin: 0 auto 14px;
+        margin: 12px auto 0;
         width: min(100%, 380px);
         text-align: center;
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 0.08s;
+        animation-delay: 0.5s;
       }
       .watch-cta-stack {
         display: flex;
@@ -233,7 +233,7 @@
         border-color: rgba(110, 231, 216, 0.5);
         background: rgba(110, 231, 216, 0.08);
       }
-      .watch-cta-reassurance {
+      .watch-cta-note {
         margin: 2px auto 0;
         color: rgba(238, 247, 246, 0.66);
         font-size: 0.78rem;
@@ -246,6 +246,10 @@
         font-size: 0.88rem;
         line-height: 1.35;
         text-align: center;
+        opacity: 0;
+        transform: translateY(14px);
+        animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        animation-delay: 0.4s;
       }
       .watch-footer a {
         color: var(--accent);
@@ -316,6 +320,18 @@
         {% set separator = '&' if '?' in onboarding_url else '?' %}
         {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot' %}
         {% set total_shorts_count = (additional_shorts_count or 0) + 1 %}
+      {% endif %}
+      <div class="watch-video-wrap">
+        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
+          <source src="{{ playback_url }}" type="video/mp4">
+        </video>
+      </div>
+      {% if onboarding_url and total_shorts_count > 1 %}
+        <div class="watch-more-context">
+          This is your first Short — {{ total_shorts_count - 1 }} more inside.
+        </div>
+      {% endif %}
+      {% if onboarding_url %}
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
           <div class="watch-cta-stack">
             <a
@@ -323,6 +339,9 @@
               class="watch-cta-primary">
               Yes — send me my Shorts
             </a>
+            <div class="watch-cta-note">
+              First month free
+            </div>
             <a
               href="{{ shorts_onboarding_url }}"
               data-share-cta="lead_feed"
@@ -335,19 +354,6 @@
               {% endif %}
             </a>
           </div>
-          <div class="watch-cta-reassurance">
-            No account access. We email them, you post. First month free.
-          </div>
-        </div>
-      {% endif %}
-      <div class="watch-video-wrap">
-        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
-          <source src="{{ playback_url }}" type="video/mp4">
-        </video>
-      </div>
-      {% if onboarding_url and total_shorts_count > 1 %}
-        <div class="watch-more-context">
-          This is your first Short — {{ total_shorts_count - 1 }} more inside.
         </div>
       {% endif %}
       <div class="watch-steps" aria-label="How it works">
