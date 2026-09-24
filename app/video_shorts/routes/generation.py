@@ -15857,7 +15857,7 @@ def admin_share_links():
     email_query = (request.args.get("email") or "").strip()
     engagement_filter = (request.args.get("engagement") or "all").strip().lower()
     archive_filter = (request.args.get("archive") or "all").strip().lower()
-    sort_key = (request.args.get("sort") or "created").strip().lower()
+    sort_key = (request.args.get("sort") or "last_seen").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     try:
         requested_page = int(request.args.get("page") or 1)
