@@ -29,21 +29,19 @@ class OutreachEmailTemplate:
 OUTREACH_EMAIL_TEMPLATES: dict[str, OutreachEmailTemplate] = {
     "FIRST_EN": OutreachEmailTemplate(
         key="FIRST_EN",
-        subject="I made a Short from your video",
+        subject="I turned your video into Shorts",
         text="""Hi [Name],
 
-I'm the founder of Minti Studio, based in San Francisco. Instead of explaining what we do, I thought I'd show you.
+I'm the founder of Minti Studio, based in San Francisco. Minti is a tool that turns long videos into ready-to-post Shorts — and I run it for you, so you never have to learn or touch anything.
 
-I turned one of your recent videos into a Short - here's how it came out:
+Instead of explaining, I pointed it at one of your recent videos and made you a batch of Shorts. Here's the first:
 
 [video_title]
 [link]
 
-Here's the idea: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to YouTube, Instagram, and Facebook, every month.
+You keep making your long videos; we turn the best moments into captioned Shorts and email them to you ready to post — you just publish. First month free, no account access, cancel anytime.
 
-Your first month is on us - 15 Shorts, made and published for you, free. After that it's a flat $20/month - no credits to count, no surprise bills, cancel anytime. You always know exactly what it costs.
-
-Take a look at your Short, and tap "Let us do it for you" to start. Or reply with any questions.
+Take a look at your first Short — the rest are inside. Or reply with any questions.
 
 Best,
 Gokhan Saltik
@@ -77,21 +75,14 @@ mintistudio.com""",
     ),
     "FOLLOWUP_EN": OutreachEmailTemplate(
         key="FOLLOWUP_EN",
-        subject="A hands-off way to grow your channel - first month free",
+        subject="Want the rest of your Shorts?",
         text="""Hi [Name],
 
-Did you get the Short we made from your video?
+Following up on the Short we made from [video_title]. We turned the best moments into a set of ready-to-post Shorts for you.
 
-[video_title]
-[link]
+Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access, first month free.
 
-Here's the thing - even though our tool makes it easy, I know that for a lot of creators, making Shorts is still one more task on top of an already busy schedule.
-
-So here's the simpler version: you keep making your long videos, and we grow your channel with Shorts - without you lifting a finger. We're not a clip tool you have to learn. Connect your channel once, and we handle everything - finding the best moments, captioning, and publishing to your channels, every month.
-
-Your first month is on us - 15 Shorts, made and published for you, free. After that it's a flat $20/month - no credits to count, no surprise bills, cancel anytime. You always know exactly what it costs.
-
-Take a look at your Short, and tap "Let us do it for you" to start.
+See them here: [link]
 
 Best,
 Gokhan""",
