@@ -12354,12 +12354,13 @@ def _load_admin_share_links(
     *,
     email_query: str = "",
     engagement_filter: str = "all",
+    funnel_filter: str = "all",
     archive_filter: str = "all",
     sort_key: str = "created",
     sort_dir: str = "desc",
     limit: int = 200,
     offset: int = 0,
-) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, str, List[Dict[str, Any]]]:
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
@@ -12375,14 +12376,26 @@ def _load_admin_share_links(
     has_outreach_scheduled_emails = bool(outreach_scheduled_email_columns)
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
+    normalized_funnel_filter = (funnel_filter or "all").strip().lower()
     normalized_archive_filter = (archive_filter or "all").strip().lower()
     normalized_sort_key = (sort_key or "created").strip().lower()
     normalized_sort_dir = (sort_dir or "desc").strip().lower()
     if normalized_filter not in {"all", "viewed", "played"}:
         normalized_filter = "all"
+    if normalized_funnel_filter not in {
+        "all",
+        "sent",
+        "viewed",
+        "requested",
+        "entered_feed",
+        "watched_in_feed",
+        "reached_trial_card",
+        "converted",
+    }:
+        normalized_funnel_filter = "all"
     if normalized_archive_filter not in {"all", "not_archived", "archived"}:
         normalized_archive_filter = "all"
-    if normalized_sort_key not in {"first_seen", "last_seen", "created"}:
+    if normalized_sort_key not in {"first_seen", "last_seen", "requested", "created"}:
         normalized_sort_key = "created"
     if normalized_sort_dir not in {"asc", "desc"}:
         normalized_sort_dir = "desc"
@@ -12390,6 +12403,7 @@ def _load_admin_share_links(
     sort_column_map = {
         "first_seen": "sr.first_seen",
         "last_seen": "sr.last_seen",
+        "requested": "lyi.yes_intent_at",
         "created": "sr.created_at",
     }
     order_column = sort_column_map[normalized_sort_key]
@@ -12723,11 +12737,29 @@ def _load_admin_share_links(
         {yes_intent_cte_sql}
     """
 
+    sent_condition_sql = "sr.emailed_at IS NOT NULL" if has_emailed_at else "1=1"
     having_clauses = ["1=1"]
     if normalized_filter == "viewed":
         having_clauses.append("coalesce(views_count, 0) > 0")
     elif normalized_filter == "played":
         having_clauses.append("coalesce(plays_count, 0) > 0")
+    summary_having_sql = " AND ".join(having_clauses)
+    if normalized_funnel_filter == "sent":
+        having_clauses.append(sent_condition_sql)
+    elif normalized_funnel_filter == "viewed":
+        having_clauses.append(f"{sent_condition_sql} AND COALESCE(sr.views_count, 0) > 0")
+    elif normalized_funnel_filter == "requested":
+        having_clauses.append(f"{sent_condition_sql} AND lyi.yes_intent_at IS NOT NULL")
+    elif normalized_funnel_filter == "entered_feed":
+        having_clauses.append(
+            f"{sent_condition_sql} AND (lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0)"
+        )
+    elif normalized_funnel_filter == "watched_in_feed":
+        having_clauses.append(f"{sent_condition_sql} AND COALESCE(lfe.watched_in_feed, 0) > 0")
+    elif normalized_funnel_filter == "reached_trial_card":
+        having_clauses.append(f"{sent_condition_sql} AND COALESCE(lfe.reached_card_b, 0) > 0")
+    elif normalized_funnel_filter == "converted":
+        having_clauses.append(f"{sent_condition_sql} AND slc.converted_at IS NOT NULL")
     having_sql = " AND ".join(having_clauses)
 
     total_count = int(
@@ -12735,14 +12767,21 @@ def _load_admin_share_links(
             f"""
             {base_cte_sql}
             SELECT COUNT(*)
-            FROM share_rows
+            FROM share_rows sr
+            LEFT JOIN latest_share_cta lsc
+              ON lsc.share_link_id = sr.id
+            LEFT JOIN lead_feed_events lfe
+              ON lfe.share_link_id = sr.id
+            LEFT JOIN share_link_conversion slc
+              ON slc.share_link_id = sr.id
+            LEFT JOIN latest_yes_intent lyi
+              ON lyi.share_link_id = sr.id
             WHERE {having_sql}
             """,
             params,
         ).fetchone()[0]
         or 0
     )
-    sent_condition_sql = "sr.emailed_at IS NOT NULL" if has_emailed_at else "1=1"
     funnel_row = conn.execute(
         f"""
         {base_cte_sql}
@@ -12763,7 +12802,7 @@ def _load_admin_share_links(
           ON slc.share_link_id = sr.id
         LEFT JOIN latest_yes_intent lyi
           ON lyi.share_link_id = sr.id
-        WHERE {having_sql}
+        WHERE {summary_having_sql}
         """,
         params,
     ).fetchone()
@@ -12777,16 +12816,16 @@ def _load_admin_share_links(
         int(funnel_row[6] or 0) if funnel_row else 0,
     ]
     funnel_labels = [
-        "Sent",
-        "Viewed",
-        "Requested",
-        "Entered feed",
-        "Watched in feed",
-        "Reached trial card",
-        "Converted",
+        ("sent", "Sent"),
+        ("viewed", "Viewed"),
+        ("requested", "Requested"),
+        ("entered_feed", "Entered feed"),
+        ("watched_in_feed", "Watched in feed"),
+        ("reached_trial_card", "Reached trial card"),
+        ("converted", "Converted"),
     ]
     funnel_summary = []
-    for index, label in enumerate(funnel_labels):
+    for index, (key, label) in enumerate(funnel_labels):
         count = raw_funnel_counts[index]
         previous = raw_funnel_counts[index - 1] if index > 0 else count
         previous_rate = (count / previous * 100.0) if previous else 0.0
@@ -12795,6 +12834,7 @@ def _load_admin_share_links(
         funnel_summary.append(
             {
                 "label": label,
+                "key": key,
                 "count": count,
                 "previous_rate": round(previous_rate, 1),
                 "total_rate": round(total_rate, 1),
@@ -12991,6 +13031,7 @@ def _load_admin_share_links(
         total_count,
         normalized_filter,
         normalized_archive_filter,
+        normalized_funnel_filter,
         normalized_sort_key,
         normalized_sort_dir,
         funnel_summary,
@@ -15929,6 +15970,7 @@ def admin_errors():
 def admin_share_links():
     email_query = (request.args.get("email") or "").strip()
     engagement_filter = (request.args.get("engagement") or "all").strip().lower()
+    funnel_filter = (request.args.get("funnel") or "all").strip().lower()
     archive_filter = (request.args.get("archive") or "all").strip().lower()
     sort_key = (request.args.get("sort") or "last_seen").strip().lower()
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
@@ -15945,6 +15987,7 @@ def admin_share_links():
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            funnel_filter=funnel_filter,
             archive_filter=archive_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
@@ -15958,6 +16001,7 @@ def admin_share_links():
             total_links,
             normalized_filter,
             normalized_archive_filter,
+            normalized_funnel_filter,
             normalized_sort_key,
             normalized_sort_dir,
             funnel_summary,
@@ -15965,6 +16009,7 @@ def admin_share_links():
             conn,
             email_query=email_query,
             engagement_filter=engagement_filter,
+            funnel_filter=funnel_filter,
             archive_filter=archive_filter,
             sort_key=sort_key,
             sort_dir=sort_dir,
@@ -15981,6 +16026,7 @@ def admin_share_links():
         email_query=email_query,
         selected_engagement=normalized_filter,
         selected_archive=normalized_archive_filter,
+        selected_funnel=normalized_funnel_filter,
         sort_key=normalized_sort_key,
         sort_dir=normalized_sort_dir,
         page=page,
