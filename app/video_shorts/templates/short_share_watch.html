@@ -166,6 +166,13 @@
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
         animation-delay: 0.08s;
       }
+      .watch-cta-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        width: 100%;
+      }
       .watch-footer {
         margin-top: 14px;
         display: flex;
@@ -205,6 +212,33 @@
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
       }
+      .watch-cta-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 46px;
+        padding: 0 22px;
+        border-radius: 999px;
+        border: 1px solid rgba(110, 231, 216, 0.28);
+        color: rgba(238, 247, 246, 0.82);
+        background: rgba(255, 255, 255, 0.04);
+        font-weight: 750;
+        font-size: 0.92rem;
+        text-decoration: none;
+      }
+      .watch-cta-secondary:hover,
+      .watch-cta-secondary:focus-visible {
+        color: var(--text);
+        border-color: rgba(110, 231, 216, 0.5);
+        background: rgba(110, 231, 216, 0.08);
+      }
+      .watch-cta-reassurance {
+        margin: 2px auto 0;
+        color: rgba(238, 247, 246, 0.66);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
       .watch-more-context {
         margin: 10px auto 0;
         width: min(100%, 360px);
@@ -212,10 +246,6 @@
         font-size: 0.88rem;
         line-height: 1.35;
         text-align: center;
-      }
-      .watch-cta-secondary {
-        color: var(--accent);
-        text-decoration: none;
       }
       .watch-footer a {
         color: var(--accent);
@@ -258,6 +288,9 @@
           font-size: 1.04rem;
           padding: 0 22px;
         }
+        .watch-cta-secondary {
+          min-height: 44px;
+        }
       }
       @media (prefers-reduced-motion: reduce) {
         .watch-step-card,
@@ -284,17 +317,27 @@
         {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot' %}
         {% set total_shorts_count = (additional_shorts_count or 0) + 1 %}
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
-          <a
-            href="{{ shorts_onboarding_url }}"
-            data-share-cta="lead_feed"
-            class="watch-cta-primary"
-            rel="noreferrer">
-            {% if total_shorts_count > 1 %}
-              Watch all {{ total_shorts_count }} Shorts →
-            {% else %}
-              Watch your Short →
-            {% endif %}
-          </a>
+          <div class="watch-cta-stack">
+            <a
+              href="{{ reply_yes_mailto_url }}"
+              class="watch-cta-primary">
+              Yes — send me my Shorts
+            </a>
+            <a
+              href="{{ shorts_onboarding_url }}"
+              data-share-cta="lead_feed"
+              class="watch-cta-secondary"
+              rel="noreferrer">
+              {% if total_shorts_count > 1 %}
+                Watch all {{ total_shorts_count }} Shorts
+              {% else %}
+                Watch your Short
+              {% endif %}
+            </a>
+          </div>
+          <div class="watch-cta-reassurance">
+            No account access. We email them, you post. First month free.
+          </div>
         </div>
       {% endif %}
       <div class="watch-video-wrap">
@@ -309,23 +352,23 @@
       {% endif %}
       <div class="watch-steps" aria-label="How it works">
         <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">🔗</span>
+          <span class="watch-step-icon" aria-hidden="true">✉️</span>
           <span class="watch-step-label">
-            Connect channel
+            Reply "yes"
           </span>
         </div>
         <span class="watch-step-arrow" aria-hidden="true">→</span>
         <div class="watch-step-card">
           <span class="watch-step-icon" aria-hidden="true">✨</span>
           <span class="watch-step-label">
-            We find moments
+            We make your Shorts
           </span>
         </div>
         <span class="watch-step-arrow" aria-hidden="true">→</span>
         <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">🚀</span>
+          <span class="watch-step-icon" aria-hidden="true">📩</span>
           <span class="watch-step-label">
-            We publish
+            We email them, you post
           </span>
         </div>
       </div>

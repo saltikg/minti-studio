@@ -139,6 +139,7 @@ from app.video_shorts.services.trial_copy import (
 )
 from app.video_shorts.services.outreach_email_templates import normalize_outreach_template_language, normalize_outreach_template_stage
 from app.video_shorts.services.outreach_email_send import (
+    OUTREACH_ZOHO_FROM_EMAIL,
     cancel_scheduled_outreach_email,
     ensure_outreach_scheduled_email_schema,
     is_recipient_declined,
@@ -9722,6 +9723,17 @@ def _render_public_short_watch_page(token: str):
     onboarding_url = ""
     resolved_language = normalize_outreach_language(row.get("language"), default="EN")
     recipient_email = str(row.get("recipient_email") or "").strip().lower()
+    reply_subject_parts = ["Yes - send me my Shorts"]
+    if recipient_email:
+        reply_subject_parts.append(recipient_email)
+    if row.get("share_link_id"):
+        reply_subject_parts.append(f"share_link:{row['share_link_id']}")
+    if row.get("token"):
+        reply_subject_parts.append(f"token:{row['token']}")
+    reply_yes_mailto_url = (
+        f"mailto:{OUTREACH_ZOHO_FROM_EMAIL}?"
+        f"{urlencode({'subject': ' | '.join(reply_subject_parts), 'body': 'yes'})}"
+    )
     if recipient_email:
         try:
             minted = mint_onboarding_magic_link(
@@ -9746,6 +9758,7 @@ def _render_public_short_watch_page(token: str):
         poster_url=poster_url,
         event_url=None if preview_mode else url_for("public_short_watch_event_alias", token=normalized_token),
         onboarding_url=onboarding_url or None,
+        reply_yes_mailto_url=reply_yes_mailto_url,
         additional_shorts_count=additional_shorts_count,
         language=resolved_language,
         trial_duration_label=_trial_duration_label(row.get("trial_days"), resolved_language),
