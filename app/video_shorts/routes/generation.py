@@ -17731,14 +17731,32 @@ def admin_operation_approve_lead(brand_id: str):
 
 def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     """Require a converted autopilot customer for this target scope."""
+
+    def _youtube_channel_url(channel_url: Any, youtube_channel_id: Any) -> str:
+        clean_url = str(channel_url or "").strip()
+        if clean_url.startswith(("http://", "https://")):
+            return clean_url
+        clean_channel_id = str(youtube_channel_id or "").strip()
+        if clean_channel_id:
+            return f"https://www.youtube.com/channel/{clean_channel_id}"
+        return ""
+
     conn = get_db_readonly()
     try:
         row = conn.execute(
             """
-            SELECT l.id, l.creator_name, l.creator_email, b.name
+            SELECT
+                l.id,
+                l.creator_name,
+                l.creator_email,
+                b.name,
+                l.youtube_channel_id,
+                c.channel_url,
+                c.youtube_channel_id
             FROM autopilot_leads l
             JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
             JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+            LEFT JOIN youtube_channels c ON c.channel_id = l.channel_id
             WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(b.owner_user_id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
@@ -17758,6 +17776,7 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
         "creator_name": str(row[1] or "").strip() or "Autopilot customer",
         "creator_email": str(row[2] or "").strip(),
         "brand_name": str(row[3] or "").strip() or "Unnamed brand",
+        "youtube_url": _youtube_channel_url(row[5], row[6]) or _youtube_channel_url("", row[4]),
     }
 
 

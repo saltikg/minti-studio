@@ -14,7 +14,10 @@
     .customer-workspace-video:last-child { border-bottom:0; }
     .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
     .customer-workspace-target-line .text-muted { color:#fff !important; }
+    .customer-workspace-target-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
     .customer-workspace-thumb, .customer-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
+    .customer-workspace-video-link { color:#fff; text-decoration:none; }
+    .customer-workspace-video-link:hover, .customer-workspace-video-link:focus { color:#fff; text-decoration:underline; }
     .customer-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
     .customer-workspace-actions { display:flex; flex-direction:column; gap:5px; align-items:flex-start; min-width:116px; }
     .customer-workspace-empty { color:#fff !important; }
@@ -35,6 +38,11 @@
           <span>Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</span>
           {% if customer.creator_email %}<span class="text-muted small">{{ customer.creator_email }}</span>{% endif %}
         </div>
+        {% if customer.youtube_url %}
+          <div class="customer-workspace-target-actions">
+            <a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a>
+          </div>
+        {% endif %}
       </div>
       <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
@@ -50,9 +58,21 @@
     <h2 class="h5 mb-2">Customer videos</h2>
     {% for video in videos %}
       <article class="customer-workspace-video" data-download-row>
-        {% if video.thumbnail_url %}<img class="customer-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="customer-workspace-thumb-placeholder"></span>{% endif %}
+        {% if video.source_href %}
+          <a href="{{ video.source_href }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ video.title }} on YouTube">
+            {% if video.thumbnail_url %}<img class="customer-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="customer-workspace-thumb-placeholder"></span>{% endif %}
+          </a>
+        {% else %}
+          {% if video.thumbnail_url %}<img class="customer-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="customer-workspace-thumb-placeholder"></span>{% endif %}
+        {% endif %}
         <div>
-          <div class="fw-semibold">{{ video.title }}</div>
+          <div class="fw-semibold">
+            {% if video.source_href %}
+              <a class="customer-workspace-video-link" href="{{ video.source_href }}" target="_blank" rel="noopener noreferrer">{{ video.title }}</a>
+            {% else %}
+              {{ video.title }}
+            {% endif %}
+          </div>
           <div class="customer-workspace-status">Download: <span data-download-status-label>{% if video.is_ready %}ready{% elif video.is_processing %}processing{% else %}{{ video.download_status }}{% endif %}</span>{% if video.transcript_status %} · Transcript: <span data-transcript-status-label>{{ video.transcript_status }}</span>{% endif %}</div>
         </div>
         <div class="customer-workspace-actions">
