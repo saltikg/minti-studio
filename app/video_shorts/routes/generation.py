@@ -9789,12 +9789,33 @@ def _handle_public_short_watch_event(token: str):
         return ("", 204)
 
     event_type = str(payload.get("type") or "").strip().lower()
-    if event_type not in {"view", "play", "cta_click", "watch_progress"}:
+    if event_type not in {"view", "play", "cta_click", "watch_progress", "yes_intent"}:
         return ("", 204)
 
     conn = get_db_readonly()
     try:
         row = _load_shared_short_row(conn, token)
+        yes_intent_exists = False
+        recipient_declined = False
+        if row and event_type == "yes_intent":
+            recipient_email = str(row.get("recipient_email") or "").strip().lower()
+            recipient_declined = is_recipient_declined(conn, recipient_email)
+            user_event_columns = table_columns(conn, "user_events")
+            share_link_id = str(row.get("share_link_id") or "").strip()
+            if user_event_columns and share_link_id:
+                share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
+                yes_intent_exists = bool(
+                    conn.execute(
+                        f"""
+                        SELECT 1
+                        FROM user_events ue
+                        WHERE ue.event_name = 'share_yes_intent'
+                          AND {share_link_expr} = ?
+                        LIMIT 1
+                        """,
+                        [share_link_id],
+                    ).fetchone()
+                )
     finally:
         conn.close()
 
@@ -9810,6 +9831,18 @@ def _handle_public_short_watch_event(token: str):
     device_type = _normalize_share_watch_device_type(payload.get("device_type"))
     if device_type:
         metadata["device_type"] = device_type
+    if event_type == "yes_intent":
+        recipient_email = str(row.get("recipient_email") or "").strip().lower()
+        if recipient_email:
+            metadata["recipient_email"] = recipient_email
+        if not recipient_declined and not yes_intent_exists:
+            track_event(
+                row["owner_user_id"],
+                "share_yes_intent",
+                short_id=row["generated_video_id"],
+                metadata=metadata,
+            )
+        return jsonify({"ok": True, "recorded": not recipient_declined and not yes_intent_exists})
     if event_type == "cta_click":
         cta_value = _normalize_share_watch_cta(payload.get("cta"))
         if not cta_value:
@@ -12241,7 +12274,7 @@ def _load_admin_error_events(
 
 
 def _share_link_event_join_sql(conn) -> str:
-    event_names_sql = "('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')"
+    event_names_sql = "('share_view', 'share_play', 'share_cta_click', 'share_watch_progress', 'share_yes_intent')"
     if getattr(conn, "backend_name", "") == "postgres":
         return """
         ue.event_name IN {event_names_sql}
@@ -12566,6 +12599,20 @@ def _load_admin_share_links(
         )
         """
 
+    yes_intent_cte_sql = f"""
+        ,
+        latest_yes_intent AS (
+            SELECT
+              sl.id AS share_link_id,
+              MAX(ue.created_at) AS yes_intent_at
+            FROM short_share_links sl
+            JOIN user_events ue
+              ON {_share_link_event_join_sql(conn)}
+            WHERE ue.event_name = 'share_yes_intent'
+            GROUP BY sl.id
+        )
+    """
+
     base_cte_sql = f"""
         WITH share_rows AS (
             SELECT
@@ -12673,6 +12720,7 @@ def _load_admin_share_links(
         )
         {redeemed_magic_cte_sql}
         {latest_scheduled_outreach_cte_sql}
+        {yes_intent_cte_sql}
     """
 
     having_clauses = ["1=1"]
@@ -12701,6 +12749,7 @@ def _load_admin_share_links(
         SELECT
           SUM(CASE WHEN {sent_condition_sql} THEN 1 ELSE 0 END) AS sent_count,
           SUM(CASE WHEN {sent_condition_sql} AND COALESCE(sr.views_count, 0) > 0 THEN 1 ELSE 0 END) AS viewed_count,
+          SUM(CASE WHEN {sent_condition_sql} AND lyi.yes_intent_at IS NOT NULL THEN 1 ELSE 0 END) AS requested_count,
           SUM(CASE WHEN {sent_condition_sql} AND (lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0) THEN 1 ELSE 0 END) AS entered_feed_count,
           SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.watched_in_feed, 0) > 0 THEN 1 ELSE 0 END) AS watched_in_feed_count,
           SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.reached_card_b, 0) > 0 THEN 1 ELSE 0 END) AS reached_trial_card_count,
@@ -12712,6 +12761,8 @@ def _load_admin_share_links(
           ON lfe.share_link_id = sr.id
         LEFT JOIN share_link_conversion slc
           ON slc.share_link_id = sr.id
+        LEFT JOIN latest_yes_intent lyi
+          ON lyi.share_link_id = sr.id
         WHERE {having_sql}
         """,
         params,
@@ -12723,10 +12774,12 @@ def _load_admin_share_links(
         int(funnel_row[3] or 0) if funnel_row else 0,
         int(funnel_row[4] or 0) if funnel_row else 0,
         int(funnel_row[5] or 0) if funnel_row else 0,
+        int(funnel_row[6] or 0) if funnel_row else 0,
     ]
     funnel_labels = [
         "Sent",
         "Viewed",
+        "Requested",
         "Entered feed",
         "Watched in feed",
         "Reached trial card",
@@ -12792,7 +12845,8 @@ def _load_admin_share_links(
           lso.scheduled_at AS outreach_scheduled_at,
           lso.status AS outreach_schedule_status,
           sr.declined,
-          sr.declined_at
+          sr.declined_at,
+          lyi.yes_intent_at
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -12806,6 +12860,8 @@ def _load_admin_share_links(
           ON lfsc.share_link_id = sr.id
         LEFT JOIN latest_scheduled_outreach lso
           ON lso.share_link_id = sr.id
+        LEFT JOIN latest_yes_intent lyi
+          ON lyi.share_link_id = sr.id
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
@@ -12842,6 +12898,7 @@ def _load_admin_share_links(
         outreach_schedule_status = str(row[37] or "").strip()
         declined = bool(row[38])
         declined_at = row[39]
+        yes_intent_at = row[40]
         feed_cards_seen = []
         if bool(row[27]):
             feed_cards_seen.append("A")
@@ -12869,6 +12926,9 @@ def _load_admin_share_links(
                 "declined": declined,
                 "declined_at": declined_at,
                 "declined_at_pst": _format_datetime_pst(declined_at),
+                "requested": bool(yes_intent_at),
+                "requested_at": yes_intent_at,
+                "requested_at_pst": _format_datetime_pst(yes_intent_at),
                 "followup_sent": followup_sent,
                 "followup_sent_at": followup_sent_at,
                 "followup_sent_at_pst": _format_datetime_pst(followup_sent_at),

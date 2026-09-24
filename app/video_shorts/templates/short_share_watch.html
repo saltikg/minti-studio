@@ -212,6 +212,21 @@
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
       }
+      .watch-cta-primary.is-pending {
+        opacity: 0.78;
+        pointer-events: none;
+      }
+      .watch-cta-primary.is-confirmed {
+        min-height: auto;
+        border-radius: 18px;
+        padding: 16px 18px;
+        background: rgba(110, 231, 216, 0.12);
+        color: var(--text) !important;
+        font-size: 0.95rem;
+        line-height: 1.35;
+        box-shadow: inset 0 0 0 1px rgba(110, 231, 216, 0.3);
+        pointer-events: none;
+      }
       .watch-cta-secondary {
         display: inline-flex;
         align-items: center;
@@ -335,7 +350,8 @@
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
           <div class="watch-cta-stack">
             <a
-              href="{{ reply_yes_mailto_url }}"
+              href="#"
+              id="watch-yes-intent"
               class="watch-cta-primary">
               Yes — send me my Shorts
             </a>
@@ -416,6 +432,19 @@
             credentials: "omit",
           }).catch(() => {});
         };
+        const postJsonEvent = async (type, extra = {}) => {
+          const response = await fetch(eventUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type, device_type: deviceType, ...extra }),
+            credentials: "omit",
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error("event_failed");
+          }
+          return payload;
+        };
         fireEvent("view");
         let playTracked = false;
         let maxPercentWatched = 0;
@@ -484,6 +513,28 @@
             fireEvent("cta_click", { cta: ctaType });
           }, { passive: true });
         });
+        const yesIntentButton = document.getElementById("watch-yes-intent");
+        if (yesIntentButton) {
+          const originalText = yesIntentButton.textContent;
+          yesIntentButton.addEventListener("click", async (event) => {
+            event.preventDefault();
+            if (yesIntentButton.classList.contains("is-pending") || yesIntentButton.classList.contains("is-confirmed")) {
+              return;
+            }
+            yesIntentButton.classList.add("is-pending");
+            yesIntentButton.textContent = "Saving...";
+            try {
+              await postJsonEvent("yes_intent");
+              yesIntentButton.classList.remove("is-pending");
+              yesIntentButton.classList.add("is-confirmed");
+              yesIntentButton.removeAttribute("href");
+              yesIntentButton.textContent = "Got it — we'll email your Shorts over shortly. Keep an eye on your inbox.";
+            } catch (_error) {
+              yesIntentButton.classList.remove("is-pending");
+              yesIntentButton.textContent = originalText;
+            }
+          });
+        }
       })();
     </script>
   </body>
