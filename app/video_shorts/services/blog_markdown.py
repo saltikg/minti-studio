@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import parse_qs, urlparse
+
 import bleach
 import markdown
 
+
+_YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_YOUTUBE_SHORTCODE_RE = re.compile(r"^\[youtube:\s*(?P<value>[^\]]+?)\s*\]$", re.IGNORECASE)
+_YOUTUBE_BARE_URL_RE = re.compile(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+$", re.IGNORECASE)
+_YOUTUBE_EMBED_TOKEN_RE = re.compile(r"(?:<p>)?YOUTUBE_EMBED_([A-Za-z0-9_-]{11})(?:</p>)?")
 
 _ALLOWED_TAGS = [
     "a",
@@ -32,9 +40,59 @@ _ALLOWED_ATTRIBUTES = {
 }
 
 
+def _extract_youtube_video_id(value: str) -> str | None:
+    candidate = (value or "").strip()
+    if _YOUTUBE_ID_RE.fullmatch(candidate):
+        return candidate
+
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    if host in {"youtu.be", "www.youtu.be"}:
+        video_id = parsed.path.strip("/").split("/", 1)[0]
+        return video_id if _YOUTUBE_ID_RE.fullmatch(video_id) else None
+    if host not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        return None
+
+    if parsed.path == "/watch":
+        video_id = (parse_qs(parsed.query).get("v") or [""])[0]
+    elif parsed.path.startswith("/shorts/") or parsed.path.startswith("/embed/"):
+        video_id = parsed.path.strip("/").split("/", 2)[1]
+    else:
+        return None
+    return video_id if _YOUTUBE_ID_RE.fullmatch(video_id) else None
+
+
+def _youtube_embed_html(video_id: str) -> str:
+    return (
+        '<div class="yt-embed">'
+        f'<iframe src="https://www.youtube-nocookie.com/embed/{video_id}" '
+        'title="YouTube video" loading="lazy" frameborder="0" '
+        'allow="accelerator; encrypted-media; picture-in-picture" allowfullscreen></iframe>'
+        "</div>"
+    )
+
+
+def _expand_youtube_embeds(markdown_text: str) -> str:
+    lines: list[str] = []
+    for line in (markdown_text or "").splitlines():
+        stripped = line.strip()
+        shortcode_match = _YOUTUBE_SHORTCODE_RE.fullmatch(stripped)
+        video_id = None
+        if shortcode_match:
+            video_id = _extract_youtube_video_id(shortcode_match.group("value"))
+        elif _YOUTUBE_BARE_URL_RE.fullmatch(stripped):
+            video_id = _extract_youtube_video_id(stripped)
+        lines.append(f"YOUTUBE_EMBED_{video_id}" if video_id else line)
+    return "\n".join(lines)
+
+
+def _restore_youtube_embeds(clean_html: str) -> str:
+    return _YOUTUBE_EMBED_TOKEN_RE.sub(lambda match: _youtube_embed_html(match.group(1)), clean_html)
+
+
 def render_markdown(markdown_text: str) -> str:
     raw_html = markdown.markdown(
-        markdown_text or "",
+        _expand_youtube_embeds(markdown_text),
         extensions=["extra", "sane_lists", "tables"],
         output_format="html5",
     )
@@ -45,4 +103,4 @@ def render_markdown(markdown_text: str) -> str:
         protocols=["http", "https", "mailto"],
         strip=True,
     )
-    return bleach.linkify(clean_html)
+    return _restore_youtube_embeds(bleach.linkify(clean_html))

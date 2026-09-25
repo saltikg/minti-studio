@@ -5,6 +5,7 @@
 {% endblock %}
 
 {% block extra_styles %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
 <style>
   .blog-cover-upload-row {
     display: flex;
@@ -47,6 +48,15 @@
     width: 100%;
     min-height: 3.25rem;
     resize: vertical;
+  }
+
+  .EasyMDEContainer,
+  .EasyMDEContainer .CodeMirror,
+  .EasyMDEContainer .editor-toolbar,
+  .EasyMDEContainer .editor-preview,
+  .EasyMDEContainer .editor-preview-side,
+  .EasyMDEContainer .editor-statusbar {
+    color-scheme: light;
   }
 </style>
 {% endblock %}
@@ -155,7 +165,32 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
 <script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var contentTextarea = document.getElementById("blog-content");
+    if (!contentTextarea || typeof EasyMDE === "undefined") {
+      return;
+    }
+
+    var easyMDE = new EasyMDE({
+      element: contentTextarea,
+      spellChecker: false,
+      toolbar: [
+        "bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|",
+        "link", "image", "preview", "side-by-side", "guide"
+      ]
+    });
+
+    // EasyMDE preview is client-side, so YouTube shortcodes expand only on the published page.
+    var form = contentTextarea.closest("form");
+    if (form) {
+      form.addEventListener("submit", function () {
+        easyMDE.codemirror.save();
+      });
+    }
+  });
+
   (function () {
     var uploadButton = document.getElementById("blog-cover-upload-button");
     var uploadInput = document.getElementById("blog-cover-upload-input");
