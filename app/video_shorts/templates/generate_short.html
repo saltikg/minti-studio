@@ -8633,7 +8633,8 @@ const updateScheduleAllPreview = () => {
   spinner?.classList.toggle("d-none", !scheduleAllState.running);
 };
 
-const markClipAsScheduled = (clip, publishAt) => {
+const markClipAsScheduled = (clip, publishAt, options = {}) => {
+  const showCardFeedback = Boolean(options.showCardFeedback);
   clip.railItem.dataset.publishStatus = "scheduled";
   clip.railItem.dataset.publishAt = publishAt;
   const deleteBtn = document.querySelector(`[data-delete-clip-btn][data-plan-index="${CSS.escape(String(clip.planIndex || ""))}"]`);
@@ -8651,9 +8652,15 @@ const markClipAsScheduled = (clip, publishAt) => {
     clip.card.dataset.publish = "scheduled";
     const feedback = clip.card.querySelector(".clip-card-save-feedback");
     if (feedback) {
-      feedback.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
-      feedback.classList.remove("d-none", "text-danger", "text-warning");
-      feedback.classList.add("text-success");
+      if (showCardFeedback) {
+        feedback.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
+        feedback.classList.remove("d-none", "text-danger", "text-warning");
+        feedback.classList.add("text-success");
+      } else {
+        feedback.textContent = "";
+        feedback.classList.add("d-none");
+        feedback.classList.remove("text-success", "text-danger", "text-warning");
+      }
     }
   }
 };
@@ -8742,7 +8749,7 @@ const runScheduleAllClips = async () => {
     }
   }
   if (scheduledCount === clips.length) {
-    setScheduleAllFeedback(`Scheduled ${scheduledCount} ${scheduledCount === 1 ? "clip" : "clips"}.`, "text-success");
+    setScheduleAllFeedback(`All ${scheduledCount} ${scheduledCount === 1 ? "clip has" : "clips have"} been scheduled.`, "text-success");
   }
   scheduleAllState.running = false;
   updateScheduleAllPreview();
