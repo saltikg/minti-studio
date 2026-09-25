@@ -50,13 +50,60 @@
     resize: vertical;
   }
 
-  .EasyMDEContainer,
-  .EasyMDEContainer .CodeMirror,
-  .EasyMDEContainer .editor-toolbar,
-  .EasyMDEContainer .editor-preview,
-  .EasyMDEContainer .editor-preview-side,
-  .EasyMDEContainer .editor-statusbar {
-    color-scheme: light;
+  .blog-content-editor .EasyMDEContainer,
+  .blog-content-editor .EasyMDEContainer .CodeMirror,
+  .blog-content-editor .EasyMDEContainer .editor-toolbar,
+  .blog-content-editor .EasyMDEContainer .editor-preview,
+  .blog-content-editor .EasyMDEContainer .editor-preview-side,
+  .blog-content-editor .EasyMDEContainer .editor-statusbar {
+    color-scheme: dark;
+  }
+
+  .blog-content-editor .editor-toolbar {
+    background: #1b2431;
+    border-color: #2c3a4d;
+  }
+
+  .blog-content-editor .editor-toolbar button,
+  .blog-content-editor .editor-toolbar button::before {
+    color: #cfd8e3 !important;
+  }
+
+  .blog-content-editor .editor-toolbar button:hover,
+  .blog-content-editor .editor-toolbar button.active {
+    background: #2c3a4d;
+    border-color: #3a4a60;
+  }
+
+  .blog-content-editor .editor-toolbar i.separator {
+    border-color: #2c3a4d;
+  }
+
+  .blog-content-editor .CodeMirror {
+    max-height: 460px;
+    background: #0f1722;
+    color: #e6e6e6;
+    border-color: #2c3a4d;
+  }
+
+  .blog-content-editor .CodeMirror-scroll {
+    max-height: 460px;
+    overflow-y: auto;
+  }
+
+  .blog-content-editor .CodeMirror-cursor {
+    border-left-color: #e6e6e6;
+  }
+
+  .blog-content-editor .editor-preview,
+  .blog-content-editor .editor-preview-side {
+    background: #0f1722;
+    color: #e6e6e6;
+  }
+
+  .blog-content-editor .editor-preview a,
+  .blog-content-editor .editor-preview-side a {
+    color: #89e2c3;
   }
 </style>
 {% endblock %}
@@ -80,7 +127,9 @@
 
       <div class="col-12">
         <label class="form-label" for="blog-content">Content (Markdown)</label>
-        <textarea id="blog-content" name="content" class="form-control font-monospace" rows="18" required>{{ form_article.content }}</textarea>
+        <div class="blog-content-editor">
+          <textarea id="blog-content" name="content" class="form-control font-monospace" rows="18" required>{{ form_article.content }}</textarea>
+        </div>
       </div>
 
       <div class="col-12 col-lg-6">
@@ -176,6 +225,8 @@
     var easyMDE = new EasyMDE({
       element: contentTextarea,
       spellChecker: false,
+      minHeight: "320px",
+      maxHeight: "460px",
       toolbar: [
         "bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|",
         "link", "image", "preview", "side-by-side", "guide"
