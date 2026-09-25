@@ -672,10 +672,14 @@ def _resolve_title_template_behavior(
         return {
             "title_engine": str(template.get("title_engine") or "drawtext").strip() or "drawtext",
             "title_uppercase": bool(template.get("title_uppercase")),
+            "title_outline_color": str(template.get("title_outline_color") or "#000000").strip() or "#000000",
+            "title_outline_width": max(0, int(template.get("title_outline_width") or 0)),
         }
     return {
         "title_engine": "drawtext",
         "title_uppercase": False,
+        "title_outline_color": "#000000",
+        "title_outline_width": 0,
     }
 
 
@@ -24371,6 +24375,8 @@ def autoclip_video(video_pk):
                 title_bg_color=title_bg_color,
                 title_bg_alpha=title_bg_alpha,
                 title_text_color=title_text_color,
+                title_outline_color=title_template_behavior["title_outline_color"],
+                title_outline_width=title_template_behavior["title_outline_width"],
                 subtitle_font_size=sub_font_size,
                 subtitle_margin=sub_margin,
                 subtitle_text_color=subtitle_text_color,

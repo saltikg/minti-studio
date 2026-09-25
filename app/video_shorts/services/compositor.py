@@ -355,6 +355,14 @@ def _normalize_title_language(language: Any) -> str:
     return value[:2]
 
 
+def _apply_title_case(text: str, title_language: Optional[str], uppercase: bool) -> str:
+    """Apply the shared, language-aware title casing used by every title engine."""
+    value = str(text or "")
+    if not uppercase:
+        return value
+    return _turkish_upper(value) if _normalize_title_language(title_language) == "tr" else value.upper()
+
+
 def _hex_to_rgba(color: Optional[str], alpha: int = 255) -> tuple[int, int, int, int]:
     value = str(color or "").strip()
     if not value.startswith("#") or len(value) != 7:
@@ -452,6 +460,8 @@ def _render_title_overlay(
     uppercase: bool,
     video_top_limit: Optional[int],
     title_language: Optional[str] = None,
+    title_outline_color: Optional[str] = "#000000",
+    title_outline_width: int = 0,
     max_lines: int = TITLE_WRAP_MAX_LINES,
     min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
 ) -> tuple[Path, dict[str, Any]]:
@@ -459,17 +469,18 @@ def _render_title_overlay(
     if font is None:
         raise RuntimeError(f"Pillow title font could not be resolved: {font_path}")
 
-    normalized_title_language = _normalize_title_language(title_language)
-    if uppercase:
-        display_text = _turkish_upper(text) if normalized_title_language == "tr" else str(text or "").upper()
-    else:
-        display_text = str(text or "")
+    display_text = _apply_title_case(text, title_language, uppercase)
     words = display_text.split()
     if not words:
         raise RuntimeError("Pillow title render requested with empty text")
 
     side_margin = _title_side_margin(target_width)
-    max_text_width = max(120, int(target_width) - (2 * side_margin))
+    try:
+        safe_outline_width = max(0, int(title_outline_width or 0))
+    except (TypeError, ValueError):
+        safe_outline_width = 0
+    # Reserve the outline width in the wrapping calculation so strokes stay in bounds.
+    max_text_width = max(120, int(target_width) - (2 * (side_margin + safe_outline_width)))
     safe_line_spacing = int(line_spacing)
     chosen_lines: list[str] = [" ".join(words)]
     chosen_font_size = max(int(font_size), int(min_font_size))
@@ -533,14 +544,16 @@ def _render_title_overlay(
 
     draw = ImageDraw.Draw(overlay)
     text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
+    outline_fill = _hex_to_rgba(title_outline_color or "#000000", 255)
     for entry in line_entries:
-        draw.text(
-            (int(entry["x"]), int(entry["y"])),
-            str(entry["text"]),
-            font=chosen_font,
-            fill=text_fill,
-            anchor="la",
-        )
+        draw_args = {
+            "font": chosen_font,
+            "fill": text_fill,
+            "anchor": "la",
+        }
+        if safe_outline_width > 0:
+            draw_args.update(stroke_fill=outline_fill, stroke_width=safe_outline_width)
+        draw.text((int(entry["x"]), int(entry["y"])), str(entry["text"]), **draw_args)
 
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="title_overlay_")
     handle.close()
@@ -550,7 +563,7 @@ def _render_title_overlay(
         "text": display_text,
         "font_size": chosen_font_size,
         "line_count": len(chosen_lines),
-        "side_margin": side_margin,
+        "side_margin": side_margin + safe_outline_width,
         "max_text_width": max_text_width,
         "draw_y": draw_y,
         "block_height": block_height,
@@ -628,6 +641,11 @@ def _title_drawtext_style(
             "shadowx=0",
             "shadowy=8",
             "shadowcolor=black@0.55",
+        ])
+    if str(subtitle_preset or "").strip() == "blue_pop":
+        parts.extend([
+            "borderw=3",
+            "bordercolor=black@1.0",
         ])
     return ":".join(parts)
 
@@ -986,7 +1004,11 @@ def _compose_with_background(
     resolved_ffmpeg = _resolve_ffmpeg()
 
     # Başlık metni, kısalt ve satırları biraz daha kısa tut
-    title_txt = _sanitize_text_for_overlay(title or "", 140)
+    title_txt = _apply_title_case(
+        _sanitize_text_for_overlay(title or "", 140),
+        title_language,
+        bool(title_uppercase),
+    )
     title_layout = _fit_title_text(
         title_txt,
         font_path=font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -1145,6 +1167,8 @@ def _compose_trimmed_with_background(
     title_bg_color: Optional[str] = None,
     title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     title_text_color: Optional[str] = None,
+    title_outline_color: Optional[str] = "#000000",
+    title_outline_width: int = 0,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     subtitle_text_color: Optional[str] = None,
@@ -1296,6 +1320,8 @@ def _compose_trimmed_with_background(
                     subtitle_preset=subtitle_preset,
                     uppercase=bool(title_uppercase),
                     title_language=title_language,
+                    title_outline_color=title_outline_color,
+                    title_outline_width=title_outline_width,
                     video_top_limit=None,
                 )
                 current_app.logger.info(
@@ -1315,7 +1341,7 @@ def _compose_trimmed_with_background(
                 next_video_input_index += 1
             else:
                 title_layout = _fit_title_text(
-                    title_txt,
+                    _apply_title_case(title_txt, title_language, bool(title_uppercase)),
                     font_path=test_font_file,
                     font_size=safe_title_font_size,
                     target_width=target_width,
@@ -2065,6 +2091,8 @@ def _compose_trimmed_with_background(
                 subtitle_preset=subtitle_preset,
                 uppercase=bool(title_uppercase),
                 title_language=title_language,
+                title_outline_color=title_outline_color,
+                title_outline_width=title_outline_width,
                 video_top_limit=video_top_limit,
             )
             current_app.logger.info(
@@ -2085,7 +2113,7 @@ def _compose_trimmed_with_background(
             next_video_input_index += 1
         else:
             title_layout = _fit_title_text(
-                title_txt,
+                _apply_title_case(title_txt, title_language, bool(title_uppercase)),
                 font_path=test_font_file,
                 font_size=title_font_size,
                 target_width=target_width,
