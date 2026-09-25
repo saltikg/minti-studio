@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -11,6 +12,10 @@ _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _YOUTUBE_SHORTCODE_RE = re.compile(r"^\[youtube:\s*(?P<value>[^\]]+?)\s*\]$", re.IGNORECASE)
 _YOUTUBE_BARE_URL_RE = re.compile(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+$", re.IGNORECASE)
 _YOUTUBE_EMBED_TOKEN_RE = re.compile(r"(?:<p>)?YOUTUBE_EMBED_([A-Za-z0-9_-]{11})(?:</p>)?")
+_COMPONENT_START_RE = re.compile(r"^:::(?P<type>[A-Za-z]+)(?:\s+(?P<title>.*))?$")
+_COMPONENT_TOKEN_RE = re.compile(r"(?:<p>)?BLOG_COMPONENT_(\d+)(?:</p>)?")
+_CALLOUT_TYPES = {"warning", "tip", "info"}
+_SPECIMEN_TAGS = {"short": "Short", "long": "Long-form"}
 
 _ALLOWED_TAGS = [
     "a",
@@ -31,6 +36,12 @@ _ALLOWED_TAGS = [
     "p",
     "pre",
     "strong",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
     "ul",
 ]
 
@@ -90,9 +101,79 @@ def _restore_youtube_embeds(clean_html: str) -> str:
     return _YOUTUBE_EMBED_TOKEN_RE.sub(lambda match: _youtube_embed_html(match.group(1)), clean_html)
 
 
-def render_markdown(markdown_text: str) -> str:
+def _component_html(component_type: str, title: str, body: str) -> str:
+    body_html = _render_markdown(body, expand_components=False)
+    safe_title = escape((title or "").strip())
+    if component_type in _CALLOUT_TYPES:
+        head = f'<span class="vs-callout__head">{safe_title}</span>' if safe_title else ""
+        return f'<div class="vs-callout vs-callout--{component_type}">{head}{body_html}</div>'
+    if component_type == "key":
+        return f'<div class="vs-key">{body_html}</div>'
+    if component_type == "action":
+        head_text = safe_title or "Next step"
+        return f'<div class="vs-action"><span class="vs-action__head">🎯 {head_text}</span>{body_html}</div>'
+    if component_type in _SPECIMEN_TAGS:
+        tag = _SPECIMEN_TAGS[component_type]
+        return (
+            f'<div class="vs-specimen vs-specimen--{component_type}">'
+            f'<span class="vs-specimen__tag">{tag}</span>'
+            '<span class="vs-specimen__play">▶</span>'
+            f"{body_html}</div>"
+        )
+    return ""
+
+
+def _extract_component_blocks(markdown_text: str) -> tuple[str, list[str]]:
+    lines = (markdown_text or "").splitlines()
+    output: list[str] = []
+    components: list[str] = []
+    index = 0
+    while index < len(lines):
+        start_match = _COMPONENT_START_RE.fullmatch(lines[index].strip())
+        if not start_match:
+            output.append(lines[index])
+            index += 1
+            continue
+
+        component_type = start_match.group("type").lower()
+        if component_type not in _CALLOUT_TYPES | {"key", "action"} | set(_SPECIMEN_TAGS):
+            output.append(lines[index])
+            index += 1
+            continue
+
+        end_index = index + 1
+        while end_index < len(lines) and lines[end_index].strip() != ":::":
+            end_index += 1
+        if end_index >= len(lines):
+            output.append(lines[index])
+            index += 1
+            continue
+
+        body = "\n".join(lines[index + 1 : end_index]).strip()
+        title = start_match.group("title") or ""
+        components.append(_component_html(component_type, title, body))
+        output.append(f"BLOG_COMPONENT_{len(components) - 1}")
+        index = end_index + 1
+
+    return "\n".join(output), components
+
+
+def _restore_component_blocks(clean_html: str, components: list[str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        index = int(match.group(1))
+        return components[index] if 0 <= index < len(components) else match.group(0)
+
+    return _COMPONENT_TOKEN_RE.sub(replace, clean_html)
+
+
+def _render_markdown(markdown_text: str, *, expand_components: bool = True) -> str:
+    component_html: list[str] = []
+    source = markdown_text or ""
+    if expand_components:
+        source, component_html = _extract_component_blocks(source)
+
     raw_html = markdown.markdown(
-        _expand_youtube_embeds(markdown_text),
+        _expand_youtube_embeds(source),
         extensions=["extra", "sane_lists", "tables"],
         output_format="html5",
     )
@@ -103,4 +184,11 @@ def render_markdown(markdown_text: str) -> str:
         protocols=["http", "https", "mailto"],
         strip=True,
     )
-    return _restore_youtube_embeds(bleach.linkify(clean_html))
+    restored_html = _restore_youtube_embeds(bleach.linkify(clean_html))
+    if expand_components:
+        restored_html = _restore_component_blocks(restored_html, component_html)
+    return restored_html
+
+
+def render_markdown(markdown_text: str) -> str:
+    return _render_markdown(markdown_text)
