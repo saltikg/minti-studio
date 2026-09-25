@@ -2478,11 +2478,13 @@
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
   }
   .style-template-card-preview--word-highlight-flame::after,
-  .style-template-card-preview--word-highlight-ocean::after {
+  .style-template-card-preview--word-highlight-ocean::after,
+  .style-template-card-preview--blue-pop::after {
     opacity: 0;
   }
   .style-template-card-preview--word-highlight-flame .style-template-card-preview-title,
-  .style-template-card-preview--word-highlight-ocean .style-template-card-preview-title {
+  .style-template-card-preview--word-highlight-ocean .style-template-card-preview-title,
+  .style-template-card-preview--blue-pop .style-template-card-preview-title {
     color: #ffffff;
     font-family: "Anton", sans-serif;
     font-weight: 400;
@@ -2493,6 +2495,9 @@
   }
   .style-template-card-preview--word-highlight-ocean .style-template-card-preview-title {
     background: #111827;
+  }
+  .style-template-card-preview--blue-pop .style-template-card-preview-title {
+    background: #3b7ded;
   }
   .style-template-card-preview--word-highlight-flame .style-template-card-preview-word,
   .style-template-card-preview--word-highlight-ocean .style-template-card-preview-word {
@@ -2516,6 +2521,25 @@
   .style-template-card-preview--word-highlight-ocean .style-template-card-preview-word.is-active {
     color: #ffffff;
     background: #3b7ded;
+    padding: 3px 6px;
+    border-radius: 999px;
+    text-shadow: none;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+  .style-template-card-preview--blue-pop .style-template-card-preview-word {
+    color: #ffffff;
+    font-family: "Archivo Black", "Archivo", sans-serif;
+    font-weight: 900;
+    text-transform: uppercase;
+    text-shadow:
+      -2px -2px 0 rgba(0, 0, 0, 0.98),
+      2px -2px 0 rgba(0, 0, 0, 0.98),
+      -2px 2px 0 rgba(0, 0, 0, 0.98),
+      2px 2px 0 rgba(0, 0, 0, 0.98);
+  }
+  .style-template-card-preview--blue-pop .style-template-card-preview-word.is-active {
+    color: #ffffff;
+    background: #2e7fff;
     padding: 3px 6px;
     border-radius: 999px;
     text-shadow: none;
@@ -12566,6 +12590,14 @@ document.addEventListener("DOMContentLoaded", function () {
       pillColor: "#3B7DED",
       activeTextColor: "#FFFFFF",
       inactiveTextColor: "#FFFFFF",
+    },
+    blue_pop: {
+      pillColor: "#2E7FFF",
+      activeTextColor: "#FFFFFF",
+      inactiveTextColor: "#FFFFFF",
+      fontFamily: '"Archivo Black", "Archivo", sans-serif',
+      fontWeight: "900",
+      uppercase: true,
     },
     green_pop: {
       pillColor: "transparent",
