@@ -20693,6 +20693,10 @@ def upload_clip_to_youtube():
     def _ajax_ok(message: str = "Publish queued."):
         return jsonify(success=True, message=message)
 
+    def _notify(message: str, category: str) -> None:
+        if not is_ajax:
+            flash(message, category)
+
     youtube_enabled = (request.form.get("youtube_enabled") or "0").strip().lower() in {"1", "true", "yes", "on"}
     schedule_instagram_reel = (request.form.get("schedule_instagram_reel") or "").strip().lower() in {"1", "true", "yes", "on"}
     schedule_instagram_feed = (request.form.get("schedule_instagram_feed") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -20723,7 +20727,7 @@ def upload_clip_to_youtube():
             message = "Instagram için planlanan zamanı seçin."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
         try:
             instagram_schedule_iso = local_to_utc_rfc3339(instagram_publish_at_value, user_tz_name)
@@ -20731,7 +20735,7 @@ def upload_clip_to_youtube():
             message = "Geçersiz Instagram yayın zamanı; YYYY-MM-DDTHH:MM formatında giriniz."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
     facebook_mode = (request.form.get("facebook_mode") or "sync").strip().lower()
     if facebook_mode not in {"sync", "now", "schedule"}:
@@ -20743,7 +20747,7 @@ def upload_clip_to_youtube():
             message = "Facebook için planlanan zamanı seçin."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
         try:
             facebook_schedule_iso = local_to_utc_rfc3339(facebook_publish_at_value, user_tz_name)
@@ -20751,7 +20755,7 @@ def upload_clip_to_youtube():
             message = "Geçersiz Facebook yayın zamanı; YYYY-MM-DDTHH:MM formatında giriniz."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
     tiktok_mode = (request.form.get("tiktok_mode") or "sync").strip().lower()
     if tiktok_mode not in {"sync", "now", "schedule"}:
@@ -20763,7 +20767,7 @@ def upload_clip_to_youtube():
             message = "TikTok için planlanan zamanı seçin."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
         try:
             tiktok_schedule_iso = local_to_utc_rfc3339(tiktok_publish_at_value, user_tz_name)
@@ -20771,7 +20775,7 @@ def upload_clip_to_youtube():
             message = "Geçersiz TikTok yayın zamanı; YYYY-MM-DDTHH:MM formatında giriniz."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
     video_pk = request.form.get("video_pk")
     brand_id = current_brand_id()
@@ -20779,13 +20783,13 @@ def upload_clip_to_youtube():
         message = "YouTube bağlantısı yok; önce bağlantı kurun."
         if is_ajax:
             return _ajax_fail(message, status=403)
-        flash(message, "warning")
+        _notify(message, "warning")
         return redirect(url_for("video_shorts_bp.youtube_connect"))
     if not youtube_enabled and not instagram_targets and not facebook_targets and not tiktok_enabled:
         message = "YouTube paylaşımı kapalı; en az bir Instagram, Facebook veya TikTok seçeneği belirleyin."
         if is_ajax:
             return _ajax_fail(message)
-        flash(message, "warning")
+        _notify(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     filename = (request.form.get("filename") or "").strip()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
@@ -20793,7 +20797,7 @@ def upload_clip_to_youtube():
         message = "Klip dosyası seçilmedi."
         if is_ajax:
             return _ajax_fail(message)
-        flash(message, "warning")
+        _notify(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
     out_path = SHORTS_DIR / filename
@@ -20809,7 +20813,7 @@ def upload_clip_to_youtube():
             message = "Geçersiz yayın zamanı; YYYY-MM-DDTHH:MM formatında giriniz."
             if is_ajax:
                 return _ajax_fail(message)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
     out_path = SHORTS_DIR / filename
@@ -20842,7 +20846,7 @@ def upload_clip_to_youtube():
         message = "Klip dosyası sunucuda bulunamadı."
         if is_ajax:
             return _ajax_fail(message)
-        flash(message, "warning")
+        _notify(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
     title = (request.form.get("title") or f"Short {filename}").strip()
@@ -20901,7 +20905,7 @@ def upload_clip_to_youtube():
             if description and description != existing_description:
                 should_update_youtube = True
         elif publish_at and existing_publish_at_iso and existing_publish_at_iso != publish_at:
-            flash("YouTube zaten yayınlandı; yayın zamanını güncelleyemezsiniz.", "warning")
+            _notify("YouTube zaten yayınlandı; yayın zamanını güncelleyemezsiniz.", "warning")
             publish_at = existing_publish_at_iso
             if existing_publish_at_local:
                 publish_at_value = existing_publish_at_local
@@ -20911,7 +20915,7 @@ def upload_clip_to_youtube():
             message = "Klip dosyası YouTube yüklemesi için çözülemedi."
             if is_ajax:
                 return _ajax_fail(message, status=404)
-            flash(message, "warning")
+            _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
         try:
             response = upload_video_with_refresh_token(
@@ -20925,7 +20929,7 @@ def upload_clip_to_youtube():
             )
             youtube_short_id = response.get("id") if response else None
             message_label = "YouTube'a yükleme başladı"
-            flash(f"{message_label} (ID: {youtube_short_id}).", "success")
+            _notify(f"{message_label} (ID: {youtube_short_id}).", "success")
             publish_status_key = "scheduled" if publish_at else "uploaded"
             _update_plan_entry_publish_state(
                 video_pk=video_pk,
@@ -20949,7 +20953,7 @@ def upload_clip_to_youtube():
             )
             if is_ajax:
                 return _ajax_fail(error_message, status=403)
-            flash(error_message, "danger")
+            _notify(error_message, "danger")
             instagram_queue_allowed = False
             facebook_queue_allowed = False
         except Exception as exc:
@@ -20957,7 +20961,7 @@ def upload_clip_to_youtube():
             message = f"YouTube yüklemesi başarısız: {exc}"
             if is_ajax:
                 return _ajax_fail(message, status=500)
-            flash(message, "danger")
+            _notify(message, "danger")
             instagram_queue_allowed = False
             facebook_queue_allowed = False
         finally:
@@ -20995,7 +20999,7 @@ def upload_clip_to_youtube():
                 message = "YouTube plan güncellemesi uygulanmadı; yayın zamanı değişmedi."
                 if is_ajax:
                     return _ajax_fail(message, status=409)
-                flash(message, "warning")
+                _notify(message, "warning")
             publish_status_key = "scheduled" if publish_at else "uploaded"
             _update_plan_entry_publish_state(
                 video_pk=video_pk,
@@ -21009,7 +21013,7 @@ def upload_clip_to_youtube():
                 youtube_id=existing_yt_id,
             )
             if update_ok:
-                flash("YouTube yayın zamanı güncellendi.", "success")
+                _notify("YouTube yayın zamanı güncellendi.", "success")
         except RefreshError as exc:
             current_app.logger.warning("Invalid YouTube refresh token during update: %s", exc)
             error_message = (
@@ -21019,7 +21023,7 @@ def upload_clip_to_youtube():
             )
             if is_ajax:
                 return _ajax_fail(error_message, status=403)
-            flash(error_message, "danger")
+            _notify(error_message, "danger")
             instagram_queue_allowed = False
             facebook_queue_allowed = False
         except Exception as exc:
@@ -21027,19 +21031,19 @@ def upload_clip_to_youtube():
             message = f"YouTube güncellemesi başarısız: {exc}"
             if is_ajax:
                 return _ajax_fail(message, status=500)
-            flash(message, "danger")
+            _notify(message, "danger")
             instagram_queue_allowed = False
             facebook_queue_allowed = False
     elif not youtube_enabled:
-        flash("YouTube paylaşımı kapalı; sadece Instagram kuyruğu kullanılacak.", "info")
+        _notify("YouTube paylaşımı kapalı; sadece Instagram kuyruğu kullanılacak.", "info")
         if facebook_targets:
-            flash("YouTube paylaşımı kapalı; Facebook kuyruğu kullanılacak.", "info")
+            _notify("YouTube paylaşımı kapalı; Facebook kuyruğu kullanılacak.", "info")
 
     if instagram_targets and instagram_queue_allowed:
         if not current_user:
-            flash("Instagram kuyruğu için giriş yapın.", "warning")
+            _notify("Instagram kuyruğu için giriş yapın.", "warning")
         elif not target_entry:
-            flash("Instagram kuyruğu için plan kaydı bulunamadı.", "warning")
+            _notify("Instagram kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
                 instagram_creds = get_instagram_credentials(current_user["id"])
@@ -21047,7 +21051,7 @@ def upload_clip_to_youtube():
                 current_app.logger.warning("Instagram creds unavailable for queue: %s", exc)
                 instagram_creds = None
             if not instagram_creds:
-                flash("Instagram bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
+                _notify("Instagram bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
             else:
                 current_app.logger.info(
                     "Instagram publish creds user_id=%s page_id=%s ig_id=%s token_tail=%s fb_user_id=%s selected_page_id=%s",
@@ -21059,7 +21063,7 @@ def upload_clip_to_youtube():
                     instagram_creds.get("selected_page_id"),
                 )
                 if not _validate_instagram_connection(instagram_creds):
-                    flash(_instagram_account_upgrade_message(), "danger")
+                    _notify(_instagram_account_upgrade_message(), "danger")
                     return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
                 caption_source = (
                     target_entry.get("ig_caption")
@@ -21105,16 +21109,16 @@ def upload_clip_to_youtube():
                             instagram_mode,
                         )
                         label = "Reels" if media_type == "reel" else "Feed"
-                        flash(f"Instagram {label} kuyruğuna eklendi.", "info")
+                        _notify(f"Instagram {label} kuyruğuna eklendi.", "info")
                     except Exception as exc:
                         current_app.logger.warning("Failed to enqueue Instagram job: %s", exc)
-                        flash("Instagram kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
+                        _notify("Instagram kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
 
     if facebook_targets and facebook_queue_allowed:
         if not current_user:
-            flash("Facebook kuyruğu için giriş yapın.", "warning")
+            _notify("Facebook kuyruğu için giriş yapın.", "warning")
         elif not target_entry:
-            flash("Facebook kuyruğu için plan kaydı bulunamadı.", "warning")
+            _notify("Facebook kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
                 facebook_info = get_facebook_page_data(current_user["id"])
@@ -21122,7 +21126,7 @@ def upload_clip_to_youtube():
                 current_app.logger.warning("Facebook info unavailable for publish: %s", exc)
                 facebook_info = None
             if not facebook_info or not facebook_info.get("page_access_token"):
-                flash("Facebook bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
+                _notify("Facebook bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
             else:
                 caption_source = (
                     target_entry.get("fb_caption")
@@ -21165,16 +21169,16 @@ def upload_clip_to_youtube():
                             facebook_mode,
                         )
                         label = "Reels" if media_type == "reel" else "Feed"
-                        flash(f"Facebook {label} kuyruğuna eklendi.", "info")
+                        _notify(f"Facebook {label} kuyruğuna eklendi.", "info")
                     except Exception as exc:
                         current_app.logger.warning("Failed to enqueue Facebook job: %s", exc)
-                        flash("Facebook kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
+                        _notify("Facebook kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
 
     if tiktok_enabled:
         if not current_user:
-            flash("TikTok paylaşımı için giriş yapın.", "warning")
+            _notify("TikTok paylaşımı için giriş yapın.", "warning")
         elif not target_entry:
-            flash("TikTok kuyruğu için plan kaydı bulunamadı.", "warning")
+            _notify("TikTok kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
                 tiktok_info = get_tiktok_data(current_user["id"])
@@ -21182,7 +21186,7 @@ def upload_clip_to_youtube():
                 current_app.logger.warning("TikTok info unavailable for publish: %s", exc)
                 tiktok_info = None
             if not tiktok_info or not tiktok_info.get("access_token") or _is_token_expired(tiktok_info.get("expires_at")):
-                flash("TikTok bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
+                _notify("TikTok bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
             else:
                 caption_source = (
                     target_entry.get("tt_caption")
@@ -21221,10 +21225,10 @@ def upload_clip_to_youtube():
                         video_pk,
                         tiktok_mode,
                     )
-                    flash("TikTok kuyruğuna eklendi.", "info")
+                    _notify("TikTok kuyruğuna eklendi.", "info")
                 except Exception as exc:
                     current_app.logger.warning("Failed to enqueue TikTok job: %s", exc)
-                    flash("TikTok kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
+                    _notify("TikTok kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
 
     if is_ajax:
         return _ajax_ok()
