@@ -1557,7 +1557,7 @@ def _normalize_seed_search_keywords(raw_keywords: Any, *, limit: int = 20) -> Li
     return keywords
 
 
-def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[str]:
+def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing_keywords: Optional[List[str]] = None) -> List[str]:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     compact_items = [
@@ -1568,6 +1568,13 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[
         }
         for item in profile_items
     ]
+    exclusion_keywords = _normalize_seed_search_keywords(existing_keywords or [], limit=220)
+    exclusion_text = ""
+    if exclusion_keywords:
+        exclusion_text = (
+            "\n\nDo NOT produce these existing keywords or close variants/synonyms of them:\n"
+            + json.dumps(exclusion_keywords[:200], ensure_ascii=False)
+        )
     prompt = (
         "These are real channels we target. Produce 20 YouTube search queries that would surface MORE channels "
         "making videos like these. Use concrete topic language a viewer types into YouTube, not category labels "
@@ -1580,6 +1587,7 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]]) -> List[
         "Return STRICT JSON only: {\"keywords\":[\"query\", ...]}.\n\n"
         "Seed channel signals:\n"
         + json.dumps(compact_items, ensure_ascii=False)
+        + exclusion_text
     )
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
@@ -1807,6 +1815,22 @@ def _insert_keywords_into_queue(conn, keywords: List[str], *, source: str = "see
     return {"newly_enqueued": inserted, "already_present": already_present}
 
 
+def _load_recent_keyword_queue_terms(conn, *, limit: int = 200) -> List[str]:
+    if not table_columns(conn, "keyword_queue"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT keyword
+        FROM keyword_queue
+        WHERE COALESCE(keyword, '') <> ''
+        ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST, id DESC
+        LIMIT ?
+        """,
+        [max(1, min(int(limit or 200), 500))],
+    ).fetchall()
+    return [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
+
+
 def count_eligible_keyword_queue(conn) -> int:
     row = conn.execute(
         """
@@ -1819,12 +1843,13 @@ def count_eligible_keyword_queue(conn) -> int:
     return int((row[0] if row else 0) or 0)
 
 
-def generate_seed_keywords_into_queue(conn) -> Dict[str, Any]:
+def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
     pool = load_seed_pool(conn)
     if not pool:
         return {
             "success": False,
             "generated": 0,
+            "generated_raw": 0,
             "newly_enqueued": 0,
             "already_present": 0,
             "keywords": [],
@@ -1834,7 +1859,8 @@ def generate_seed_keywords_into_queue(conn) -> Dict[str, Any]:
         }
     existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
     profile_text = str((existing_profile or [None])[0] or "").strip()
-    generated_keywords = _generate_seed_search_keywords(pool)
+    exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(conn, limit=200)
+    generated_keywords = _generate_seed_search_keywords(pool, existing_keywords=exclusions)
     filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
     keywords = filter_result["kept"]
     dropped_keywords = filter_result["dropped"]
@@ -1859,6 +1885,7 @@ def generate_seed_keywords_into_queue(conn) -> Dict[str, Any]:
     return {
         "success": True,
         "generated": len(keywords),
+        "generated_raw": len(generated_keywords),
         "newly_enqueued": int(queue_counts["newly_enqueued"]),
         "already_present": int(queue_counts["already_present"]),
         "keywords": keywords,

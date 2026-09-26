@@ -13,6 +13,7 @@ from app.video_shorts.services.db import get_db, table_columns
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 CONTROL_TABLE = "discovery_automation_control"
 RUNS_TABLE = "discovery_automation_runs"
+SUMMARY_TABLE = "discovery_keyword_generation_summaries"
 DEFAULT_LOCK_MINUTES = 45
 AUTO_GENERATE_COLUMN = "last_keyword_auto_generated_at"
 
@@ -166,13 +167,109 @@ def _mark_keyword_auto_generated_after_failure() -> None:
         current_app.logger.exception("Failed to record discovery keyword auto-generation attempt after failure")
 
 
-def _maybe_auto_generate_seed_keywords(batch_size: int) -> Dict[str, Any]:
+def _automation_daily_keyword_target(control: Dict[str, Any]) -> int:
+    runs_per_day = _parse_int(control.get("runs_per_day"), 1, minimum=1, maximum=24)
+    batch_size = _parse_int(control.get("max_keywords_per_cycle"), 1, minimum=1, maximum=10)
+    return runs_per_day * batch_size
+
+
+def _today_pt_string(now_utc: datetime) -> str:
+    return now_utc.astimezone(PACIFIC_TZ).date().isoformat()
+
+
+def _ensure_keyword_generation_summary_table(conn) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SUMMARY_TABLE} (
+            date_pt DATE PRIMARY KEY,
+            target INTEGER NOT NULL DEFAULT 0,
+            generated_raw INTEGER NOT NULL DEFAULT 0,
+            dropped_duplicates INTEGER NOT NULL DEFAULT 0,
+            inserted INTEGER NOT NULL DEFAULT 0,
+            pulled_forward INTEGER NOT NULL DEFAULT 0,
+            eligible_final INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _store_keyword_generation_summary(conn, summary: Dict[str, Any]) -> None:
+    _ensure_keyword_generation_summary_table(conn)
+    date_pt = str(summary.get("date_pt") or "")
+    conn.execute(f"DELETE FROM {SUMMARY_TABLE} WHERE date_pt = ?", [date_pt])
+    conn.execute(
+        f"""
+        INSERT INTO {SUMMARY_TABLE} (
+            date_pt, target, generated_raw, dropped_duplicates, inserted,
+            pulled_forward, eligible_final, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        [
+            date_pt,
+            int(summary.get("target") or 0),
+            int(summary.get("generated_raw") or 0),
+            int(summary.get("dropped_duplicates") or 0),
+            int(summary.get("inserted") or 0),
+            int(summary.get("pulled_forward") or 0),
+            int(summary.get("eligible_final") or 0),
+        ],
+    )
+
+
+def _pull_forward_keyword_queue(conn, needed: int) -> Dict[str, Any]:
+    needed = max(0, int(needed or 0))
+    if needed <= 0:
+        return {"pulled_forward": 0, "keywords": []}
+    rows = conn.execute(
+        """
+        SELECT id, keyword
+        FROM keyword_queue
+        WHERE status = 'queued'
+          AND next_run_at > CURRENT_TIMESTAMP
+        ORDER BY COALESCE(found_count, 0) DESC,
+                 last_searched_at ASC NULLS FIRST,
+                 id ASC
+        LIMIT ?
+        """,
+        [needed],
+    ).fetchall()
+    ids = [int(row[0]) for row in rows]
+    keywords = [str(row[1] or "").strip() for row in rows if str(row[1] or "").strip()]
+    if not ids:
+        return {"pulled_forward": 0, "keywords": []}
+    placeholders = ",".join(["?"] * len(ids))
+    conn.execute(
+        f"""
+        UPDATE keyword_queue
+        SET next_run_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id IN ({placeholders})
+        """,
+        ids,
+    )
+    return {"pulled_forward": len(ids), "keywords": keywords}
+
+
+def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any]:
+    target = _automation_daily_keyword_target(control)
+    now_utc = _utc_now()
     metadata: Dict[str, Any] = {
         "eligible_before": 0,
         "auto_generated": 0,
         "auto_generated_total": 0,
         "auto_generation_attempted": False,
         "auto_generation_skipped": "",
+        "date_pt": _today_pt_string(now_utc),
+        "target": target,
+        "generated_raw": 0,
+        "dropped_duplicates": 0,
+        "inserted": 0,
+        "pulled_forward": 0,
+        "eligible_final": 0,
+        "attempts": 0,
     }
     conn = get_db()
     try:
@@ -184,7 +281,8 @@ def _maybe_auto_generate_seed_keywords(batch_size: int) -> Dict[str, Any]:
 
         eligible_before = count_eligible_keyword_queue(conn)
         metadata["eligible_before"] = eligible_before
-        if eligible_before >= batch_size:
+        metadata["eligible_final"] = eligible_before
+        if eligible_before >= target:
             return metadata
 
         control_columns = table_columns(conn, CONTROL_TABLE)
@@ -199,33 +297,64 @@ def _maybe_auto_generate_seed_keywords(batch_size: int) -> Dict[str, Any]:
         row = conn.execute(
             f"SELECT {AUTO_GENERATE_COLUMN} FROM discovery_automation_control WHERE id = 1"
         ).fetchone()
-        if _same_pacific_day(row[0] if row else None, _utc_now()):
+        if _same_pacific_day(row[0] if row else None, now_utc):
             metadata["auto_generation_skipped"] = "already_attempted_today"
             current_app.logger.info(
-                "Discovery keyword auto-generation skipped: already attempted today (eligible was %s)",
+                "Discovery keyword auto-generation skipped: already attempted today (eligible=%s target=%s)",
                 eligible_before,
+                target,
             )
             return metadata
 
         metadata["auto_generation_attempted"] = True
-        generation = generate_seed_keywords_into_queue(conn)
+        generation_errors: List[Dict[str, Any]] = []
+        for attempt in range(1, 4):
+            if count_eligible_keyword_queue(conn) >= target:
+                break
+            generation = generate_seed_keywords_into_queue(conn)
+            metadata["attempts"] = attempt
+            metadata["generated_raw"] += int(generation.get("generated_raw") or generation.get("generated") or 0)
+            metadata["auto_generated_total"] += int(generation.get("generated") or 0)
+            inserted = int(generation.get("newly_enqueued") or 0)
+            duplicates = int(generation.get("already_present") or 0)
+            metadata["inserted"] += inserted
+            metadata["auto_generated"] += inserted
+            metadata["dropped_duplicates"] += duplicates
+            generation_errors.extend(generation.get("errors") or [])
+            metadata["auto_generation_success"] = bool(generation.get("success"))
+            if count_eligible_keyword_queue(conn) >= target:
+                break
+
+        eligible_after_generation = count_eligible_keyword_queue(conn)
+        if eligible_after_generation < target:
+            pull_result = _pull_forward_keyword_queue(conn, target - eligible_after_generation)
+            metadata["pulled_forward"] = int(pull_result.get("pulled_forward") or 0)
+            metadata["pulled_forward_keywords"] = pull_result.get("keywords") or []
+
+        eligible_final = count_eligible_keyword_queue(conn)
+        metadata["eligible_final"] = eligible_final
+        metadata["auto_generation_errors"] = generation_errors
+        _store_keyword_generation_summary(conn, metadata)
         _mark_keyword_auto_generated(conn)
         conn.commit()
-        auto_generated = int(generation.get("newly_enqueued") or 0)
-        metadata["auto_generated"] = auto_generated
-        metadata["auto_generated_total"] = int(generation.get("generated") or 0)
-        metadata["auto_generation_success"] = bool(generation.get("success"))
-        metadata["auto_generation_errors"] = generation.get("errors") or []
         current_app.logger.info(
-            "Discovery keyword auto-generated %s keywords (eligible was %s)",
-            auto_generated,
+            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s",
+            metadata["date_pt"],
+            target,
+            metadata["generated_raw"],
+            metadata["dropped_duplicates"],
+            metadata["inserted"],
+            metadata["pulled_forward"],
+            eligible_final,
+            metadata["attempts"],
             eligible_before,
         )
-        if not generation.get("success") or auto_generated <= 0:
+        if metadata["inserted"] <= 0 and metadata["pulled_forward"] <= 0:
             current_app.logger.warning(
-                "Discovery keyword auto-generation returned no new keywords: generated=%s eligible_before=%s errors=%s",
+                "Discovery keyword auto-generation returned no usable keywords: generated=%s eligible_before=%s target=%s errors=%s",
                 metadata["auto_generated_total"],
                 eligible_before,
+                target,
                 metadata["auto_generation_errors"],
             )
         return metadata
@@ -466,7 +595,7 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
         if not control:
             raise RuntimeError("Discovery automation control row is missing.")
         batch_size = int(control.get("max_keywords_per_cycle") or 1)
-        auto_generation = _maybe_auto_generate_seed_keywords(batch_size)
+        auto_generation = _maybe_auto_generate_seed_keywords(control)
         try:
             conn.close()
         except Exception:
