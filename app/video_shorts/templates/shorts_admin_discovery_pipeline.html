@@ -2,9 +2,6 @@
 
 {% block title %}Discovery Pipeline{% endblock %}
 {% block admin_heading %}Discovery Pipeline{% endblock %}
-{% block admin_subheading %}
-  <p>Persistent view of discovered YouTube channels. Discovery and queue controls land in later phases.</p>
-{% endblock %}
 
 {% macro keyword_sort_link(key, label) -%}
   <a
@@ -368,8 +365,7 @@
       <div class="alert alert-warning mb-3">discovery_leads table is not available yet. Run the manual schema SQL on prod, then reload this page.</div>
     {% endif %}
 
-    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
-      <div class="discovery-muted">Sorted by demo-source fit and last discovered time · persistent discovery store</div>
+    <div class="d-flex justify-content-end align-items-center gap-3 flex-wrap mb-3">
       <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', format='csv') }}" class="btn btn-sm btn-outline-info">Download CSV</a>
     </div>
 
@@ -380,18 +376,17 @@
           <div class="discovery-muted">Keyword searches from automation runs · qualified leads by first-seen date</div>
         </div>
       </div>
+      <div class="discovery-compact-strip">
+        <span class="discovery-compact-stat">Total leads <strong>{{ totals.total }}</strong></span>
+        <span class="discovery-compact-stat">ICP fit <strong>{{ totals.icp_fit }}</strong></span>
+        <span class="discovery-compact-stat">Ready <strong>{{ ready_to_promote_count }}</strong></span>
+        <span class="discovery-compact-stat">Dismissed <strong>{{ status_counts.get('dismissed', 0) }}</strong></span>
+        <span class="discovery-compact-stat">Queued keywords <strong>{{ keyword_summary.queued }}</strong></span>
+        <span class="discovery-compact-stat">trakk today <strong>{{ trakk_usage.used_today }} / {{ trakk_usage.daily_cap }}</strong></span>
+      </div>
       <div class="discovery-trend-canvas">
         <canvas id="discoveryTrendChart" aria-label="Discovery trend chart"></canvas>
       </div>
-    </div>
-
-    <div class="discovery-compact-strip">
-      <span class="discovery-compact-stat">Total leads <strong>{{ totals.total }}</strong></span>
-      <span class="discovery-compact-stat">ICP fit <strong>{{ totals.icp_fit }}</strong></span>
-      <span class="discovery-compact-stat">Ready <strong>{{ ready_to_promote_count }}</strong></span>
-      <span class="discovery-compact-stat">Dismissed <strong>{{ status_counts.get('dismissed', 0) }}</strong></span>
-      <span class="discovery-compact-stat">Queued keywords <strong>{{ keyword_summary.queued }}</strong></span>
-      <span class="discovery-compact-stat">trakk today <strong>{{ trakk_usage.used_today }} / {{ trakk_usage.daily_cap }}</strong></span>
     </div>
 
     <div class="discovery-main-tabs" role="tablist" aria-label="Discovery pipeline sections">
