@@ -65,7 +65,7 @@ LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS = 150_000
 LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D = 2
 LEAD_DISCOVERY_HARD_MAX_SHORTS_15D = 8
 LEAD_DISCOVERY_MAX_KEYWORDS = 10
-LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 40
+LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 50
 LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
 LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT = 5
 LEAD_DISCOVERY_SEED_CHANNEL_LIMIT = 50
@@ -765,7 +765,62 @@ def select_source_video_candidates_for_channel(youtube_channel_id: str) -> Dict[
     return {"auto_pick": auto_pick, "candidates": candidates}
 
 
-def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, Any]:
+def _ensure_discovery_icp_llm_usage_table(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_icp_llm_usage (
+            id BIGSERIAL PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            run_id BIGINT,
+            model VARCHAR NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+
+
+def _store_discovery_icp_llm_usage(*, run_id: Optional[int], response: Any) -> None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    input_tokens = int(
+        getattr(usage, "prompt_tokens", None)
+        or getattr(usage, "input_tokens", None)
+        or 0
+    )
+    output_tokens = int(
+        getattr(usage, "completion_tokens", None)
+        or getattr(usage, "output_tokens", None)
+        or 0
+    )
+    conn = None
+    try:
+        conn = get_db()
+        _ensure_discovery_icp_llm_usage_table(conn)
+        conn.execute(
+            """
+            INSERT INTO discovery_icp_llm_usage (
+                run_id, model, input_tokens, output_tokens, created_at
+            )
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            [run_id, OPENAI_MODEL, input_tokens, output_tokens],
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Could not record discovery ICP LLM usage")
+    finally:
+        if conn:
+            conn.close()
+
+
+def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Optional[int] = None) -> Dict[str, Any]:
     if not _openai_client:
         return {"icp_fit": None, "icp_reason": "OpenAI is not configured."}
     channel_title = str(row.get("channel_title") or "")
@@ -825,6 +880,7 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any]) -> Dict[str, A
         ],
         temperature=0.1,
     )
+    _store_discovery_icp_llm_usage(run_id=run_id, response=response)
     content = (response.choices[0].message.content or "").strip()
     try:
         payload = json.loads(content)
@@ -1878,6 +1934,13 @@ def _ensure_discovery_run_keyword_stats_table(conn) -> None:
         )
         """
     )
+    if "icp_email_found" not in table_columns(conn, "discovery_run_keyword_stats"):
+        conn.execute(
+            """
+            ALTER TABLE discovery_run_keyword_stats
+            ADD COLUMN icp_email_found INTEGER NOT NULL DEFAULT 0
+            """
+        )
 
 
 def _record_initial_discovery_run_keyword_stats(
@@ -1906,10 +1969,10 @@ def _record_initial_discovery_run_keyword_stats(
                 """
                 INSERT INTO discovery_run_keyword_stats (
                     run_id, run_started_at, keyword, keyword_queue_id, raw_results,
-                    new_candidates, enriched, icp_fit, email_found, cut_by_cap,
+                    new_candidates, enriched, icp_fit, email_found, icp_email_found, cut_by_cap,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 [
                     run_id,
@@ -1944,7 +2007,7 @@ def _update_discovery_run_keyword_stats(
     if not run_id:
         return
     metrics: Dict[str, Dict[str, int]] = {
-        keyword.lower(): {"enriched": 0, "icp_fit": 0, "email_found": 0}
+        keyword.lower(): {"enriched": 0, "icp_fit": 0, "email_found": 0, "icp_email_found": 0}
         for keyword in keywords
     }
     for row in results:
@@ -1954,15 +2017,18 @@ def _update_discovery_run_keyword_stats(
         metrics[keyword]["enriched"] += 1
         if row.get("icp_fit") is True:
             metrics[keyword]["icp_fit"] += 1
-        if str(row.get("creator_email") or "").strip():
+        has_email = bool(str(row.get("creator_email") or "").strip())
+        if has_email:
             metrics[keyword]["email_found"] += 1
+        if row.get("icp_fit") is True and has_email:
+            metrics[keyword]["icp_email_found"] += 1
     conn = None
     try:
         conn = get_db()
         _ensure_discovery_run_keyword_stats_table(conn)
         for keyword in keywords:
             lowered = keyword.lower()
-            values = metrics.get(lowered) or {"enriched": 0, "icp_fit": 0, "email_found": 0}
+            values = metrics.get(lowered) or {"enriched": 0, "icp_fit": 0, "email_found": 0, "icp_email_found": 0}
             new_count = int(new_counts.get(lowered) or 0)
             conn.execute(
                 """
@@ -1970,6 +2036,7 @@ def _update_discovery_run_keyword_stats(
                 SET enriched = ?,
                     icp_fit = ?,
                     email_found = ?,
+                    icp_email_found = ?,
                     cut_by_cap = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE run_id = ?
@@ -1979,6 +2046,7 @@ def _update_discovery_run_keyword_stats(
                     int(values["enriched"]),
                     int(values["icp_fit"]),
                     int(values["email_found"]),
+                    int(values["icp_email_found"]),
                     int(values["enriched"]) < new_count,
                     run_id,
                     keyword,
@@ -2570,7 +2638,13 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                 row["icp_reason"] = hard_gate_reason
             elif ai_icp:
                 _attach_lead_discovery_email(row)
-                row.update(_classify_lead_discovery_icp(niche or candidate.get("matched_keyword") or "", row))
+                row.update(
+                    _classify_lead_discovery_icp(
+                        niche or candidate.get("matched_keyword") or "",
+                        row,
+                        run_id=discovery_run_id or None,
+                    )
+                )
             else:
                 _attach_lead_discovery_email(row)
                 row["icp_fit"] = None

@@ -101,7 +101,7 @@ def _row_to_control(row: Any) -> Dict[str, Any]:
         "offpeak_hours_pt": hours,
         "offpeak_hours_pt_json": _json_hours(hours),
         "max_keywords_per_cycle": _parse_int(row[5], 1, minimum=1, maximum=10),
-        "max_results_per_keyword": _parse_int(row[6], 15, minimum=1, maximum=40),
+        "max_results_per_keyword": _parse_int(row[6], 15, minimum=1, maximum=50),
         "max_channels_enriched_per_cycle": _parse_int(row[7], 15, minimum=1, maximum=150),
         "max_trakk_per_cycle": _parse_int(row[8], 5, minimum=0, maximum=20),
         "max_trakk_per_day": _parse_int(row[9] if len(row) > 14 else 50, 50, minimum=0, maximum=500),
@@ -431,7 +431,7 @@ def update_discovery_automation_control(updates: Dict[str, Any]) -> Dict[str, An
         runs_per_day = _parse_int(updates.get("runs_per_day", current.get("runs_per_day")), 1, minimum=1, maximum=24)
         hours = _parse_offpeak_hours(updates.get("offpeak_hours_pt", current.get("offpeak_hours_pt") or [1, 2, 3, 4]))
         max_keywords = _parse_int(updates.get("max_keywords_per_cycle", current.get("max_keywords_per_cycle")), 1, minimum=1, maximum=10)
-        max_results = _parse_int(updates.get("max_results_per_keyword", current.get("max_results_per_keyword")), 15, minimum=1, maximum=40)
+        max_results = _parse_int(updates.get("max_results_per_keyword", current.get("max_results_per_keyword")), 15, minimum=1, maximum=50)
         max_channels = _parse_int(
             updates.get("max_channels_enriched_per_cycle", current.get("max_channels_enriched_per_cycle")),
             15,
