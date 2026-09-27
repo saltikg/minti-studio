@@ -505,7 +505,14 @@ def _load_current_lead_feed_tracking_context(
                     WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
                     ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
                     LIMIT 1
-                ) AS share_link_id
+                ) AS share_link_id,
+                (
+                    SELECT sl.token
+                    FROM short_share_links sl
+                    WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                    ORDER BY sl.created_at DESC NULLS LAST, sl.id DESC
+                    LIMIT 1
+                ) AS share_link_token
             FROM autopilot_leads l
             WHERE CAST(l.user_id AS VARCHAR) = ?
               AND CAST(l.brand_id AS VARCHAR) = ?
@@ -520,6 +527,7 @@ def _load_current_lead_feed_tracking_context(
         return {
             "autopilot_lead_id": str(row[0] or "").strip(),
             "share_link_id": str(row[1] or "").strip(),
+            "share_link_token": str(row[2] or "").strip(),
             "brand_id": str(brand_id or "").strip(),
         }
     finally:
@@ -603,6 +611,11 @@ def lead_feed_page():
         my_videos_url=url_for("video_shorts_bp.my_videos_page"),
         autopilot_confirmation_url=url_for("video_shorts_bp.autopilot_confirmation_page"),
         lead_feed_event_url=url_for("video_shorts_bp.lead_feed_event"),
+        yes_intent_event_url=(
+            url_for("public_short_watch_event_alias", token=tracking_context["share_link_token"])
+            if tracking_context.get("share_link_token")
+            else ""
+        ),
         lead_feed_tracking=tracking_context,
     )
 

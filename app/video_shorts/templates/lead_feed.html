@@ -322,8 +322,8 @@
                   <p class="lead-feed-kicker">MINTI AUTOPILOT</p>
                   <h2 class="lead-feed-card-title">15 Shorts/mo — done for you</h2>
                   <p class="lead-feed-card-copy">You make long videos. We turn them into Shorts.</p>
-                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start free →</button>
-                  <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Yes — send me my Shorts</button>
+                  <p class="lead-feed-consent">We'll email your Shorts over shortly. Keep an eye on your inbox.</p>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
                   <div class="lead-feed-error d-none" data-checkout-error></div>
                 </div>
@@ -331,9 +331,9 @@
             {% elif loop.index == 2 %}
               <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial" data-feed-item-type="card_b">
                 <div class="lead-feed-card-inner">
-                  <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
-                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
-                  <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+                  <h2 class="lead-feed-card-title">Want these Shorts?</h2>
+                  <button type="button" class="lead-feed-trial-btn" data-trial-cta>Yes — send me my Shorts</button>
+                  <p class="lead-feed-consent">We'll email your Shorts over shortly. Keep an eye on your inbox.</p>
                   <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
                   <div class="lead-feed-status d-none" data-checkout-status></div>
                   <div class="lead-feed-error d-none" data-checkout-error></div>
@@ -343,9 +343,9 @@
           {% endfor %}
           <section class="lead-feed-slide lead-feed-card" data-feed-slide data-slide-kind="trial" data-feed-item-type="end_card">
             <div class="lead-feed-card-inner">
-              <h2 class="lead-feed-card-title">Start your 1-month free trial</h2>
-              <button type="button" class="lead-feed-trial-btn" data-trial-cta>Start my trial</button>
-              <p class="lead-feed-consent">By starting, you agree to our <a href="{{ url_for('video_shorts_bp.terms_page') }}" target="_blank" rel="noopener">Terms</a> and <a href="{{ url_for('video_shorts_bp.privacy_page') }}" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+              <h2 class="lead-feed-card-title">Want these Shorts?</h2>
+              <button type="button" class="lead-feed-trial-btn" data-trial-cta>Yes — send me my Shorts</button>
+              <p class="lead-feed-consent">We'll email your Shorts over shortly. Keep an eye on your inbox.</p>
               <a href="#keep-watching" class="lead-feed-keep-watching" data-next-slide>or keep watching ↓</a>
               <div class="lead-feed-status d-none" data-checkout-status></div>
               <div class="lead-feed-error d-none" data-checkout-error></div>
@@ -386,8 +386,7 @@
         const videoSlideIndexes = slides
           .map((slide, index) => slide.querySelector("[data-feed-video]") ? index : null)
           .filter((index) => index !== null);
-        const activationEndpoint = {{ url_for('video_shorts_bp.save_service_mode_choice')|tojson }};
-        const autopilotConfirmationUrl = {{ autopilot_confirmation_url|tojson }};
+        const yesIntentEventUrl = {{ yes_intent_event_url|tojson }};
         const feedEventUrl = {{ lead_feed_event_url|tojson }};
         let activeIndex = 0;
         let started = false;
@@ -728,36 +727,45 @@
               error.classList.add("d-none");
             }
             if (status) {
-              status.textContent = "Starting your autopilot trial...";
+              status.textContent = "Saving...";
               status.classList.remove("d-none");
             }
             try {
-              const response = await fetch(activationEndpoint, {
+              if (!yesIntentEventUrl) {
+                throw new Error("Could not save your request.");
+              }
+              const response = await fetch(yesIntentEventUrl, {
                 method: "POST",
-                credentials: "same-origin",
+                credentials: "omit",
                 headers: {
                   "Content-Type": "application/json",
-                  "X-Requested-With": "XMLHttpRequest",
                 },
-                body: JSON.stringify({ service_mode: "autopilot", activation_source: "lead_feed" }),
+                body: JSON.stringify({ type: "yes_intent", device_type: deviceType }),
               });
               const payload = await response.json().catch(() => null);
               if (!response.ok || !payload || !payload.ok) {
-                throw new Error((payload && payload.error) || "Could not start autopilot.");
+                throw new Error("Could not save your request.");
               }
-            } catch (activationError) {
+            } catch (requestError) {
               button.disabled = false;
               if (status) {
                 status.textContent = "";
                 status.classList.add("d-none");
               }
               if (error) {
-                error.textContent = activationError?.message || "Could not start autopilot.";
+                error.textContent = requestError?.message || "Could not save your request.";
                 error.classList.remove("d-none");
               }
               return;
             }
-            window.location.assign(autopilotConfirmationUrl);
+            document.querySelectorAll("[data-trial-cta]").forEach((ctaButton) => {
+              ctaButton.disabled = true;
+              ctaButton.classList.add("is-confirmed");
+            });
+            if (status) {
+              status.textContent = "Got it — we'll email your Shorts over shortly. Keep an eye on your inbox.";
+              status.classList.remove("d-none");
+            }
           });
         });
       })();
