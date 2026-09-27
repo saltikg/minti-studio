@@ -949,6 +949,7 @@ def ensure_discovery_category_schema(conn) -> None:
         CREATE TABLE IF NOT EXISTS discovery_categories (
             id BIGSERIAL PRIMARY KEY,
             name VARCHAR NOT NULL UNIQUE,
+            persona TEXT,
             status VARCHAR NOT NULL DEFAULT 'active',
             source VARCHAR NOT NULL DEFAULT 'backfill',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -956,6 +957,9 @@ def ensure_discovery_category_schema(conn) -> None:
         )
         """
     )
+    category_columns = table_columns(conn, "discovery_categories")
+    if category_columns and "persona" not in category_columns:
+        conn.execute("ALTER TABLE discovery_categories ADD COLUMN persona TEXT")
     keyword_columns = table_columns(conn, "keyword_queue")
     if keyword_columns and "category_id" not in keyword_columns:
         conn.execute("ALTER TABLE keyword_queue ADD COLUMN category_id BIGINT")
@@ -966,21 +970,27 @@ def ensure_discovery_category_schema(conn) -> None:
     _ensure_discovery_icp_llm_usage_table(conn)
 
 
-def _get_or_create_discovery_category(conn, name: object, *, source: str = "backfill", status: str = "active") -> Optional[int]:
+def _get_or_create_discovery_category(conn, name: object, *, source: str = "backfill", status: str = "active", persona: object = "") -> Optional[int]:
     clean_name = _normalize_discovery_category_name(name)
     if not clean_name:
         return None
+    clean_persona = " ".join(str(persona or "").strip().split())[:500]
     row = conn.execute("SELECT id FROM discovery_categories WHERE lower(name) = lower(?) LIMIT 1", [clean_name]).fetchone()
     if row:
+        if clean_persona:
+            conn.execute(
+                "UPDATE discovery_categories SET persona = ? WHERE id = ? AND (persona IS NULL OR trim(persona) = '')",
+                [clean_persona, row[0]],
+            )
         return int(row[0])
     inserted = conn.execute(
         """
-        INSERT INTO discovery_categories (name, status, source, created_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO discovery_categories (name, persona, status, source, created_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT (name) DO NOTHING
         RETURNING id
         """,
-        [clean_name, status, source],
+        [clean_name, clean_persona, status, source],
     ).fetchone()
     if inserted:
         return int(inserted[0])
@@ -994,7 +1004,7 @@ def _load_discovery_categories(conn, *, statuses: Optional[set[str]] = None) -> 
         placeholders = ",".join(["?"] * len(statuses))
         rows = conn.execute(
             f"""
-            SELECT id, name, status, source, created_at, decided_at
+            SELECT id, name, status, source, created_at, decided_at, persona
             FROM discovery_categories
             WHERE status IN ({placeholders})
             ORDER BY id ASC
@@ -1004,7 +1014,7 @@ def _load_discovery_categories(conn, *, statuses: Optional[set[str]] = None) -> 
     else:
         rows = conn.execute(
             """
-            SELECT id, name, status, source, created_at, decided_at
+            SELECT id, name, status, source, created_at, decided_at, persona
             FROM discovery_categories
             ORDER BY id ASC
             """
@@ -1017,6 +1027,7 @@ def _load_discovery_categories(conn, *, statuses: Optional[set[str]] = None) -> 
             "source": str(row[3] or "").strip(),
             "created_at": row[4],
             "decided_at": row[5],
+            "persona": str(row[6] or "").strip(),
         }
         for row in rows
     ]
@@ -1281,39 +1292,51 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
         return {"categories": [], "keywords": [], "newly_enqueued": 0, "already_present": 0, "errors": [{"error": "openai_not_configured"}]}
     metrics = _load_discovery_category_metrics(conn, days=14)
     top_channels = _load_top_icp_channels_for_category_discovery(conn, limit=10)
-    blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+    blocked_statuses = set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"}
+    blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=blocked_statuses)]
     prompt = (
-        "We sell done-for-you Shorts to solo educator/coach/consultant/expert creators who make long-form YouTube. "
-        "Propose 2 NEW categories of people similar to these ICP-fit creators (same type of person: solo educator/coach/consultant who sells something) "
-        "but in different subject areas. For each, give 3 YouTube search queries and a one-line rationale. "
-        "Do NOT propose dropped/saturated categories or close variants. Return STRICT JSON only: "
-        "{\"categories\":[{\"name\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
+        "We sell done-for-you Shorts to individual, on-camera, long-form YouTube creators: solo educators, coaches, consultants, "
+        "and subject-matter experts who sell to consumers or individual learners. "
+        "Propose 2 NEW categories of people similar to these ICP-fit creators, but in different consumer-facing subject areas. "
+        "For each category, first write a one-sentence persona describing the individual creator, for example: "
+        "\"a former teacher who sells a homeschool curriculum and talks to parents on camera\". "
+        "Then give exactly 3 YouTube search queries. Each query must read like a long-form video title that this persona would give "
+        "their own video, aimed at consumers/B2C audiences, not at businesses. "
+        "Exclude B2B services, agencies, law/accounting firms, corporate consulting, news, product review, faceless channels, "
+        "compilation channels, and categories aimed at entrepreneurs, business owners, companies, or internal teams. "
+        "Do NOT propose dropped, saturated, current testing categories, or close variants. Return STRICT JSON only: "
+        "{\"categories\":[{\"name\":\"...\",\"persona\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
         f"Top ICP-fit channels: {json.dumps(top_channels, ensure_ascii=False)}\n\n"
         f"Existing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
         f"Do NOT propose these or close variants: {json.dumps(blocked, ensure_ascii=False)}"
     )
+    current_app.logger.info("Discovery category discovery prompt: %s", prompt)
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You discover new high-yield YouTube lead categories for B2B creator outreach."},
+            {"role": "system", "content": "You discover high-yield consumer-facing YouTube creator categories for creator outreach. Return JSON only."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.45,
     )
     _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_discovery", conn=conn)
-    payload = json.loads((response.choices[0].message.content or "").strip())
+    response_content = (response.choices[0].message.content or "").strip()
+    current_app.logger.info("Discovery category discovery response: %s", response_content)
+    payload = json.loads(response_content)
     proposed: List[Dict[str, Any]] = []
     keyword_items: List[Dict[str, str]] = []
     for raw_category in (payload.get("categories") or [])[:2]:
         name = _normalize_discovery_category_name(raw_category.get("name"))
         if not name:
             continue
-        category_id = _get_or_create_discovery_category(conn, name, source="llm", status="testing")
+        persona = " ".join(str(raw_category.get("persona") or "").strip().split())[:500]
+        category_id = _get_or_create_discovery_category(conn, name, source="llm", status="testing", persona=persona)
         queries = _normalize_seed_search_keywords(raw_category.get("queries"), limit=3)[:3]
         proposed.append(
             {
                 "id": category_id,
                 "name": name,
+                "persona": persona,
                 "rationale": str(raw_category.get("rationale") or "").strip()[:300],
                 "keywords": queries,
             }
@@ -1330,6 +1353,7 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
     return {
         "categories": proposed,
         "categories_proposed": [item["name"] for item in proposed],
+        "categories_proposed_detail": [{"name": item["name"], "persona": item["persona"]} for item in proposed],
         "keywords": keyword_items,
         "newly_enqueued": int(queue_counts["newly_enqueued"]),
         "already_present": int(queue_counts["already_present"]),

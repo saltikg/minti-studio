@@ -274,6 +274,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         "eligible_final": 0,
         "attempts": 0,
         "categories_proposed": [],
+        "categories_proposed_detail": [],
     }
     conn = get_db()
     try:
@@ -321,6 +322,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             category_inserted = int(category_generation.get("newly_enqueued") or 0)
             category_duplicates = int(category_generation.get("already_present") or 0)
             metadata["categories_proposed"] = category_generation.get("categories_proposed") or []
+            metadata["categories_proposed_detail"] = category_generation.get("categories_proposed_detail") or []
             metadata["inserted"] += category_inserted
             metadata["auto_generated"] += category_inserted
             metadata["generated_raw"] += len(category_generation.get("keywords") or [])
@@ -359,7 +361,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         _mark_keyword_auto_generated(conn)
         conn.commit()
         current_app.logger.info(
-            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s categories_proposed=%s",
+            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s categories_proposed=%s categories_proposed_detail=%s",
             metadata["date_pt"],
             target,
             metadata["generated_raw"],
@@ -370,6 +372,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             metadata["attempts"],
             eligible_before,
             metadata["categories_proposed"],
+            metadata["categories_proposed_detail"],
         )
         if metadata["inserted"] <= 0 and metadata["pulled_forward"] <= 0:
             current_app.logger.warning(
