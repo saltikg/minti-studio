@@ -193,6 +193,8 @@ def _ensure_keyword_generation_summary_table(conn) -> None:
         )
         """
     )
+    if "categories_proposed" not in table_columns(conn, SUMMARY_TABLE):
+        conn.execute(f"ALTER TABLE {SUMMARY_TABLE} ADD COLUMN categories_proposed TEXT")
 
 
 def _store_keyword_generation_summary(conn, summary: Dict[str, Any]) -> None:
@@ -203,9 +205,9 @@ def _store_keyword_generation_summary(conn, summary: Dict[str, Any]) -> None:
         f"""
         INSERT INTO {SUMMARY_TABLE} (
             date_pt, target, generated_raw, dropped_duplicates, inserted,
-            pulled_forward, eligible_final, created_at, updated_at
+            pulled_forward, eligible_final, categories_proposed, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         [
             date_pt,
@@ -215,6 +217,7 @@ def _store_keyword_generation_summary(conn, summary: Dict[str, Any]) -> None:
             int(summary.get("inserted") or 0),
             int(summary.get("pulled_forward") or 0),
             int(summary.get("eligible_final") or 0),
+            json.dumps(summary.get("categories_proposed") or [], ensure_ascii=False),
         ],
     )
 
@@ -270,20 +273,25 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         "pulled_forward": 0,
         "eligible_final": 0,
         "attempts": 0,
+        "categories_proposed": [],
     }
     conn = get_db()
     try:
-        from app.video_shorts.routes.api import count_eligible_keyword_queue, generate_seed_keywords_into_queue
+        from app.video_shorts.routes.api import (
+            backfill_discovery_keyword_categories,
+            count_eligible_keyword_queue,
+            discover_daily_categories_into_queue,
+            generate_seed_keywords_into_queue,
+        )
 
         if not table_columns(conn, "keyword_queue"):
             metadata["auto_generation_skipped"] = "keyword_queue_missing"
             return metadata
 
+        backfill_discovery_keyword_categories(conn)
         eligible_before = count_eligible_keyword_queue(conn)
         metadata["eligible_before"] = eligible_before
         metadata["eligible_final"] = eligible_before
-        if eligible_before >= target:
-            return metadata
 
         control_columns = table_columns(conn, CONTROL_TABLE)
         if AUTO_GENERATE_COLUMN not in control_columns:
@@ -308,6 +316,19 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
 
         metadata["auto_generation_attempted"] = True
         generation_errors: List[Dict[str, Any]] = []
+        try:
+            category_generation = discover_daily_categories_into_queue(conn)
+            category_inserted = int(category_generation.get("newly_enqueued") or 0)
+            category_duplicates = int(category_generation.get("already_present") or 0)
+            metadata["categories_proposed"] = category_generation.get("categories_proposed") or []
+            metadata["inserted"] += category_inserted
+            metadata["auto_generated"] += category_inserted
+            metadata["generated_raw"] += len(category_generation.get("keywords") or [])
+            metadata["dropped_duplicates"] += category_duplicates
+            generation_errors.extend(category_generation.get("errors") or [])
+        except Exception:
+            current_app.logger.exception("Discovery category daily generation failed; continuing keyword top-up")
+
         for attempt in range(1, 4):
             if count_eligible_keyword_queue(conn) >= target:
                 break
@@ -338,7 +359,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         _mark_keyword_auto_generated(conn)
         conn.commit()
         current_app.logger.info(
-            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s",
+            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s categories_proposed=%s",
             metadata["date_pt"],
             target,
             metadata["generated_raw"],
@@ -348,6 +369,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             eligible_final,
             metadata["attempts"],
             eligible_before,
+            metadata["categories_proposed"],
         )
         if metadata["inserted"] <= 0 and metadata["pulled_forward"] <= 0:
             current_app.logger.warning(
@@ -564,6 +586,13 @@ def _claim_scheduled_control(conn) -> Optional[Dict[str, Any]]:
     return claimed
 
 
+def _is_last_daily_run_slot(control: Dict[str, Any]) -> bool:
+    now_pt = _utc_now().astimezone(PACIFIC_TZ)
+    hours = sorted(_parse_offpeak_hours(control.get("offpeak_hours_pt")))
+    selected_hours = hours[: max(1, min(24, int(control.get("runs_per_day") or 1)))]
+    return bool(selected_hours and now_pt.hour == selected_hours[-1])
+
+
 def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: bool = False) -> Dict[str, Any]:
     conn = get_db()
     run_id: Optional[int] = None
@@ -637,6 +666,13 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
 
         conn = get_db()
         _finish_run(conn, run_id, status="completed" if result.get("success") else "skipped", result=result)
+        if _is_last_daily_run_slot(control):
+            try:
+                from app.video_shorts.routes.api import apply_discovery_category_daily_decisions
+
+                result["category_decisions"] = apply_discovery_category_daily_decisions(conn)
+            except Exception:
+                current_app.logger.exception("Discovery category daily decisions failed")
         _mark_control_finished(conn)
         conn.commit()
         return {"success": bool(result.get("success")), "run_id": run_id, "result": result}

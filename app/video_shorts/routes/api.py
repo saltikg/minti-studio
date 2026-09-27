@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from flask import current_app, flash, g, jsonify, redirect, request, url_for
+from flask import current_app, flash, g, has_app_context, jsonify, redirect, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import CAPTION_API_TOKEN, OPENAI_MODEL, _openai_client
@@ -75,6 +75,18 @@ LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT = 10
 LEAD_DISCOVERY_QUEUE_TAKE_MAX = 20
 RESEARCH_INTERVAL_DAYS = 7
 SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
+DISCOVERY_STARTING_CATEGORIES = [
+    "Finance/retirement",
+    "Career",
+    "Relationships/family",
+    "Business/marketing/digital products",
+    "Personal development",
+    "Faith/spirituality",
+    "Parenting/education",
+    "Health & wellness coaching",
+]
+DISCOVERY_CATEGORY_ACTIVE_STATUSES = {"active", "testing", "kept"}
+DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated"}
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
 DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
 
@@ -773,14 +785,34 @@ def _ensure_discovery_icp_llm_usage_table(conn) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             run_id BIGINT,
             model VARCHAR NOT NULL,
+            purpose VARCHAR NOT NULL DEFAULT 'icp_classify',
             input_tokens INTEGER NOT NULL DEFAULT 0,
             output_tokens INTEGER NOT NULL DEFAULT 0
         )
         """
     )
+    columns = table_columns(conn, "discovery_icp_llm_usage")
+    if "purpose" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE discovery_icp_llm_usage
+            ADD COLUMN purpose VARCHAR NOT NULL DEFAULT 'icp_classify'
+            """
+        )
 
 
-def _store_discovery_icp_llm_usage(*, run_id: Optional[int], response: Any) -> None:
+def _log_discovery_exception(message: str, *args: Any) -> None:
+    if has_app_context():
+        current_app.logger.exception(message, *args)
+
+
+def _store_discovery_icp_llm_usage(
+    *,
+    run_id: Optional[int],
+    response: Any,
+    purpose: str = "icp_classify",
+    conn: Any = None,
+) -> None:
     usage = getattr(response, "usage", None)
     if usage is None:
         return
@@ -794,29 +826,31 @@ def _store_discovery_icp_llm_usage(*, run_id: Optional[int], response: Any) -> N
         or getattr(usage, "output_tokens", None)
         or 0
     )
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = get_db()
+        if owns_conn:
+            conn = get_db()
         _ensure_discovery_icp_llm_usage_table(conn)
         conn.execute(
             """
             INSERT INTO discovery_icp_llm_usage (
-                run_id, model, input_tokens, output_tokens, created_at
+                run_id, model, purpose, input_tokens, output_tokens, created_at
             )
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            [run_id, OPENAI_MODEL, input_tokens, output_tokens],
+            [run_id, OPENAI_MODEL, str(purpose or "unknown")[:80], input_tokens, output_tokens],
         )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
     except Exception:
-        if conn:
+        if owns_conn and conn:
             try:
                 conn.rollback()
             except Exception:
                 pass
-        current_app.logger.exception("Could not record discovery ICP LLM usage")
+        _log_discovery_exception("Could not record discovery ICP LLM usage")
     finally:
-        if conn:
+        if owns_conn and conn:
             conn.close()
 
 
@@ -880,7 +914,7 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
         ],
         temperature=0.1,
     )
-    _store_discovery_icp_llm_usage(run_id=run_id, response=response)
+    _store_discovery_icp_llm_usage(run_id=run_id, response=response, purpose="icp_classify")
     content = (response.choices[0].message.content or "").strip()
     try:
         payload = json.loads(content)
@@ -903,6 +937,463 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
         "icp_fit": icp_fit,
         "icp_reason": reason,
     }
+
+
+def _normalize_discovery_category_name(value: object) -> str:
+    return " ".join(str(value or "").strip().split())[:120]
+
+
+def ensure_discovery_category_schema(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_categories (
+            id BIGSERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL UNIQUE,
+            status VARCHAR NOT NULL DEFAULT 'active',
+            source VARCHAR NOT NULL DEFAULT 'backfill',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            decided_at TIMESTAMP
+        )
+        """
+    )
+    keyword_columns = table_columns(conn, "keyword_queue")
+    if keyword_columns and "category_id" not in keyword_columns:
+        conn.execute("ALTER TABLE keyword_queue ADD COLUMN category_id BIGINT")
+    _ensure_discovery_run_keyword_stats_table(conn)
+    stats_columns = table_columns(conn, "discovery_run_keyword_stats")
+    if stats_columns and "category_id" not in stats_columns:
+        conn.execute("ALTER TABLE discovery_run_keyword_stats ADD COLUMN category_id BIGINT")
+    _ensure_discovery_icp_llm_usage_table(conn)
+
+
+def _get_or_create_discovery_category(conn, name: object, *, source: str = "backfill", status: str = "active") -> Optional[int]:
+    clean_name = _normalize_discovery_category_name(name)
+    if not clean_name:
+        return None
+    row = conn.execute("SELECT id FROM discovery_categories WHERE lower(name) = lower(?) LIMIT 1", [clean_name]).fetchone()
+    if row:
+        return int(row[0])
+    inserted = conn.execute(
+        """
+        INSERT INTO discovery_categories (name, status, source, created_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (name) DO NOTHING
+        RETURNING id
+        """,
+        [clean_name, status, source],
+    ).fetchone()
+    if inserted:
+        return int(inserted[0])
+    row = conn.execute("SELECT id FROM discovery_categories WHERE lower(name) = lower(?) LIMIT 1", [clean_name]).fetchone()
+    return int(row[0]) if row else None
+
+
+def _load_discovery_categories(conn, *, statuses: Optional[set[str]] = None) -> List[Dict[str, Any]]:
+    ensure_discovery_category_schema(conn)
+    if statuses:
+        placeholders = ",".join(["?"] * len(statuses))
+        rows = conn.execute(
+            f"""
+            SELECT id, name, status, source, created_at, decided_at
+            FROM discovery_categories
+            WHERE status IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            list(statuses),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, name, status, source, created_at, decided_at
+            FROM discovery_categories
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    return [
+        {
+            "id": int(row[0]),
+            "name": str(row[1] or "").strip(),
+            "status": str(row[2] or "").strip(),
+            "source": str(row[3] or "").strip(),
+            "created_at": row[4],
+            "decided_at": row[5],
+        }
+        for row in rows
+    ]
+
+
+def ensure_starting_discovery_categories(conn) -> Dict[str, int]:
+    ensure_discovery_category_schema(conn)
+    category_ids: Dict[str, int] = {}
+    for name in DISCOVERY_STARTING_CATEGORIES:
+        category_id = _get_or_create_discovery_category(conn, name, source="backfill", status="active")
+        if category_id:
+            category_ids[name.lower()] = category_id
+    return category_ids
+
+
+def _category_keyword_rule_fallback(keyword: str) -> str:
+    text = keyword.lower()
+    if any(term in text for term in ["retirement", "tax", "budget", "finance", "estate", "trust", "money", "invest"]):
+        return "Finance/retirement"
+    if any(term in text for term in ["career", "job", "workplace"]):
+        return "Career"
+    if any(term in text for term in ["relationship", "marriage", "family", "boundaries", "parents"]):
+        return "Relationships/family"
+    if any(term in text for term in ["marketing", "digital product", "business", "niche", "creator"]):
+        return "Business/marketing/digital products"
+    if any(term in text for term in ["mindset", "discipline", "manifestation", "personal growth", "codependency"]):
+        return "Personal development"
+    if any(term in text for term in ["faith", "spiritual", "prophetic", "biblical", "prayer"]):
+        return "Faith/spirituality"
+    if any(term in text for term in ["parenting", "teens", "homeschool", "education", "preschool"]):
+        return "Parenting/education"
+    if any(term in text for term in ["health", "hormone", "perimenopause", "fatigue", "nutrition", "vagus", "adhd", "autism"]):
+        return "Health & wellness coaching"
+    return "Personal development"
+
+
+def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
+    ensure_starting_discovery_categories(conn)
+    if not table_columns(conn, "keyword_queue"):
+        return {"assigned": 0, "category_counts": {}, "errors": [{"error": "keyword_queue_missing"}]}
+    rows = conn.execute(
+        """
+        SELECT id, keyword
+        FROM keyword_queue
+        WHERE COALESCE(keyword, '') <> ''
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    keywords = [{"id": int(row[0]), "keyword": str(row[1] or "").strip()} for row in rows if str(row[1] or "").strip()]
+    existing_categories = _load_discovery_categories(conn)
+    assignments: Dict[str, str] = {}
+    if _openai_client and keywords:
+        prompt = (
+            "Assign every keyword to exactly one category. Use the starting categories whenever possible; "
+            "create a new category only if none fit. Return STRICT JSON only: "
+            "{\"assignments\":[{\"keyword\":\"...\",\"category\":\"...\"}]}.\n\n"
+            f"Starting categories: {json.dumps(DISCOVERY_STARTING_CATEGORIES, ensure_ascii=False)}\n"
+            f"Keywords: {json.dumps([item['keyword'] for item in keywords], ensure_ascii=False)}"
+        )
+        try:
+            response = _openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You classify YouTube discovery search keywords into durable business lead categories."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+            )
+            _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_backfill", conn=conn)
+            payload = json.loads((response.choices[0].message.content or "").strip())
+            for item in payload.get("assignments") or []:
+                keyword = str(item.get("keyword") or "").strip().lower()
+                category = _normalize_discovery_category_name(item.get("category"))
+                if keyword and category:
+                    assignments[keyword] = category
+        except Exception:
+            _log_discovery_exception("Discovery category backfill LLM assignment failed; using rule fallback")
+    category_counts: Dict[str, int] = {}
+    category_name_by_lower = {category["name"].lower(): category["name"] for category in existing_categories}
+    assigned = 0
+    for item in keywords:
+        keyword = item["keyword"]
+        category_name = assignments.get(keyword.lower()) or _category_keyword_rule_fallback(keyword)
+        category_name = category_name_by_lower.get(category_name.lower(), category_name)
+        category_id = _get_or_create_discovery_category(conn, category_name, source="llm" if category_name.lower() not in category_name_by_lower else "backfill", status="active")
+        if not category_id:
+            continue
+        conn.execute("UPDATE keyword_queue SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [category_id, item["id"]])
+        assigned += 1
+        category_counts[category_name] = category_counts.get(category_name, 0) + 1
+    conn.execute(
+        """
+        UPDATE discovery_run_keyword_stats s
+        SET category_id = q.category_id,
+            updated_at = CURRENT_TIMESTAMP
+        FROM keyword_queue q
+        WHERE s.keyword_queue_id = q.id
+          AND q.category_id IS NOT NULL
+          AND (s.category_id IS NULL OR s.category_id <> q.category_id)
+        """
+    )
+    conn.execute(
+        """
+        UPDATE discovery_run_keyword_stats s
+        SET category_id = q.category_id,
+            updated_at = CURRENT_TIMESTAMP
+        FROM keyword_queue q
+        WHERE lower(s.keyword) = lower(q.keyword)
+          AND q.category_id IS NOT NULL
+          AND s.category_id IS NULL
+        """
+    )
+    return {"assigned": assigned, "category_counts": category_counts, "errors": []}
+
+
+def _load_discovery_category_metrics(conn, *, days: int = 14) -> List[Dict[str, Any]]:
+    ensure_discovery_category_schema(conn)
+    rows = conn.execute(
+        """
+        SELECT
+            c.id,
+            c.name,
+            c.status,
+            COUNT(s.id) AS keywords_searched,
+            COALESCE(SUM(s.raw_results), 0) AS raw_results,
+            COALESCE(SUM(s.new_candidates), 0) AS new_candidates,
+            COALESCE(SUM(s.enriched), 0) AS enriched,
+            COALESCE(SUM(s.icp_fit), 0) AS icp_fit,
+            COALESCE(SUM(s.icp_email_found), 0) AS icp_email_found
+        FROM discovery_categories c
+        LEFT JOIN discovery_run_keyword_stats s
+          ON s.category_id = c.id
+         AND s.run_started_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+        GROUP BY c.id, c.name, c.status
+        ORDER BY c.name ASC
+        """
+    ).fetchall()
+    metrics: List[Dict[str, Any]] = []
+    for row in rows:
+        raw = int(row[4] or 0)
+        enriched = int(row[6] or 0)
+        icp_fit = int(row[7] or 0)
+        new_candidates = int(row[5] or 0)
+        metrics.append(
+            {
+                "id": int(row[0]),
+                "name": str(row[1] or "").strip(),
+                "status": str(row[2] or "").strip(),
+                "keywords_searched": int(row[3] or 0),
+                "raw": raw,
+                "new": new_candidates,
+                "enriched": enriched,
+                "icp_fit": icp_fit,
+                "icp_email_found": int(row[8] or 0),
+                "icp_rate": round((icp_fit / enriched), 4) if enriched else 0,
+                "freshness": round((new_candidates / raw), 4) if raw else 0,
+            }
+        )
+    return metrics
+
+
+def _load_top_icp_channels_for_category_discovery(conn, *, limit: int = 10) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT dl.channel_title, dl.channel_description, dl.matched_keyword, COALESCE(c.name, '')
+        FROM discovery_leads dl
+        LEFT JOIN keyword_queue q ON lower(q.keyword) = lower(dl.matched_keyword)
+        LEFT JOIN discovery_categories c ON c.id = q.category_id
+        WHERE dl.icp_fit IS TRUE
+          AND dl.first_seen_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+        ORDER BY dl.first_seen_at DESC NULLS LAST, dl.id DESC
+        LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
+    return [
+        {
+            "channel_name": str(row[0] or "").strip()[:160],
+            "description": str(row[1] or "").strip()[:300],
+            "matched_keyword": str(row[2] or "").strip(),
+            "category": str(row[3] or "").strip(),
+        }
+        for row in rows
+    ]
+
+
+def _normalize_category_keyword_items(raw_items: Any, *, limit: int = 20) -> List[Dict[str, str]]:
+    if isinstance(raw_items, dict):
+        raw_items = raw_items.get("items") or raw_items.get("keywords") or []
+    if not isinstance(raw_items, list):
+        return [{"keyword": keyword, "category": ""} for keyword in _normalize_seed_search_keywords(raw_items, limit=limit)]
+    items: List[Dict[str, str]] = []
+    seen = set()
+    for raw in raw_items:
+        if isinstance(raw, dict):
+            keyword = " ".join(str(raw.get("keyword") or raw.get("query") or "").strip().split())[:120]
+            category = _normalize_discovery_category_name(raw.get("category"))
+        else:
+            keyword = " ".join(str(raw or "").strip().split())[:120]
+            category = ""
+        lowered = keyword.lower()
+        if not keyword or lowered in seen:
+            continue
+        seen.add(lowered)
+        items.append({"keyword": keyword, "category": category})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]], *, source: str, default_category_id: Optional[int] = None, priority: int = 100, due_now: bool = False) -> Dict[str, Any]:
+    inserted = 0
+    already_present = 0
+    inserted_keywords: List[str] = []
+    columns = table_columns(conn, "keyword_queue")
+    has_category_id = "category_id" in columns
+    for item in items:
+        keyword = " ".join(str(item.get("keyword") or "").strip().split())[:120]
+        if not keyword:
+            continue
+        category_id = default_category_id
+        category_name = _normalize_discovery_category_name(item.get("category"))
+        if category_name:
+            category_id = _get_or_create_discovery_category(conn, category_name, source="llm", status="active") or category_id
+        existing = conn.execute(
+            f"SELECT id, {'category_id' if has_category_id else 'NULL'} AS category_id FROM keyword_queue WHERE lower(keyword) = lower(?) LIMIT 1",
+            [keyword],
+        ).fetchone()
+        if existing:
+            already_present += 1
+            if has_category_id and category_id and not existing[1]:
+                conn.execute("UPDATE keyword_queue SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [category_id, existing[0]])
+            continue
+        if has_category_id:
+            conn.execute(
+                """
+                INSERT INTO keyword_queue (
+                    keyword, source, status, priority, category_id, next_run_at, created_at, updated_at
+                )
+                VALUES (?, ?, 'queued', ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (keyword) DO NOTHING
+                """,
+                [keyword, source, int(priority), category_id, bool(due_now)],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO keyword_queue (keyword, source, status, priority, next_run_at, created_at, updated_at)
+                VALUES (?, ?, 'queued', ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (keyword) DO NOTHING
+                """,
+                [keyword, source, int(priority), bool(due_now)],
+            )
+        inserted += 1
+        inserted_keywords.append(keyword)
+    return {"newly_enqueued": inserted, "already_present": already_present, "keywords": inserted_keywords}
+
+
+def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
+    ensure_starting_discovery_categories(conn)
+    if not _openai_client:
+        return {"categories": [], "keywords": [], "newly_enqueued": 0, "already_present": 0, "errors": [{"error": "openai_not_configured"}]}
+    metrics = _load_discovery_category_metrics(conn, days=14)
+    top_channels = _load_top_icp_channels_for_category_discovery(conn, limit=10)
+    blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+    prompt = (
+        "We sell done-for-you Shorts to solo educator/coach/consultant/expert creators who make long-form YouTube. "
+        "Propose 2 NEW categories of people similar to these ICP-fit creators (same type of person: solo educator/coach/consultant who sells something) "
+        "but in different subject areas. For each, give 3 YouTube search queries and a one-line rationale. "
+        "Do NOT propose dropped/saturated categories or close variants. Return STRICT JSON only: "
+        "{\"categories\":[{\"name\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
+        f"Top ICP-fit channels: {json.dumps(top_channels, ensure_ascii=False)}\n\n"
+        f"Existing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
+        f"Do NOT propose these or close variants: {json.dumps(blocked, ensure_ascii=False)}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You discover new high-yield YouTube lead categories for B2B creator outreach."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.45,
+    )
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_discovery", conn=conn)
+    payload = json.loads((response.choices[0].message.content or "").strip())
+    proposed: List[Dict[str, Any]] = []
+    keyword_items: List[Dict[str, str]] = []
+    for raw_category in (payload.get("categories") or [])[:2]:
+        name = _normalize_discovery_category_name(raw_category.get("name"))
+        if not name:
+            continue
+        category_id = _get_or_create_discovery_category(conn, name, source="llm", status="testing")
+        queries = _normalize_seed_search_keywords(raw_category.get("queries"), limit=3)[:3]
+        proposed.append(
+            {
+                "id": category_id,
+                "name": name,
+                "rationale": str(raw_category.get("rationale") or "").strip()[:300],
+                "keywords": queries,
+            }
+        )
+        for query in queries:
+            keyword_items.append({"keyword": query, "category": name})
+    queue_counts = _insert_category_keyword_items_into_queue(
+        conn,
+        keyword_items,
+        source="category_discovery",
+        priority=0,
+        due_now=True,
+    )
+    return {
+        "categories": proposed,
+        "categories_proposed": [item["name"] for item in proposed],
+        "keywords": keyword_items,
+        "newly_enqueued": int(queue_counts["newly_enqueued"]),
+        "already_present": int(queue_counts["already_present"]),
+        "errors": [],
+    }
+
+
+def apply_discovery_category_daily_decisions(conn) -> Dict[str, Any]:
+    ensure_discovery_category_schema(conn)
+    decisions: List[Dict[str, Any]] = []
+    testing_rows = conn.execute(
+        """
+        SELECT c.id, c.name, COALESCE(SUM(s.icp_fit), 0) AS icp_fit, COUNT(s.id) AS rows_seen,
+               COALESCE(SUM(CASE WHEN s.cut_by_cap THEN 1 ELSE 0 END), 0) AS cut_rows
+        FROM discovery_categories c
+        LEFT JOIN discovery_run_keyword_stats s ON s.category_id = c.id
+        WHERE c.status = 'testing'
+        GROUP BY c.id, c.name
+        """
+    ).fetchall()
+    for row in testing_rows:
+        category_id = int(row[0])
+        rows_seen = int(row[3] or 0)
+        cut_rows = int(row[4] or 0)
+        if rows_seen < 3 or cut_rows > 0:
+            continue
+        icp_fit = int(row[2] or 0)
+        next_status = "kept" if icp_fit >= 2 else "dropped"
+        conn.execute(
+            "UPDATE discovery_categories SET status = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [next_status, category_id],
+        )
+        decisions.append({"category": str(row[1] or ""), "status": next_status, "icp_fit": icp_fit})
+    active_rows = conn.execute(
+        """
+        SELECT id, name
+        FROM discovery_categories
+        WHERE status IN ('active', 'kept')
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    for category_id, name in active_rows:
+        recent = conn.execute(
+            """
+            SELECT raw_results, new_candidates
+            FROM discovery_run_keyword_stats
+            WHERE category_id = ?
+            ORDER BY run_started_at DESC NULLS LAST, id DESC
+            LIMIT 10
+            """,
+            [category_id],
+        ).fetchall()
+        if len(recent) < 10:
+            continue
+        raw_total = sum(int(row[0] or 0) for row in recent)
+        new_total = sum(int(row[1] or 0) for row in recent)
+        freshness = (new_total / raw_total) if raw_total else 0
+        if freshness < 0.15:
+            conn.execute(
+                "UPDATE discovery_categories SET status = 'saturated', decided_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [category_id],
+            )
+            decisions.append({"category": str(name or ""), "status": "saturated", "freshness": round(freshness, 4)})
+    return {"decisions": decisions}
 
 
 def _load_emailed_seed_channels(limit: int = LEAD_DISCOVERY_SEED_CHANNEL_LIMIT) -> List[Dict[str, Any]]:
@@ -1613,7 +2104,12 @@ def _normalize_seed_search_keywords(raw_keywords: Any, *, limit: int = 20) -> Li
     return keywords
 
 
-def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing_keywords: Optional[List[str]] = None) -> List[str]:
+def _generate_seed_search_keyword_items(
+    profile_items: List[Dict[str, Any]],
+    existing_keywords: Optional[List[str]] = None,
+    *,
+    conn=None,
+) -> List[Dict[str, str]]:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
     compact_items = [
@@ -1631,6 +2127,25 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing
             "\n\nDo NOT produce these existing keywords or close variants/synonyms of them:\n"
             + json.dumps(exclusion_keywords[:200], ensure_ascii=False)
         )
+    category_text = ""
+    blocked_text = ""
+    if conn is not None:
+        try:
+            ensure_starting_discovery_categories(conn)
+            metrics = [
+                item
+                for item in _load_discovery_category_metrics(conn, days=14)
+                if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
+            ]
+            blocked = [item["name"] for item in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+            category_text = (
+                "\n\nGenerate for active/kept categories only. Favor categories with high icp_email_found and high freshness. "
+                "Return each keyword with the category name you used.\n"
+                f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}"
+            )
+            blocked_text = f"\n\nNever generate for these dropped/saturated categories or close variants: {json.dumps(blocked, ensure_ascii=False)}"
+        except Exception:
+            _log_discovery_exception("Could not load discovery category metrics for seed keyword generation")
     prompt = (
         "These are real channels we target. Produce 20 YouTube search queries that would surface MORE channels "
         "making videos like these. Use concrete topic language a viewer types into YouTube, not category labels "
@@ -1640,9 +2155,11 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing
         "Avoid meta or industry labels like: solo educator, online coach, consultant, consultant YouTube channel, "
         "expert creator, personal brand, content creator.\n"
         "Each query must be 2-5 words, specific to a topic/audience/problem, not a job title. "
-        "Return STRICT JSON only: {\"keywords\":[\"query\", ...]}.\n\n"
+        "Return STRICT JSON only: {\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
         "Seed channel signals:\n"
         + json.dumps(compact_items, ensure_ascii=False)
+        + category_text
+        + blocked_text
         + exclusion_text
     )
     response = _openai_client.chat.completions.create(
@@ -1653,12 +2170,17 @@ def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing
         ],
         temperature=0.35,
     )
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="keyword_generator", conn=conn)
     content = (response.choices[0].message.content or "").strip()
     try:
         payload = json.loads(content)
-        return _normalize_seed_search_keywords(payload.get("keywords"), limit=20)
+        return _normalize_category_keyword_items(payload.get("keywords"), limit=20)
     except Exception:
-        return _normalize_seed_search_keywords(content, limit=20)
+        return _normalize_category_keyword_items(content, limit=20)
+
+
+def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing_keywords: Optional[List[str]] = None) -> List[str]:
+    return [item["keyword"] for item in _generate_seed_search_keyword_items(profile_items, existing_keywords=existing_keywords)]
 
 
 def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str) -> Dict[str, List[str]]:
@@ -1848,27 +2370,9 @@ def load_seed_pool(conn=None) -> List[Dict[str, Any]]:
             conn.close()
 
 
-def _insert_keywords_into_queue(conn, keywords: List[str], *, source: str = "seed") -> Dict[str, Any]:
-    inserted = 0
-    already_present = 0
-    for keyword in keywords:
-        clean_keyword = " ".join(str(keyword or "").strip().split())[:120]
-        if not clean_keyword:
-            continue
-        existing = conn.execute("SELECT id FROM keyword_queue WHERE lower(keyword) = lower(?) LIMIT 1", [clean_keyword]).fetchone()
-        if existing:
-            already_present += 1
-            continue
-        conn.execute(
-            """
-            INSERT INTO keyword_queue (keyword, source, status, priority, created_at, updated_at)
-            VALUES (?, ?, 'queued', 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (keyword) DO NOTHING
-            """,
-            [clean_keyword, source],
-        )
-        inserted += 1
-    return {"newly_enqueued": inserted, "already_present": already_present}
+def _insert_keywords_into_queue(conn, keywords: List[Any], *, source: str = "seed") -> Dict[str, Any]:
+    items = _normalize_category_keyword_items(keywords, limit=max(len(keywords), 1))
+    return _insert_category_keyword_items_into_queue(conn, items, source=source, priority=100, due_now=False)
 
 
 def _existing_discovery_channel_ids(conn, channel_ids: List[str]) -> set[str]:
@@ -1941,6 +2445,8 @@ def _ensure_discovery_run_keyword_stats_table(conn) -> None:
             ADD COLUMN icp_email_found INTEGER NOT NULL DEFAULT 0
             """
         )
+    if "category_id" not in table_columns(conn, "discovery_run_keyword_stats"):
+        conn.execute("ALTER TABLE discovery_run_keyword_stats ADD COLUMN category_id BIGINT")
 
 
 def _record_initial_discovery_run_keyword_stats(
@@ -1961,6 +2467,7 @@ def _record_initial_discovery_run_keyword_stats(
         _ensure_discovery_run_keyword_stats_table(conn)
         conn.execute("DELETE FROM discovery_run_keyword_stats WHERE run_id = ?", [run_id])
         queue_ids = {str(item.get("keyword") or "").strip().lower(): item.get("id") for item in queue_keyword_items}
+        category_ids = {str(item.get("keyword") or "").strip().lower(): item.get("category_id") for item in queue_keyword_items}
         for keyword in keywords:
             lowered = keyword.lower()
             new_count = int(new_counts.get(lowered) or 0)
@@ -1969,10 +2476,10 @@ def _record_initial_discovery_run_keyword_stats(
                 """
                 INSERT INTO discovery_run_keyword_stats (
                     run_id, run_started_at, keyword, keyword_queue_id, raw_results,
-                    new_candidates, enriched, icp_fit, email_found, icp_email_found, cut_by_cap,
+                    new_candidates, enriched, icp_fit, email_found, icp_email_found, cut_by_cap, category_id,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 [
                     run_id,
@@ -1982,6 +2489,7 @@ def _record_initial_discovery_run_keyword_stats(
                     int(raw_counts.get(lowered) or 0),
                     new_count,
                     enriched_count < new_count,
+                    category_ids.get(lowered),
                 ],
             )
         conn.commit()
@@ -2110,11 +2618,20 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
     existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
     profile_text = str((existing_profile or [None])[0] or "").strip()
     exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(conn, limit=200)
-    generated_keywords = _generate_seed_search_keywords(pool, existing_keywords=exclusions)
+    generated_items = _generate_seed_search_keyword_items(pool, existing_keywords=exclusions, conn=conn)
+    generated_keywords = [item["keyword"] for item in generated_items]
     filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
     keywords = filter_result["kept"]
     dropped_keywords = filter_result["dropped"]
-    queue_counts = _insert_keywords_into_queue(conn, keywords, source="seed")
+    item_by_keyword = {item["keyword"].lower(): item for item in generated_items}
+    kept_items = [
+        {
+            "keyword": keyword,
+            "category": item_by_keyword.get(keyword.lower(), {}).get("category", ""),
+        }
+        for keyword in keywords
+    ]
+    queue_counts = _insert_category_keyword_items_into_queue(conn, kept_items, source="seed", priority=100, due_now=False)
     if existing_profile:
         conn.execute(
             """
@@ -2139,6 +2656,7 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
         "newly_enqueued": int(queue_counts["newly_enqueued"]),
         "already_present": int(queue_counts["already_present"]),
         "keywords": keywords,
+        "keyword_items": kept_items,
         "dropped_keywords": dropped_keywords,
         "seed_pool_count": len(pool),
         "errors": [],
@@ -2146,9 +2664,11 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
 
 
 def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
+    columns = table_columns(conn, "keyword_queue")
+    category_sql = "category_id" if "category_id" in columns else "NULL AS category_id"
     rows = conn.execute(
-        """
-        SELECT id, keyword
+        f"""
+        SELECT id, keyword, {category_sql}
         FROM keyword_queue
         WHERE status = 'queued'
           AND (next_run_at IS NULL OR next_run_at <= CURRENT_TIMESTAMP)
@@ -2157,7 +2677,11 @@ def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
         """,
         [take_n],
     ).fetchall()
-    return [{"id": row[0], "keyword": str(row[1] or "").strip()} for row in rows if str(row[1] or "").strip()]
+    return [
+        {"id": row[0], "keyword": str(row[1] or "").strip(), "category_id": row[2]}
+        for row in rows
+        if str(row[1] or "").strip()
+    ]
 
 
 def _update_keyword_queue_after_run(
