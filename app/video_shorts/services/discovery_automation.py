@@ -590,6 +590,11 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
                 conn.rollback()
                 return {"success": True, "skipped": True, "reason": "not_due"}
         run_id = _create_run(conn)
+        run_started_row = conn.execute(
+            "SELECT started_at FROM discovery_automation_runs WHERE id = ?",
+            [run_id],
+        ).fetchone()
+        run_started_at = run_started_row[0] if run_started_row else None
         conn.commit()
 
         if not control:
@@ -602,6 +607,8 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
             pass
         payload = {
             "use_queue": True,
+            "discovery_run_id": run_id,
+            "discovery_run_started_at": run_started_at,
             "take_n": batch_size,
             "max_keywords": batch_size,
             "max_results_per_keyword": int(control.get("max_results_per_keyword") or 15),

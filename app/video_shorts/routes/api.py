@@ -1815,6 +1815,188 @@ def _insert_keywords_into_queue(conn, keywords: List[str], *, source: str = "see
     return {"newly_enqueued": inserted, "already_present": already_present}
 
 
+def _existing_discovery_channel_ids(conn, channel_ids: List[str]) -> set[str]:
+    clean_ids = []
+    seen = set()
+    for channel_id in channel_ids:
+        clean = str(channel_id or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            clean_ids.append(clean)
+    if not clean_ids or not table_columns(conn, "discovery_leads"):
+        return set()
+    existing: set[str] = set()
+    for index in range(0, len(clean_ids), 200):
+        chunk = clean_ids[index : index + 200]
+        placeholders = ",".join(["?"] * len(chunk))
+        rows = conn.execute(
+            f"""
+            SELECT youtube_channel_id
+            FROM discovery_leads
+            WHERE youtube_channel_id IN ({placeholders})
+            """,
+            chunk,
+        ).fetchall()
+        existing.update(str(row[0] or "").strip() for row in rows if str(row[0] or "").strip())
+    return existing
+
+
+def _round_robin_candidates(candidate_map: Dict[str, List[Dict[str, str]]], *, limit: int) -> List[Dict[str, str]]:
+    selected: List[Dict[str, str]] = []
+    if limit <= 0:
+        return selected
+    keywords = list(candidate_map.keys())
+    max_len = max((len(candidate_map.get(keyword) or []) for keyword in keywords), default=0)
+    for index in range(max_len):
+        for keyword in keywords:
+            candidates = candidate_map.get(keyword) or []
+            if index >= len(candidates):
+                continue
+            selected.append(candidates[index])
+            if len(selected) >= limit:
+                return selected
+    return selected
+
+
+def _ensure_discovery_run_keyword_stats_table(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_run_keyword_stats (
+            id BIGSERIAL PRIMARY KEY,
+            run_id BIGINT NOT NULL,
+            run_started_at TIMESTAMP,
+            keyword VARCHAR NOT NULL,
+            keyword_queue_id BIGINT,
+            raw_results INTEGER NOT NULL DEFAULT 0,
+            new_candidates INTEGER NOT NULL DEFAULT 0,
+            enriched INTEGER NOT NULL DEFAULT 0,
+            icp_fit INTEGER NOT NULL DEFAULT 0,
+            email_found INTEGER NOT NULL DEFAULT 0,
+            cut_by_cap BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _record_initial_discovery_run_keyword_stats(
+    *,
+    run_id: Optional[int],
+    run_started_at: Any,
+    queue_keyword_items: List[Dict[str, Any]],
+    keywords: List[str],
+    raw_counts: Dict[str, int],
+    new_counts: Dict[str, int],
+    selected_counts: Dict[str, int],
+) -> None:
+    if not run_id:
+        return
+    conn = None
+    try:
+        conn = get_db()
+        _ensure_discovery_run_keyword_stats_table(conn)
+        conn.execute("DELETE FROM discovery_run_keyword_stats WHERE run_id = ?", [run_id])
+        queue_ids = {str(item.get("keyword") or "").strip().lower(): item.get("id") for item in queue_keyword_items}
+        for keyword in keywords:
+            lowered = keyword.lower()
+            new_count = int(new_counts.get(lowered) or 0)
+            enriched_count = int(selected_counts.get(lowered) or 0)
+            conn.execute(
+                """
+                INSERT INTO discovery_run_keyword_stats (
+                    run_id, run_started_at, keyword, keyword_queue_id, raw_results,
+                    new_candidates, enriched, icp_fit, email_found, cut_by_cap,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                [
+                    run_id,
+                    run_started_at,
+                    keyword,
+                    queue_ids.get(lowered),
+                    int(raw_counts.get(lowered) or 0),
+                    new_count,
+                    enriched_count < new_count,
+                ],
+            )
+        conn.commit()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Could not record initial discovery run keyword stats")
+    finally:
+        if conn:
+            conn.close()
+
+
+def _update_discovery_run_keyword_stats(
+    *,
+    run_id: Optional[int],
+    keywords: List[str],
+    results: List[Dict[str, Any]],
+    new_counts: Dict[str, int],
+) -> None:
+    if not run_id:
+        return
+    metrics: Dict[str, Dict[str, int]] = {
+        keyword.lower(): {"enriched": 0, "icp_fit": 0, "email_found": 0}
+        for keyword in keywords
+    }
+    for row in results:
+        keyword = str(row.get("matched_keyword") or "").strip().lower()
+        if keyword not in metrics:
+            continue
+        metrics[keyword]["enriched"] += 1
+        if row.get("icp_fit") is True:
+            metrics[keyword]["icp_fit"] += 1
+        if str(row.get("creator_email") or "").strip():
+            metrics[keyword]["email_found"] += 1
+    conn = None
+    try:
+        conn = get_db()
+        _ensure_discovery_run_keyword_stats_table(conn)
+        for keyword in keywords:
+            lowered = keyword.lower()
+            values = metrics.get(lowered) or {"enriched": 0, "icp_fit": 0, "email_found": 0}
+            new_count = int(new_counts.get(lowered) or 0)
+            conn.execute(
+                """
+                UPDATE discovery_run_keyword_stats
+                SET enriched = ?,
+                    icp_fit = ?,
+                    email_found = ?,
+                    cut_by_cap = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?
+                  AND lower(keyword) = lower(?)
+                """,
+                [
+                    int(values["enriched"]),
+                    int(values["icp_fit"]),
+                    int(values["email_found"]),
+                    int(values["enriched"]) < new_count,
+                    run_id,
+                    keyword,
+                ],
+            )
+        conn.commit()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        current_app.logger.exception("Could not update discovery run keyword stats")
+    finally:
+        if conn:
+            conn.close()
+
+
 def _load_recent_keyword_queue_terms(conn, *, limit: int = 200) -> List[str]:
     if not table_columns(conn, "keyword_queue"):
         return []
@@ -1910,7 +2092,13 @@ def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
     return [{"id": row[0], "keyword": str(row[1] or "").strip()} for row in rows if str(row[1] or "").strip()]
 
 
-def _update_keyword_queue_after_run(conn, queue_keywords: List[Dict[str, Any]], results: List[Dict[str, Any]]) -> Dict[str, int]:
+def _update_keyword_queue_after_run(
+    conn,
+    queue_keywords: List[Dict[str, Any]],
+    results: List[Dict[str, Any]],
+    *,
+    fully_enriched_by_keyword: Optional[Dict[str, bool]] = None,
+) -> Dict[str, int]:
     qualified_by_keyword: Dict[str, int] = {}
     for row in results:
         keyword = str(row.get("matched_keyword") or "").strip()
@@ -1927,8 +2115,15 @@ def _update_keyword_queue_after_run(conn, queue_keywords: List[Dict[str, Any]], 
         ).fetchone()
         lifetime_found_count = int((existing_row[0] if existing_row else 0) or 0) + found_count
         requeue_at = (datetime.now(timezone.utc) + timedelta(days=RESEARCH_INTERVAL_DAYS)).replace(tzinfo=None)
-        next_status = "queued" if lifetime_found_count > 0 else "searched"
-        next_run_at = requeue_at if lifetime_found_count > 0 else None
+        fully_enriched = True
+        if fully_enriched_by_keyword is not None:
+            fully_enriched = bool(fully_enriched_by_keyword.get(keyword.lower(), True))
+        if not fully_enriched:
+            next_status = "queued"
+            next_run_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            next_status = "queued" if lifetime_found_count > 0 else "searched"
+            next_run_at = requeue_at if lifetime_found_count > 0 else None
         conn.execute(
             """
             UPDATE keyword_queue
@@ -2129,6 +2324,8 @@ def admin_youtube_channel_diagnose():
 def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
     niche = " ".join(str(payload.get("niche") or "").strip().split())
     supplied_keywords = _normalize_discovery_keywords(payload.get("keywords"))
+    discovery_run_id = _coerce_int_param(payload.get("discovery_run_id"), 0, minimum=0, maximum=10_000_000_000)
+    discovery_run_started_at = payload.get("discovery_run_started_at")
     use_queue = bool(payload.get("use_queue"))
     take_n = _coerce_int_param(
         payload.get("take_n"),
@@ -2233,7 +2430,8 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
 
     search_calls = 0
     raw_search_items = 0
-    candidates_by_channel: Dict[str, Dict[str, str]] = {}
+    raw_counts_by_keyword: Dict[str, int] = {}
+    searched_candidates_by_keyword: Dict[str, List[Dict[str, str]]] = {}
     for keyword in keywords:
         try:
             search_calls += 1
@@ -2244,20 +2442,67 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                 region=region,
             )
             raw_search_items += raw_count
-            for candidate in candidates:
-                channel_id = candidate["channel_id"]
-                if channel_id not in candidates_by_channel:
-                    candidates_by_channel[channel_id] = candidate
+            raw_counts_by_keyword[keyword.lower()] = raw_count
+            searched_candidates_by_keyword[keyword] = candidates
+            if not candidates:
+                searched_candidates_by_keyword.setdefault(keyword, [])
         except YoutubeApiError as exc:
             errors.append({"error": "youtube_search_error", "keyword": keyword, "message": str(exc)})
         except Exception as exc:
             current_app.logger.exception("Lead discovery search failed for keyword=%s", keyword)
             errors.append({"error": "search_failed", "keyword": keyword, "message": str(exc) or "Search failed."})
 
+    all_candidate_ids = [
+        str(candidate.get("channel_id") or "").strip()
+        for candidates in searched_candidates_by_keyword.values()
+        for candidate in candidates
+        if str(candidate.get("channel_id") or "").strip()
+    ]
+    existing_discovery_ids: set[str] = set()
+    if all_candidate_ids:
+        conn = None
+        try:
+            conn = get_db_readonly()
+            existing_discovery_ids = _existing_discovery_channel_ids(conn, all_candidate_ids)
+        except Exception:
+            current_app.logger.exception("Could not load existing discovery channel ids before candidate cap")
+        finally:
+            if conn:
+                conn.close()
+
+    new_candidates_by_keyword: Dict[str, List[Dict[str, str]]] = {}
+    new_counts_by_keyword: Dict[str, int] = {}
+    seen_new_channel_ids: set[str] = set()
+    for keyword in keywords:
+        new_candidates: List[Dict[str, str]] = []
+        for candidate in searched_candidates_by_keyword.get(keyword) or []:
+            channel_id = str(candidate.get("channel_id") or "").strip()
+            if not channel_id:
+                continue
+            if channel_id in existing_discovery_ids or channel_id in seen_new_channel_ids:
+                continue
+            seen_new_channel_ids.add(channel_id)
+            new_candidates.append(candidate)
+        new_candidates_by_keyword[keyword] = new_candidates
+        new_counts_by_keyword[keyword.lower()] = len(new_candidates)
+
     quota_counter = {"enrichment_read_calls": 0}
     results: List[Dict[str, Any]] = []
     persistence_counts = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0}
-    enrichment_candidates = list(candidates_by_channel.values())[:max_channels_enriched]
+    enrichment_candidates = _round_robin_candidates(new_candidates_by_keyword, limit=max_channels_enriched)
+    selected_counts_by_keyword: Dict[str, int] = {}
+    for candidate in enrichment_candidates:
+        keyword = str(candidate.get("matched_keyword") or "").strip().lower()
+        selected_counts_by_keyword[keyword] = selected_counts_by_keyword.get(keyword, 0) + 1
+    _record_initial_discovery_run_keyword_stats(
+        run_id=discovery_run_id or None,
+        run_started_at=discovery_run_started_at,
+        queue_keyword_items=queue_keyword_items,
+        keywords=keywords,
+        raw_counts=raw_counts_by_keyword,
+        new_counts=new_counts_by_keyword,
+        selected_counts=selected_counts_by_keyword,
+    )
     channels_enriched = 0
     already_lead_skipped = 0
     dismissed_skipped = 0
@@ -2341,6 +2586,13 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
             current_app.logger.exception("Lead discovery enrichment failed for channel=%s", channel_id)
             errors.append({"error": "enrichment_failed", "channel_id": channel_id, "message": str(exc) or "Enrichment failed."})
 
+    _update_discovery_run_keyword_stats(
+        run_id=discovery_run_id or None,
+        keywords=keywords,
+        results=results,
+        new_counts=new_counts_by_keyword,
+    )
+
     def _passes_default_thresholds(row: Dict[str, Any]) -> bool:
         try:
             subscribers = int(row.get("subscriber_count") or -1)
@@ -2365,7 +2617,16 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         conn = None
         try:
             conn = get_db()
-            keyword_found_counts = _update_keyword_queue_after_run(conn, queue_keyword_items, results)
+            fully_enriched_by_keyword = {
+                keyword.lower(): int(selected_counts_by_keyword.get(keyword.lower()) or 0) >= int(new_counts_by_keyword.get(keyword.lower()) or 0)
+                for keyword in keywords
+            }
+            keyword_found_counts = _update_keyword_queue_after_run(
+                conn,
+                queue_keyword_items,
+                results,
+                fully_enriched_by_keyword=fully_enriched_by_keyword,
+            )
             conn.commit()
         except Exception:
             if conn:
@@ -2387,7 +2648,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         "search_calls": search_calls,
         "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
         "raw_search_items": raw_search_items,
-        "unique_channel_ids": len(candidates_by_channel),
+        "unique_channel_ids": len(seen_new_channel_ids),
         "channels_enriched": channels_enriched,
         "already_lead_skipped": already_lead_skipped,
         "dismissed_skipped": dismissed_skipped,
