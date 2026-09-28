@@ -1425,7 +1425,7 @@ def run_worker_loop() -> None:
             except Exception:
                 app.logger.exception("Discovery automation polling failed")
             try:
-                if process_next_discovery_promote_request():
+                while process_next_discovery_promote_request():
                     processed_any = True
             except Exception:
                 app.logger.exception("Discovery promote queue processing failed")
