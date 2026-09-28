@@ -23,6 +23,12 @@ from app.video_shorts.services.db import (
 from app.video_shorts.services.error_capture import CLIENT_ERROR_MAX_BODY_BYTES, capture_client_error, current_event_user_id
 from app.video_shorts.services.email_verification import send_autopilot_upgrade_request_email
 from app.video_shorts.services.render_jobs import JOB_TYPE_ENRICH_DISCOVERY_EMAILS, enqueue_preview_frame_job, enqueue_worker_job, get_job
+from app.video_shorts.services.discovery_promote_queue import (
+    enqueue_discovery_promote_request,
+    ensure_discovery_promote_queue_schema,
+    load_promote_status_payload,
+    promote_queue_count,
+)
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
@@ -3665,8 +3671,7 @@ def admin_discovery_promote_to_lead():
     elif len(lead_ids) == 1:
         selected_source_by_lead[lead_ids[0]] = str(payload.get("source_video_id") or payload.get("sourceVideoId") or "").strip()
 
-    promoted: List[Dict[str, Any]] = []
-    linked: List[Dict[str, Any]] = []
+    queued: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
     required_columns = {
@@ -3679,6 +3684,7 @@ def admin_discovery_promote_to_lead():
         "best_source_video_minutes",
     }
     conn = get_db()
+    queue_count = 0
     try:
         discovery_columns = table_columns(conn, "discovery_leads")
         missing_columns = sorted(required_columns - set(discovery_columns))
@@ -3693,6 +3699,9 @@ def admin_discovery_promote_to_lead():
                 }
             ), 500
 
+        current_user = getattr(g, "vs_current_user", {}) or {}
+        requested_by = str((current_user or {}).get("id") or "admin").strip()
+        ensure_discovery_promote_queue_schema(conn)
         for lead_id in lead_ids:
             try:
                 row = conn.execute(
@@ -3752,85 +3761,30 @@ def admin_discovery_promote_to_lead():
                         [str(existing[0]), existing[1], lead_id],
                     )
                     conn.commit()
-                    linked.append({"id": lead_id, "autopilot_lead_id": str(existing[0]), "reason": "already_a_lead_linked"})
+                    queued.append(
+                        {
+                            "id": lead_id,
+                            "autopilot_lead_id": str(existing[0]),
+                            "status": "done",
+                            "reason": "already_a_lead_linked",
+                        }
+                    )
                     continue
 
                 selected_source_video_id = selected_source_by_lead.get(lead_id) or ""
-                source = None
-                if selected_source_video_id:
-                    source_options = select_source_video_candidates_for_channel(lead["youtube_channel_id"])
-                    source = next(
-                        (
-                            candidate
-                            for candidate in source_options.get("candidates") or []
-                            if str(candidate.get("video_id") or "").strip() == selected_source_video_id
-                        ),
-                        None,
-                    )
-                    if not source:
-                        conn.execute(
-                            "UPDATE discovery_leads SET promotion_error = ? WHERE id = ?",
-                            ["selected_source_video_not_recent", lead_id],
-                        )
-                        conn.commit()
-                        skipped.append({"id": lead_id, "reason": "selected_source_video_not_recent"})
-                        continue
-                else:
-                    source = select_source_video_for_channel(lead["youtube_channel_id"])
-                if not source:
-                    conn.execute(
-                        "UPDATE discovery_leads SET promotion_error = ? WHERE id = ?",
-                        ["no_suitable_source_video", lead_id],
-                    )
-                    conn.commit()
-                    skipped.append({"id": lead_id, "reason": "no_suitable_source_video"})
-                    continue
-
-                meta = fetch_video_metadata(str(source["video_id"]))
-                if lead.get("channel_description"):
-                    meta["channel_description"] = lead["channel_description"]
-                autopilot = create_autopilot_lead_from_video(
+                request_row = enqueue_discovery_promote_request(
                     conn,
-                    meta=meta,
-                    video_id=str(source["video_id"]),
-                    canonical_url=str(source["canonical_url"]),
-                    creator_name=lead["creator_name"] or lead["channel_title"],
-                    creator_email=lead["creator_email"],
-                    subscriber_count=lead["subscriber_count"],
-                    discovery_owner_user_id=DISCOVERY_PROMOTION_OWNER_USER_ID,
-                    discovery_brand_id=DISCOVERY_PROMOTION_BRAND_ID,
-                )
-                conn.execute(
-                    """
-                    UPDATE discovery_leads
-                    SET autopilot_lead_id = ?,
-                        promoted_to_autopilot_at = CURRENT_TIMESTAMP,
-                        promoted_source_video_id = ?,
-                        promotion_error = NULL,
-                        sweetspot_score = ?,
-                        best_source_video_id = ?,
-                        best_source_video_minutes = ?
-                    WHERE id = ?
-                    """,
-                    [
-                        autopilot["lead_id"],
-                        autopilot["video_pk"],
-                        source.get("score"),
-                        source.get("video_id"),
-                        source.get("minutes"),
-                        lead_id,
-                    ],
+                    discovery_lead_id=lead_id,
+                    selected_source_video_id=selected_source_video_id,
+                    requested_by=requested_by,
                 )
                 conn.commit()
-                promoted.append(
+                queued.append(
                     {
                         "id": lead_id,
-                        "autopilot_lead_id": autopilot["lead_id"],
-                        "source_video_id": source.get("video_id"),
-                        "source_video_title": source.get("title"),
-                        "source_video_pk": autopilot["video_pk"],
-                        "source_video_minutes": source.get("minutes"),
-                        "sweetspot_score": source.get("score"),
+                        "request_id": request_row.get("id"),
+                        "status": request_row.get("status"),
+                        "kind": request_row.get("kind"),
                     }
                 )
             except Exception as exc:
@@ -3850,18 +3804,44 @@ def admin_discovery_promote_to_lead():
                 current_app.logger.exception("Discovery lead promotion failed id=%s", lead_id)
                 skipped.append({"id": lead_id, "reason": "promotion_failed"})
                 errors.append({"id": lead_id, "error": "promotion_failed", "message": message})
+        queue_count = promote_queue_count(conn)
     finally:
         conn.close()
 
     return jsonify(
         {
-            "success": bool(promoted or linked or skipped) and not errors,
-            "promoted": promoted,
-            "linked": linked,
+            "success": bool(queued or skipped) and not errors,
+            "queued": queued,
+            "promoted": [],
+            "linked": [],
             "skipped": skipped,
             "errors": errors,
+            "queue_count": queue_count,
         }
     )
+
+
+@video_shorts_bp.route("/api/admin/discovery-promote-status", methods=["GET"])
+def admin_discovery_promote_status():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        return jsonify(payload), status
+    raw_ids = request.args.get("lead_ids") or request.args.get("ids") or ""
+    lead_ids: List[int] = []
+    for chunk in str(raw_ids or "").split(","):
+        try:
+            value = int(chunk.strip())
+        except Exception:
+            continue
+        if value > 0:
+            lead_ids.append(value)
+    conn = get_db_readonly()
+    try:
+        payload = load_promote_status_payload(conn, lead_ids)
+    finally:
+        conn.close()
+    return jsonify(payload)
 
 
 @video_shorts_bp.route("/api/admin/seed-generate-keywords", methods=["POST"])

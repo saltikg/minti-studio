@@ -7,6 +7,7 @@
     <span class="discovery-compact-stat">Total leads <strong>{{ totals.total }}</strong></span>
     <span class="discovery-compact-stat">ICP fit <strong>{{ totals.icp_fit }}</strong></span>
     <span class="discovery-compact-stat">Ready <strong>{{ ready_to_promote_count }}</strong></span>
+    <span class="discovery-compact-stat">Promote kuyruğu <strong id="promoteQueueCount">{{ promote_queue_count }}</strong></span>
     <span class="discovery-compact-stat">Dismissed <strong>{{ status_counts.get('dismissed', 0) }}</strong></span>
     <span class="discovery-compact-stat">Queued keywords <strong>{{ keyword_summary.queued }}</strong></span>
     <span class="discovery-compact-stat">trakk today <strong>{{ trakk_usage.used_today }} / {{ trakk_usage.daily_cap }}</strong></span>
@@ -182,6 +183,22 @@
       border-color: rgba(148, 163, 184, 0.28);
       background: rgba(15, 23, 42, 0.42);
       color: #cbd5e1;
+    }
+    .discovery-status.queued,
+    .discovery-status.processing {
+      border-color: rgba(14, 165, 233, 0.34);
+      background: rgba(14, 165, 233, 0.14);
+      color: #bae6fd;
+    }
+    .discovery-status.done {
+      border-color: rgba(34, 197, 94, 0.34);
+      background: rgba(34, 197, 94, 0.14);
+      color: #bbf7d0;
+    }
+    .discovery-status.failed {
+      border-color: rgba(248, 113, 113, 0.34);
+      background: rgba(248, 113, 113, 0.14);
+      color: #fecaca;
     }
     .keyword-select-cell {
       width: 38px;
@@ -665,6 +682,8 @@
       {% if lead_filter %}
         <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
       {% endif %}
+      <button id="bulkPromoteButton" type="button" class="btn btn-sm btn-outline-info">Promote selected</button>
+      <span id="bulkPromoteStatus" class="discovery-muted"></span>
     </div>
 
     <div class="discovery-table-wrap">
@@ -706,13 +725,26 @@
                 {% endif %}
               </td>
               <td>
+                {% set promote_request = lead.promote_request or {} %}
+                {% set promote_status = promote_request.status or '' %}
                 {% if lead.autopilot_lead_id %}
                   <span class="discovery-status email_enriched">promoted</span>
                 {% elif lead.creator_email and lead.icp_fit is true and lead.status not in ['already_lead', 'dismissed'] %}
+                  <label class="discovery-muted d-block mb-1">
+                    <input class="promote-lead-checkbox" type="checkbox" value="{{ lead.id }}" {% if promote_status in ['queued', 'processing', 'done'] %}disabled{% endif %}>
+                    Select
+                  </label>
                   <button type="button" class="btn btn-sm btn-outline-light choose-source-video-button" data-lead-id="{{ lead.id }}">Choose video</button>
-                  <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}">Promote</button>
+                  <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}" {% if promote_status in ['queued', 'processing', 'done'] %}disabled{% endif %}>Promote</button>
                 {% else %}
                   <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Promote</button>
+                {% endif %}
+                {% if promote_status %}
+                  <div class="mt-1 promote-status-chip-wrap" data-lead-id="{{ lead.id }}">
+                    <span class="discovery-status {{ promote_status }}">{{ promote_request.label or promote_status }}</span>
+                  </div>
+                {% else %}
+                  <div class="mt-1 promote-status-chip-wrap" data-lead-id="{{ lead.id }}"></div>
                 {% endif %}
                 {% if lead.status == 'dismissed' %}
                   <button type="button" class="btn btn-sm btn-outline-light mt-1 restore-discovery-lead-button" data-lead-id="{{ lead.id }}">Restore</button>
@@ -1068,6 +1100,64 @@
       }
 
       const selectedSourceVideos = new Map();
+      const promoteStatusUrl = '{{ url_for("video_shorts_bp.admin_discovery_promote_status") }}';
+      const promoteLeadIds = Array.from(document.querySelectorAll('.promote-real-lead-status[data-lead-id]'))
+        .map((node) => node.getAttribute('data-lead-id'))
+        .filter(Boolean);
+
+      function promoteStatusLabel(status) {
+        if (!status) return '';
+        if (status.label) return status.label;
+        if (status.status === 'queued') return status.queue_position ? `Sırada #${status.queue_position}` : 'Sırada';
+        if (status.status === 'processing') return 'İşleniyor';
+        if (status.status === 'done') return 'Hazır';
+        if (status.status === 'failed') return status.error ? `Hata: ${status.error}` : 'Hata';
+        return status.status || '';
+      }
+
+      function applyPromoteStatus(leadId, status) {
+        const chipWrap = document.querySelector(`.promote-status-chip-wrap[data-lead-id="${leadId}"]`);
+        const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
+        const button = document.querySelector(`.promote-real-lead-button[data-lead-id="${leadId}"]`);
+        const checkbox = document.querySelector(`.promote-lead-checkbox[value="${leadId}"]`);
+        const label = promoteStatusLabel(status || {});
+        const normalized = String((status || {}).status || '').toLowerCase();
+        if (chipWrap) {
+          chipWrap.innerHTML = label ? `<span class="discovery-status ${normalized}">${label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>` : '';
+        }
+        if (rowStatus && label) rowStatus.textContent = label;
+        const locked = ['queued', 'processing', 'done'].includes(normalized);
+        if (button) button.disabled = locked;
+        if (checkbox) checkbox.disabled = locked;
+      }
+
+      async function refreshPromoteStatuses() {
+        if (!promoteLeadIds.length) return;
+        try {
+          const response = await fetch(`${promoteStatusUrl}?lead_ids=${encodeURIComponent(promoteLeadIds.join(','))}`, {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+          });
+          const data = await response.json();
+          if (!response.ok || data.success === false) return;
+          const queueCount = document.getElementById('promoteQueueCount');
+          if (queueCount && data.queue_count !== undefined) queueCount.textContent = data.queue_count;
+          const statuses = data.statuses || {};
+          Object.keys(statuses).forEach((leadId) => applyPromoteStatus(leadId, statuses[leadId]));
+        } catch (error) {
+          // Passive refresh only; row-level actions surface their own errors.
+        }
+      }
+
+      async function enqueuePromote(leadIds, sourceVideoIdByLead = {}) {
+        const payload = { lead_ids: leadIds };
+        const sourceMap = {};
+        Object.keys(sourceVideoIdByLead).forEach((leadId) => {
+          if (sourceVideoIdByLead[leadId]) sourceMap[leadId] = sourceVideoIdByLead[leadId];
+        });
+        if (Object.keys(sourceMap).length) payload.source_video_ids = sourceMap;
+        return postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', payload);
+      }
 
       function sourceCandidateLabel(candidate) {
         const minutes = Number(candidate.minutes || 0);
@@ -1151,25 +1241,24 @@
           const confirmed = window.confirm(`Creates a real lead and starts demo generation. This costs compute.${sourceNote}\n\nContinue?`);
           if (!confirmed) return;
           button.disabled = true;
-          if (rowStatus) rowStatus.textContent = 'Promoting...';
+          if (rowStatus) rowStatus.textContent = 'Kuyruğa alınıyor...';
           try {
-            const payload = { lead_ids: [leadId] };
-            if (selectedSourceVideoId) payload.source_video_id = selectedSourceVideoId;
-            const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', payload);
-            const promoted = data.promoted || [];
-            const linked = data.linked || [];
+            const sourceMap = {};
+            if (selectedSourceVideoId) sourceMap[leadId] = selectedSourceVideoId;
+            const data = await enqueuePromote([leadId], sourceMap);
+            const queued = data.queued || [];
             const skipped = data.skipped || [];
-            if (promoted.length) {
-              const item = promoted[0];
-              if (rowStatus) rowStatus.textContent = `Promoted ${item.autopilot_lead_id}; ${item.source_video_title || item.source_video_id || ''}; ${item.source_video_minutes} min. Refresh to see pipeline state.`;
-            } else if (linked.length) {
-              const item = linked[0];
-              if (rowStatus) rowStatus.textContent = `Linked existing lead ${item.autopilot_lead_id}.`;
+            if (queued.length) {
+              const item = queued[0];
+              const status = item.status || 'queued';
+              applyPromoteStatus(leadId, { status, label: status === 'done' ? 'Hazır' : 'Sırada' });
+              if (rowStatus) rowStatus.textContent = item.reason === 'already_a_lead_linked' ? `Linked existing lead ${item.autopilot_lead_id}.` : 'Sırada';
+              refreshPromoteStatuses();
             } else if (skipped.length) {
               if (rowStatus) rowStatus.textContent = `Skipped: ${skipped[0].reason}`;
               button.disabled = false;
             } else {
-              if (rowStatus) rowStatus.textContent = 'No lead was promoted.';
+              if (rowStatus) rowStatus.textContent = 'No lead was queued.';
               button.disabled = false;
             }
           } catch (error) {
@@ -1178,6 +1267,42 @@
           }
         });
       });
+
+      const bulkPromoteButton = document.getElementById('bulkPromoteButton');
+      const bulkPromoteStatus = document.getElementById('bulkPromoteStatus');
+      if (bulkPromoteButton && bulkPromoteStatus) {
+        bulkPromoteButton.addEventListener('click', async function () {
+          const leadIds = Array.from(document.querySelectorAll('.promote-lead-checkbox:checked')).map((input) => input.value);
+          if (!leadIds.length) {
+            bulkPromoteStatus.textContent = 'Select at least one lead.';
+            return;
+          }
+          const confirmed = window.confirm(`Queue ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'} for promote? Manual source selections are used when present; the rest use auto-pick.`);
+          if (!confirmed) return;
+          const sourceMap = {};
+          leadIds.forEach((leadId) => {
+            const selected = selectedSourceVideos.get(String(leadId)) || '';
+            if (selected) sourceMap[leadId] = selected;
+          });
+          bulkPromoteButton.disabled = true;
+          bulkPromoteStatus.textContent = 'Kuyruğa alınıyor...';
+          try {
+            const data = await enqueuePromote(leadIds, sourceMap);
+            const queued = data.queued || [];
+            const skipped = data.skipped || [];
+            queued.forEach((item) => applyPromoteStatus(String(item.id), { status: item.status || 'queued', label: item.status === 'done' ? 'Hazır' : 'Sırada' }));
+            bulkPromoteStatus.textContent = `Queued ${queued.length}; skipped ${skipped.length}.`;
+            refreshPromoteStatuses();
+          } catch (error) {
+            bulkPromoteStatus.textContent = error.message || 'Bulk promote failed.';
+          } finally {
+            bulkPromoteButton.disabled = false;
+          }
+        });
+      }
+
+      refreshPromoteStatuses();
+      window.setInterval(refreshPromoteStatuses, 10000);
 
       document.querySelectorAll('.dismiss-discovery-lead-button').forEach((button) => {
         button.addEventListener('click', async function () {

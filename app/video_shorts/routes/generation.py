@@ -304,6 +304,10 @@ from app.video_shorts.services.lead_pipeline import (
 )
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
 from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
+from app.video_shorts.services.discovery_promote_queue import (
+    load_promote_statuses,
+    promote_queue_count,
+)
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
@@ -16639,6 +16643,7 @@ def admin_discovery_lead_pipeline():
         seed_summary = {"promoted_leads": 0, "seed_profiles": 0}
         automation = {"has_automation": False, "control": {}, "runs": []}
         trakk_usage = {"used_today": 0, "daily_cap": 50}
+        promote_queue_count_value = 0
         total_pages = 1
         filtered_total = 0
         ready_to_promote_count = 0
@@ -16888,6 +16893,15 @@ def admin_discovery_lead_pipeline():
                 }
                 )
 
+            try:
+                promote_queue_count_value = promote_queue_count(conn)
+                promote_statuses = load_promote_statuses(conn, [int(lead["id"]) for lead in leads])
+                for lead in leads:
+                    lead["promote_request"] = promote_statuses.get(int(lead["id"]), {})
+            except Exception:
+                current_app.logger.exception("Could not load discovery promote queue statuses")
+                promote_queue_count_value = 0
+
         if has_keywords:
             keyword_sort_sql_map = {
                 "keyword": "lower(keyword)",
@@ -17107,6 +17121,7 @@ def admin_discovery_lead_pipeline():
         seed_summary=seed_summary,
         automation=automation,
         trakk_usage=trakk_usage,
+        promote_queue_count=promote_queue_count_value,
         leads=leads,
         lead_filter=lead_filter,
         active_pipeline_tab=active_pipeline_tab,

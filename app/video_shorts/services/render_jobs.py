@@ -842,7 +842,10 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
                     {discovery_clause}
                     AND {customer_active_exists}
                   )
-                ORDER BY priority DESC, created_at ASC
+                ORDER BY
+                  CASE WHEN {discovery_clause} THEN 1 ELSE 0 END ASC,
+                  priority DESC,
+                  created_at ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 """,
@@ -902,7 +905,10 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
                     {discovery_clause}
                     AND {customer_active_exists}
                   )
-                ORDER BY priority DESC, created_at ASC
+                ORDER BY
+                  CASE WHEN {discovery_clause} THEN 1 ELSE 0 END ASC,
+                  priority DESC,
+                  created_at ASC
                 LIMIT 1
                 """,
                 [
