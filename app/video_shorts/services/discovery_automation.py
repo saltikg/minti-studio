@@ -8,6 +8,11 @@ from zoneinfo import ZoneInfo
 from flask import current_app
 
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.youtube_quota import (
+    ensure_youtube_quota_table,
+    today_pt,
+    total_units_for_date,
+)
 
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
@@ -16,6 +21,7 @@ RUNS_TABLE = "discovery_automation_runs"
 SUMMARY_TABLE = "discovery_keyword_generation_summaries"
 DEFAULT_LOCK_MINUTES = 45
 AUTO_GENERATE_COLUMN = "last_keyword_auto_generated_at"
+DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET = 4000
 
 
 def _utc_now() -> datetime:
@@ -103,6 +109,12 @@ def _row_to_control(row: Any) -> Dict[str, Any]:
         "max_keywords_per_cycle": _parse_int(row[5], 1, minimum=1, maximum=10),
         "max_results_per_keyword": _parse_int(row[6], 15, minimum=1, maximum=50),
         "max_channels_enriched_per_cycle": _parse_int(row[7], 15, minimum=1, maximum=150),
+        "youtube_daily_unit_budget": _parse_int(
+            row[16] if len(row) > 16 else DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET,
+            DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET,
+            minimum=0,
+            maximum=10000,
+        ),
         "max_trakk_per_cycle": _parse_int(row[8], 5, minimum=0, maximum=20),
         "max_trakk_per_day": _parse_int(row[9] if len(row) > 14 else 50, 50, minimum=0, maximum=500),
         "next_run_at": row[10] if len(row) > 14 else row[9],
@@ -120,6 +132,7 @@ def _select_control(conn) -> Dict[str, Any]:
     columns = table_columns(conn, CONTROL_TABLE)
     max_trakk_per_day_sql = "max_trakk_per_day" if "max_trakk_per_day" in columns else "50"
     auto_generated_at_sql = AUTO_GENERATE_COLUMN if AUTO_GENERATE_COLUMN in columns else "NULL"
+    youtube_budget_sql = "youtube_daily_unit_budget" if "youtube_daily_unit_budget" in columns else str(DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET)
     row = conn.execute(
         f"""
         SELECT id, enabled, paused_reason, offpeak_hours_pt_json, runs_per_day,
@@ -127,7 +140,8 @@ def _select_control(conn) -> Dict[str, Any]:
                max_channels_enriched_per_cycle, max_trakk_per_cycle,
                {max_trakk_per_day_sql},
                next_run_at, last_started_at, last_finished_at, lock_expires_at, updated_at,
-               {auto_generated_at_sql}
+               {auto_generated_at_sql},
+               {youtube_budget_sql}
         FROM discovery_automation_control
         WHERE id = 1
         LIMIT 1
@@ -171,6 +185,36 @@ def _automation_daily_keyword_target(control: Dict[str, Any]) -> int:
     runs_per_day = _parse_int(control.get("runs_per_day"), 1, minimum=1, maximum=24)
     batch_size = _parse_int(control.get("max_keywords_per_cycle"), 1, minimum=1, maximum=10)
     return runs_per_day * batch_size
+
+
+def _estimate_discovery_run_youtube_units(control: Dict[str, Any]) -> int:
+    keywords = _parse_int(control.get("max_keywords_per_cycle"), 1, minimum=1, maximum=10)
+    max_results = _parse_int(control.get("max_results_per_keyword"), 15, minimum=1, maximum=50)
+    max_channels = _parse_int(control.get("max_channels_enriched_per_cycle"), 15, minimum=1, maximum=150)
+    potential_channels = min(max_channels, keywords * max_results)
+    search_units = keywords * 100
+    channel_list_units = (potential_channels + 49) // 50
+    playlist_units = potential_channels
+    video_list_units = potential_channels
+    return int(search_units + channel_list_units + playlist_units + video_list_units)
+
+
+def _discovery_quota_budget_status(conn, control: Dict[str, Any]) -> Dict[str, Any]:
+    ensure_youtube_quota_table(conn)
+    budget = _parse_int(
+        control.get("youtube_daily_unit_budget"),
+        DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET,
+        minimum=0,
+        maximum=10000,
+    )
+    used = total_units_for_date(conn, today_pt())
+    estimate = _estimate_discovery_run_youtube_units(control)
+    return {
+        "budget": budget,
+        "used": used,
+        "estimate": estimate,
+        "would_exceed": bool(budget and used + estimate > budget),
+    }
 
 
 def _today_pt_string(now_utc: datetime) -> str:
@@ -621,6 +665,23 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
             if not control:
                 conn.rollback()
                 return {"success": True, "skipped": True, "reason": "not_due"}
+        quota_status = _discovery_quota_budget_status(conn, control)
+        if quota_status.get("would_exceed"):
+            current_app.logger.warning(
+                "discovery skipped: quota budget used=%s estimate=%s budget=%s date_pt=%s",
+                quota_status.get("used"),
+                quota_status.get("estimate"),
+                quota_status.get("budget"),
+                today_pt(),
+            )
+            _mark_control_finished(conn)
+            conn.commit()
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": "quota_budget",
+                "quota_budget": quota_status,
+            }
         run_id = _create_run(conn)
         run_started_row = conn.execute(
             "SELECT started_at FROM discovery_automation_runs WHERE id = ?",

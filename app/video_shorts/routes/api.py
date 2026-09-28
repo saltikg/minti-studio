@@ -37,6 +37,7 @@ from app.video_shorts.youtube_api import (
     _youtube_get_json,
     extract_channel_id,
     extract_video_id,
+    fetch_channel_metadata_batch,
     fetch_channel_subscriber_counts,
     fetch_playlist_items_batch,
     fetch_video_metadata,
@@ -149,10 +150,12 @@ def _collect_recent_uploads(
     while len(videos) < limit:
         if quota_counter is not None:
             quota_counter["enrichment_read_calls"] = int(quota_counter.get("enrichment_read_calls") or 0) + 1
+            _increment_enrichment_method_counter(quota_counter, "playlistItems.list")
         batch = fetch_playlist_items_batch(
             playlist_id=uploads_playlist_id,
             page_token=page_token,
             max_results=min(50, limit),
+            quota_feature="discovery_enrichment",
         )
         batch_videos = batch.get("videos") or []
         if not batch_videos:
@@ -416,13 +419,34 @@ def _increment_enrichment_counter(quota_counter: Optional[Dict[str, int]], amoun
         quota_counter["enrichment_read_calls"] = int(quota_counter.get("enrichment_read_calls") or 0) + max(0, int(amount or 0))
 
 
-def _fetch_video_details(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+def _increment_enrichment_method_counter(
+    quota_counter: Optional[Dict[str, int]],
+    method: str,
+    amount: int = 1,
+) -> None:
+    if quota_counter is None:
+        return
+    clean_method = str(method or "").strip()
+    if not clean_method:
+        return
+    methods = quota_counter.setdefault("enrichment_calls_by_method", {})
+    methods[clean_method] = int(methods.get(clean_method) or 0) + max(0, int(amount or 0))
+
+
+def _fetch_video_details(
+    video_ids: List[str],
+    *,
+    quota_feature: str = "discovery_enrichment",
+    quota_counter: Optional[Dict[str, int]] = None,
+) -> Dict[str, Dict[str, Any]]:
     clean_ids = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
     if not clean_ids:
         return {}
     details: Dict[str, Dict[str, Any]] = {}
     for i in range(0, len(clean_ids), 50):
         chunk = clean_ids[i : i + 50]
+        _increment_enrichment_counter(quota_counter)
+        _increment_enrichment_method_counter(quota_counter, "videos.list")
         payload = _youtube_get_json(
             "videos",
             {
@@ -431,6 +455,8 @@ def _fetch_video_details(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
             },
             timeout=10,
             require_auth=False,
+            quota_feature=quota_feature,
+            quota_method="videos.list",
         )
         for item in payload.get("items") or []:
             video_id = str(item.get("id") or "").strip()
@@ -466,6 +492,10 @@ def diagnose_channel(
     *,
     video_meta: Optional[Dict[str, Any]] = None,
     quota_counter: Optional[Dict[str, int]] = None,
+    channel_meta: Optional[Dict[str, Any]] = None,
+    subscriber_info: Optional[Dict[str, Any]] = None,
+    recent_uploads: Optional[List[Dict[str, Any]]] = None,
+    stats_map: Optional[Dict[str, Dict[str, Any]]] = None,
     min_longform_seconds: int = LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS,
     short_max_seconds: int = LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS,
     email_video_description_limit: int = LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT,
@@ -477,20 +507,24 @@ def diagnose_channel(
         raise YoutubeApiError("Channel not found on YouTube")
 
     channel_lookup_url = f"https://www.youtube.com/channel/{resolved_channel_id}"
-    _increment_enrichment_counter(quota_counter)
-    channel_meta = get_channel_metadata(channel_lookup_url)
-    _increment_enrichment_counter(quota_counter)
-    subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id])
-    subscriber_info = subscriber_map.get(resolved_channel_id) or {}
-    recent_uploads = _collect_recent_uploads(
-        channel_meta["uploads_playlist_id"],
-        limit=UPLOAD_SAMPLE_SIZE,
-        quota_counter=quota_counter,
-    )
+    if channel_meta is None:
+        _increment_enrichment_counter(quota_counter)
+        _increment_enrichment_method_counter(quota_counter, "channels.list")
+        channel_meta = get_channel_metadata(channel_lookup_url)
+    if subscriber_info is None:
+        _increment_enrichment_counter(quota_counter)
+        _increment_enrichment_method_counter(quota_counter, "channels.list")
+        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id], quota_feature="discovery_enrichment")
+        subscriber_info = subscriber_map.get(resolved_channel_id) or {}
+    if recent_uploads is None:
+        recent_uploads = _collect_recent_uploads(
+            channel_meta["uploads_playlist_id"],
+            limit=UPLOAD_SAMPLE_SIZE,
+            quota_counter=quota_counter,
+        )
     video_ids = [item.get("video_id") for item in recent_uploads if item.get("video_id")]
-    if video_ids:
-        _increment_enrichment_counter(quota_counter, (len(video_ids) + 49) // 50)
-    stats_map = _fetch_video_details(video_ids)
+    if stats_map is None:
+        stats_map = _fetch_video_details(video_ids, quota_counter=quota_counter)
     sweetspot = _select_sweetspot_from_uploads(recent_uploads, stats_map)
 
     now_utc = datetime.now(timezone.utc)
@@ -645,7 +679,13 @@ def _search_youtube_channels_for_keyword(keyword: str, *, max_results: int, lang
         params["relevanceLanguage"] = lang
     if region:
         params["regionCode"] = region
-    payload = _youtube_get_json("search", params, timeout=10)
+    payload = _youtube_get_json(
+        "search",
+        params,
+        timeout=10,
+        quota_feature="discovery_search",
+        quota_method="search.list",
+    )
     candidates: List[Dict[str, str]] = []
     items = payload.get("items") or []
     for item in items:
@@ -3190,6 +3230,52 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         new_counts=new_counts_by_keyword,
         selected_counts=selected_counts_by_keyword,
     )
+    enrichment_channel_ids = [
+        str(candidate.get("channel_id") or "").strip()
+        for candidate in enrichment_candidates
+        if str(candidate.get("channel_id") or "").strip()
+    ]
+    channel_meta_by_id: Dict[str, Dict[str, Any]] = {}
+    recent_uploads_by_channel: Dict[str, List[Dict[str, Any]]] = {}
+    video_stats_by_channel: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    if enrichment_channel_ids:
+        unique_channel_ids = list(dict.fromkeys(enrichment_channel_ids))
+        _increment_enrichment_counter(quota_counter, (len(unique_channel_ids) + 49) // 50)
+        _increment_enrichment_method_counter(quota_counter, "channels.list", (len(unique_channel_ids) + 49) // 50)
+        channel_meta_by_id = fetch_channel_metadata_batch(
+            unique_channel_ids,
+            quota_feature="discovery_enrichment",
+        )
+        all_video_ids: List[str] = []
+        video_ids_by_channel: Dict[str, List[str]] = {}
+        for channel_id in unique_channel_ids:
+            channel_meta = channel_meta_by_id.get(channel_id) or {}
+            uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
+            if not uploads_playlist_id:
+                continue
+            try:
+                uploads = _collect_recent_uploads(
+                    uploads_playlist_id,
+                    limit=UPLOAD_SAMPLE_SIZE,
+                    quota_counter=quota_counter,
+                )
+            except Exception:
+                current_app.logger.exception("Could not collect discovery uploads for channel=%s", channel_id)
+                uploads = []
+            recent_uploads_by_channel[channel_id] = uploads
+            video_ids = [str(item.get("video_id") or "").strip() for item in uploads if str(item.get("video_id") or "").strip()]
+            video_ids_by_channel[channel_id] = video_ids
+            all_video_ids.extend(video_ids)
+        video_details = _fetch_video_details(
+            list(dict.fromkeys(all_video_ids)),
+            quota_counter=quota_counter,
+        )
+        for channel_id, video_ids in video_ids_by_channel.items():
+            video_stats_by_channel[channel_id] = {
+                video_id: video_details.get(video_id) or {}
+                for video_id in video_ids
+                if video_id in video_details
+            }
     channels_enriched = 0
     already_lead_skipped = 0
     dismissed_skipped = 0
@@ -3243,6 +3329,10 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
             row = diagnose_channel(
                 channel_id,
                 quota_counter=quota_counter,
+                channel_meta=channel_meta_by_id.get(channel_id),
+                subscriber_info=channel_meta_by_id.get(channel_id),
+                recent_uploads=recent_uploads_by_channel.get(channel_id),
+                stats_map=video_stats_by_channel.get(channel_id),
                 min_longform_seconds=min_longform_seconds,
                 short_max_seconds=short_max_seconds,
                 resolve_email=False,
@@ -3340,6 +3430,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
         "keywords": keywords,
         "search_calls": search_calls,
         "enrichment_read_calls": int(quota_counter.get("enrichment_read_calls") or 0),
+        "enrichment_calls_by_method": quota_counter.get("enrichment_calls_by_method") or {},
         "raw_search_items": raw_search_items,
         "unique_channel_ids": len(seen_new_channel_ids),
         "channels_enriched": channels_enriched,

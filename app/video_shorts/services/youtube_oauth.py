@@ -18,6 +18,7 @@ from app.video_shorts.config import (
 )
 from app.video_shorts.services.brands import brand_scoped_user_id, current_brand_id
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
+from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 DEFAULT_SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -552,6 +553,7 @@ def upload_video_with_refresh_token(
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = request.execute()
+    record_youtube_data_api_call(feature="publish", method="videos.insert")
     return response
 
 
@@ -583,6 +585,7 @@ def update_video_with_refresh_token(
 
     request = youtube.videos().update(part="snippet,status", body=body)
     response = request.execute()
+    record_youtube_data_api_call(feature="publish", method="videos.update")
     return response
 
 
@@ -668,6 +671,7 @@ def fetch_video_statuses(
     statuses: Dict[str, Dict[str, Any]] = {}
     try:
         response = youtube.videos().list(part="status", id=",".join(video_ids)).execute()
+        record_youtube_data_api_call(feature="reconcile", method="videos.list")
         for item in response.get("items", []):
             vid = item.get("id")
             if not vid:

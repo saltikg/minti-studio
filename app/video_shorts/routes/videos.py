@@ -86,6 +86,7 @@ from app.video_shorts.youtube_api import (
     fetch_video_comments,
 )
 from app.video_shorts.services.youtube_oauth import build_authenticated_youtube
+from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
 
@@ -5066,6 +5067,7 @@ def shorts_comment_approve(comment_id):
             id=comment_id,
             moderationStatus="published",
         ).execute()
+        record_youtube_data_api_call(feature="comments", method="comments.setModerationStatus")
         update_comment_status("youtube", comment_id, "published")
         counts = None
         if video_id and not is_reply:
@@ -5094,6 +5096,7 @@ def shorts_comment_reject(comment_id):
             id=comment_id,
             moderationStatus="rejected",
         ).execute()
+        record_youtube_data_api_call(feature="comments", method="comments.setModerationStatus")
         update_comment_status("youtube", comment_id, "rejected")
         counts = None
         if video_id and not is_reply:
@@ -5123,6 +5126,7 @@ def shorts_comment_hide(comment_id):
             moderationStatus="rejected",
             banAuthor=True,
         ).execute()
+        record_youtube_data_api_call(feature="comments", method="comments.setModerationStatus")
         update_comment_status("youtube", comment_id, "rejected")
         counts = None
         if video_id and not is_reply:
@@ -5154,9 +5158,11 @@ def shorts_comment_delete(comment_id):
         youtube = _require_youtube_client()
         try:
             youtube.comments().delete(id=comment_id).execute()
+            record_youtube_data_api_call(feature="comments", method="comments.delete")
         except Exception as exc:
             if thread_id and not is_reply and _is_processing_failure(exc):
                 youtube.commentThreads().delete(id=thread_id).execute()
+                record_youtube_data_api_call(feature="comments", method="comments.delete")
             else:
                 raise
         delete_comment_record("youtube", comment_id)
@@ -5192,6 +5198,7 @@ def shorts_comment_reply(comment_id):
                 }
             },
         ).execute()
+        record_youtube_data_api_call(feature="comments", method="comments.insert")
         snippet = response.get("snippet") or {}
         new_comment = {
             "author": snippet.get("authorDisplayName") or "Siz",

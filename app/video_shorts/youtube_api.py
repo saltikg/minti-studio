@@ -11,6 +11,7 @@ from google.auth.exceptions import RefreshError
 
 from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES
 from app.video_shorts.services.youtube_oauth import get_access_token, list_stored_refresh_tokens
+from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 logger = logging.getLogger(__name__)
@@ -60,15 +61,19 @@ def _youtube_get_json(
     timeout: int = 10,
     user_id: Optional[str] = None,
     require_auth: bool = True,
+    quota_feature: str = "other",
+    quota_method: Optional[str] = None,
 ) -> Dict[str, Any]:
     api_key = _youtube_api_key()
     last_error: Optional[Exception] = None
     url = f"{YOUTUBE_API_BASE}/{endpoint}"
+    method = quota_method or f"{endpoint}.list"
 
     if api_key:
         try:
             resp = requests.get(url, params={**params, "key": api_key}, timeout=timeout)
             resp.raise_for_status()
+            record_youtube_data_api_call(feature=quota_feature, method=method)
             return resp.json() or {}
         except requests.RequestException as exc:
             last_error = exc
@@ -95,6 +100,7 @@ def _youtube_get_json(
                 last_error = YoutubeApiError("YouTube OAuth token is not available", status_code=401)
                 continue
             resp.raise_for_status()
+            record_youtube_data_api_call(feature=quota_feature, method=method)
             return resp.json() or {}
         except requests.RequestException as exc:
             last_error = exc
@@ -122,7 +128,7 @@ def _youtube_get_json(
     return {}
 
 
-def _youtube_videos_list_response(video_ids: List[str]) -> Dict[str, Any]:
+def _youtube_videos_list_response(video_ids: List[str], *, quota_feature: str = "metrics") -> Dict[str, Any]:
     chunk = [str(video_id or "").strip() for video_id in video_ids if str(video_id or "").strip()]
     if not chunk:
         return {}
@@ -132,6 +138,8 @@ def _youtube_videos_list_response(video_ids: List[str]) -> Dict[str, Any]:
         {"part": "snippet,contentDetails,statistics", "id": ids_param},
         timeout=10,
         require_auth=False,
+        quota_feature=quota_feature,
+        quota_method="videos.list",
     )
 
 
@@ -260,7 +268,11 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
     }
 
 
-def fetch_channel_subscriber_counts(channel_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
+def fetch_channel_subscriber_counts(
+    channel_ids: List[str],
+    *,
+    quota_feature: str = "other",
+) -> Dict[str, Dict[str, Optional[str]]]:
     if not channel_ids:
         return {}
     results: Dict[str, Dict[str, Optional[str]]] = {}
@@ -271,6 +283,8 @@ def fetch_channel_subscriber_counts(channel_ids: List[str]) -> Dict[str, Dict[st
             "channels",
             {"part": "snippet,statistics", "id": ",".join(chunk)},
             timeout=10,
+            quota_feature=quota_feature,
+            quota_method="channels.list",
         )
         for item in payload.get("items", []):
             channel_id = item.get("id")
@@ -284,6 +298,58 @@ def fetch_channel_subscriber_counts(channel_ids: List[str]) -> Dict[str, Dict[st
                 subscriber_count = None
             results[channel_id] = {
                 "subscriber_count": subscriber_count,
+                "channel_title": snippet.get("title"),
+                "channel_description": snippet.get("description"),
+            }
+    return results
+
+
+def fetch_channel_metadata_batch(
+    channel_ids: List[str],
+    *,
+    quota_feature: str = "other",
+) -> Dict[str, Dict[str, Any]]:
+    clean_ids = []
+    seen = set()
+    for raw_id in channel_ids or []:
+        channel_id = str(raw_id or "").strip()
+        if not channel_id or channel_id in seen:
+            continue
+        clean_ids.append(channel_id)
+        seen.add(channel_id)
+    if not clean_ids:
+        return {}
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for i in range(0, len(clean_ids), 50):
+        chunk = clean_ids[i : i + 50]
+        payload = _youtube_get_json(
+            "channels",
+            {"part": "snippet,statistics,contentDetails", "id": ",".join(chunk)},
+            timeout=10,
+            quota_feature=quota_feature,
+            quota_method="channels.list",
+        )
+        for item in payload.get("items", []) or []:
+            channel_id = str(item.get("id") or "").strip()
+            if not channel_id:
+                continue
+            snippet = item.get("snippet") or {}
+            statistics = item.get("statistics") or {}
+            content_details = item.get("contentDetails") or {}
+            uploads_playlist_id = ((content_details.get("relatedPlaylists") or {}).get("uploads") or "").strip()
+
+            def _to_int(value):
+                try:
+                    return int(value)
+                except Exception:
+                    return None
+
+            results[channel_id] = {
+                "youtube_channel_id": channel_id,
+                "uploads_playlist_id": uploads_playlist_id,
+                "total_videos": _to_int(statistics.get("videoCount")) or 0,
+                "subscriber_count": _to_int(statistics.get("subscriberCount")),
                 "channel_title": snippet.get("title"),
                 "channel_description": snippet.get("description"),
             }
@@ -380,7 +446,7 @@ def get_channel_metadata(channel_url: str):
                     username = url.split("/user/")[-1].split("/")[0]
                     params["forUsername"] = username
 
-    data = _youtube_get_json("channels", params)
+    data = _youtube_get_json("channels", params, quota_feature="other", quota_method="channels.list")
 
     items = data.get("items", [])
     if not items:
@@ -399,7 +465,13 @@ def get_channel_metadata(channel_url: str):
     }
 
 
-def fetch_playlist_items_batch(playlist_id: str, page_token: str = None, max_results: int = 50):
+def fetch_playlist_items_batch(
+    playlist_id: str,
+    page_token: str = None,
+    max_results: int = 50,
+    *,
+    quota_feature: str = "other",
+):
     """
     Uploads playlistinden bir batch video çeker.
 
@@ -421,7 +493,12 @@ def fetch_playlist_items_batch(playlist_id: str, page_token: str = None, max_res
     if page_token:
         params["pageToken"] = page_token
 
-    data = _youtube_get_json("playlistItems", params)
+    data = _youtube_get_json(
+        "playlistItems",
+        params,
+        quota_feature=quota_feature,
+        quota_method="playlistItems.list",
+    )
 
     videos = []
 
@@ -485,7 +562,7 @@ def fetch_video_stats(video_ids):
     for i in range(0, len(video_ids), chunk_size):
         chunk = video_ids[i:i + chunk_size]
         try:
-            data = _youtube_videos_list_response(chunk)
+            data = _youtube_videos_list_response(chunk, quota_feature="metrics")
         except requests.RequestException as exc:
             raise YoutubeApiError(f"YouTube stats fetch failed: {exc}") from exc
         items = data.get("items") or []
@@ -715,7 +792,13 @@ def _fetch_video_comments_api_key(video_id: str, max_results: int):
         if next_page_token:
             request_params["pageToken"] = next_page_token
         try:
-            payload = _youtube_get_json("commentThreads", request_params, timeout=10)
+            payload = _youtube_get_json(
+                "commentThreads",
+                request_params,
+                timeout=10,
+                quota_feature="comments",
+                quota_method="commentThreads.list",
+            )
         except YoutubeApiError as exc:
             raise YoutubeApiError(f"YouTube comments fetch failed: {exc}") from exc
         items.extend(payload.get("items") or [])
@@ -773,6 +856,7 @@ def _fetch_video_comments_oauth(
                 timeout=10,
             )
             resp.raise_for_status()
+            record_youtube_data_api_call(feature="comments", method="commentThreads.list")
         except requests.RequestException as exc:
             raise YoutubeApiError(f"YouTube comments fetch failed: {exc}")
         payload = resp.json() or {}
