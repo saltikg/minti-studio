@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 import re
 import socket
@@ -27,6 +28,9 @@ from app.video_shorts.config import (
     DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN,
     DISCOVERY_IDLE_WAIT_SECONDS,
     DISCOVERY_IDLE_WEB_WINDOW_SECONDS,
+    DISCOVERY_IDLE_DISK_USAGE_PCT_MAX,
+    DISCOVERY_TEMP_JANITOR_INTERVAL_SECONDS,
+    DISCOVERY_TEMP_JANITOR_MAX_AGE_SECONDS,
     DISCOVERY_NIGHT_END_HOUR_PT,
     DISCOVERY_NIGHT_START_HOUR_PT,
     DISK_GUARD_PCT,
@@ -35,6 +39,7 @@ from app.video_shorts.config import (
     STALE_JOB_TIMEOUT_SECONDS,
     WORKER_CONCURRENCY,
     WORKER_MODE,
+    VIDEO_SHORTS_TMP_DIR,
 )
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
@@ -122,6 +127,7 @@ BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|upt
 ADMIN_OR_STATIC_PATH_RE = re.compile(r"\\s(?:GET|POST|HEAD|OPTIONS)\\s+(/[^\\s?]*)")
 _PT = ZoneInfo("America/Los_Angeles")
 _last_idle_skip_log: Dict[str, float] = {}
+_last_discovery_temp_janitor_run = 0.0
 
 
 def _worker_id() -> str:
@@ -218,6 +224,141 @@ def _mem_available_mb() -> int:
     return 0
 
 
+def _root_disk_usage_pct() -> int:
+    try:
+        usage = shutil.disk_usage("/")
+        return int(round((usage.used / usage.total) * 100))
+    except Exception:
+        logger.exception("Could not read root disk usage")
+        return 100
+
+
+def _payload_values(value: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, dict):
+        for item in value.values():
+            values.extend(_payload_values(item))
+    elif isinstance(value, list):
+        for item in value:
+            values.extend(_payload_values(item))
+    elif value is not None:
+        text = str(value).strip()
+        if text:
+            values.append(text)
+    return values
+
+
+def _active_job_temp_refs() -> set[str]:
+    conn = get_db_readonly()
+    refs: set[str] = set()
+    try:
+        rows = conn.execute(
+            """
+            SELECT status, payload_json
+            FROM shorts_render_jobs
+            WHERE status IN ('queued', 'processing')
+            """
+        ).fetchall()
+    except Exception:
+        logger.exception("Discovery temp janitor could not read active job refs")
+        return refs
+    finally:
+        conn.close()
+    for row in rows:
+        if str(row[0] or "").lower() == "processing":
+            refs.add("__processing_job__")
+        payload = row[1]
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload or "{}")
+            except Exception:
+                payload = {}
+        for value in _payload_values(payload):
+            if value.startswith(("/tmp/", str(VIDEO_SHORTS_TMP_DIR))):
+                refs.add(value)
+            if re.fullmatch(r"[A-Za-z0-9_-]{6,}", value):
+                refs.add(value)
+    return refs
+
+
+def _path_is_referenced(path: Path, refs: set[str]) -> bool:
+    path_text = str(path)
+    name = path.name
+    for ref in refs:
+        if not ref:
+            continue
+        if path_text.startswith(ref) or ref.startswith(path_text):
+            return True
+        if len(ref) >= 6 and ref in name:
+            return True
+    return False
+
+
+def _delete_path(path: Path) -> int:
+    try:
+        if path.is_dir():
+            size = 0
+            for child in path.rglob("*"):
+                try:
+                    if child.is_file() or child.is_symlink():
+                        size += child.stat().st_size
+                except OSError:
+                    pass
+            shutil.rmtree(path, ignore_errors=True)
+            return size
+        size = path.stat().st_size
+        path.unlink(missing_ok=True)
+        return size
+    except Exception:
+        logger.exception("Discovery temp janitor could not delete path=%s", path)
+        return 0
+
+
+def run_discovery_temp_janitor(*, force: bool = False) -> Dict[str, Any]:
+    global _last_discovery_temp_janitor_run
+    now = time.time()
+    if not force and now - _last_discovery_temp_janitor_run < float(DISCOVERY_TEMP_JANITOR_INTERVAL_SECONDS):
+        return {"deleted": [], "bytes_freed": 0, "skipped": "interval"}
+    _last_discovery_temp_janitor_run = now
+    cutoff = now - float(DISCOVERY_TEMP_JANITOR_MAX_AGE_SECONDS)
+    refs = _active_job_temp_refs()
+    candidates: list[Path] = []
+    for pattern in ("vs_quick_*", "word_highlight_overlay_*", "track_*"):
+        candidates.extend(Path("/tmp").glob(pattern))
+    tmp_dir = Path(VIDEO_SHORTS_TMP_DIR)
+    if tmp_dir.exists():
+        if "__processing_job__" not in refs:
+            candidates.extend(path for path in tmp_dir.iterdir() if path.is_file())
+        else:
+            logger.info("Discovery temp janitor skipped %s files because a job is processing", tmp_dir)
+
+    deleted: list[str] = []
+    bytes_freed = 0
+    for path in sorted(set(candidates), key=lambda item: str(item)):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_mtime >= cutoff:
+            continue
+        if _path_is_referenced(path, refs):
+            continue
+        freed = _delete_path(path)
+        if freed or not path.exists():
+            bytes_freed += freed
+            deleted.append(str(path))
+    if deleted:
+        logger.info(
+            "Discovery temp janitor deleted %s path(s), freed %s bytes: %s",
+            len(deleted),
+            bytes_freed,
+            deleted,
+        )
+    else:
+        logger.info("Discovery temp janitor deleted 0 paths, freed 0 bytes")
+    return {"deleted": deleted, "bytes_freed": bytes_freed}
+
+
 def _in_discovery_night_window(now_utc: Optional[datetime] = None) -> bool:
     now_pt = (now_utc or datetime.now(timezone.utc)).astimezone(_PT)
     hour = now_pt.hour
@@ -238,7 +379,7 @@ def _log_idle_skip(reason: str) -> None:
         _last_idle_skip_log[reason] = now
 
 
-def discovery_idle_skip_reason(app) -> Optional[str]:
+def discovery_idle_skip_reason(app, *, include_disk_gate: bool = False) -> Optional[str]:
     conn = get_db()
     try:
         if customer_job_waiting(conn):
@@ -249,6 +390,11 @@ def discovery_idle_skip_reason(app) -> Optional[str]:
     mem_available = _mem_available_mb()
     if mem_available < int(DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN):
         return f"MemAvailable {mem_available}MB below {DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN}MB"
+
+    if include_disk_gate:
+        usage_pct = _root_disk_usage_pct()
+        if usage_pct > int(DISCOVERY_IDLE_DISK_USAGE_PCT_MAX):
+            return f"root disk usage {usage_pct}% > {DISCOVERY_IDLE_DISK_USAGE_PCT_MAX}%"
 
     if _in_discovery_night_window():
         return None
@@ -263,8 +409,8 @@ def discovery_idle_skip_reason(app) -> Optional[str]:
     return None
 
 
-def _discovery_worker_should_wait(app) -> bool:
-    reason = discovery_idle_skip_reason(app)
+def _discovery_worker_should_wait(app, *, include_disk_gate: bool = False) -> bool:
+    reason = discovery_idle_skip_reason(app, include_disk_gate=include_disk_gate)
     if not reason:
         return False
     _log_idle_skip(reason)
@@ -600,15 +746,19 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
 
     if cookies_path:
         opts["cookiefile"] = cookies_path
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([video_url])
-    if target.exists():
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([video_url])
+        if target.exists():
+            return target
+        candidates = sorted(work_dir.glob(f"{video_id}.*"))
+        if not candidates:
+            raise FileNotFoundError(f"download output missing for {video_id}")
+        candidates[0].rename(target)
         return target
-    candidates = sorted(work_dir.glob(f"{video_id}.*"))
-    if not candidates:
-        raise FileNotFoundError(f"download output missing for {video_id}")
-    candidates[0].rename(target)
-    return target
+    except Exception:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise
 
 
 def _log_exit_ip(proxy_url: str, video_id: str) -> None:
@@ -1556,7 +1706,17 @@ def run_worker_loop() -> None:
     app = create_app()
     with app.app_context():
         app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
+        if mode in {"all", "discovery"}:
+            try:
+                run_discovery_temp_janitor(force=True)
+            except Exception:
+                app.logger.exception("Discovery temp janitor failed at startup")
         while True:
+            if mode in {"all", "discovery"}:
+                try:
+                    run_discovery_temp_janitor()
+                except Exception:
+                    app.logger.exception("Discovery temp janitor failed")
             requeue_dead_local_worker_jobs()
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
@@ -1609,7 +1769,7 @@ def run_worker_loop() -> None:
                 except Exception:
                     app.logger.exception("Discovery promote queue processing failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
-                if mode == "discovery" and _discovery_worker_should_wait(app):
+                if mode == "discovery" and _discovery_worker_should_wait(app, include_disk_gate=True):
                     break
                 if process_next_job(
                     app,
