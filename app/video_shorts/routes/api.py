@@ -1295,11 +1295,11 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
     blocked_statuses = set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"}
     blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=blocked_statuses)]
     prompt = (
-        "We sell done-for-you Shorts to individual, on-camera, long-form YouTube creators: solo educators, coaches, consultants, "
-        "and subject-matter experts who sell to consumers or individual learners. "
+        "Minti helps individual, on-camera, long-form YouTube creators: solo educators, coaches, consultants, "
+        "and subject-matter experts who talk to camera and share information or personal/professional experience in any niche. "
         "Propose 2 NEW categories of people similar to these ICP-fit creators, but in different consumer-facing subject areas. "
         "For each category, first write a one-sentence persona describing the individual creator, for example: "
-        "\"a former teacher who sells a homeschool curriculum and talks to parents on camera\". "
+        "\"a former teacher who shares practical homeschool routines and talks to parents on camera\". "
         "Then give exactly 3 YouTube search queries. Each query must read like a long-form video title that this persona would give "
         "their own video, aimed at consumers/B2C audiences, not at businesses. "
         "Exclude B2B services, agencies, law/accounting firms, corporate consulting, news, product review, faceless channels, "
@@ -1361,13 +1361,13 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
     }
 
 
-def apply_discovery_category_daily_decisions(conn) -> Dict[str, Any]:
+def apply_discovery_category_daily_decisions(conn, *, include_saturation: bool = True) -> Dict[str, Any]:
     ensure_discovery_category_schema(conn)
     decisions: List[Dict[str, Any]] = []
     testing_rows = conn.execute(
         """
-        SELECT c.id, c.name, COALESCE(SUM(s.icp_fit), 0) AS icp_fit, COUNT(s.id) AS rows_seen,
-               COALESCE(SUM(CASE WHEN s.cut_by_cap THEN 1 ELSE 0 END), 0) AS cut_rows
+        SELECT c.id, c.name, COALESCE(SUM(s.enriched), 0) AS enriched,
+               COALESCE(SUM(s.icp_fit), 0) AS icp_fit
         FROM discovery_categories c
         LEFT JOIN discovery_run_keyword_stats s ON s.category_id = c.id
         WHERE c.status = 'testing'
@@ -1376,17 +1376,18 @@ def apply_discovery_category_daily_decisions(conn) -> Dict[str, Any]:
     ).fetchall()
     for row in testing_rows:
         category_id = int(row[0])
-        rows_seen = int(row[3] or 0)
-        cut_rows = int(row[4] or 0)
-        if rows_seen < 3 or cut_rows > 0:
+        enriched = int(row[2] or 0)
+        if enriched < 30:
             continue
-        icp_fit = int(row[2] or 0)
+        icp_fit = int(row[3] or 0)
         next_status = "kept" if icp_fit >= 2 else "dropped"
         conn.execute(
             "UPDATE discovery_categories SET status = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?",
             [next_status, category_id],
         )
-        decisions.append({"category": str(row[1] or ""), "status": next_status, "icp_fit": icp_fit})
+        decisions.append({"category": str(row[1] or ""), "status": next_status, "enriched": enriched, "icp_fit": icp_fit})
+    if not include_saturation:
+        return {"decisions": decisions}
     active_rows = conn.execute(
         """
         SELECT id, name

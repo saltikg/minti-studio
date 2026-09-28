@@ -669,6 +669,12 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
 
         conn = get_db()
         _finish_run(conn, run_id, status="completed" if result.get("success") else "skipped", result=result)
+        try:
+            from app.video_shorts.routes.api import apply_discovery_category_daily_decisions
+
+            result["category_testing_decisions"] = apply_discovery_category_daily_decisions(conn, include_saturation=False)
+        except Exception:
+            current_app.logger.exception("Discovery category testing decisions failed")
         if _is_last_daily_run_slot(control):
             try:
                 from app.video_shorts.routes.api import apply_discovery_category_daily_decisions
