@@ -1160,7 +1160,7 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
     category_name_by_lower = {category["name"].lower(): category["name"] for category in existing_categories}
     assigned = 0
     for item in keywords:
-        if item.get("category_id") and item.get("category_source") == "llm" and item.get("category_status") in {"testing", "kept", "dropped"}:
+        if item.get("category_id"):
             continue
         keyword = item["keyword"]
         category_name = assignments.get(keyword.lower()) or _category_keyword_rule_fallback(keyword)
@@ -1178,14 +1178,18 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
             updated_at = CURRENT_TIMESTAMP
         FROM keyword_queue q
         LEFT JOIN discovery_categories qc ON qc.id = q.category_id
-        LEFT JOIN discovery_categories sc ON sc.id = s.category_id
         WHERE s.keyword_queue_id = q.id
           AND q.category_id IS NOT NULL
           AND (s.category_id IS NULL OR s.category_id <> q.category_id)
           AND (
                 (qc.source = 'llm' AND qc.status IN ('testing', 'kept', 'dropped'))
                 OR s.category_id IS NULL
-                OR COALESCE(sc.source, '') <> 'llm'
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM discovery_categories sc
+                    WHERE sc.id = s.category_id
+                      AND sc.source = 'llm'
+                )
               )
         """
     )

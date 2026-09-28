@@ -333,7 +333,14 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             metadata["auto_generation_skipped"] = "keyword_queue_missing"
             return metadata
 
-        backfill_discovery_keyword_categories(conn)
+        try:
+            backfill_discovery_keyword_categories(conn)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            current_app.logger.exception("Discovery category backfill failed; continuing daily generation")
         eligible_before = count_eligible_keyword_queue(conn)
         metadata["eligible_before"] = eligible_before
         metadata["eligible_final"] = eligible_before
