@@ -97,12 +97,10 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
                     SELECT
                         r.id,
                         'discovery_promote' AS type,
-                        COALESCE(u.email, r.discovery_lead_id::text) AS user_email,
+                        r.discovery_lead_id::text AS user_email,
                         r.started_at,
                         'discovery_promote' AS origin
                     FROM discovery_promote_requests r
-                    LEFT JOIN discovery_leads dl ON dl.id = r.discovery_lead_id
-                    LEFT JOIN shorts_users u ON u.id::text = dl.promoted_user_id
                     WHERE r.status = 'processing'
                       AND r.started_at IS NOT NULL
                     ORDER BY r.started_at ASC
