@@ -819,7 +819,15 @@ def enqueue_render_job(
     )
 
 
-def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def claim_next_job(
+    worker_id: str,
+    *,
+    job_type: Optional[str] = None,
+    customer_only: bool = False,
+    discovery_only: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if customer_only and discovery_only:
+        raise ValueError("claim_next_job cannot be both customer_only and discovery_only")
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
@@ -832,12 +840,18 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
         if backend_name == "postgres":
             discovery_clause = _discovery_job_clause(conn)
             customer_active_exists = _customer_active_exists_sql(conn)
+            origin_clause = ""
+            if customer_only:
+                origin_clause = f"AND NOT ({discovery_clause})"
+            elif discovery_only:
+                origin_clause = f"AND ({discovery_clause})"
             row = conn.execute(
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
                 WHERE status = ?
                   {job_type_clause}
+                  {origin_clause}
                   AND NOT (
                     {discovery_clause}
                     AND {customer_active_exists}
@@ -895,12 +909,18 @@ def claim_next_job(worker_id: str, *, job_type: Optional[str] = None) -> Optiona
         with _duckdb_claim_lock:
             discovery_clause = _discovery_job_clause(conn)
             customer_active_exists = _customer_active_exists_sql(conn)
+            origin_clause = ""
+            if customer_only:
+                origin_clause = f"AND NOT ({discovery_clause})"
+            elif discovery_only:
+                origin_clause = f"AND ({discovery_clause})"
             row = conn.execute(
                 f"""
                 SELECT id
                 FROM {JOBS_TABLE}
                 WHERE status = ?
                   {job_type_clause}
+                  {origin_clause}
                   AND NOT (
                     {discovery_clause}
                     AND {customer_active_exists}

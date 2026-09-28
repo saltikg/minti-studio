@@ -1,0 +1,15 @@
+[Unit]
+Description=Gunicorn service for Minti Studio
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/apps/minti_studio
+EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/gunicorn --workers 2 --worker-class gthread --threads 4 --timeout 300 --bind 127.0.0.1:8000 --access-logfile /home/ubuntu/apps/minti_studio/logs/gunicorn-access.log --error-logfile /home/ubuntu/apps/minti_studio/logs/gunicorn-error.log wsgi:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 [Unit]
-Description=Minti Studio render worker
+Description=Minti Studio discovery worker
 After=network.target
 
 [Service]
@@ -7,10 +7,14 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/apps/minti_studio
 EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
-Environment=WORKER_MODE=customer
+Environment=WORKER_MODE=discovery
 ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/python -m app.video_shorts.worker
 Restart=always
 RestartSec=5
+CPUQuota=100%
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=450M
 
 [Install]
 WantedBy=multi-user.target

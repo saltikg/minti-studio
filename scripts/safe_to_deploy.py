@@ -32,6 +32,7 @@ class ProcessingJob:
     job_type: str
     user_email: str
     started_at: datetime
+    origin: str = ""
 
 
 def _load_env_file() -> Path:
@@ -61,7 +62,8 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
             j.id,
             j.type,
             COALESCE(u.email, j.user_id) AS user_email,
-            j.started_at
+            j.started_at,
+            COALESCE(j.payload_json->>'job_origin', '') AS origin
         FROM shorts_render_jobs j
         LEFT JOIN shorts_users u ON u.id::text = j.user_id
         WHERE j.status = 'processing'
@@ -85,8 +87,44 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
                         job_type=str(row[1]),
                         user_email=str(row[2] or "unknown"),
                         started_at=started_at,
+                        origin=str(row[4] or ""),
                     )
                 )
+            cur.execute("SELECT to_regclass('main.discovery_promote_requests')")
+            if cur.fetchone()[0]:
+                cur.execute(
+                    """
+                    SELECT
+                        r.id,
+                        'discovery_promote' AS type,
+                        COALESCE(u.email, r.discovery_lead_id::text) AS user_email,
+                        r.started_at,
+                        'discovery_promote' AS origin
+                    FROM discovery_promote_requests r
+                    LEFT JOIN discovery_leads dl ON dl.id = r.discovery_lead_id
+                    LEFT JOIN shorts_users u ON u.id::text = dl.promoted_user_id
+                    WHERE r.status = 'processing'
+                      AND r.started_at IS NOT NULL
+                    ORDER BY r.started_at ASC
+                    """
+                )
+                for row in cur.fetchall():
+                    started_at = row[3]
+                    if started_at is None:
+                        continue
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                    else:
+                        started_at = started_at.astimezone(timezone.utc)
+                    jobs.append(
+                        ProcessingJob(
+                            job_id=str(row[0]),
+                            job_type=str(row[1]),
+                            user_email=str(row[2] or "unknown"),
+                            started_at=started_at,
+                            origin=str(row[4] or ""),
+                        )
+                    )
     return jobs
 
 
@@ -159,8 +197,9 @@ def _format_age(started_at: datetime, now: datetime) -> str:
 
 def _print_processing_jobs(jobs: Iterable[ProcessingJob], now: datetime) -> None:
     for job in jobs:
+        origin = f" | {job.origin}" if job.origin else ""
         print(
-            f"  - {job.job_type} | {job.user_email} | started {_format_age(job.started_at, now)}"
+            f"  - {job.job_type}{origin} | {job.user_email} | started {_format_age(job.started_at, now)}"
         )
 
 

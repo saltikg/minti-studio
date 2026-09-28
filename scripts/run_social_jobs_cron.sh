@@ -57,4 +57,4 @@ fi
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT"
-exec "${CMD[@]}" >>"$LOG_FILE" 2>&1
+exec /usr/bin/nice -n 15 /usr/bin/ionice -c3 "${CMD[@]}" >>"$LOG_FILE" 2>&1

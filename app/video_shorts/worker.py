@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import socket
 import time
 import tempfile
 import shutil
 import secrets
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import logging, urllib.request
 logger = logging.getLogger(__name__)
@@ -19,11 +22,19 @@ from flask import g
 
 from app import create_app
 from app.video_shorts.config import (
+    DISCOVERY_IDLE_LOAD_1M_MAX,
+    DISCOVERY_IDLE_LOG_INTERVAL_SECONDS,
+    DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN,
+    DISCOVERY_IDLE_WAIT_SECONDS,
+    DISCOVERY_IDLE_WEB_WINDOW_SECONDS,
+    DISCOVERY_NIGHT_END_HOUR_PT,
+    DISCOVERY_NIGHT_START_HOUR_PT,
     DISK_GUARD_PCT,
     JOB_POLL_INTERVAL_SECONDS,
     MAX_GLOBAL_CONCURRENT_JOBS,
     STALE_JOB_TIMEOUT_SECONDS,
     WORKER_CONCURRENCY,
+    WORKER_MODE,
 )
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
@@ -70,7 +81,7 @@ from app.video_shorts.services.render_jobs import (
 from app.video_shorts.services.autopilot_email_enrichment import enrich_autopilot_discovery_email_batch
 from app.video_shorts.services.discovery_email_enrichment import enrich_discovery_email_batch
 from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
-from app.video_shorts.services.discovery_promote_queue import process_next_discovery_promote_request
+from app.video_shorts.services.discovery_promote_queue import customer_job_waiting, process_next_discovery_promote_request
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
 from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
@@ -105,8 +116,160 @@ class PermanentRenderJobError(RuntimeError):
     pass
 
 
+ACCESS_LOG_PATH = Path(os.getenv("GUNICORN_ACCESS_LOG_PATH", "/home/ubuntu/apps/minti_studio/logs/gunicorn-access.log"))
+ACCESS_LOG_TIME_RE = re.compile(r"\[(?P<ts>[^\]]+)\]")
+BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|uptime|monitor|health)", re.I)
+ADMIN_OR_STATIC_PATH_RE = re.compile(r"\\s(?:GET|POST|HEAD|OPTIONS)\\s+(/[^\\s?]*)")
+_PT = ZoneInfo("America/Los_Angeles")
+_last_idle_skip_log: Dict[str, float] = {}
+
+
 def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _worker_mode() -> str:
+    mode = str(WORKER_MODE or "all").strip().lower()
+    if mode not in {"all", "customer", "discovery"}:
+        logger.warning("Invalid WORKER_MODE=%s; using all", mode)
+        return "all"
+    return mode
+
+
+def _tail_lines(path: Path, *, max_lines: int = 2000, chunk_size: int = 8192) -> list[str]:
+    if not path.exists():
+        return []
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        buffer = b""
+        lines: deque[bytes] = deque()
+        while position > 0 and len(lines) <= max_lines:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            handle.seek(position)
+            buffer = handle.read(read_size) + buffer
+            parts = buffer.splitlines()
+            if position > 0:
+                buffer = parts[0]
+                parts = parts[1:]
+            else:
+                buffer = b""
+            for part in reversed(parts):
+                lines.appendleft(part)
+                if len(lines) > max_lines:
+                    lines.popleft()
+        if buffer:
+            lines.appendleft(buffer)
+        return [line.decode("utf-8", errors="replace") for line in lines]
+
+
+def _parse_access_log_time(line: str) -> Optional[datetime]:
+    match = ACCESS_LOG_TIME_RE.search(line)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group("ts"), "%d/%b/%Y:%H:%M:%S %z").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _access_log_path(line: str) -> str:
+    match = ADMIN_OR_STATIC_PATH_RE.search(line)
+    return str(match.group(1) if match else "")
+
+
+def _is_ignored_web_hit(line: str) -> bool:
+    lowered = line.lower()
+    path = _access_log_path(line).lower()
+    if BOT_UA_RE.search(line):
+        return True
+    if path.startswith(("/video_shorts/admin", "/admin", "/static", "/assets", "/favicon", "/health")):
+        return True
+    if "/api/client-error" in path:
+        return True
+    if "gokhansaltik" in lowered:
+        return True
+    return False
+
+
+def _recent_real_web_activity(now_utc: datetime) -> int:
+    cutoff = now_utc - timedelta(seconds=int(DISCOVERY_IDLE_WEB_WINDOW_SECONDS))
+    hits = 0
+    for line in reversed(_tail_lines(ACCESS_LOG_PATH)):
+        parsed = _parse_access_log_time(line)
+        if parsed is None:
+            continue
+        if parsed < cutoff:
+            break
+        if not _is_ignored_web_hit(line):
+            hits += 1
+    return hits
+
+
+def _mem_available_mb() -> int:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                parts = line.split()
+                return int(int(parts[1]) / 1024)
+    except Exception:
+        logger.exception("Could not read MemAvailable")
+    return 0
+
+
+def _in_discovery_night_window(now_utc: Optional[datetime] = None) -> bool:
+    now_pt = (now_utc or datetime.now(timezone.utc)).astimezone(_PT)
+    hour = now_pt.hour
+    start = int(DISCOVERY_NIGHT_START_HOUR_PT)
+    end = int(DISCOVERY_NIGHT_END_HOUR_PT)
+    if start == end:
+        return True
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def _log_idle_skip(reason: str) -> None:
+    now = time.time()
+    last = _last_idle_skip_log.get(reason, 0.0)
+    if now - last >= float(DISCOVERY_IDLE_LOG_INTERVAL_SECONDS):
+        logger.info("discovery worker skipped: %s", reason)
+        _last_idle_skip_log[reason] = now
+
+
+def discovery_idle_skip_reason(app) -> Optional[str]:
+    conn = get_db()
+    try:
+        if customer_job_waiting(conn):
+            return "customer job queued/processing"
+    finally:
+        conn.close()
+
+    mem_available = _mem_available_mb()
+    if mem_available < int(DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN):
+        return f"MemAvailable {mem_available}MB below {DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN}MB"
+
+    if _in_discovery_night_window():
+        return None
+
+    load_1m = os.getloadavg()[0]
+    if load_1m >= float(DISCOVERY_IDLE_LOAD_1M_MAX):
+        return f"load1 {load_1m:.2f} >= {DISCOVERY_IDLE_LOAD_1M_MAX:.2f}"
+
+    recent_hits = _recent_real_web_activity(datetime.now(timezone.utc))
+    if recent_hits:
+        return f"{recent_hits} real web request(s) in last {DISCOVERY_IDLE_WEB_WINDOW_SECONDS}s"
+    return None
+
+
+def _discovery_worker_should_wait(app) -> bool:
+    reason = discovery_idle_skip_reason(app)
+    if not reason:
+        return False
+    _log_idle_skip(reason)
+    time.sleep(float(DISCOVERY_IDLE_WAIT_SECONDS))
+    return True
 
 
 def _load_user_context(user_id: str, brand_id: Optional[str]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
@@ -1297,10 +1460,16 @@ def _execute_instagram_comment_webhook_job(app, job: Dict[str, Any]) -> Dict[str
     return process_instagram_comment_webhook_job(job.get("payload") or {})
 
 
-def process_next_job(app, worker_id: str) -> bool:
+def process_next_job(
+    app,
+    worker_id: str,
+    *,
+    customer_only: bool = False,
+    discovery_only: bool = False,
+) -> bool:
     if _worker_should_wait_before_claim(app):
         return False
-    job = claim_next_job(worker_id)
+    job = claim_next_job(worker_id, customer_only=customer_only, discovery_only=discovery_only)
     if not job:
         return False
     if job.get("type") == JOB_TYPE_RENDER_SHORT:
@@ -1383,54 +1552,71 @@ def process_next_job(app, worker_id: str) -> bool:
 
 def run_worker_loop() -> None:
     worker_id = _worker_id()
+    mode = _worker_mode()
     app = create_app()
     with app.app_context():
+        app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
         while True:
             requeue_dead_local_worker_jobs()
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
-            try:
-                if process_due_scheduled_outreach_email():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Scheduled outreach email processing failed")
-            try:
-                if generation.process_new_lead_autodownload():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("New lead auto-download polling failed")
-            try:
-                if generation.process_downloaded_lead_autoplan():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Downloaded lead auto-plan polling failed")
-            try:
-                if generation.process_planned_lead_autogenerate():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Planned lead auto-generate polling failed")
-            try:
-                if generation.process_approved_lead_autoschedule():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Approved lead auto-schedule polling failed")
-            try:
-                if generation.process_due_youtube_publish_reconcile():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("YouTube publish reconcile polling failed")
-            try:
-                if process_due_discovery_automation_cycle():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Discovery automation polling failed")
-            try:
-                while process_next_discovery_promote_request():
-                    processed_any = True
-            except Exception:
-                app.logger.exception("Discovery promote queue processing failed")
+            if mode in {"all", "customer"}:
+                try:
+                    if process_due_scheduled_outreach_email():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Scheduled outreach email processing failed")
+                try:
+                    if generation.process_new_lead_autodownload():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("New lead auto-download polling failed")
+                try:
+                    if generation.process_downloaded_lead_autoplan():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Downloaded lead auto-plan polling failed")
+                try:
+                    if generation.process_planned_lead_autogenerate():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Planned lead auto-generate polling failed")
+                try:
+                    if generation.process_approved_lead_autoschedule():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Approved lead auto-schedule polling failed")
+                try:
+                    if generation.process_due_youtube_publish_reconcile():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("YouTube publish reconcile polling failed")
+            if mode in {"all", "discovery"}:
+                if mode == "discovery" and _discovery_worker_should_wait(app):
+                    continue
+                try:
+                    if process_due_discovery_automation_cycle():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Discovery automation polling failed")
+                if mode == "discovery" and _discovery_worker_should_wait(app):
+                    continue
+                try:
+                    while process_next_discovery_promote_request():
+                        processed_any = True
+                        if mode == "discovery" and _discovery_worker_should_wait(app):
+                            break
+                except Exception:
+                    app.logger.exception("Discovery promote queue processing failed")
             for _ in range(max(1, int(WORKER_CONCURRENCY or 1))):
-                if process_next_job(app, worker_id):
+                if mode == "discovery" and _discovery_worker_should_wait(app):
+                    break
+                if process_next_job(
+                    app,
+                    worker_id,
+                    customer_only=(mode == "customer"),
+                    discovery_only=(mode == "discovery"),
+                ):
                     processed_any = True
                 else:
                     break
