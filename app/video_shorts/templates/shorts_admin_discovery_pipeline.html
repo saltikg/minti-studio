@@ -416,6 +416,7 @@
           <thead>
             <tr>
               <th>Date</th>
+              <th>Yeni kategoriler</th>
               <th>Aranan kelimeler</th>
               <th>Bulunan ve onaylanan lead</th>
             </tr>
@@ -424,6 +425,15 @@
             {% for row in daily_discovery_rows %}
               <tr>
                 <td>{{ row.date }}</td>
+                <td class="discovery-daily-keywords">
+                  {% if row.new_categories %}
+                    {%- for category in row.new_categories -%}
+                      {{ category.name }} ({{ category.keyword_count }}){{ ', ' if not loop.last else '' }}
+                    {%- endfor -%}
+                  {% else %}
+                    <span class="discovery-muted">—</span>
+                  {% endif %}
+                </td>
                 <td class="discovery-daily-keywords">
                   {% if row.searched_keywords %}
                     {{ row.searched_keywords|join(', ') }}
@@ -460,7 +470,7 @@
               </tr>
             {% else %}
               <tr>
-                <td colspan="3" class="text-center text-white-50 py-4">No daily discovery activity yet.</td>
+                <td colspan="4" class="text-center text-white-50 py-4">No daily discovery activity yet.</td>
               </tr>
             {% endfor %}
           </tbody>

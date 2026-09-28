@@ -16660,6 +16660,7 @@ def admin_discovery_lead_pipeline():
         daily_found_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
         daily_found_icp_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
         daily_approved_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
+        daily_new_categories: Dict[str, List[Dict[str, Any]]] = {day.isoformat(): [] for day in daily_dates}
 
         if has_discovery:
             has_promotion_columns = "autopilot_lead_id" in discovery_columns
@@ -16980,6 +16981,42 @@ def admin_discovery_lead_pipeline():
                     clean_keyword = keyword.strip()
                     if clean_keyword:
                         daily_keyword_searches[day_key].add(clean_keyword)
+        category_columns = table_columns(conn, "discovery_categories")
+        keyword_stats_columns = table_columns(conn, "discovery_run_keyword_stats")
+        if category_columns and keyword_stats_columns and {"created_at", "source"}.issubset(category_columns):
+            if getattr(conn, "backend_name", "") == "postgres":
+                category_day_sql = "(c.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date"
+                run_day_sql = "(s.run_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date"
+            else:
+                category_day_sql = "CAST(c.created_at AS DATE)"
+                run_day_sql = "CAST(s.run_started_at AS DATE)"
+            for row in conn.execute(
+                f"""
+                SELECT
+                    {category_day_sql} AS category_day,
+                    c.name,
+                    COUNT(DISTINCT s.keyword) AS searched_keyword_count
+                FROM discovery_categories c
+                LEFT JOIN discovery_run_keyword_stats s
+                  ON s.category_id = c.id
+                 AND {run_day_sql} = {category_day_sql}
+                WHERE c.created_at >= ?
+                  AND COALESCE(c.source, '') = 'llm'
+                GROUP BY 1, c.name
+                ORDER BY 1 DESC, c.name ASC
+                """,
+                [daily_start],
+            ).fetchall():
+                day_key = str(row[0]) if row[0] else ""
+                if day_key in daily_new_categories:
+                    count = int(row[2] or 0)
+                    if count > 0:
+                        daily_new_categories[day_key].append(
+                            {
+                                "name": str(row[1] or ""),
+                                "keyword_count": count,
+                            }
+                        )
         trend_series["keyword_searches"] = [trend_searches[day] for day in trend_series["dates"]]
         trend_series["qualified_leads"] = [trend_qualified[day] for day in trend_series["dates"]]
 
@@ -17014,6 +17051,7 @@ def admin_discovery_lead_pipeline():
             daily_discovery_rows.append(
                 {
                     "date": day_key,
+                    "new_categories": daily_new_categories[day_key],
                     "searched_keywords": sorted(daily_keyword_searches[day_key], key=str.lower),
                     "found_count": sum(found_keywords.values()),
                     "found_icp_count": sum(found_icp_keywords.values()),
