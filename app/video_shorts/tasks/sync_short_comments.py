@@ -13,7 +13,7 @@ import logging
 import os
 import pathlib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -397,6 +397,34 @@ def _parse_sync_ts(value: object) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _youtube_api_error_reason(exc: YoutubeApiError) -> Optional[str]:
+    payload = getattr(exc, "payload", None) or {}
+    error_payload = payload.get("error") if isinstance(payload, dict) else None
+    errors = error_payload.get("errors") if isinstance(error_payload, dict) else None
+    if isinstance(errors, list):
+        for item in errors:
+            if not isinstance(item, dict):
+                continue
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                return reason
+    if isinstance(error_payload, dict):
+        reason = str(error_payload.get("reason") or "").strip()
+        if reason:
+            return reason
+    return None
+
+
+def _comments_disabled_skip_active(sync_state_entry: Optional[Dict[str, object]]) -> bool:
+    if not sync_state_entry:
+        return False
+    reason = str(sync_state_entry.get("comments_fetch_error_reason") or "").strip()
+    if reason != "commentsDisabled":
+        return False
+    skip_until = _parse_sync_ts(sync_state_entry.get("comments_fetch_error_skip_until"))
+    return bool(skip_until and skip_until > datetime.now(timezone.utc))
+
+
 def _ensure_sync_state_table(conn) -> None:
     try:
         conn.execute(
@@ -415,6 +443,9 @@ def _ensure_sync_state_table(conn) -> None:
             ("last_comment_count", "INTEGER"),
             ("observed_comment_count", "INTEGER"),
             ("observed_comment_count_at", "TIMESTAMP"),
+            ("comments_fetch_error_reason", "VARCHAR"),
+            ("comments_fetch_error_checked_at", "TIMESTAMP"),
+            ("comments_fetch_error_skip_until", "TIMESTAMP"),
         ):
             if column_name in cols:
                 continue
@@ -504,11 +535,17 @@ def _load_sync_state(short_video_ids: List[str]) -> Dict[str, Dict[str, object]]
         has_observed_at_column = "observed_comment_count_at" in cols
         select_comment_count = ", last_comment_count" if has_count_column else ""
         select_observed_count = ", observed_comment_count" if has_observed_column else ""
+        has_error_reason_column = "comments_fetch_error_reason" in cols
+        has_error_checked_at_column = "comments_fetch_error_checked_at" in cols
+        has_error_skip_until_column = "comments_fetch_error_skip_until" in cols
         select_observed_at = ", observed_comment_count_at" if has_observed_at_column else ""
+        select_error_reason = ", comments_fetch_error_reason" if has_error_reason_column else ""
+        select_error_checked_at = ", comments_fetch_error_checked_at" if has_error_checked_at_column else ""
+        select_error_skip_until = ", comments_fetch_error_skip_until" if has_error_skip_until_column else ""
         try:
             rows = conn.execute(
                 f"""
-                SELECT short_video_id, last_synced_at{select_comment_count}{select_observed_count}{select_observed_at}
+                SELECT short_video_id, last_synced_at{select_comment_count}{select_observed_count}{select_observed_at}{select_error_reason}{select_error_checked_at}{select_error_skip_until}
                 FROM short_comment_sync_state
                 WHERE short_video_id IN ({placeholders})
                 """,
@@ -534,11 +571,26 @@ def _load_sync_state(short_video_ids: List[str]) -> Dict[str, Dict[str, object]]
             observed_comment_count_at = None
             if has_observed_at_column:
                 observed_comment_count_at = _parse_sync_ts(row[row_index])
+                row_index += 1
+            comments_fetch_error_reason = None
+            if has_error_reason_column:
+                comments_fetch_error_reason = row[row_index]
+                row_index += 1
+            comments_fetch_error_checked_at = None
+            if has_error_checked_at_column:
+                comments_fetch_error_checked_at = _parse_sync_ts(row[row_index])
+                row_index += 1
+            comments_fetch_error_skip_until = None
+            if has_error_skip_until_column:
+                comments_fetch_error_skip_until = _parse_sync_ts(row[row_index])
             result[row[0]] = {
                 "last_synced_at": _parse_sync_ts(row[1]),
                 "last_comment_count": last_comment_count,
                 "observed_comment_count": observed_comment_count,
                 "observed_comment_count_at": observed_comment_count_at,
+                "comments_fetch_error_reason": comments_fetch_error_reason,
+                "comments_fetch_error_checked_at": comments_fetch_error_checked_at,
+                "comments_fetch_error_skip_until": comments_fetch_error_skip_until,
             }
         return result
     finally:
@@ -556,6 +608,9 @@ def _update_sync_state(sync_updates: Dict[str, Dict[str, object]]) -> None:
             last_comment_count = _normalize_comment_count(state.get("last_comment_count"))
             observed_comment_count = _normalize_comment_count(state.get("observed_comment_count"))
             observed_comment_count_at = state.get("observed_comment_count_at")
+            comments_fetch_error_reason = state.get("comments_fetch_error_reason")
+            comments_fetch_error_checked_at = state.get("comments_fetch_error_checked_at")
+            comments_fetch_error_skip_until = state.get("comments_fetch_error_skip_until")
             conn.execute(
                 """
                 INSERT INTO short_comment_sync_state (
@@ -563,15 +618,21 @@ def _update_sync_state(sync_updates: Dict[str, Dict[str, object]]) -> None:
                     last_synced_at,
                     last_comment_count,
                     observed_comment_count,
-                    observed_comment_count_at
+                    observed_comment_count_at,
+                    comments_fetch_error_reason,
+                    comments_fetch_error_checked_at,
+                    comments_fetch_error_skip_until
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (short_video_id)
                 DO UPDATE SET
                     last_synced_at = COALESCE(excluded.last_synced_at, short_comment_sync_state.last_synced_at),
                     last_comment_count = COALESCE(excluded.last_comment_count, short_comment_sync_state.last_comment_count),
                     observed_comment_count = COALESCE(excluded.observed_comment_count, short_comment_sync_state.observed_comment_count),
-                    observed_comment_count_at = COALESCE(excluded.observed_comment_count_at, short_comment_sync_state.observed_comment_count_at)
+                    observed_comment_count_at = COALESCE(excluded.observed_comment_count_at, short_comment_sync_state.observed_comment_count_at),
+                    comments_fetch_error_reason = COALESCE(excluded.comments_fetch_error_reason, short_comment_sync_state.comments_fetch_error_reason),
+                    comments_fetch_error_checked_at = COALESCE(excluded.comments_fetch_error_checked_at, short_comment_sync_state.comments_fetch_error_checked_at),
+                    comments_fetch_error_skip_until = COALESCE(excluded.comments_fetch_error_skip_until, short_comment_sync_state.comments_fetch_error_skip_until)
                 """,
                 [
                     short_id,
@@ -579,6 +640,9 @@ def _update_sync_state(sync_updates: Dict[str, Dict[str, object]]) -> None:
                     last_comment_count,
                     observed_comment_count,
                     observed_comment_count_at,
+                    comments_fetch_error_reason,
+                    comments_fetch_error_checked_at,
+                    comments_fetch_error_skip_until,
                 ],
             )
         conn.commit()
@@ -654,8 +718,12 @@ def _sync_youtube_comments_for_videos(
 ) -> int:
     updated_count = 0
     skipped_unchanged = 0
+    skipped_comments_disabled = 0
     attempted_count = 0
     for short_id in short_ids:
+        if _comments_disabled_skip_active(sync_state.get(short_id)):
+            skipped_comments_disabled += 1
+            continue
         current_comment_count = _normalize_comment_count(comment_count_map.get(short_id))
         if skip_unchanged and not _should_fetch_youtube_comment_bodies(
             short_id,
@@ -667,15 +735,43 @@ def _sync_youtube_comments_for_videos(
             continue
         comments: List[Dict[str, object]] = []
         any_success = False
+        now = datetime.now(timezone.utc)
+        oauth_user_id = short_oauth_user_ids.get(short_id)
+        if not oauth_user_id:
+            logger.warning(
+                "Skipping YouTube comment fetch for short_id=%s owner_user_id=%s because no unambiguous OAuth token key could be resolved.",
+                short_id,
+                owner_user_id,
+            )
+            continue
+
+        def _store_comments_disabled(exc: YoutubeApiError) -> bool:
+            reason = _youtube_api_error_reason(exc)
+            if reason != "commentsDisabled":
+                if reason:
+                    logger.warning(
+                        "YouTube comment fetch failed for short_id=%s reason=%s status=%s",
+                        short_id,
+                        reason,
+                        getattr(exc, "status_code", None),
+                    )
+                return False
+            skip_until = now + timedelta(days=7)
+            sync_updates.setdefault(short_id, {}).update(
+                {
+                    "comments_fetch_error_reason": reason,
+                    "comments_fetch_error_checked_at": now,
+                    "comments_fetch_error_skip_until": skip_until,
+                }
+            )
+            logger.info(
+                "Skipping YouTube comments for short_id=%s for 7 days because commentThreads.list returned reason=%s.",
+                short_id,
+                reason,
+            )
+            return True
+
         try:
-            oauth_user_id = short_oauth_user_ids.get(short_id)
-            if not oauth_user_id:
-                logger.warning(
-                    "Skipping YouTube comment fetch for short_id=%s owner_user_id=%s because no unambiguous OAuth token key could be resolved.",
-                    short_id,
-                    owner_user_id,
-                )
-                continue
             attempted_count += 1
             comments.extend(
                 fetch_video_comments(
@@ -686,8 +782,9 @@ def _sync_youtube_comments_for_videos(
                 )
             )
             any_success = True
-        except YoutubeApiError:
-            pass
+        except YoutubeApiError as exc:
+            if _store_comments_disabled(exc):
+                continue
         try:
             comments.extend(
                 fetch_video_comments(
@@ -700,8 +797,9 @@ def _sync_youtube_comments_for_videos(
                 )
             )
             any_success = True
-        except YoutubeApiError:
-            pass
+        except YoutubeApiError as exc:
+            if _store_comments_disabled(exc):
+                continue
         if not any_success:
             continue
         comments = _merge_youtube_comments(comments)
@@ -716,6 +814,9 @@ def _sync_youtube_comments_for_videos(
                     if current_comment_count is not None
                     else badge_total
                 ),
+                "comments_fetch_error_reason": "",
+                "comments_fetch_error_checked_at": now,
+                "comments_fetch_error_skip_until": now,
             }
         )
         if not comments:
@@ -766,6 +867,12 @@ def _sync_youtube_comments_for_videos(
         skipped_unchanged,
         updated_count,
     )
+    if skipped_comments_disabled:
+        logger.info(
+            "Skipped %s YouTube shorts for owner_user_id=%s because commentsDisabled skip window is active.",
+            skipped_comments_disabled,
+            owner_user_id,
+        )
     return updated_count
 
 

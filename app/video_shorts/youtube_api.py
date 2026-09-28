@@ -33,6 +33,17 @@ def _youtube_api_key() -> str:
     return (os.environ.get("YOUTUBE_API_KEY") or "").strip()
 
 
+def _http_error_payload(exc: requests.RequestException) -> tuple[Optional[int], Optional[Dict[str, Any]]]:
+    response = getattr(exc, "response", None)
+    payload = None
+    if response is not None:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+    return getattr(response, "status_code", None), payload
+
+
 def _candidate_oauth_user_ids(preferred_user_id: Optional[str] = None) -> List[Optional[str]]:
     candidates: List[Optional[str]] = []
     seen = set()
@@ -800,7 +811,11 @@ def _fetch_video_comments_api_key(video_id: str, max_results: int):
                 quota_method="commentThreads.list",
             )
         except YoutubeApiError as exc:
-            raise YoutubeApiError(f"YouTube comments fetch failed: {exc}") from exc
+            raise YoutubeApiError(
+                f"YouTube comments fetch failed: {exc}",
+                status_code=exc.status_code,
+                payload=exc.payload,
+            ) from exc
         items.extend(payload.get("items") or [])
         page_count += 1
         next_page_token = payload.get("nextPageToken")
@@ -858,7 +873,12 @@ def _fetch_video_comments_oauth(
             resp.raise_for_status()
             record_youtube_data_api_call(feature="comments", method="commentThreads.list")
         except requests.RequestException as exc:
-            raise YoutubeApiError(f"YouTube comments fetch failed: {exc}")
+            status_code, payload = _http_error_payload(exc)
+            raise YoutubeApiError(
+                f"YouTube comments fetch failed: {exc}",
+                status_code=status_code,
+                payload=payload,
+            )
         payload = resp.json() or {}
         items.extend(payload.get("items") or [])
         page_count += 1
