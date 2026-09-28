@@ -1070,13 +1070,24 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
         return {"assigned": 0, "category_counts": {}, "errors": [{"error": "keyword_queue_missing"}]}
     rows = conn.execute(
         """
-        SELECT id, keyword
-        FROM keyword_queue
-        WHERE COALESCE(keyword, '') <> ''
-        ORDER BY id ASC
+        SELECT q.id, q.keyword, q.category_id, COALESCE(c.source, ''), COALESCE(c.status, '')
+        FROM keyword_queue q
+        LEFT JOIN discovery_categories c ON c.id = q.category_id
+        WHERE COALESCE(q.keyword, '') <> ''
+        ORDER BY q.id ASC
         """
     ).fetchall()
-    keywords = [{"id": int(row[0]), "keyword": str(row[1] or "").strip()} for row in rows if str(row[1] or "").strip()]
+    keywords = [
+        {
+            "id": int(row[0]),
+            "keyword": str(row[1] or "").strip(),
+            "category_id": row[2],
+            "category_source": str(row[3] or "").strip(),
+            "category_status": str(row[4] or "").strip(),
+        }
+        for row in rows
+        if str(row[1] or "").strip()
+    ]
     existing_categories = _load_discovery_categories(conn)
     assignments: Dict[str, str] = {}
     if _openai_client and keywords:
@@ -1109,6 +1120,8 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
     category_name_by_lower = {category["name"].lower(): category["name"] for category in existing_categories}
     assigned = 0
     for item in keywords:
+        if item.get("category_id") and item.get("category_source") == "llm" and item.get("category_status") in {"testing", "kept", "dropped"}:
+            continue
         keyword = item["keyword"]
         category_name = assignments.get(keyword.lower()) or _category_keyword_rule_fallback(keyword)
         category_name = category_name_by_lower.get(category_name.lower(), category_name)
@@ -1124,9 +1137,16 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
         SET category_id = q.category_id,
             updated_at = CURRENT_TIMESTAMP
         FROM keyword_queue q
+        LEFT JOIN discovery_categories qc ON qc.id = q.category_id
+        LEFT JOIN discovery_categories sc ON sc.id = s.category_id
         WHERE s.keyword_queue_id = q.id
           AND q.category_id IS NOT NULL
           AND (s.category_id IS NULL OR s.category_id <> q.category_id)
+          AND (
+                (qc.source = 'llm' AND qc.status IN ('testing', 'kept', 'dropped'))
+                OR s.category_id IS NULL
+                OR COALESCE(sc.source, '') <> 'llm'
+              )
         """
     )
     conn.execute(
@@ -1135,8 +1155,11 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
         SET category_id = q.category_id,
             updated_at = CURRENT_TIMESTAMP
         FROM keyword_queue q
+        LEFT JOIN discovery_categories qc ON qc.id = q.category_id
         WHERE lower(s.keyword) = lower(q.keyword)
           AND q.category_id IS NOT NULL
+          AND qc.source = 'llm'
+          AND qc.status IN ('testing', 'kept', 'dropped')
           AND s.category_id IS NULL
         """
     )
@@ -1361,9 +1384,53 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
     }
 
 
+def retire_queued_keywords_for_dropped_categories(conn, category_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+    if not table_columns(conn, "keyword_queue"):
+        return []
+    params: List[Any] = []
+    category_filter = ""
+    if category_ids:
+        clean_ids = [int(category_id) for category_id in category_ids if category_id]
+        if not clean_ids:
+            return []
+        category_filter = f"AND c.id IN ({','.join(['?'] * len(clean_ids))})"
+        params.extend(clean_ids)
+    rows = conn.execute(
+        f"""
+        SELECT q.id, q.keyword, c.name
+        FROM keyword_queue q
+        JOIN discovery_categories c ON c.id = q.category_id
+        WHERE c.status = 'dropped'
+          AND q.status = 'queued'
+          {category_filter}
+        ORDER BY c.id ASC, q.id ASC
+        """,
+        params,
+    ).fetchall()
+    if not rows:
+        return []
+    keyword_ids = [int(row[0]) for row in rows]
+    placeholders = ",".join(["?"] * len(keyword_ids))
+    conn.execute(
+        f"""
+        UPDATE keyword_queue
+        SET status = 'retired',
+            next_run_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id IN ({placeholders})
+        """,
+        keyword_ids,
+    )
+    return [
+        {"id": int(row[0]), "keyword": str(row[1] or ""), "category": str(row[2] or "")}
+        for row in rows
+    ]
+
+
 def apply_discovery_category_daily_decisions(conn, *, include_saturation: bool = True) -> Dict[str, Any]:
     ensure_discovery_category_schema(conn)
     decisions: List[Dict[str, Any]] = []
+    dropped_category_ids: List[int] = []
     testing_rows = conn.execute(
         """
         SELECT c.id, c.name, COALESCE(SUM(s.enriched), 0) AS enriched,
@@ -1385,9 +1452,12 @@ def apply_discovery_category_daily_decisions(conn, *, include_saturation: bool =
             "UPDATE discovery_categories SET status = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ?",
             [next_status, category_id],
         )
+        if next_status == "dropped":
+            dropped_category_ids.append(category_id)
         decisions.append({"category": str(row[1] or ""), "status": next_status, "enriched": enriched, "icp_fit": icp_fit})
+    retired_keywords = retire_queued_keywords_for_dropped_categories(conn, dropped_category_ids)
     if not include_saturation:
-        return {"decisions": decisions}
+        return {"decisions": decisions, "retired_keywords": retired_keywords}
     active_rows = conn.execute(
         """
         SELECT id, name
@@ -1418,7 +1488,7 @@ def apply_discovery_category_daily_decisions(conn, *, include_saturation: bool =
                 [category_id],
             )
             decisions.append({"category": str(name or ""), "status": "saturated", "freshness": round(freshness, 4)})
-    return {"decisions": decisions}
+    return {"decisions": decisions, "retired_keywords": retired_keywords}
 
 
 def _load_emailed_seed_channels(limit: int = LEAD_DISCOVERY_SEED_CHANNEL_LIMIT) -> List[Dict[str, Any]]:
