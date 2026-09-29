@@ -98,7 +98,10 @@ def _apply_prefilter(conn, candidates: list[dict[str, Any]], existing: list[dict
 
 
 def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str, str]]) -> str:
+    ids = [row["id"] for row in candidates]
     payload = {
+        "instruction": f"Return exactly {len(ids)} decisions, one for every candidate id in candidate_ids. Do not omit any candidate.",
+        "candidate_ids": ids,
         "existing": existing,
         "candidates": [
             {
@@ -112,6 +115,17 @@ def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str
         ],
     }
     return json_dumps_compact(payload)
+
+
+def _missing_decision_ids(candidates: list[dict[str, Any]], decisions: list[dict[str, Any]]) -> list[int]:
+    expected = {int(row["id"]) for row in candidates}
+    returned = set()
+    for decision in decisions:
+        try:
+            returned.add(int(decision.get("id") or 0))
+        except (TypeError, ValueError):
+            continue
+    return sorted(expected - returned)
 
 
 def _status_for_decision(decision: dict[str, Any]) -> str:
@@ -183,14 +197,24 @@ def judge(*, dry_run: bool = False, seed: bool = False) -> dict[str, Any]:
         decisions = list(prefiltered)
         usage = None
         if remaining:
-            result = call_json(
-                "judge",
-                model=BLOG_MODEL_JUDGE,
-                system_prompt=SYSTEM_PROMPT,
-                user_prompt=_build_user_prompt(remaining, existing),
-            )
-            payload = json.loads(result.content)
-            llm_decisions = payload.get("decisions") or []
+            prompt = _build_user_prompt(remaining, existing)
+            result = None
+            llm_decisions: list[dict[str, Any]] = []
+            missing_ids: list[int] = []
+            for attempt in range(2):
+                result = call_json(
+                    "judge",
+                    model=BLOG_MODEL_JUDGE,
+                    system_prompt=SYSTEM_PROMPT,
+                    user_prompt=prompt if attempt == 0 else prompt + "\n\nThe prior response omitted candidates. Return one decision for every candidate_id.",
+                )
+                payload = json.loads(result.content)
+                llm_decisions = payload.get("decisions") or []
+                missing_ids = _missing_decision_ids(remaining, llm_decisions)
+                if not missing_ids:
+                    break
+            if missing_ids:
+                raise RuntimeError(f"LLM omitted decisions for candidate ids: {missing_ids[:20]}")
             decisions.extend(llm_decisions)
             _apply_decisions(conn, llm_decisions, dry_run=dry_run)
             if not dry_run:
