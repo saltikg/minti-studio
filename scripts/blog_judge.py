@@ -151,10 +151,10 @@ def _apply_prefilter(conn, candidates: list[dict[str, Any]], existing: list[dict
                     conn.execute(
                         """
                         UPDATE blog_topics
-                        SET duplicate_of = ?, judge_reason = ?
+                        SET judge_reason = ?
                         WHERE id = ?
                         """,
-                        [match, reason[:500], candidate["id"]],
+                        [reason[:500], candidate["id"]],
                     )
                 else:
                     conn.execute(
@@ -316,7 +316,7 @@ def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dic
                 ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
                 + [
                     _format_prev_reason(candidate, decision) if rejudge else str(decision.get("judge_reason") or "")[:500],
-                    decision.get("duplicate_of"),
+                    candidate.get("duplicate_of") if preserve_seed else decision.get("duplicate_of"),
                     None if preserve_seed else title,
                     normalize_keyword(decision.get("primary_keyword")),
                     decision.get("category"),
