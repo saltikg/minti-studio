@@ -272,6 +272,7 @@ def _validate_title_distance(
     candidates: list[dict[str, Any]],
     decisions: list[dict[str, Any]],
     existing: list[dict[str, str]],
+    stage_name: str = "judge",
 ) -> tuple[list[dict[str, Any]], list[Any]]:
     revised = list(decisions)
     repair_results: list[Any] = []
@@ -290,7 +291,7 @@ def _validate_title_distance(
             "Return one decision for this candidate with a genuinely different our_title, "
             "written from the MintiStudio audience's problem. If no distinct title is possible, return lowfit."
         )
-        result = call_json("judge", model=BLOG_MODEL_JUDGE, system_prompt=SYSTEM_PROMPT, user_prompt=repair_prompt)
+        result = call_json(stage_name, model=BLOG_MODEL_JUDGE, system_prompt=SYSTEM_PROMPT, user_prompt=repair_prompt)
         repair_results.append(result)
         payload = json.loads(result.content)
         replacement = (payload.get("decisions") or [{}])[0]
@@ -378,9 +379,23 @@ def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dic
         )
 
 
-def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _usage_payload(result) -> dict[str, Any]:
+    return {
+        "model": result.model,
+        "input_tokens": result.input_tokens,
+        "cached_input_tokens": result.cached_input_tokens,
+        "cache_write_input_tokens": result.cache_write_input_tokens,
+        "output_tokens": result.output_tokens,
+        "reasoning_tokens": result.reasoning_tokens,
+        "cost_usd": str(result.cost_usd),
+        "_result": result,
+    }
+
+
+def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, str]], *, dry_run: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     decisions: list[dict[str, Any]] = []
     usages: list[dict[str, Any]] = []
+    stage_name = "judge_dry" if dry_run else "judge"
     for batch in _chunks(candidates):
         prompt = _build_user_prompt(batch, existing)
         result = None
@@ -388,7 +403,7 @@ def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, 
         missing_ids: list[int] = []
         for attempt in range(2):
             result = call_json(
-                "judge",
+                stage_name,
                 model=BLOG_MODEL_JUDGE,
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=prompt if attempt == 0 else prompt + "\n\nThe prior response omitted candidates. Return one decision for every candidate_id.",
@@ -402,30 +417,12 @@ def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, 
                 break
         if missing_ids:
             raise RuntimeError(f"LLM omitted decisions for candidate ids: {missing_ids[:20]}")
-        llm_decisions, repair_results = _validate_title_distance(candidates=batch, decisions=llm_decisions, existing=existing)
+        llm_decisions, repair_results = _validate_title_distance(candidates=batch, decisions=llm_decisions, existing=existing, stage_name=stage_name)
         decisions.extend(llm_decisions)
         if result:
-            usages.append(
-                {
-                    "model": result.model,
-                    "input_tokens": result.input_tokens,
-                    "cached_input_tokens": result.cached_input_tokens,
-                    "output_tokens": result.output_tokens,
-                    "cost_usd": str(result.cost_usd),
-                    "_result": result,
-                }
-            )
+            usages.append(_usage_payload(result))
         for repair_result in repair_results:
-            usages.append(
-                {
-                    "model": repair_result.model,
-                    "input_tokens": repair_result.input_tokens,
-                    "cached_input_tokens": repair_result.cached_input_tokens,
-                    "output_tokens": repair_result.output_tokens,
-                    "cost_usd": str(repair_result.cost_usd),
-                    "_result": repair_result,
-                }
-            )
+            usages.append(_usage_payload(repair_result))
     return decisions, usages
 
 
@@ -468,7 +465,7 @@ def judge(
         decisions = list(prefiltered)
         usages: list[dict[str, Any]] = []
         if remaining:
-            llm_decisions, usages = _run_llm_batches(remaining, existing)
+            llm_decisions, usages = _run_llm_batches(remaining, existing, dry_run=dry_run)
             decisions.extend(llm_decisions)
             _apply_decisions(
                 conn,
@@ -478,9 +475,8 @@ def judge(
                 preserve_seed=enrich_seeds,
                 rejudge=rejudge_queued or rejudge_rejected,
             )
-            if not dry_run:
-                for usage in usages:
-                    log_usage("judge", usage["_result"])
+            for usage in usages:
+                log_usage("judge_dry" if dry_run else "judge", usage["_result"])
         if not dry_run:
             conn.commit()
         counts: dict[str, int] = {}

@@ -82,6 +82,13 @@ def _cached_tokens(usage: Any) -> int:
     return _usage_value(details, "cached_tokens", "cached_input_tokens")
 
 
+def _cache_write_tokens(usage: Any) -> int:
+    details = getattr(usage, "input_tokens_details", None) or getattr(usage, "prompt_tokens_details", None)
+    if not details:
+        return 0
+    return _usage_value(details, "cache_write_tokens", "cache_write_input_tokens", "cache_creation_tokens", "cache_creation_input_tokens")
+
+
 def _decode_image_response(response: Any) -> bytes:
     data = getattr(response, "data", None) or []
     if not data:
@@ -114,6 +121,7 @@ def generate_blog_image(
     topic_id: int | None = None,
     run_id: int | None = None,
     overwrite: bool = True,
+    dry_run: bool = False,
 ) -> BlogImageResult:
     _check_budget()
     if OpenAI is None:
@@ -146,6 +154,7 @@ def generate_blog_image(
             usage = getattr(response, "usage", None)
             input_tokens = _usage_value(usage, "input_tokens", "prompt_tokens")
             cached_tokens = _cached_tokens(usage)
+            cache_write_tokens = _cache_write_tokens(usage)
             output_tokens = _usage_value(usage, "output_tokens", "image_tokens")
             cost = compute_image_cost(selected_model, input_tokens, cached_tokens, output_tokens)
             usage_result = LLMResult(
@@ -154,11 +163,12 @@ def generate_blog_image(
                 model=selected_model,
                 input_tokens=input_tokens,
                 cached_input_tokens=cached_tokens,
+                cache_write_input_tokens=cache_write_tokens,
                 output_tokens=output_tokens,
                 reasoning_tokens=0,
                 cost_usd=cost,
             )
-            log_usage("image", usage_result, topic_id=topic_id, run_id=run_id, images=1, quality=selected_quality)
+            log_usage("image_dry" if dry_run else "image", usage_result, topic_id=topic_id, run_id=run_id, images=1, quality=selected_quality)
             return BlogImageResult(
                 kind=kind,
                 marker=marker,

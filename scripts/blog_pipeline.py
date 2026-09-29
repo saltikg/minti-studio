@@ -196,7 +196,7 @@ def _stable_prefix() -> dict[str, Any]:
     return {
         "facts": _read_text(CONTEXT_ROOT / "minti_facts.md"),
         "style_guide": _read_text(CONTEXT_ROOT / "style_guide.md"),
-        "example_articles": _published_articles(3, include_content=True),
+        "example_articles": _published_articles(1, include_content=True),
         "screenshots": _load_manifest(),
         "allowed_components": {
             "callouts": [":::info Optional title\\nBody\\n:::", ":::tip Optional title\\nBody\\n:::", ":::warning Optional title\\nBody\\n:::"],
@@ -258,9 +258,10 @@ def _check_run_budget(state: PipelineState) -> None:
 
 def _call_stage(state: PipelineState, stage: str, model: str, system_prompt: str, payload: dict[str, Any]) -> dict[str, Any]:
     _check_run_budget(state)
-    result = call_json(stage, model=model, system_prompt=system_prompt, user_prompt=json_dumps_compact(payload))
+    usage_stage = f"{stage}_dry" if state.dry_run else stage
+    result = call_json(usage_stage, model=model, system_prompt=system_prompt, user_prompt=json_dumps_compact(payload))
     state.run_cost += result.cost_usd
-    log_usage(stage, result, topic_id=int(state.topic["id"]), run_id=state.run_id)
+    log_usage(usage_stage, result, topic_id=int(state.topic["id"]), run_id=state.run_id)
     return json.loads(result.content), result.cost_usd
 
 
@@ -534,6 +535,7 @@ def _run_image_stage(
             topic_id=int(state.topic["id"]),
             run_id=state.run_id,
             overwrite=True,
+            dry_run=state.dry_run,
         )
         article["cover_image_url"] = cover_result.url
         output["cover"] = _image_result_payload(cover_result)
@@ -565,6 +567,7 @@ def _run_image_stage(
                 topic_id=int(state.topic["id"]),
                 run_id=state.run_id,
                 overwrite=True,
+                dry_run=state.dry_run,
             )
             output["visuals"].append(_image_result_payload(result))
             state.run_cost += result.cost_usd
@@ -584,6 +587,7 @@ def _run_image_stage(
                     topic_id=int(state.topic["id"]),
                     run_id=state.run_id,
                     overwrite=True,
+                    dry_run=state.dry_run,
                 )
                 state.run_cost += medium.cost_usd
                 output["test_variants"].append({"low": _image_result_payload(result), "medium": _image_result_payload(medium)})
