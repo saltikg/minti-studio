@@ -69,6 +69,55 @@ def _word_count(markdown_text: str) -> int:
     return len(re.findall(r"\b[\w'-]+\b", text))
 
 
+def _normalize_marker(value: Any) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"IMAGE_[123]", text)
+    return match.group(0) if match else text
+
+
+def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
+    article = dict(article or {})
+    if not article.get("content_md") and article.get("content"):
+        article["content_md"] = article.get("content")
+    if not article.get("summary") and article.get("excerpt"):
+        article["summary"] = article.get("excerpt")
+    article["slug"] = _slugify(article.get("slug") or article.get("title") or "article")
+    content = str(article.get("content_md") or "")
+    visuals: list[dict[str, Any]] = []
+    for visual in article.get("visuals") or []:
+        normalized = dict(visual)
+        marker = _normalize_marker(normalized.get("marker") or normalized.get("id"))
+        normalized["marker"] = marker
+        if marker and f"<!-- {marker} -->" not in content:
+            content = content.replace(str(visual.get("marker") or ""), f"<!-- {marker} -->")
+        visuals.append(normalized)
+    article["visuals"] = visuals
+    article["content_md"] = content
+    if not article.get("reading_time"):
+        article["reading_time"] = max(1, round(_word_count(content) / 220))
+    return article
+
+
+def _review_score(review: dict[str, Any]) -> int:
+    for key in ("total", "score"):
+        value = review.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+    scores = review.get("scores")
+    if isinstance(scores, dict):
+        total = 0
+        for value in scores.values():
+            try:
+                total += int(value)
+            except (TypeError, ValueError):
+                pass
+        return total
+    return 0
+
+
 def _load_manifest() -> list[dict[str, Any]]:
     raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     items: list[dict[str, Any]] = []
@@ -186,8 +235,7 @@ def _call_stage(state: PipelineState, stage: str, model: str, system_prompt: str
     _check_run_budget(state)
     result = call_json(stage, model=model, system_prompt=system_prompt, user_prompt=json_dumps_compact(payload))
     state.run_cost += result.cost_usd
-    if not state.dry_run:
-        log_usage(stage, result, topic_id=int(state.topic["id"]), run_id=state.run_id)
+    log_usage(stage, result, topic_id=int(state.topic["id"]), run_id=state.run_id)
     return json.loads(result.content), result.cost_usd
 
 
@@ -290,7 +338,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
     target_dir.mkdir(parents=True, exist_ok=True)
     placed: list[dict[str, str]] = []
     for visual in article.get("visuals") or []:
-        marker = str(visual.get("marker") or "")
+        marker = _normalize_marker(visual.get("marker") or visual.get("id"))
         if visual.get("type") != "screenshot" or marker not in {"IMAGE_1", "IMAGE_2", "IMAGE_3"}:
             continue
         screenshot = screenshot_by_id.get(str(visual.get("screenshot_id") or ""))
@@ -388,6 +436,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             },
         }
         article, cost = _call_stage(state, "writer", BLOG_MODEL_WRITER, _writer_prompt(), user_base)
+        article = _normalize_article_payload(article)
         conn = get_db()
         state.seq += 1
         set_current_stage(conn, state.run_id, "writer")
@@ -402,7 +451,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
         review_1, cost = _call_stage(state, "reviewer_1", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
         state.seq += 1
-        review_1_score = int(review_1.get("total") or 0)
+        review_1_score = _review_score(review_1)
         record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_1", status="done", model=BLOG_MODEL_REVIEWER, output=review_1, score=review_1_score, cost_usd=cost)
         conn.commit()
 
@@ -410,6 +459,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         if review_1_score < BLOG_REVIEW_PASS or review_1.get("blocking_issues"):
             revision_payload = {**user_base, "article": article, "review": review_1}
             article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
+            article = _normalize_article_payload(article)
             state.seq += 1
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
@@ -419,11 +469,12 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             review_2, cost = _call_stage(state, "reviewer_2", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
             final_review = review_2
             state.seq += 1
-            review_2_score = int(review_2.get("total") or 0)
+            review_2_score = _review_score(review_2)
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost)
             conn.commit()
             if review_2_score < BLOG_REVIEW_PASS or review_2.get("blocking_issues"):
                 article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
+                article = _normalize_article_payload(article)
                 state.seq += 1
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
@@ -433,6 +484,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
         before_design = str(article.get("content_md") or "")
         designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), {**user_base, "article": article})
+        designer_output = _normalize_article_payload(designer_output)
         after_design = str(designer_output.get("content_md") or "")
         guard_ok, guard_note = _guard_designer(before_design, after_design)
         if guard_ok:
@@ -446,7 +498,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
         article = _replace_screenshot_placeholders(article, screenshots)
         run_status = "draft_ready"
-        final_score = int(final_review.get("total") or 0)
+        final_score = _review_score(final_review)
         if final_score < BLOG_REVIEW_PASS or final_review.get("blocking_issues") or not checks.get("ok"):
             run_status = "needs_you"
 
