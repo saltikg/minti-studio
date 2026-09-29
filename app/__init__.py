@@ -2,10 +2,11 @@
 import os
 import json  # <- eklendi
 import logging
+from html import escape
 from datetime import datetime, timedelta
 
 
-from flask import Flask, jsonify, redirect, g, url_for
+from flask import Flask, Response, jsonify, redirect, g, request, url_for
 from dotenv import load_dotenv
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir_on_startup
@@ -130,6 +131,68 @@ def create_app():
         @app.get("/")
         def legacy_root_redirect():
             return redirect(url_for("video_shorts_bp.home"))
+
+    def _absolute_public_url(path: str) -> str:
+        base_url = (app.config.get("BASE_URL") or request.url_root).rstrip("/")
+        return f"{base_url}{path}"
+
+    def _sitemap_lastmod(value):
+        if not value:
+            return ""
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+
+    @app.get("/sitemap.xml")
+    def sitemap_xml():
+        from app.video_shorts.services.blog_articles import ensure_default_blog_articles_seeded, list_published_blog_articles
+
+        ensure_default_blog_articles_seeded()
+        entries = [
+            {
+                "loc": _absolute_public_url(url_for("video_shorts_bp.home")),
+                "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url(url_for("video_shorts_bp.blog_index")),
+                "lastmod": "",
+            },
+        ]
+        for article in list_published_blog_articles():
+            lastmod = article.get("updated_at") or article.get("published_at")
+            entries.append(
+                {
+                    "loc": _absolute_public_url(url_for("video_shorts_bp.blog_article", slug=article["slug"])),
+                    "lastmod": _sitemap_lastmod(lastmod),
+                }
+            )
+        lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        for entry in entries:
+            lines.append("  <url>")
+            lines.append(f"    <loc>{escape(entry['loc'])}</loc>")
+            if entry.get("lastmod"):
+                lines.append(f"    <lastmod>{escape(entry['lastmod'])}</lastmod>")
+            lines.append("  </url>")
+        lines.append("</urlset>")
+        response = Response("\n".join(lines) + "\n", mimetype="application/xml")
+        response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
+
+    @app.get("/robots.txt")
+    def robots_txt():
+        lines = [
+            "User-agent: *",
+            "Disallow: /video_shorts/admin/",
+            "Disallow: /video_shorts/api/admin/",
+            "Disallow: /video_shorts/login",
+            "Disallow: /video_shorts/logout",
+            "Allow: /video_shorts/blog/",
+            f"Sitemap: {_absolute_public_url('/sitemap.xml')}",
+        ]
+        response = Response("\n".join(lines) + "\n", mimetype="text/plain")
+        response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
 
     @app.errorhandler(Exception)
     def handle_application_exception(exc):

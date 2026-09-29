@@ -15,10 +15,20 @@ from app.video_shorts.services.outreach_email_send import (
 
 
 BLOG_NOTIFY_EMAIL = os.getenv("BLOG_NOTIFY_EMAIL", "info@mintistudio.com")
+BLOG_PUBLIC_BASE_URL = (os.getenv("BLOG_PUBLIC_BASE_URL") or "https://mintistudio.com").rstrip("/")
 
 
 def _line(label: str, value: Any) -> str:
     return f"{label}: {value if value not in (None, '') else '-'}"
+
+
+def _absolute_url(value: str) -> str:
+    text = str(value or "").strip()
+    if not text or text.startswith("http"):
+        return text
+    if text.startswith("/"):
+        return f"{BLOG_PUBLIC_BASE_URL}{text}"
+    return text
 
 
 def send_blog_run_notification(
@@ -55,7 +65,7 @@ def send_blog_run_notification(
             "Images/screenshots used:",
         ]
     )
-    body_lines.extend([f"- {item}" for item in images] or ["- -"])
+    body_lines.extend([f"- {_absolute_url(item)}" for item in images] or ["- -"])
     if reason:
         body_lines.extend(["", _line("Reason", reason)])
     text = "\n".join(body_lines).strip() + "\n"
@@ -85,4 +95,3 @@ def send_blog_run_notification(
     if refused:
         raise RuntimeError(f"Zoho SMTP refused recipient: {refused}")
     return {"status": "accepted", "message_id": message_id, "transport": "zoho", "to": recipient}
-

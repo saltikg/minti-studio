@@ -8,7 +8,7 @@ from typing import Any
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 
 
-RUN_STATUSES = ("running", "draft_ready", "needs_you", "failed")
+RUN_STATUSES = ("running", "draft_ready", "needs_you", "failed", "published")
 STAGE_ORDER = ("writer", "checks", "reviewer_1", "revision_1", "reviewer_2", "revision_2", "designer", "images")
 
 
@@ -59,6 +59,22 @@ def finish_run(conn, run_id: int | None, *, status: str, article_id: int | None 
     )
 
 
+def mark_run_notified(conn, run_id: int | None) -> None:
+    if not run_id or "notified_at" not in table_columns(conn, "blog_pipeline_runs"):
+        return
+    conn.execute(
+        "UPDATE blog_pipeline_runs SET notified_at = COALESCE(notified_at, CURRENT_TIMESTAMP) WHERE id = ?",
+        [run_id],
+    )
+
+
+def run_was_notified(conn, run_id: int | None) -> bool:
+    if not run_id or "notified_at" not in table_columns(conn, "blog_pipeline_runs"):
+        return False
+    row = conn.execute("SELECT notified_at FROM blog_pipeline_runs WHERE id = ?", [run_id]).fetchone()
+    return bool(row and row[0])
+
+
 def set_current_stage(conn, run_id: int | None, stage: str) -> None:
     if not run_id:
         return
@@ -107,13 +123,15 @@ def record_stage(
 def list_admin_runs(limit: int = 100) -> list[dict[str, Any]]:
     conn = get_db_readonly()
     try:
-        if not table_columns(conn, "blog_pipeline_runs"):
+        run_columns = table_columns(conn, "blog_pipeline_runs")
+        if not run_columns:
             return []
         article_slug_sql = "a.slug" if table_columns(conn, "blog_articles") else "NULL"
+        notified_sql = "r.notified_at" if "notified_at" in run_columns else "NULL AS notified_at"
         rows = conn.execute(
             f"""
             SELECT r.id, r.topic_id, r.article_id, r.status, r.current_stage, r.final_review_score,
-                   r.total_cost_usd, r.error, r.started_at, r.finished_at,
+                   r.total_cost_usd, r.error, r.started_at, r.finished_at, {notified_sql},
                    t.title AS topic_title,
                    {article_slug_sql} AS article_slug
             FROM blog_pipeline_runs r
@@ -152,12 +170,14 @@ def list_admin_runs(limit: int = 100) -> list[dict[str, Any]]:
 def get_admin_run_detail(run_id: int) -> dict[str, Any] | None:
     conn = get_db_readonly()
     try:
-        if not table_columns(conn, "blog_pipeline_runs"):
+        run_columns = table_columns(conn, "blog_pipeline_runs")
+        if not run_columns:
             return None
+        notified_sql = "r.notified_at" if "notified_at" in run_columns else "NULL AS notified_at"
         row = conn.execute(
-            """
+            f"""
             SELECT r.id, r.topic_id, r.article_id, r.status, r.current_stage, r.final_review_score,
-                   r.total_cost_usd, r.error, r.started_at, r.finished_at,
+                   r.total_cost_usd, r.error, r.started_at, r.finished_at, {notified_sql},
                    t.title AS topic_title, t.brief AS topic_brief,
                    a.title AS article_title, a.slug AS article_slug, a.content AS article_content,
                    a.cover_image_url AS article_cover_image_url
@@ -213,4 +233,13 @@ def publish_pipeline_topic_for_article(conn, *, article_id: int) -> None:
           AND status IN ('draft_ready', 'in_production', 'queued')
         """,
         [int(row[0])],
+    )
+    conn.execute(
+        """
+        UPDATE blog_pipeline_runs
+        SET status = 'published'
+        WHERE article_id = ?
+          AND status IN ('draft_ready', 'needs_you', 'running')
+        """,
+        [int(article_id)],
     )

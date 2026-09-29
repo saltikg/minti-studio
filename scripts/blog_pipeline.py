@@ -44,7 +44,9 @@ from app.video_shorts.services.blog_pipeline import current_month_spend, json_du
 from app.video_shorts.services.blog_pipeline_runs import (  # noqa: E402
     create_run,
     finish_run,
+    mark_run_notified,
     record_stage,
+    run_was_notified,
     set_current_stage,
 )
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns  # noqa: E402
@@ -536,7 +538,10 @@ def _article_image_urls(article: dict[str, Any]) -> list[str]:
     if cover:
         urls.append(cover)
     urls.extend(re.findall(r"!\[[^\]]*\]\((/video_shorts/static/img/blog/[^)]+)\)", str(article.get("content_md") or "")))
-    return urls
+    absolute: list[str] = []
+    for url in urls:
+        absolute.append(url if url.startswith("http") else f"{BASE_URL}{url}")
+    return absolute
 
 
 def _no_publish_reason(*, run_status: str, article: dict[str, Any], checks: dict[str, Any], final_score: int, image_status: str) -> str | None:
@@ -573,6 +578,13 @@ def _notify_run(
     published: bool = False,
 ) -> dict[str, Any]:
     article = article or {}
+    if state and state.run_id and not state.dry_run:
+        check_conn = get_db()
+        try:
+            if run_was_notified(check_conn, state.run_id):
+                return {"status": "skipped", "notes": "already notified", "payload": {}}
+        finally:
+            check_conn.close()
     if status_label == "published":
         subject = f"[Minti Blog] Published — {title}"
     elif status_label == "failed":
@@ -605,6 +617,8 @@ def _notify_run(
         try:
             row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [state.run_id]).fetchone()
             record_stage(conn, run_id=state.run_id, seq=int(row[0] or 0) + 1, stage="notification", status=status, output=payload, notes=notes)
+            if status == "done":
+                mark_run_notified(conn, state.run_id)
             conn.commit()
         finally:
             conn.close()
@@ -1108,6 +1122,15 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             conn.commit()
         finally:
             conn.close()
+        if published:
+            conn = get_db()
+            try:
+                finish_run(conn, state.run_id, status="published", article_id=article_id, final_review_score=final_score)
+                conn.commit()
+            finally:
+                conn.close()
+            run_status = "published"
+            result["status"] = "published"
         notification = _notify_run(
             state=state,
             status_label="published" if published else "draft_kept",

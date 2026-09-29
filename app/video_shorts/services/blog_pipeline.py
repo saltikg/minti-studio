@@ -562,6 +562,10 @@ def blog_topics_header_stats() -> dict[str, Any]:
     try:
         spend = current_month_spend(conn)
         row = None
+        last_scout_run = None
+        if table_columns(conn, "blog_sources"):
+            source_row = conn.execute("SELECT MAX(last_checked_at) FROM blog_sources").fetchone()
+            last_scout_run = source_row[0] if source_row else None
         if table_columns(conn, "blog_topics"):
             row = conn.execute(
                 """
@@ -572,8 +576,17 @@ def blog_topics_header_stats() -> dict[str, Any]:
                   AND created_at >= CURRENT_TIMESTAMP - INTERVAL '2 hours'
                 """
             ).fetchone()
+            if last_scout_run is None:
+                topic_row = conn.execute(
+                    """
+                    SELECT MAX(created_at)
+                    FROM blog_topics
+                    WHERE source_type IN ('competitor_blog', 'youtube_news', 'youtube_channel')
+                    """
+                ).fetchone()
+                last_scout_run = topic_row[0] if topic_row else None
         return {
-            "last_scout_run": row[0] if row else None,
+            "last_scout_run": last_scout_run,
             "recent_candidates": int(row[1] or 0) if row else 0,
             "recent_accepted": int(row[2] or 0) if row else 0,
             "monthly_spend": spend,
