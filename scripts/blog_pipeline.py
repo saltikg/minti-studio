@@ -66,6 +66,14 @@ SELF_DISCLAIMER_RE = re.compile(
     r"not a promised MintiStudio|confirm .*MintiStudio|MintiStudio .*does not (?:claim|promise|specify))",
     re.I,
 )
+IMAGE_MARKERS = ("IMAGE_1", "IMAGE_2", "IMAGE_3")
+IMAGE_COMMENT_RE = re.compile(r"<!--\s*IMAGE_([123])\s*-->")
+IMAGE_PLACEHOLDER_VARIANT_RE = re.compile(
+    r"<!--\s*IMAGE_([123])\s*-->|"
+    r"\{\{\s*IMAGE_([123])\s*\}\}|"
+    r"\[\s*IMAGE_([123])\s*\]|"
+    r"(?<![A-Za-z0-9_])IMAGE_([123])(?![A-Za-z0-9_])"
+)
 
 
 @dataclass
@@ -98,6 +106,168 @@ def _normalize_marker(value: Any) -> str:
     return match.group(0) if match else text
 
 
+def _image_comment(marker: str) -> str:
+    return f"<!-- {marker} -->"
+
+
+def _normalize_image_placeholder_syntax(content: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        number = next(group for group in match.groups() if group)
+        return _image_comment(f"IMAGE_{number}")
+
+    return IMAGE_PLACEHOLDER_VARIANT_RE.sub(replace, content or "")
+
+
+def _remove_duplicate_image_placeholders(content: str) -> str:
+    seen: set[str] = set()
+
+    def replace(match: re.Match[str]) -> str:
+        marker = f"IMAGE_{match.group(1)}"
+        if marker in seen:
+            return ""
+        seen.add(marker)
+        return _image_comment(marker)
+
+    content = IMAGE_COMMENT_RE.sub(replace, content or "")
+    return re.sub(r"\n{3,}", "\n\n", content).strip()
+
+
+def _is_h2(line: str) -> bool:
+    return bool(re.match(r"^##\s+\S", line or ""))
+
+
+def _is_final_section_heading(line: str) -> bool:
+    if not _is_h2(line):
+        return False
+    heading = re.sub(r"^##\s+", "", line).strip().lower()
+    return any(term in heading for term in ("final", "conclusion", "cta", "next step", "related"))
+
+
+def _is_safe_paragraph_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return not (
+        stripped.startswith(("#", "|", ">", ":::", "<!--", "!["))
+        or re.match(r"^([-*+]\s+|\d+\.\s+)", stripped)
+    )
+
+
+def _candidate_h2_indexes(lines: list[str]) -> list[int]:
+    indexes = [index for index, line in enumerate(lines) if _is_h2(line) and not _is_final_section_heading(line)]
+    return indexes or [index for index, line in enumerate(lines) if _is_h2(line)]
+
+
+def _insert_position_after_first_paragraph(lines: list[str], start_index: int) -> int:
+    index = start_index + 1
+    while index < len(lines):
+        line = lines[index]
+        if _is_h2(line) or _is_final_section_heading(line):
+            return index
+        if _is_safe_paragraph_line(line):
+            while index + 1 < len(lines) and _is_safe_paragraph_line(lines[index + 1]):
+                index += 1
+            return index + 1
+        index += 1
+    return len(lines)
+
+
+def _fallback_insert_position(lines: list[str]) -> int:
+    for index, line in enumerate(lines):
+        if _is_final_section_heading(line):
+            return index
+    return len(lines)
+
+
+def _insert_missing_image_placeholders(content: str) -> str:
+    lines = (content or "").splitlines()
+    present = {f"IMAGE_{match.group(1)}" for match in IMAGE_COMMENT_RE.finditer(content or "")}
+    missing = [marker for marker in IMAGE_MARKERS if marker not in present]
+    if not missing:
+        return content
+
+    h2_indexes = _candidate_h2_indexes(lines)
+    fallback_index = _fallback_insert_position(lines)
+    slot_positions = [_insert_position_after_first_paragraph(lines, index) for index in h2_indexes]
+    if fallback_index not in slot_positions:
+        slot_positions.append(fallback_index)
+    slot_positions = sorted(set(slot_positions)) or [len(lines)]
+    planned: dict[int, list[str]] = {}
+    for marker in missing:
+        marker_index = IMAGE_MARKERS.index(marker)
+        slot_index = min(round(marker_index * (len(slot_positions) - 1) / 2), len(slot_positions) - 1)
+        planned.setdefault(slot_positions[slot_index], []).append(marker)
+    for insert_at in sorted(planned, reverse=True):
+        insertion: list[str] = [""]
+        for marker in sorted(planned[insert_at], key=IMAGE_MARKERS.index):
+            insertion.extend([_image_comment(marker), ""])
+        lines[insert_at:insert_at] = insertion
+    return "\n".join(lines).strip()
+
+
+def _previous_h2_and_first_paragraph(content: str, marker: str) -> tuple[str, str]:
+    lines = (content or "").splitlines()
+    marker_line = next((index for index, line in enumerate(lines) if _image_comment(marker) in line), len(lines))
+    heading = ""
+    heading_index = 0
+    for index in range(marker_line, -1, -1):
+        if index < len(lines) and _is_h2(lines[index]):
+            heading = re.sub(r"^##\s+", "", lines[index]).strip()
+            heading_index = index
+            break
+    paragraph = ""
+    for line in lines[heading_index + 1 : marker_line]:
+        if _is_safe_paragraph_line(line):
+            paragraph = line.strip()
+            break
+    return heading or "MintiStudio workflow", paragraph
+
+
+def _generated_visual_for_marker(content: str, marker: str) -> dict[str, Any]:
+    heading, paragraph = _previous_h2_and_first_paragraph(content, marker)
+    prompt_detail = f" Section context: {paragraph[:320]}" if paragraph else ""
+    return {
+        "marker": marker,
+        "type": "generate",
+        "alt": f"{heading} illustration",
+        "prompt": f"Landscape editorial visual for the section '{heading}'.{prompt_detail}",
+    }
+
+
+def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[str, Any]:
+    content = _normalize_image_placeholder_syntax(str(article.get("content_md") or ""))
+    content = _remove_duplicate_image_placeholders(content)
+    content = _insert_missing_image_placeholders(content)
+    article["content_md"] = content
+
+    visual_by_marker: dict[str, dict[str, Any]] = {}
+    for visual in article.get("visuals") or []:
+        marker = _normalize_marker(visual.get("marker") or visual.get("id"))
+        if marker not in IMAGE_MARKERS or marker in visual_by_marker:
+            continue
+        normalized = dict(visual)
+        normalized["marker"] = marker
+        if normalized.get("type") not in {"screenshot", "generate"}:
+            normalized["type"] = "generate"
+        if normalized.get("type") == "generate" and not normalized.get("prompt"):
+            generated = _generated_visual_for_marker(content, marker)
+            normalized["prompt"] = normalized.get("brief") or normalized.get("description") or generated["prompt"]
+            normalized.setdefault("alt", generated["alt"])
+        visual_by_marker[marker] = normalized
+
+    screenshot_count = 0
+    normalized_visuals: list[dict[str, Any]] = []
+    for marker in IMAGE_MARKERS:
+        visual = dict(visual_by_marker.get(marker) or _generated_visual_for_marker(content, marker))
+        if visual.get("type") == "screenshot":
+            screenshot_count += 1
+            if screenshot_count > 2:
+                visual = _generated_visual_for_marker(content, marker)
+        normalized_visuals.append(visual)
+    article["visuals"] = normalized_visuals
+    return article
+
+
 def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
     article = dict(article or {})
     if not article.get("content_md"):
@@ -118,6 +288,7 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         visuals.append(normalized)
     article["visuals"] = visuals
     article["content_md"] = content
+    article = _normalize_image_placeholders_and_visuals(article)
     if not article.get("meta_title"):
         article["meta_title"] = str(article.get("title") or "")[:60]
     if not article.get("meta_description"):
@@ -1000,9 +1171,9 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             revision_payload = {**user_base, "article": article, "review": review_1}
             previous_visuals = list(article.get("visuals") or [])
             article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
-            article = _normalize_article_payload(article)
             if not article.get("visuals") and previous_visuals:
                 article["visuals"] = previous_visuals
+            article = _normalize_article_payload(article)
             state.seq += 1
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
@@ -1018,9 +1189,9 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             if review_2_score < BLOG_REVIEW_PASS or _blocking_issues(review_2, checks):
                 previous_visuals = list(article.get("visuals") or [])
                 article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
-                article = _normalize_article_payload(article)
                 if not article.get("visuals") and previous_visuals:
                     article["visuals"] = previous_visuals
+                article = _normalize_article_payload(article)
                 state.seq += 1
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
