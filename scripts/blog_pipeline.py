@@ -77,8 +77,8 @@ def _normalize_marker(value: Any) -> str:
 
 def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
     article = dict(article or {})
-    if not article.get("content_md") and article.get("content"):
-        article["content_md"] = article.get("content")
+    if not article.get("content_md"):
+        article["content_md"] = article.get("content") or article.get("content_markdown")
     if not article.get("summary") and article.get("excerpt"):
         article["summary"] = article.get("excerpt")
     article["slug"] = _slugify(article.get("slug") or article.get("title") or "article")
@@ -88,22 +88,31 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(visual)
         marker = _normalize_marker(normalized.get("marker") or normalized.get("id"))
         normalized["marker"] = marker
+        if normalized.get("type") not in {"screenshot", "generate"}:
+            normalized["type"] = "generate"
+        if normalized.get("type") == "generate" and not normalized.get("prompt"):
+            normalized["prompt"] = normalized.get("brief") or normalized.get("description") or ""
         if marker and f"<!-- {marker} -->" not in content:
             content = content.replace(str(visual.get("marker") or ""), f"<!-- {marker} -->")
         visuals.append(normalized)
     article["visuals"] = visuals
     article["content_md"] = content
+    if not article.get("meta_title"):
+        article["meta_title"] = str(article.get("title") or "")[:60]
+    if not article.get("meta_description"):
+        article["meta_description"] = str(article.get("summary") or "")[:155]
     if not article.get("reading_time"):
         article["reading_time"] = max(1, round(_word_count(content) / 220))
     return article
 
 
 def _review_score(review: dict[str, Any]) -> int:
-    for key in ("total", "score"):
+    for key in ("total", "score", "overall_score"):
         value = review.get(key)
         if value is not None:
             try:
-                return int(value)
+                parsed = int(value)
+                return parsed * 10 if key == "overall_score" and parsed <= 10 else parsed
             except (TypeError, ValueError):
                 pass
     scores = review.get("scores")
