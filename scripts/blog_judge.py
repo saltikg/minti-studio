@@ -34,8 +34,8 @@ A topic fits only if a genuinely useful article for that audience can naturally 
 Duplicate means the same reader question as an existing article or queued topic, even with different wording.
 The competitor headline is a demand signal only. Do not reuse or lightly reword it. our_title and angle must be MintiStudio's own.
 
-Return JSON object only:
-{"decisions":[{"id":123,"decision":"accept|duplicate|offtopic|lowfit","fit_score":0,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","is_timely":false,"expires_in_days":null}]}
+Return JSON object only. For accepted topics, fit_score should usually be 60-100.
+{"decisions":[{"id":123,"decision":"accept|duplicate|offtopic|lowfit","fit_score":82,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","is_timely":false,"expires_in_days":null}]}
 """
 
 
