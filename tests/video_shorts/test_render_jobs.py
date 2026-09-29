@@ -79,6 +79,7 @@ stripe_module.billing_portal = SimpleNamespace(
 
 requests_module = _ensure_module("requests")
 requests_module.Response = type("Response", (), {})
+requests_module.RequestException = type("RequestException", (Exception,), {})
 requests_module.get = lambda *args, **kwargs: None
 requests_module.post = lambda *args, **kwargs: None
 requests_module.delete = lambda *args, **kwargs: None
@@ -753,6 +754,58 @@ def test_timed_out_processing_job_requeues_then_fails_and_releases_quota(monkeyp
     assert second_pass["failed"] == 1
     assert failed["status"] == "failed"
     assert snapshot["exports"]["used"] == 0
+
+
+def test_discovery_startup_recovery_requeues_first_processing_attempt(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "discovery_startup_requeue.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+    payload = {**_payload(1, "discovery-requeue"), "job_origin": render_jobs.DISCOVERY_JOB_ORIGIN}
+    queued = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=_input_hash("discovery-requeue"),
+        priority=render_jobs.DISCOVERY_JOB_PRIORITY,
+    )
+    claimed = render_jobs.claim_next_job("worker-discovery-startup", discovery_only=True)
+
+    result = render_jobs.recover_processing_discovery_jobs_on_startup()
+    recovered = render_jobs.get_job(queued["job"]["id"], user_id=user_id)
+
+    assert claimed["id"] == queued["job"]["id"]
+    assert result == {"requeued": 1, "failed": 0}
+    assert recovered["status"] == "queued"
+    assert "Discovery worker restarted" in recovered["error"]
+
+
+def test_discovery_startup_recovery_fails_second_processing_attempt(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "discovery_startup_fail.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+    payload = {**_payload(1, "discovery-fail"), "job_origin": render_jobs.DISCOVERY_JOB_ORIGIN}
+    queued = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=_input_hash("discovery-fail"),
+        priority=render_jobs.DISCOVERY_JOB_PRIORITY,
+    )
+    claimed = render_jobs.claim_next_job("worker-discovery-startup", discovery_only=True)
+    conn = db_service.get_db()
+    try:
+        conn.execute(
+            "UPDATE shorts_render_jobs SET attempts = ?, max_attempts = ? WHERE id = ?",
+            [2, 3, claimed["id"]],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = render_jobs.recover_processing_discovery_jobs_on_startup()
+    recovered = render_jobs.get_job(queued["job"]["id"], user_id=user_id)
+
+    assert result == {"requeued": 0, "failed": 1}
+    assert recovered["status"] == "failed"
+    assert "retry already used" in recovered["error"]
 
 
 def test_done_job_cache_returns_existing_result_without_new_job(monkeypatch, tmp_path):

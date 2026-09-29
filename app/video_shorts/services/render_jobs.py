@@ -1139,6 +1139,37 @@ def requeue_dead_local_worker_jobs() -> Dict[str, int]:
     return {"requeued": requeued, "failed": failed}
 
 
+def recover_processing_discovery_jobs_on_startup() -> Dict[str, int]:
+    """Recover discovery demo jobs left processing by a previous discovery worker process."""
+    conn = get_db()
+    try:
+        ensure_render_jobs_schema(conn)
+        rows = conn.execute(
+            f"""
+            {_job_select_sql()}
+            WHERE status = ?
+              AND ({_discovery_job_clause(conn)})
+            ORDER BY started_at IS NULL, started_at ASC, created_at ASC
+            """,
+            [JOB_STATUS_PROCESSING],
+        ).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+
+    requeued = 0
+    failed = 0
+    for row in rows:
+        job = _row_to_job(row)
+        if int(job.get("attempts") or 0) >= 2:
+            mark_job_failed(job["id"], "Discovery worker restarted while processing; retry already used.")
+            failed += 1
+        else:
+            requeue_job(job["id"], "Discovery worker restarted while processing; requeued automatically.")
+            requeued += 1
+    return {"requeued": requeued, "failed": failed}
+
+
 def finalize_job_success(job_id: str) -> Dict[str, Any]:
     job = get_job(job_id)
     if job and job.get("user_id"):

@@ -201,6 +201,12 @@ def _print_processing_jobs(jobs: Iterable[ProcessingJob], now: datetime) -> None
         )
 
 
+def _is_discovery_job(job: ProcessingJob) -> bool:
+    origin = str(job.origin or "").strip().lower()
+    job_type = str(job.job_type or "").strip().lower()
+    return origin in {"discovery_demo", "discovery_promote"} or job_type.startswith("discovery_")
+
+
 def main() -> int:
     _load_env_file()
     now = datetime.now(timezone.utc)
@@ -212,9 +218,32 @@ def main() -> int:
         return 2
 
     if jobs:
-        print(f"WAIT — {len(jobs)} job(s) in progress:")
+        customer_jobs = [job for job in jobs if not _is_discovery_job(job)]
+        if customer_jobs:
+            print(f"WAIT — {len(customer_jobs)} customer/non-discovery job(s) in progress:")
+            _print_processing_jobs(customer_jobs, now)
+            discovery_jobs = [job for job in jobs if _is_discovery_job(job)]
+            if discovery_jobs:
+                print(f"  Discovery job(s) also running ({len(discovery_jobs)}), but customer jobs keep deploy blocked:")
+                _print_processing_jobs(discovery_jobs, now)
+            return 1
+
+        recent_hits = _recent_web_hits(now)
+        if recent_hits:
+            print(
+                "CAUTION — web request(s) in the last 5 min; a restart causes a brief (~5-7s) "
+                "outage for anyone currently on the site. Safe to proceed if you accept that."
+            )
+            print(f"  - recent requests seen: {len(recent_hits)}")
+            print(f"  - last request: {_format_age(recent_hits[-1], now)}")
+            print(f"  - discovery jobs in progress: {len(jobs)}; deploy may proceed, but restart discovery worker only when idle:")
+            _print_processing_jobs(jobs, now)
+            return 0
+
+        print(f"SAFE_DEFER_DISCOVERY — {len(jobs)} discovery job(s) in progress:")
         _print_processing_jobs(jobs, now)
-        return 1
+        print("deploy now; restart the discovery worker only when idle")
+        return 0
 
     recent_hits = _recent_web_hits(now)
     if recent_hits:

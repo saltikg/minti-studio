@@ -78,6 +78,7 @@ from app.video_shorts.services.render_jobs import (
     get_job,
     mark_job_done,
     mark_job_failed,
+    recover_processing_discovery_jobs_on_startup,
     requeue_dead_local_worker_jobs,
     requeue_job,
     requeue_timed_out_jobs,
@@ -1707,6 +1708,12 @@ def run_worker_loop() -> None:
     with app.app_context():
         app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
         if mode in {"all", "discovery"}:
+            try:
+                recovered = recover_processing_discovery_jobs_on_startup()
+                if recovered.get("requeued") or recovered.get("failed"):
+                    app.logger.warning("Recovered discovery processing jobs at startup: %s", recovered)
+            except Exception:
+                app.logger.exception("Discovery processing job recovery failed at startup")
             try:
                 run_discovery_temp_janitor(force=True)
             except Exception:
