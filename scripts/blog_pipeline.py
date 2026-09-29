@@ -43,6 +43,12 @@ LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
 CTA_URL = "https://mintistudio.com/video_shorts/login"
+BASE_URL = (os.getenv("BLOG_PUBLIC_BASE_URL") or "https://mintistudio.com").rstrip("/")
+SELF_DISCLAIMER_RE = re.compile(
+    r"(not a claim that MintiStudio|do not assume Autopilot|should not be inferred from the price|"
+    r"not a promised MintiStudio|confirm .*MintiStudio|MintiStudio .*does not (?:claim|promise|specify))",
+    re.I,
+)
 
 
 @dataclass
@@ -83,7 +89,6 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         article["summary"] = article.get("excerpt")
     article["slug"] = _slugify(article.get("slug") or article.get("title") or "article")
     content = str(article.get("content_md") or "")
-    content = re.sub(r"(?m)^\\s*(IMAGE_[123])\\s*$", r"<!-- \1 -->", content)
     visuals: list[dict[str, Any]] = []
     for visual in article.get("visuals") or []:
         normalized = dict(visual)
@@ -93,8 +98,6 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
             normalized["type"] = "generate"
         if normalized.get("type") == "generate" and not normalized.get("prompt"):
             normalized["prompt"] = normalized.get("brief") or normalized.get("description") or ""
-        if marker and f"<!-- {marker} -->" not in content:
-            content = content.replace(str(visual.get("marker") or ""), f"<!-- {marker} -->")
         visuals.append(normalized)
     article["visuals"] = visuals
     article["content_md"] = content
@@ -168,7 +171,7 @@ def _published_articles(limit: int | None = None, *, include_content: bool = Fal
         rows = conn.execute(sql, params).fetchall()
         articles = []
         for row in rows:
-            item = {"title": row[0], "slug": row[1], "summary": row[2], "url": f"https://mintistudio.com/blog/{row[1]}/"}
+            item = {"title": row[0], "slug": row[1], "summary": row[2], "url": _canonical_blog_url(str(row[1] or ""))}
             if include_content:
                 item["content"] = row[3]
             articles.append(item)
@@ -253,6 +256,15 @@ def _internal_link_urls(articles: list[dict[str, Any]]) -> set[str]:
     return {str(article["url"]) for article in articles}
 
 
+def _canonical_blog_url(slug: str) -> str:
+    from app import create_app
+    from flask import url_for
+
+    app = create_app()
+    with app.test_request_context(base_url=BASE_URL):
+        return url_for("video_shorts_bp.blog_article", slug=slug, _external=True)
+
+
 def _article_links(markdown_text: str) -> list[str]:
     return re.findall(r"\[[^\]]+\]\((https?://[^)]+)\)", markdown_text or "")
 
@@ -290,6 +302,8 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
         issues.append("meta_description exceeds 155 characters")
     if CTA_URL not in content:
         issues.append("CTA link is missing")
+    if re.search(r"(?m)^\s*IMAGE_[123]\s*$", content):
+        issues.append("bare IMAGE_n placeholder text is not allowed; use exact <!-- IMAGE_n --> comments")
     placeholders = re.findall(r"<!--\s*IMAGE_[123]\s*-->", content)
     if sorted(placeholders) != ["<!-- IMAGE_1 -->", "<!-- IMAGE_2 -->", "<!-- IMAGE_3 -->"]:
         issues.append("content_md must contain exactly <!-- IMAGE_1 -->, <!-- IMAGE_2 -->, <!-- IMAGE_3 -->")
@@ -300,8 +314,10 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
         issues.append(f"word count {word_count} is outside 1200-1800")
     allowed_urls = _internal_link_urls(published) | {CTA_URL}
     for url in _article_links(content):
-        if "mintistudio.com/blog/" in url and url not in allowed_urls:
+        if "mintistudio.com" in url and url not in allowed_urls:
             issues.append(f"internal link not in published list: {url}")
+    if SELF_DISCLAIMER_RE.search(content):
+        issues.append("MintiStudio self-disclaimer is not allowed")
     screenshot_by_id = {item["id"]: item for item in screenshots}
     screenshot_count = 0
     visuals = article.get("visuals") or []
@@ -316,6 +332,26 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
     if screenshot_count > 2:
         issues.append("at most 2 visuals may be screenshots")
     return {"ok": not issues, "issues": issues, "fixed": fixed, "word_count": word_count}
+
+
+def _blocking_issues(review: dict[str, Any], checks: dict[str, Any] | None = None) -> list[Any]:
+    items: list[Any] = []
+    for key in ("blocking_issues", "required_fixes"):
+        value = review.get(key)
+        if isinstance(value, list):
+            items.extend(value)
+    for item in review.get("issues") or []:
+        if isinstance(item, dict) and str(item.get("severity") or "").lower() == "blocking":
+            items.append(item)
+    if checks and not checks.get("ok"):
+        items.extend([{"severity": "blocking", "issue": issue} for issue in checks.get("issues") or []])
+    return items
+
+
+def _pre_save_visual_guard(article: dict[str, Any], screenshots: list[dict[str, Any]], published: list[dict[str, Any]]) -> None:
+    checks = _code_checks(article, screenshots, published)
+    if not checks.get("ok"):
+        raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
 
 
 def _strip_design_syntax(text: str) -> str:
@@ -340,12 +376,13 @@ def _guard_designer(before: str, after: str) -> tuple[bool, str]:
     return True, f"similarity {ratio:.3f}"
 
 
-def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[dict[str, Any]]) -> dict[str, Any]:
+def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[dict[str, Any]], *, copy_files: bool = True) -> dict[str, Any]:
     slug = str(article["slug"])
     content = str(article.get("content_md") or "")
     screenshot_by_id = {item["id"]: item for item in screenshots}
     target_dir = STATIC_BLOG_ROOT / slug
-    target_dir.mkdir(parents=True, exist_ok=True)
+    if copy_files:
+        target_dir.mkdir(parents=True, exist_ok=True)
     placed: list[dict[str, str]] = []
     for visual in article.get("visuals") or []:
         marker = _normalize_marker(visual.get("marker") or visual.get("id"))
@@ -355,12 +392,15 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
         if not screenshot:
             continue
         source = LIBRARY_ROOT / str(screenshot["filename"])
-        target = target_dir / source.name
-        shutil.copy2(source, target)
-        url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target.name)}"
+        target_name = source.name
+        if copy_files:
+            target = target_dir / source.name
+            shutil.copy2(source, target)
+            target_name = target.name
+        url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target_name)}"
         alt = str(screenshot.get("alt") or visual.get("alt") or "")
         content = content.replace(f"<!-- {marker} -->", f"![{alt}]({url})")
-        placed.append({"marker": marker, "filename": target.name, "url": url, "alt": alt})
+        placed.append({"marker": marker, "filename": target_name, "url": url, "alt": alt})
     article["content_md"] = content
     article["screenshots_placed"] = placed
     return article
@@ -402,15 +442,27 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
 
 
 def _writer_prompt() -> str:
-    return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions. Never claim anything about MintiStudio unless it is in minti_facts.md. Never send raw HTML except the exact IMAGE placeholders."""
+    return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
+
+Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
+content_md must include exactly these three placeholders as standalone HTML comments: <!-- IMAGE_1 -->, <!-- IMAGE_2 -->, <!-- IMAGE_3 -->. Bare IMAGE_1 text is forbidden.
+visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. At most 2 may be screenshots. Use type=\"generate\" for the remaining visual and provide a prompt.
+Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
+Never claim anything about MintiStudio unless it is in minti_facts.md.
+Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem."""
 
 
 def _reviewer_prompt() -> str:
-    return """You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, and existing titles. Be concrete and conservative."""
+    return """You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
+
+Return JSON with total, scores, blocking_issues, fixes.
+Any deterministic check issue must be copied into blocking_issues.
+Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing exact IMAGE comment placeholders; visuals not exactly 3 items.
+Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
 
 
 def _revision_prompt() -> str:
-    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Preserve valid metadata, links, and IMAGE placeholders unless a fix explicitly requires changing them."""
+    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Preserve valid metadata, links, cover, visuals, and exact IMAGE comment placeholders unless a fix explicitly requires changing them. Never drop the visuals array."""
 
 
 def _designer_prompt() -> str:
@@ -467,7 +519,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         conn.commit()
 
         final_review = review_1
-        if review_1_score < BLOG_REVIEW_PASS or review_1.get("blocking_issues"):
+        if review_1_score < BLOG_REVIEW_PASS or _blocking_issues(review_1, checks):
             revision_payload = {**user_base, "article": article, "review": review_1}
             previous_visuals = list(article.get("visuals") or [])
             article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
@@ -486,7 +538,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             review_2_score = _review_score(review_2)
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost)
             conn.commit()
-            if review_2_score < BLOG_REVIEW_PASS or review_2.get("blocking_issues"):
+            if review_2_score < BLOG_REVIEW_PASS or _blocking_issues(review_2, checks):
                 previous_visuals = list(article.get("visuals") or [])
                 article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
                 article = _normalize_article_payload(article)
@@ -500,8 +552,14 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 conn.commit()
 
         before_design = str(article.get("content_md") or "")
-        designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), {**user_base, "article": article})
-        designer_output = _normalize_article_payload(designer_output)
+        designer_payload = {
+            "stable_context": {
+                "allowed_components": prefix["allowed_components"],
+                "style_guide": prefix["style_guide"],
+            },
+            "content_md": article.get("content_md") or "",
+        }
+        designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), designer_payload)
         after_design = str(designer_output.get("content_md") or "")
         guard_ok, guard_note = _guard_designer(before_design, after_design)
         if guard_ok:
@@ -513,10 +571,17 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "content_md": after_design, "visuals": article.get("visuals")}, notes=guard_note, cost_usd=cost)
         conn.commit()
 
-        article = _replace_screenshot_placeholders(article, screenshots)
+        checks = _code_checks(article, screenshots, published)
+        state.seq += 1
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
+        conn.commit()
+        if not checks.get("ok"):
+            raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
+
+        article = _replace_screenshot_placeholders(article, screenshots, copy_files=not dry_run)
         run_status = "draft_ready"
         final_score = _review_score(final_review)
-        if final_score < BLOG_REVIEW_PASS or final_review.get("blocking_issues") or not checks.get("ok"):
+        if final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
             run_status = "needs_you"
 
         result = {
