@@ -1,0 +1,185 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_heading %}Blog pipeline{% endblock %}
+
+{% block admin_subheading %}
+  <p>Topics queued from seeds, competitor blogs, and YouTube news. Phase 2 runs are reserved for the next tab.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .blog-pipeline-tabs,
+    .blog-pipeline-filter,
+    .blog-pipeline-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .blog-pipeline-tabs {
+      margin-bottom: 16px;
+    }
+    .blog-pipeline-tab {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      padding: 8px 14px;
+      color: rgba(255, 255, 255, 0.72);
+      text-decoration: none;
+    }
+    .blog-pipeline-tab.is-active {
+      background: rgba(45, 212, 191, 0.16);
+      border-color: rgba(45, 212, 191, 0.32);
+      color: #8ff3d8;
+    }
+    .blog-pipeline-stats {
+      margin-bottom: 16px;
+    }
+    .blog-pipeline-stat {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.76);
+    }
+    .blog-pipeline-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1120px;
+    }
+    .blog-pipeline-table th,
+    .blog-pipeline-table td {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px;
+      vertical-align: top;
+    }
+    .blog-pipeline-table th {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .blog-topic-title {
+      width: 260px;
+    }
+    .blog-source-title,
+    .blog-topic-reason {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.86rem;
+    }
+    .blog-status-badge {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      background: rgba(148, 163, 184, 0.18);
+      color: #dbeafe;
+    }
+    .blog-status-badge.queued {
+      background: rgba(45, 212, 191, 0.18);
+      color: #99f6e4;
+    }
+    .blog-status-badge.candidate {
+      background: rgba(59, 130, 246, 0.18);
+      color: #bfdbfe;
+    }
+    .blog-status-badge.rejected-duplicate,
+    .blog-status-badge.rejected-offtopic,
+    .blog-status-badge.rejected-lowfit {
+      background: rgba(248, 113, 113, 0.16);
+      color: #fecaca;
+    }
+    .blog-pipeline-table input,
+    .blog-pipeline-table textarea,
+    .blog-pipeline-table select {
+      min-width: 0;
+    }
+    .blog-pipeline-wrap {
+      overflow-x: auto;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="blog-pipeline-tabs" role="tablist" aria-label="Blog pipeline sections">
+    <a class="blog-pipeline-tab is-active" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Topics</a>
+    <span class="blog-pipeline-tab" aria-disabled="true">Runs</span>
+  </div>
+
+  <div class="blog-pipeline-stats">
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">Last run: {{ header_stats.recent_candidates }} found / {{ header_stats.recent_accepted }} accepted</div>
+    <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
+  </div>
+
+  <form method="get" class="blog-pipeline-filter mb-3">
+    <label for="blog-topic-status" class="form-label mb-0">Status</label>
+    <select id="blog-topic-status" name="status" class="form-select form-select-sm w-auto">
+      <option value="">All</option>
+      {% for status in statuses %}
+        <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-sm btn-outline-light" type="submit">Filter</button>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Reset</a>
+  </form>
+
+  <div class="vs-admin-card blog-pipeline-wrap">
+    <table class="blog-pipeline-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Topic</th>
+          <th>Source</th>
+          <th>Fit</th>
+          <th>Status</th>
+          <th>Reason</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for topic in topics %}
+          <tr>
+            <td>{{ topic.created_at|fmt_dt if topic.created_at else '—' }}</td>
+            <td class="blog-topic-title">
+              <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_topic_update', topic_id=topic.id) }}" id="topic-form-{{ topic.id }}">
+                <input type="hidden" name="filter_status" value="{{ selected_status }}">
+                <input class="form-control form-control-sm mb-2" name="title" value="{{ topic.title or '' }}">
+                {% if topic.source_title %}
+                  <div class="blog-source-title">{{ topic.source_title }}</div>
+                {% endif %}
+                <textarea class="form-control form-control-sm mt-2" name="brief" rows="3">{{ topic.brief or '' }}</textarea>
+              </form>
+            </td>
+            <td>
+              <div>{{ topic.source_name or '—' }}</div>
+              {% if topic.source_url %}
+                <a href="{{ topic.source_url }}" target="_blank" rel="noopener">Source</a>
+              {% endif %}
+            </td>
+            <td>
+              <input class="form-control form-control-sm" form="topic-form-{{ topic.id }}" type="number" min="0" max="100" name="fit_score" value="{{ topic.fit_score if topic.fit_score is not none else '' }}">
+            </td>
+            <td>
+              <span class="blog-status-badge {{ (topic.status or '')|replace('_', '-') }}">{{ topic.status|replace('_', ' ') }}</span>
+              <select class="form-select form-select-sm mt-2" form="topic-form-{{ topic.id }}" name="status">
+                <option value="queued" {% if topic.status == 'queued' %}selected{% endif %}>queued</option>
+                <option value="rejected_lowfit" {% if topic.status == 'rejected_lowfit' %}selected{% endif %}>rejected</option>
+                <option value="rejected_duplicate" {% if topic.status == 'rejected_duplicate' %}selected{% endif %}>duplicate</option>
+                <option value="rejected_offtopic" {% if topic.status == 'rejected_offtopic' %}selected{% endif %}>offtopic</option>
+              </select>
+            </td>
+            <td class="blog-topic-reason">{{ topic.judge_reason or '—' }}</td>
+            <td>
+              <button class="btn btn-sm btn-primary" form="topic-form-{{ topic.id }}" type="submit">Save</button>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="text-center text-white-50 py-4">No blog topics yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

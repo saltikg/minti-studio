@@ -19,6 +19,12 @@ from app.video_shorts.services.blog_articles import (
     update_blog_article,
     update_blog_article_status,
 )
+from app.video_shorts.services.blog_pipeline import (
+    BLOG_TOPIC_STATUSES,
+    admin_blog_topics,
+    blog_topics_header_stats,
+    update_blog_topic_from_form,
+)
 _ALLOWED_COVER_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -297,3 +303,33 @@ def admin_blog_article_status(article_id: int):
         abort(404)
     flash("Blog article status updated.", "success")
     return redirect(url_for("video_shorts_bp.admin_blog_articles"))
+
+
+@video_shorts_bp.route("/admin/blog-pipeline", methods=["GET"])
+@require_admin
+def admin_blog_pipeline_topics():
+    status = (request.args.get("status") or "").strip()
+    if status not in BLOG_TOPIC_STATUSES:
+        status = ""
+    return render_template(
+        "shorts_admin_blog_pipeline.html",
+        admin_title="Blog pipeline",
+        topics=admin_blog_topics(status or None),
+        selected_status=status,
+        statuses=BLOG_TOPIC_STATUSES,
+        header_stats=blog_topics_header_stats(),
+    )
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/topics/<int:topic_id>", methods=["POST"])
+@require_admin
+def admin_blog_pipeline_topic_update(topic_id: int):
+    try:
+        updated = update_blog_topic_from_form(topic_id, request.form)
+    except Exception as exc:
+        flash(f"Failed to update topic: {exc}", "danger")
+        return redirect(url_for("video_shorts_bp.admin_blog_pipeline_topics", status=request.form.get("filter_status") or None))
+    if not updated:
+        abort(404)
+    flash("Topic updated.", "success")
+    return redirect(url_for("video_shorts_bp.admin_blog_pipeline_topics", status=request.form.get("filter_status") or None))

@@ -270,10 +270,18 @@
           <div class="vs-admin-nav-heading">Site</div>
           <a
             href="{{ url_for('video_shorts_bp.admin_blog_articles') }}"
-            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/blog') %}is-active{% endif %}">
+            class="vs-admin-nav-link {% if request.path == '/video_shorts/admin/blog' or request.path.startswith('/video_shorts/admin/blog/') %}is-active{% endif %}">
             <span aria-hidden="true">●</span>
             <span class="vs-admin-nav-label">
               <span>Blog</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/blog-pipeline') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Blog pipeline</span>
             </span>
           </a>
           <a
