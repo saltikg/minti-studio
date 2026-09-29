@@ -41,8 +41,14 @@ category="monetization" for those. The brief must explain how the change affects
 where MintiStudio naturally helps.
 
 Wrong past rejections to avoid:
-- "Made On YouTube: creator monetization / shopping" is in scope.
-- "Made On YouTube: Shorts series / TV features" is in scope when framed for creators packaging and selling expertise.
+- "Made On YouTube: creator monetization / shopping" is in scope and must be accept or adapt, not offtopic or lowfit.
+- "Made On YouTube: Shorts series / TV features" is in scope when framed for creators packaging and selling expertise, and must be accept or adapt.
+
+Hard YouTube news rule: if source_name is YouTube blog and the headline/summary is about creator
+monetization, shopping, sponsorship, YPP, Shorts rules/features, Studio, analytics, or creator
+tools, do not reject it because it is not a clipping workflow. Score audience_fit and minti_bridge
+from how solo educators/coaches/consultants/podcasters can use the change to sell, package long-form
+expertise into Shorts, or protect their channel. Use adapt when the source framing is broad.
 
 Generic AI video tools, viewer-side YouTube features with no creator/business angle, broad industry
 news, gaming, dance/meme content, and generic social-media news are off topic.
