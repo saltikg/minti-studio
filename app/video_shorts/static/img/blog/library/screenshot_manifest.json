@@ -1,0 +1,148 @@
+[
+  {
+    "id": "analytics-subscribers",
+    "filename": "1-minti-dashboard.png",
+    "feature": "Analytics: followers per platform + daily subscribers",
+    "shows": "Follower cards for YouTube, Instagram, Facebook Page, TikTok, a daily subscribers line chart per platform, and a daily audience change table.",
+    "alt": "MintiStudio audience analytics with daily subscriber changes per platform",
+    "use_for": [
+      "audience growth",
+      "views vs subscribers",
+      "tracking channel growth"
+    ],
+    "hold": true,
+    "caution": "HOLD — the subscriber snapshot ingest has an open cross-channel contamination bug; do not publish this chart until that is fixed. Data is Gokhan's own channel."
+  },
+  {
+    "id": "analytics-views",
+    "filename": "2-minti-barchart.png",
+    "feature": "Analytics: total views + daily views by platform",
+    "shows": "Total Views and Total Comments cards with period change, and a daily stacked bar chart of YouTube and Instagram views over about a month.",
+    "alt": "MintiStudio analytics showing daily Shorts views across YouTube and Instagram",
+    "use_for": [
+      "measuring Shorts performance",
+      "analytics",
+      "what to track after publishing"
+    ],
+    "hold": false,
+    "caution": "Data is from Gokhan's own channel (OK to publish)."
+  },
+  {
+    "id": "video-from-url",
+    "filename": "3-minti-youtube-video-url-paste.png",
+    "feature": "Add a video by pasting a YouTube link",
+    "shows": "Close-up of the 'Video from URL' tab: 'Paste a YouTube link — we'll pull it in and get it ready.'",
+    "alt": "Paste a YouTube link to start making Shorts in MintiStudio",
+    "use_for": [
+      "getting started",
+      "no upload needed",
+      "first step of the workflow"
+    ]
+  },
+  {
+    "id": "clip-edit-modal",
+    "filename": "4-manual-changing-video-details.png",
+    "feature": "Clip detail: trim, title, text",
+    "shows": "A single clip's detail modal: vertical preview, editable start/end times, clip title with regenerate button, the clip's transcript text, and Schedule / Delete clip actions. YouTube and Instagram target icons at the top.",
+    "alt": "MintiStudio clip detail with start and end times, title, and transcript text",
+    "use_for": [
+      "fine-tuning a clip",
+      "clip titles",
+      "preparing a Short to publish"
+    ]
+  },
+  {
+    "id": "transcript-selection",
+    "filename": "5-manual-video-creation.png",
+    "feature": "Pick a clip by selecting transcript lines",
+    "shows": "Transcript panel with a selected range marked START and END across several lines; footer shows the selection length and a 'Create clip' button.",
+    "alt": "Selecting a clip range directly from the transcript in MintiStudio",
+    "use_for": [
+      "choosing clip moments",
+      "manual clip selection",
+      "editing without a timeline"
+    ]
+  },
+  {
+    "id": "my-videos-shorts-library",
+    "filename": "6-my-videos-page.png",
+    "feature": "My Videos: Shorts library + source videos",
+    "shows": "My Videos page: 'Video from URL' tab with a paste-a-YouTube-link field, a 'Your Shorts' strip of vertical thumbnails with Published/Ready badges and dates, and the list of source long videos with length and added date.",
+    "alt": "MintiStudio My Videos page with a library of Shorts made from long videos",
+    "use_for": [
+      "one long video becomes many Shorts",
+      "Shorts library",
+      "repurposing",
+      "workflow overview"
+    ]
+  },
+  {
+    "id": "planning-calendar",
+    "filename": "7-scheduled-videos-calender.png",
+    "feature": "Publishing calendar + per-platform status",
+    "shows": "Planning page: Published / Scheduled / Videos-with-new-comments counters, a monthly calendar with YouTube and Instagram markers per day, and a table of Shorts with per-platform status (Scheduled, Published, Reel queued, Not planned) and view/like/comment counts.",
+    "alt": "MintiStudio publishing calendar with scheduled and published Shorts across YouTube and Instagram",
+    "use_for": [
+      "weekly publishing schedule",
+      "consistency",
+      "cross-platform tracking",
+      "done-for-you publishing"
+    ],
+    "hold": true,
+    "caution": "HOLD until recropped — rows show 'Unknown channel' and very low view counts. Crop to the calendar + counters (or retake after the label is fixed), then set hold to false."
+  },
+  {
+    "id": "schedule-publish-modal",
+    "filename": "8-manual-video-scheduling.png",
+    "feature": "Schedule & Publish to YouTube + Instagram",
+    "shows": "Schedule & Publish modal: title, description with 'Create Description LLM' button (description, hashtags, transcript), YouTube publish time in Pacific time, Instagram options (share as Reel or feed video, publish same time / immediately / separate time), and a Facebook Page section.",
+    "alt": "MintiStudio Schedule and Publish modal for YouTube Shorts and Instagram Reels",
+    "use_for": [
+      "scheduling Shorts",
+      "cross-posting to Instagram Reels",
+      "descriptions and hashtags",
+      "time zones",
+      "publishing consistency"
+    ],
+    "caution": "Facebook Page section shows 'not connected' — fine for a scheduling article, avoid for a Facebook-focused one."
+  },
+  {
+    "id": "transcript-clips-overview",
+    "filename": "9-generate-video-screen.png",
+    "feature": "Transcript + player + clip list",
+    "shows": "Video workspace: timestamped English transcript on the left (click a row to set start, another to set end), the source video player on the right, and a Clips panel with 'Suggest clips with AI', an 'Auto-create clips scoring >= 72' slider, 'Schedule all', and a created clip card.",
+    "alt": "MintiStudio video workspace with timestamped transcript, video player, and AI clip suggestions",
+    "use_for": [
+      "finding the best moments",
+      "AI clip suggestions",
+      "turning long videos into Shorts",
+      "workflow overview"
+    ]
+  },
+  {
+    "id": "crop-style-templates",
+    "filename": "10-manual-video-crop.png",
+    "feature": "Crop for Shorts: style templates + reframe",
+    "shows": "The 'Crop for Shorts' editor. Top row: caption style templates (Modern Pink, Modern Purple, Sky Cyan, Electric Lime, Serif Bordo, Word Highlight). Layout tab with Fill / Fill split / Fit options, a Subscribe Animation toggle, a 'Drag to reframe' crop box over the horizontal source video, and a vertical Final Preview with a title and word-highlighted captions.",
+    "alt": "MintiStudio Crop for Shorts editor with caption style templates, reframe box, and vertical preview",
+    "use_for": [
+      "captions",
+      "caption styles",
+      "reframing horizontal video to vertical",
+      "branding Shorts",
+      "editing workflow"
+    ]
+  },
+  {
+    "id": "clips-suggest-ai",
+    "filename": "11-ai-suggested-video-schedule-all-function.png",
+    "feature": "Suggest clips with AI + auto-create threshold",
+    "shows": "Close-up of the Clips panel: 'Suggest clips with AI' button, 'Auto-create clips scoring >= 72' slider, 'Create clips' and 'Schedule all' buttons, and one clip card.",
+    "alt": "Suggest clips with AI and the auto-create score threshold in MintiStudio",
+    "use_for": [
+      "AI clip selection",
+      "batch creating Shorts",
+      "saving time"
+    ]
+  }
+]
