@@ -48,7 +48,7 @@ def slug_to_title(url: str) -> str:
     return re.sub(r"[-_]+", " ", stem).strip().title()
 
 
-def fetch_url(url: str, *, timeout: int = 15, accept: str | None = None) -> tuple[int | None, str, str, bytes]:
+def fetch_url(url: str, *, timeout: int = 15, accept: str | None = None, max_bytes: int = 5_000_000) -> tuple[int | None, str, str, bytes]:
     headers = {
         "User-Agent": BLOG_SCOUT_USER_AGENT,
         "Accept": accept or "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8, */*;q=0.5",
@@ -56,7 +56,7 @@ def fetch_url(url: str, *, timeout: int = 15, accept: str | None = None) -> tupl
     req = request.Request(url, headers=headers)
     try:
         with request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.geturl(), resp.headers.get("content-type", ""), resp.read(1_000_000)
+            return resp.status, resp.geturl(), resp.headers.get("content-type", ""), resp.read(max_bytes)
     except Exception as exc:
         return None, url, "", str(exc).encode("utf-8", "ignore")
 
