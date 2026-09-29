@@ -249,7 +249,7 @@ def insert_candidate(conn, *, source: BlogSource, item: dict[str, Any]) -> bool:
             title, source_type, source_name, source_url, source_title, status, brief
         )
         VALUES (?, ?, ?, ?, ?, 'candidate', ?)
-        ON CONFLICT (source_url) DO NOTHING
+        ON CONFLICT (source_url) WHERE source_url IS NOT NULL DO NOTHING
         RETURNING id
         """,
         [title, source.source_type, source.name, source_url, title, str(item.get("summary") or "")[:400]],
@@ -287,7 +287,10 @@ def seed_topics() -> dict[str, list[str]]:
                     fit_score, status, judge_reason
                 )
                 VALUES (?, ?, ?, ?, 'seed', 'Seed', ?, 'queued', 'manual seed')
-                ON CONFLICT (primary_keyword) DO NOTHING
+                ON CONFLICT (primary_keyword)
+                    WHERE status IN ('queued', 'in_production', 'draft_ready', 'published')
+                      AND primary_keyword IS NOT NULL
+                    DO NOTHING
                 RETURNING id
                 """,
                 [title, keyword, category, intent, score],
