@@ -20,3 +20,4 @@ psycopg[binary]
 stripe
 Markdown
 bleach
+youtube-transcript-api

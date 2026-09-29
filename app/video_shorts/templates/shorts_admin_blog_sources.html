@@ -1,0 +1,153 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_heading %}Blog pipeline sources{% endblock %}
+
+{% block admin_subheading %}
+  <p>Manage RSS/sitemap sources and YouTube channels used by the blog scout.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .blog-pipeline-tabs,
+    .blog-pipeline-stats,
+    .blog-source-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .blog-pipeline-tabs {
+      margin-bottom: 16px;
+    }
+    .blog-pipeline-tab {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      padding: 8px 14px;
+      color: rgba(255, 255, 255, 0.72);
+      text-decoration: none;
+    }
+    .blog-pipeline-tab.is-active {
+      background: rgba(45, 212, 191, 0.16);
+      border-color: rgba(45, 212, 191, 0.32);
+      color: #8ff3d8;
+    }
+    .blog-pipeline-stats {
+      margin-bottom: 16px;
+    }
+    .blog-pipeline-stat {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.76);
+    }
+    .blog-source-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1080px;
+    }
+    .blog-source-table th,
+    .blog-source-table td {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px;
+      vertical-align: top;
+    }
+    .blog-source-table th {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .blog-source-wrap {
+      overflow-x: auto;
+    }
+    .blog-source-muted {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.86rem;
+    }
+    .blog-source-form {
+      margin-bottom: 16px;
+    }
+    .blog-source-form input,
+    .blog-source-form select {
+      min-width: 180px;
+    }
+    .blog-source-form .source-url {
+      min-width: min(420px, 100%);
+      flex: 1 1 360px;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="blog-pipeline-tabs" role="tablist" aria-label="Blog pipeline sections">
+    <a class="blog-pipeline-tab" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Topics</a>
+    <a class="blog-pipeline-tab is-active" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_sources') }}">Sources</a>
+    <span class="blog-pipeline-tab" aria-disabled="true">Runs</span>
+  </div>
+
+  <div class="blog-pipeline-stats">
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">Last run: {{ header_stats.recent_candidates }} found / {{ header_stats.recent_accepted }} accepted</div>
+    <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
+  </div>
+
+  <form class="blog-source-form" method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_source_add') }}">
+    <select class="form-select form-select-sm w-auto" name="type" aria-label="Source type">
+      <option value="rss">RSS / sitemap</option>
+      <option value="youtube_channel">YouTube channel</option>
+    </select>
+    <input class="form-control form-control-sm" name="name" placeholder="Name" required>
+    <input class="form-control form-control-sm source-url" name="url" placeholder="https://..." required>
+    <input class="form-control form-control-sm" name="channel_id" placeholder="Channel ID">
+    <button class="btn btn-sm btn-primary" type="submit">Add source</button>
+  </form>
+
+  <div class="vs-admin-card blog-source-wrap">
+    <table class="blog-source-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Type</th>
+          <th>URL</th>
+          <th>Last checked</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for source in sources %}
+          <tr>
+            <td>
+              <strong>{{ source.name }}</strong>
+              {% if source.channel_id %}
+                <div class="blog-source-muted">{{ source.channel_id }}</div>
+              {% endif %}
+            </td>
+            <td>{{ source.type }}</td>
+            <td><a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.url }}</a></td>
+            <td>{{ source.last_checked_at|fmt_dt if source.last_checked_at else '—' }}</td>
+            <td>
+              <span class="badge {% if source.enabled %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                {{ 'enabled' if source.enabled else 'disabled' }}
+              </span>
+              {% if source.last_error %}
+                <div class="blog-source-muted">{{ source.last_error }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_source_toggle', source_id=source.id) }}">
+                <input type="hidden" name="enabled" value="{{ '0' if source.enabled else '1' }}">
+                <button class="btn btn-sm btn-outline-light" type="submit">{{ 'Disable' if source.enabled else 'Enable' }}</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="6" class="text-center text-white-50 py-4">No sources configured.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

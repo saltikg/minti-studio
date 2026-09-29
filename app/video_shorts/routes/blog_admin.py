@@ -21,8 +21,11 @@ from app.video_shorts.services.blog_articles import (
 )
 from app.video_shorts.services.blog_pipeline import (
     BLOG_TOPIC_STATUSES,
+    add_blog_source_from_form,
     admin_blog_topics,
+    admin_blog_sources,
     blog_topics_header_stats,
+    set_blog_source_enabled,
     update_blog_topic_from_form,
 )
 _ALLOWED_COVER_MIME_TYPES = {
@@ -319,6 +322,44 @@ def admin_blog_pipeline_topics():
         statuses=BLOG_TOPIC_STATUSES,
         header_stats=blog_topics_header_stats(),
     )
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/sources", methods=["GET"])
+@require_admin
+def admin_blog_pipeline_sources():
+    return render_template(
+        "shorts_admin_blog_sources.html",
+        admin_title="Blog pipeline sources",
+        sources=admin_blog_sources(),
+        header_stats=blog_topics_header_stats(),
+    )
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/sources", methods=["POST"])
+@require_admin
+def admin_blog_pipeline_source_add():
+    try:
+        add_blog_source_from_form(request.form)
+    except Exception as exc:
+        flash(f"Failed to add source: {exc}", "danger")
+    else:
+        flash("Source saved.", "success")
+    return redirect(url_for("video_shorts_bp.admin_blog_pipeline_sources"))
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/sources/<int:source_id>/toggle", methods=["POST"])
+@require_admin
+def admin_blog_pipeline_source_toggle(source_id: int):
+    enabled = str(request.form.get("enabled") or "").strip() == "1"
+    try:
+        updated = set_blog_source_enabled(source_id, enabled)
+    except Exception as exc:
+        flash(f"Failed to update source: {exc}", "danger")
+        return redirect(url_for("video_shorts_bp.admin_blog_pipeline_sources"))
+    if not updated:
+        abort(404)
+    flash("Source updated.", "success")
+    return redirect(url_for("video_shorts_bp.admin_blog_pipeline_sources"))
 
 
 @video_shorts_bp.route("/admin/blog-pipeline/topics/<int:topic_id>", methods=["POST"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -88,6 +89,8 @@ class BlogSource:
     url: str
     entry_kind: str
     enabled: bool = True
+    id: int | None = None
+    channel_id: str | None = None
 
 
 BLOG_SOURCES: tuple[BlogSource, ...] = (
@@ -98,6 +101,171 @@ BLOG_SOURCES: tuple[BlogSource, ...] = (
     BlogSource("YouTube blog", "youtube_news", "https://blog.youtube/sitemap.xml", "sitemap"),
     BlogSource("Creator Insider RSS", "youtube_news", "", "feed", enabled=False),
 )
+
+
+def _entry_kind_for_source_type(source_type: str, url: str) -> str:
+    if source_type == "youtube_channel":
+        return "youtube_channel"
+    lower = (url or "").lower()
+    return "feed" if lower.endswith(".rss") or "/feed" in lower else "sitemap"
+
+
+def _topic_source_type(fetch_type: str, name: str, url: str) -> str:
+    if fetch_type == "youtube_channel":
+        return "youtube_channel"
+    haystack = f"{name} {url}".lower()
+    if "blog.youtube" in haystack or "youtube" in haystack:
+        return "youtube_news"
+    return "competitor_blog"
+
+
+def list_blog_sources(conn=None, *, enabled_only: bool = False) -> list[BlogSource]:
+    close_conn = conn is None
+    conn = conn or get_db_readonly()
+    try:
+        if not table_columns(conn, "blog_sources"):
+            return list(BLOG_SOURCES)
+        where = "WHERE enabled = true" if enabled_only else ""
+        rows = conn.execute(
+            f"""
+            SELECT id, type, name, url, channel_id, enabled
+            FROM blog_sources
+            {where}
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        sources: list[BlogSource] = []
+        for row in rows:
+            source_id, source_type, name, url, channel_id, enabled = row
+            source_type = str(source_type or "")
+            url = str(url or "")
+            name = str(name or "")
+            sources.append(
+                BlogSource(
+                    name=name,
+                    source_type=_topic_source_type(source_type, name, url),
+                    url=url,
+                    entry_kind=_entry_kind_for_source_type(source_type, url),
+                    enabled=bool(enabled),
+                    id=int(source_id) if source_id is not None else None,
+                    channel_id=str(channel_id or "") or None,
+                )
+            )
+        return sources
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def update_blog_source_check(conn, source: BlogSource, *, error: str | None) -> None:
+    if not source.id or not table_columns(conn, "blog_sources"):
+        return
+    conn.execute(
+        """
+        UPDATE blog_sources
+        SET last_checked_at = CURRENT_TIMESTAMP,
+            last_error = ?
+        WHERE id = ?
+        """,
+        [(error or "")[:500] if error else None, source.id],
+    )
+
+
+def admin_blog_sources() -> list[dict[str, Any]]:
+    conn = get_db_readonly()
+    try:
+        if not table_columns(conn, "blog_sources"):
+            return []
+        rows = conn.execute(
+            """
+            SELECT id, type, name, url, channel_id, enabled, last_checked_at, last_error, created_at
+            FROM blog_sources
+            ORDER BY enabled DESC, type ASC, name ASC
+            """
+        ).fetchall()
+        return [row_to_dict(conn.description, row) for row in rows]
+    finally:
+        conn.close()
+
+
+def add_blog_source_from_form(form: Any) -> bool:
+    source_type = str(form.get("type") or "").strip()
+    name = str(form.get("name") or "").strip()
+    url = str(form.get("url") or "").strip()
+    channel_id = str(form.get("channel_id") or "").strip() or None
+    if source_type not in {"rss", "youtube_channel"}:
+        raise ValueError("Source type must be rss or youtube_channel.")
+    if not name or not url:
+        raise ValueError("Name and URL are required.")
+    conn = get_db()
+    try:
+        if not table_columns(conn, "blog_sources"):
+            raise RuntimeError("blog_sources table is missing.")
+        row = conn.execute(
+            """
+            INSERT INTO blog_sources (type, name, url, channel_id, enabled)
+            VALUES (?, ?, ?, ?, true)
+            ON CONFLICT (url) DO UPDATE
+            SET type = EXCLUDED.type,
+                name = EXCLUDED.name,
+                channel_id = EXCLUDED.channel_id,
+                enabled = true
+            RETURNING id
+            """,
+            [source_type, name, url, channel_id],
+        ).fetchone()
+        conn.commit()
+        return bool(row)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def set_blog_source_enabled(source_id: int, enabled: bool) -> bool:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            UPDATE blog_sources
+            SET enabled = ?
+            WHERE id = ?
+            RETURNING id
+            """,
+            [bool(enabled), source_id],
+        ).fetchone()
+        conn.commit()
+        return bool(row)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def inject_dataimpulse_sessid(proxy_url: str, sessid: str | None = None) -> str:
+    text = str(proxy_url or "").strip()
+    if not text:
+        return text
+    sessid = sessid or secrets.token_hex(8)
+    parsed = parse.urlsplit(text)
+    if not parsed.username or "dataimpulse" not in parsed.netloc.lower():
+        return text
+    username = parse.unquote(parsed.username)
+    if "sessid." not in username:
+        username = f"{username};sessid.{sessid}"
+    password = parse.unquote(parsed.password or "")
+    auth = parse.quote(username, safe=";.")
+    if password:
+        auth = f"{auth}:{parse.quote(password, safe='')}"
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{auth}@{host}"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -253,17 +421,40 @@ def insert_candidate(conn, *, source: BlogSource, item: dict[str, Any]) -> bool:
     title = str(item.get("title") or "").strip()
     if not source_url or not title:
         return False
-    row = conn.execute(
-        """
-        INSERT INTO blog_topics (
-            title, source_type, source_name, source_url, source_title, status, brief
-        )
-        VALUES (?, ?, ?, ?, ?, 'candidate', ?)
-        ON CONFLICT (source_url) WHERE source_url IS NOT NULL DO NOTHING
-        RETURNING id
-        """,
-        [title, source.source_type, source.name, source_url, title, str(item.get("summary") or "")[:400]],
-    ).fetchone()
+    columns = table_columns(conn, "blog_topics")
+    source_summary = item.get("source_summary")
+    if "source_summary" in columns:
+        row = conn.execute(
+            """
+            INSERT INTO blog_topics (
+                title, source_type, source_name, source_url, source_title, status, brief, source_summary
+            )
+            VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?)
+            ON CONFLICT (source_url) WHERE source_url IS NOT NULL DO NOTHING
+            RETURNING id
+            """,
+            [
+                title,
+                source.source_type,
+                source.name,
+                source_url,
+                title,
+                str(item.get("summary") or "")[:400],
+                source_summary if isinstance(source_summary, str) else (json_dumps_compact(source_summary) if source_summary else None),
+            ],
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            INSERT INTO blog_topics (
+                title, source_type, source_name, source_url, source_title, status, brief
+            )
+            VALUES (?, ?, ?, ?, ?, 'candidate', ?)
+            ON CONFLICT (source_url) WHERE source_url IS NOT NULL DO NOTHING
+            RETURNING id
+            """,
+            [title, source.source_type, source.name, source_url, title, str(item.get("summary") or "")[:400]],
+        ).fetchone()
     return bool(row)
 
 
@@ -332,6 +523,8 @@ def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
     try:
         columns = table_columns(conn, "blog_topics")
         fit_breakdown_sql = "fit_breakdown" if "fit_breakdown" in columns else "NULL AS fit_breakdown"
+        source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
+        adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
         where = ""
         params: list[Any] = []
         if status and status in BLOG_TOPIC_STATUSES:
@@ -340,8 +533,8 @@ def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
         rows = conn.execute(
             f"""
             SELECT id, created_at, title, source_title, source_name, source_url,
-                   fit_score, status, judge_reason, brief, primary_keyword,
-                   {fit_breakdown_sql}
+                   source_type, fit_score, status, judge_reason, brief, primary_keyword,
+                   {fit_breakdown_sql}, {source_summary_sql}, {adapted_from_sql}
             FROM blog_topics
             {where}
             ORDER BY
@@ -375,7 +568,7 @@ def blog_topics_header_stats() -> dict[str, Any]:
                 SELECT MAX(created_at), COUNT(*),
                        SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END)
                 FROM blog_topics
-                WHERE source_type IN ('competitor_blog', 'youtube_news')
+                WHERE source_type IN ('competitor_blog', 'youtube_news', 'youtube_channel')
                   AND created_at >= CURRENT_TIMESTAMP - INTERVAL '2 hours'
                 """
             ).fetchone()

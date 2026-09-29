@@ -24,7 +24,7 @@ from app.video_shorts.services.blog_pipeline import (  # noqa: E402
     seed_topics,
     title_similarity,
 )
-from app.video_shorts.services.db import get_db  # noqa: E402
+from app.video_shorts.services.db import get_db, table_columns  # noqa: E402
 
 
 SYSTEM_PROMPT = """You judge blog topic candidates for MintiStudio.
@@ -32,9 +32,20 @@ SYSTEM_PROMPT = """You judge blog topic candidates for MintiStudio.
 Audience: solo educators, coaches, consultants, podcasters, mostly US English, who make long-form video and have something to sell.
 MintiStudio turns long videos into Shorts. It offers DIY self-serve plus Autopilot done-for-you at $20/mo. It is not a tool you learn and run yourself.
 
-A topic fits only if a genuinely useful article for that audience can naturally lead to MintiStudio.
-Generic AI video tools, viewer-side YouTube features, industry news, gaming, dance/meme content,
-and generic social-media news are off topic.
+A topic fits if a genuinely useful article for OUR AUDIENCE can naturally lead to MintiStudio.
+Do not judge fit by whether the topic is literally about clipping. Creator monetization, Shorts
+features/rules, YouTube Partner Program changes, sponsorship/shopping tools, policy changes, and
+analytics changes are IN SCOPE when they affect solo educators, coaches, consultants, or podcasters
+who publish long-form plus Shorts and have something to sell. Use category="news" or
+category="monetization" for those. The brief must explain how the change affects our audience and
+where MintiStudio naturally helps.
+
+Wrong past rejections to avoid:
+- "Made On YouTube: creator monetization / shopping" is in scope.
+- "Made On YouTube: Shorts series / TV features" is in scope when framed for creators packaging and selling expertise.
+
+Generic AI video tools, viewer-side YouTube features with no creator/business angle, broad industry
+news, gaming, dance/meme content, and generic social-media news are off topic.
 
 Duplicate means the same reader question, not the same words. Compare every candidate against ALL
 existing articles and all queued/in_production/draft_ready/published topics, including seeds.
@@ -42,6 +53,18 @@ Examples:
 - "best video repurposing tools" == "best OpusClip alternatives"
 - "clip podcast highlights" == "make Shorts from podcast episodes"
 Return duplicate_of with the exact existing title or slug.
+
+Decision rules:
+- accept: directly strong fit for our audience.
+- adapt: the source is useful demand/news but the source framing is wrong, too broad, or too tool-led.
+  Create an audience-first our_title and fill adapted_from with the original source framing in a short phrase.
+- duplicate: same reader question as an existing article/topic.
+- offtopic: cannot naturally help our audience.
+- lowfit: weak but not completely unrelated.
+
+For YouTube creator videos, use source_summary as a lightweight transcript summary. If accepted or
+adapted, the brief must include claims to verify plus official sources to check in Phase 2. Do not
+trust creator commentary as final authority.
 
 Originality rule: our_title must be written from our audience's problem, not the competitor's SEO
 phrasing. It must not reuse the source headline's main phrase or structure.
@@ -60,7 +83,7 @@ Always fill brief in 2-3 sentences: reader, problem, promise, and where MintiStu
 The competitor headline/summary is a demand signal only. Never reuse that text.
 
 Return JSON object only.
-{"decisions":[{"id":123,"decision":"accept|duplicate|offtopic|lowfit","fit_score":82,"audience_fit":32,"minti_bridge":26,"intent_score":16,"timeliness":8,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","is_timely":false,"expires_in_days":null}]}
+{"decisions":[{"id":123,"decision":"accept|adapt|duplicate|offtopic|lowfit","fit_score":82,"audience_fit":32,"minti_bridge":26,"intent_score":16,"timeliness":8,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","adapted_from":null,"is_timely":false,"expires_in_days":null}]}
 """
 
 BATCH_SIZE = 25
@@ -72,12 +95,18 @@ def _topic_rows(conn, *, mode: str = "candidate") -> list[dict[str, Any]]:
         where = "status = 'queued' AND source_type <> 'seed'"
     elif mode == "enrich_seeds":
         where = "source_type = 'seed'"
+    elif mode == "rejudge_rejected":
+        where = "source_type IN ('competitor_blog', 'youtube_news') AND status IN ('rejected_duplicate', 'rejected_offtopic')"
     else:
         where = "status = 'candidate'"
+    columns = table_columns(conn, "blog_topics")
+    source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
+    adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
     rows = conn.execute(
         f"""
         SELECT id, title, source_type, source_name, source_url, source_title, brief,
-               created_at, status, fit_score, judge_reason, duplicate_of
+               created_at, status, fit_score, judge_reason, duplicate_of,
+               {source_summary_sql}, {adapted_from_sql}
         FROM blog_topics
         WHERE {where}
         ORDER BY created_at ASC
@@ -186,6 +215,7 @@ def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str
                 "current_title": row.get("title") or "",
                 "current_status": row.get("status") or "",
                 "current_fit_score": row.get("fit_score"),
+                "source_summary": row.get("source_summary") or "",
             }
             for row in candidates
         ],
@@ -207,7 +237,7 @@ def _missing_decision_ids(candidates: list[dict[str, Any]], decisions: list[dict
 def _status_for_decision(decision: dict[str, Any]) -> str:
     raw = str(decision.get("decision") or "").strip().lower()
     score = int(decision.get("fit_score") or 0)
-    if raw == "accept":
+    if raw in {"accept", "adapt"}:
         return "queued" if score >= BLOG_JUDGE_MIN_SCORE else "rejected_lowfit"
     if raw == "duplicate":
         return "rejected_duplicate"
@@ -236,7 +266,7 @@ def _validate_title_distance(
     repair_results: list[Any] = []
     by_id = {int(row["id"]): row for row in candidates}
     for decision in list(revised):
-        if str(decision.get("decision") or "").strip().lower() != "accept":
+        if str(decision.get("decision") or "").strip().lower() not in {"accept", "adapt"}:
             continue
         topic_id = int(decision.get("id") or 0)
         candidate = by_id.get(topic_id)
@@ -285,6 +315,7 @@ def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dic
         return
     by_id = {int(row["id"]): row for row in candidates}
     now = datetime.now(timezone.utc)
+    has_adapted_from = "adapted_from" in table_columns(conn, "blog_topics")
     for decision in decisions:
         _ensure_fit_score(decision)
         topic_id = int(decision.get("id") or 0)
@@ -294,6 +325,26 @@ def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dic
         if decision.get("is_timely") and decision.get("expires_in_days"):
             expires_at = now + timedelta(days=max(1, int(decision.get("expires_in_days") or 1)))
         title = str(decision.get("our_title") or "").strip() or None
+        adapted_sql = ", adapted_from = ?" if has_adapted_from else ""
+        params = (
+            ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
+            + [
+                _format_prev_reason(candidate, decision) if rejudge else str(decision.get("judge_reason") or "")[:500],
+                candidate.get("duplicate_of") if preserve_seed else decision.get("duplicate_of"),
+                None if preserve_seed else title,
+                normalize_keyword(decision.get("primary_keyword")),
+                decision.get("category"),
+                decision.get("intent"),
+                decision.get("angle"),
+                decision.get("brief"),
+                json.dumps(_fit_breakdown(decision), ensure_ascii=True),
+                bool(decision.get("is_timely")),
+                expires_at,
+            ]
+        )
+        if has_adapted_from:
+            params.append(None if preserve_seed else (str(decision.get("adapted_from") or "").strip() or None))
+        params.append(topic_id)
         conn.execute(
             f"""
             UPDATE blog_topics
@@ -309,26 +360,10 @@ def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dic
                 brief = ?,
                 fit_breakdown = ?,
                 is_timely = ?,
-                expires_at = ?
+                expires_at = ?{adapted_sql}
             WHERE id = ?
             """,
-            (
-                ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
-                + [
-                    _format_prev_reason(candidate, decision) if rejudge else str(decision.get("judge_reason") or "")[:500],
-                    candidate.get("duplicate_of") if preserve_seed else decision.get("duplicate_of"),
-                    None if preserve_seed else title,
-                    normalize_keyword(decision.get("primary_keyword")),
-                    decision.get("category"),
-                    decision.get("intent"),
-                    decision.get("angle"),
-                    decision.get("brief"),
-                    json.dumps(_fit_breakdown(decision), ensure_ascii=True),
-                    bool(decision.get("is_timely")),
-                    expires_at,
-                    topic_id,
-                ]
-            ),
+            params,
         )
 
 
@@ -392,20 +427,29 @@ def _before_after_rows(candidates: list[dict[str, Any]], decisions: list[dict[st
                 "id": candidate["id"],
                 "source_title": candidate.get("source_title") or candidate.get("title") or "",
                 "our_title": decision.get("our_title") or candidate.get("title") or "",
-                "old": f"{candidate.get('status')}/{candidate.get('fit_score')}",
-                "new": f"{_status_for_decision(decision)}/{decision.get('fit_score')}" if decision else "missing",
+                "old": str(candidate.get("status") or ""),
+                "new": str(decision.get("decision") or (_status_for_decision(decision) if decision else "missing")),
+                "source_name": candidate.get("source_name") or "",
+                "adapted_from": decision.get("adapted_from") or "",
                 "duplicate_of": decision.get("duplicate_of"),
             }
         )
     return rows
 
 
-def judge(*, dry_run: bool = False, seed: bool = False, rejudge_queued: bool = False, enrich_seeds: bool = False) -> dict[str, Any]:
+def judge(
+    *,
+    dry_run: bool = False,
+    seed: bool = False,
+    rejudge_queued: bool = False,
+    enrich_seeds: bool = False,
+    rejudge_rejected: bool = False,
+) -> dict[str, Any]:
     seed_result = seed_topics() if seed and not dry_run else {"inserted": [], "skipped": []}
     conn = get_db()
     try:
         expired = _expire_timely(conn, dry_run=dry_run)
-        mode = "enrich_seeds" if enrich_seeds else ("rejudge_queued" if rejudge_queued else "candidate")
+        mode = "enrich_seeds" if enrich_seeds else ("rejudge_rejected" if rejudge_rejected else ("rejudge_queued" if rejudge_queued else "candidate"))
         candidates = _topic_rows(conn, mode=mode)
         exclude_ids = {int(row["id"]) for row in candidates}
         existing = list_existing_articles_and_topics(conn, exclude_topic_ids=exclude_ids)
@@ -421,7 +465,7 @@ def judge(*, dry_run: bool = False, seed: bool = False, rejudge_queued: bool = F
                 llm_decisions,
                 dry_run=dry_run,
                 preserve_seed=enrich_seeds,
-                rejudge=rejudge_queued,
+                rejudge=rejudge_queued or rejudge_rejected,
             )
             if not dry_run:
                 for usage in usages:
@@ -440,7 +484,7 @@ def judge(*, dry_run: bool = False, seed: bool = False, rejudge_queued: bool = F
             "usages": public_usages,
             "usage": public_usages[-1] if public_usages else None,
             "seeds": seed_result,
-            "before_after": _before_after_rows(candidates, decisions) if (dry_run and (rejudge_queued or enrich_seeds)) else [],
+            "before_after": _before_after_rows(candidates, decisions) if (dry_run and (rejudge_queued or enrich_seeds or rejudge_rejected)) else [],
         }
     except Exception:
         conn.rollback()
@@ -454,9 +498,16 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--seed", action="store_true", help="Insert idempotent seed topics before judging.")
     parser.add_argument("--rejudge-queued", action="store_true", help="Re-judge non-seed queued topics.")
+    parser.add_argument("--rejudge-rejected", action="store_true", help="Re-judge rejected competitor_blog/youtube_news topics.")
     parser.add_argument("--enrich-seeds", action="store_true", help="Fill angle/brief on seed topics without changing status or score.")
     args = parser.parse_args()
-    result = judge(dry_run=args.dry_run, seed=args.seed, rejudge_queued=args.rejudge_queued, enrich_seeds=args.enrich_seeds)
+    result = judge(
+        dry_run=args.dry_run,
+        seed=args.seed,
+        rejudge_queued=args.rejudge_queued,
+        enrich_seeds=args.enrich_seeds,
+        rejudge_rejected=args.rejudge_rejected,
+    )
     print("BLOG_JUDGE_DRY_RUN" if args.dry_run else "BLOG_JUDGE_DONE")
     if result["seeds"]["inserted"] or result["seeds"]["skipped"]:
         print("seeds_inserted=" + json.dumps(result["seeds"]["inserted"]))
@@ -467,11 +518,11 @@ def main() -> int:
         print("usages=" + json.dumps(result["usages"], sort_keys=True))
     if result["before_after"]:
         print("before_after:")
-        print("id | source_title | our_title | old status/score | new status/score | duplicate_of")
+        print("id | source_name | source_title | old decision | new decision | our_title | adapted_from")
         for row in result["before_after"]:
             print(
-                f"{row['id']} | {row['source_title']} | {row['our_title']} | "
-                f"{row['old']} | {row['new']} | {row.get('duplicate_of') or ''}"
+                f"{row['id']} | {row['source_name']} | {row['source_title']} | "
+                f"{row['old']} | {row['new']} | {row['our_title']} | {row.get('adapted_from') or ''}"
             )
     for decision in result["decisions"][:10]:
         print(json.dumps(decision, sort_keys=True))

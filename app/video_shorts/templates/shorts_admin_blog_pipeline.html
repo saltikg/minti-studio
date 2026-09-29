@@ -140,6 +140,7 @@
 {% block content %}
   <div class="blog-pipeline-tabs" role="tablist" aria-label="Blog pipeline sections">
     <a class="blog-pipeline-tab is-active" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Topics</a>
+    <a class="blog-pipeline-tab" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_sources') }}">Sources</a>
     <span class="blog-pipeline-tab" aria-disabled="true">Runs</span>
   </div>
 
@@ -177,6 +178,7 @@
       <tbody>
         {% for topic in topics %}
           {% set breakdown = topic.fit_breakdown|from_json_safe if topic.fit_breakdown else {} %}
+          {% set source_summary = topic.source_summary|from_json_safe if topic.source_summary else {} %}
           <tr data-topic-row>
             <td>{{ topic.created_at|fmt_dt if topic.created_at else '—' }}</td>
             <td class="blog-topic-title">
@@ -187,10 +189,40 @@
                   {% if topic.source_title %}
                     <div class="blog-source-title">{{ topic.source_title }}</div>
                   {% endif %}
+                  {% if topic.adapted_from %}
+                    <div class="blog-source-title">Adapted from: {{ topic.adapted_from }}</div>
+                  {% endif %}
                   {% if topic.brief %}
                     <details class="blog-topic-brief">
                       <summary>Brief</summary>
                       <div>{{ topic.brief }}</div>
+                    </details>
+                  {% endif %}
+                  {% if topic.source_type == 'youtube_channel' and source_summary %}
+                    <details class="blog-topic-brief">
+                      <summary>Video summary</summary>
+                      {% if source_summary.video_summary %}
+                        <div>{{ source_summary.video_summary }}</div>
+                      {% endif %}
+                      {% if source_summary.creator_takeaways %}
+                        <div class="mt-2"><strong>Takeaways</strong></div>
+                        <ul class="mb-0">
+                          {% for item in source_summary.creator_takeaways %}
+                            <li>{{ item }}</li>
+                          {% endfor %}
+                        </ul>
+                      {% endif %}
+                      {% if source_summary.claims_to_verify %}
+                        <div class="mt-2"><strong>Verify</strong></div>
+                        <ul class="mb-0">
+                          {% for item in source_summary.claims_to_verify %}
+                            <li>{{ item }}</li>
+                          {% endfor %}
+                        </ul>
+                      {% endif %}
+                      {% if source_summary.transcript_error %}
+                        <div>{{ source_summary.transcript_error }}</div>
+                      {% endif %}
                     </details>
                   {% endif %}
                 </div>
