@@ -61,10 +61,29 @@
     .blog-topic-title {
       width: 260px;
     }
+    .blog-topic-name {
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.92);
+    }
     .blog-source-title,
     .blog-topic-reason {
       color: rgba(255, 255, 255, 0.56);
       font-size: 0.86rem;
+    }
+    .blog-topic-brief {
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 0.9rem;
+    }
+    .blog-topic-brief summary {
+      cursor: pointer;
+      color: rgba(191, 219, 254, 0.86);
+    }
+    .blog-fit-breakdown {
+      margin-top: 4px;
+      color: rgba(255, 255, 255, 0.52);
+      font-size: 0.78rem;
+      line-height: 1.45;
     }
     .blog-status-badge {
       display: inline-flex;
@@ -96,6 +115,24 @@
     }
     .blog-pipeline-wrap {
       overflow-x: auto;
+    }
+    .blog-topic-edit {
+      display: none;
+    }
+    .blog-topic-actions {
+      gap: 8px;
+    }
+    tr.is-editing .blog-topic-read {
+      display: none;
+    }
+    tr.is-editing .blog-topic-edit {
+      display: block;
+    }
+    tr.is-editing .blog-topic-actions {
+      display: flex;
+    }
+    tr.is-editing .blog-edit-button {
+      display: none;
     }
   </style>
 {% endblock %}
@@ -139,17 +176,34 @@
       </thead>
       <tbody>
         {% for topic in topics %}
-          <tr>
+          {% set breakdown = topic.fit_breakdown|from_json_safe if topic.fit_breakdown else {} %}
+          <tr data-topic-row>
             <td>{{ topic.created_at|fmt_dt if topic.created_at else '—' }}</td>
             <td class="blog-topic-title">
               <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_topic_update', topic_id=topic.id) }}" id="topic-form-{{ topic.id }}">
                 <input type="hidden" name="filter_status" value="{{ selected_status }}">
-                <input class="form-control form-control-sm mb-2" name="title" value="{{ topic.title or '' }}">
+                <div class="blog-topic-read">
+                  <div class="blog-topic-name">{{ topic.title or 'Untitled topic' }}</div>
+                  {% if topic.source_title %}
+                    <div class="blog-source-title">{{ topic.source_title }}</div>
+                  {% endif %}
+                  {% if topic.brief %}
+                    <details class="blog-topic-brief">
+                      <summary>Brief</summary>
+                      <div>{{ topic.brief }}</div>
+                    </details>
+                  {% endif %}
+                </div>
+                <div class="blog-topic-edit">
+                  <input class="form-control form-control-sm mb-2" name="title" value="{{ topic.title or '' }}">
+                  <textarea class="form-control form-control-sm mt-2" name="brief" rows="3">{{ topic.brief or '' }}</textarea>
+                </div>
+              </form>
+              <div class="blog-topic-edit mt-2">
                 {% if topic.source_title %}
                   <div class="blog-source-title">{{ topic.source_title }}</div>
                 {% endif %}
-                <textarea class="form-control form-control-sm mt-2" name="brief" rows="3">{{ topic.brief or '' }}</textarea>
-              </form>
+              </div>
             </td>
             <td>
               <div>{{ topic.source_name or '—' }}</div>
@@ -158,20 +212,41 @@
               {% endif %}
             </td>
             <td>
-              <input class="form-control form-control-sm" form="topic-form-{{ topic.id }}" type="number" min="0" max="100" name="fit_score" value="{{ topic.fit_score if topic.fit_score is not none else '' }}">
+              <div class="blog-topic-read">
+                <strong>{{ topic.fit_score if topic.fit_score is not none else '—' }}</strong>
+                {% if breakdown %}
+                  <div class="blog-fit-breakdown" title="Audience {{ breakdown.audience_fit or 0 }} · Bridge {{ breakdown.minti_bridge or 0 }} · Intent {{ breakdown.intent or 0 }} · Timeliness {{ breakdown.timeliness or 0 }}">
+                    Audience {{ breakdown.audience_fit or 0 }}<br>
+                    Bridge {{ breakdown.minti_bridge or 0 }}<br>
+                    Intent {{ breakdown.intent or 0 }}<br>
+                    Time {{ breakdown.timeliness or 0 }}
+                  </div>
+                {% endif %}
+              </div>
+              <div class="blog-topic-edit">
+                <input class="form-control form-control-sm" form="topic-form-{{ topic.id }}" type="number" min="0" max="100" name="fit_score" value="{{ topic.fit_score if topic.fit_score is not none else '' }}">
+              </div>
             </td>
             <td>
-              <span class="blog-status-badge {{ (topic.status or '')|replace('_', '-') }}">{{ topic.status|replace('_', ' ') }}</span>
-              <select class="form-select form-select-sm mt-2" form="topic-form-{{ topic.id }}" name="status">
-                <option value="queued" {% if topic.status == 'queued' %}selected{% endif %}>queued</option>
-                <option value="rejected_lowfit" {% if topic.status == 'rejected_lowfit' %}selected{% endif %}>rejected</option>
-                <option value="rejected_duplicate" {% if topic.status == 'rejected_duplicate' %}selected{% endif %}>duplicate</option>
-                <option value="rejected_offtopic" {% if topic.status == 'rejected_offtopic' %}selected{% endif %}>offtopic</option>
-              </select>
+              <div class="blog-topic-read">
+                <span class="blog-status-badge {{ (topic.status or '')|replace('_', '-') }}">{{ topic.status|replace('_', ' ') }}</span>
+              </div>
+              <div class="blog-topic-edit">
+                <select class="form-select form-select-sm" form="topic-form-{{ topic.id }}" name="status">
+                  <option value="queued" {% if topic.status == 'queued' %}selected{% endif %}>queued</option>
+                  <option value="rejected_lowfit" {% if topic.status == 'rejected_lowfit' %}selected{% endif %}>rejected</option>
+                  <option value="rejected_duplicate" {% if topic.status == 'rejected_duplicate' %}selected{% endif %}>duplicate</option>
+                  <option value="rejected_offtopic" {% if topic.status == 'rejected_offtopic' %}selected{% endif %}>offtopic</option>
+                </select>
+              </div>
             </td>
             <td class="blog-topic-reason">{{ topic.judge_reason or '—' }}</td>
             <td>
-              <button class="btn btn-sm btn-primary" form="topic-form-{{ topic.id }}" type="submit">Save</button>
+              <button class="btn btn-sm btn-outline-light blog-edit-button" type="button" data-topic-edit>Edit</button>
+              <div class="blog-topic-edit blog-topic-actions">
+                <button class="btn btn-sm btn-primary" form="topic-form-{{ topic.id }}" type="submit">Save</button>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-topic-cancel>Cancel</button>
+              </div>
             </td>
           </tr>
         {% else %}
@@ -182,4 +257,22 @@
       </tbody>
     </table>
   </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    document.addEventListener('click', function (event) {
+      const editButton = event.target.closest('[data-topic-edit]');
+      if (editButton) {
+        const row = editButton.closest('[data-topic-row]');
+        if (row) row.classList.add('is-editing');
+        return;
+      }
+      const cancelButton = event.target.closest('[data-topic-cancel]');
+      if (cancelButton) {
+        const row = cancelButton.closest('[data-topic-row]');
+        if (row) row.classList.remove('is-editing');
+      }
+    });
+  </script>
 {% endblock %}

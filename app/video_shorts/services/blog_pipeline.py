@@ -28,7 +28,7 @@ BLOG_TOPIC_STATUSES = (
 )
 ACTIVE_TOPIC_STATUSES = ("queued", "in_production", "draft_ready", "published")
 BLOG_MONTHLY_BUDGET_USD = Decimal(os.getenv("BLOG_MONTHLY_BUDGET_USD", "15") or "15")
-BLOG_JUDGE_MIN_SCORE = int(os.getenv("BLOG_JUDGE_MIN_SCORE", "60") or "60")
+BLOG_JUDGE_MIN_SCORE = int(os.getenv("BLOG_JUDGE_MIN_SCORE", "70") or "70")
 BLOG_SCOUT_USER_AGENT = os.getenv("BLOG_SCOUT_USER_AGENT", "MintiStudioBlogScout/1.0 (+https://mintistudio.com)")
 
 
@@ -40,6 +40,14 @@ def normalize_keyword(value: str | None) -> str | None:
 def normalize_title(value: str | None) -> str:
     text = re.sub(r"[^a-z0-9\s-]", " ", str(value or "").lower())
     return re.sub(r"\s+", " ", text).strip()
+
+
+def title_similarity(left: str | None, right: str | None) -> float:
+    left_norm = normalize_title(left)
+    right_norm = normalize_title(right)
+    if not left_norm or not right_norm:
+        return 0.0
+    return SequenceMatcher(None, left_norm, right_norm).ratio()
 
 
 def slug_to_title(url: str) -> str:
@@ -197,7 +205,7 @@ def current_month_spend(conn=None) -> Decimal:
             conn.close()
 
 
-def list_existing_articles_and_topics(conn=None) -> list[dict[str, str]]:
+def list_existing_articles_and_topics(conn=None, *, exclude_topic_ids: set[int] | None = None) -> list[dict[str, str]]:
     close_conn = conn is None
     conn = conn or get_db_readonly()
     rows: list[dict[str, str]] = []
@@ -209,10 +217,12 @@ def list_existing_articles_and_topics(conn=None) -> list[dict[str, str]]:
                     rows.append({"kind": "article", "title": label, "slug": str(slug or "")})
         if table_columns(conn, "blog_topics"):
             placeholders = ",".join(["?"] * len(ACTIVE_TOPIC_STATUSES))
-            for title, keyword in conn.execute(
-                f"SELECT title, primary_keyword FROM blog_topics WHERE status IN ({placeholders})",
+            for topic_id, title, keyword in conn.execute(
+                f"SELECT id, title, primary_keyword FROM blog_topics WHERE status IN ({placeholders})",
                 list(ACTIVE_TOPIC_STATUSES),
             ).fetchall():
+                if exclude_topic_ids and int(topic_id) in exclude_topic_ids:
+                    continue
                 label = str(title or keyword or "").strip()
                 if label:
                     rows.append({"kind": "topic", "title": label, "slug": str(keyword or "")})
@@ -320,6 +330,8 @@ def json_dumps_compact(value: Any) -> str:
 def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
     conn = get_db_readonly()
     try:
+        columns = table_columns(conn, "blog_topics")
+        fit_breakdown_sql = "fit_breakdown" if "fit_breakdown" in columns else "NULL AS fit_breakdown"
         where = ""
         params: list[Any] = []
         if status and status in BLOG_TOPIC_STATUSES:
@@ -328,7 +340,8 @@ def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
         rows = conn.execute(
             f"""
             SELECT id, created_at, title, source_title, source_name, source_url,
-                   fit_score, status, judge_reason, brief, primary_keyword
+                   fit_score, status, judge_reason, brief, primary_keyword,
+                   {fit_breakdown_sql}
             FROM blog_topics
             {where}
             ORDER BY

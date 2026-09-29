@@ -15,18 +15,49 @@ except ImportError:  # pragma: no cover
     OpenAI = None
 
 
-BLOG_MODEL_JUDGE = os.getenv("BLOG_MODEL_JUDGE", "gpt-5-nano")
+BLOG_MODEL_JUDGE = os.getenv("BLOG_MODEL_JUDGE", "gpt-6-astra")
 BLOG_MODEL_WRITER = os.getenv("BLOG_MODEL_WRITER", "gpt-6-astra")
 BLOG_MODEL_REVIEWER = os.getenv("BLOG_MODEL_REVIEWER", "gpt-6-luna")
 BLOG_MODEL_DESIGNER = os.getenv("BLOG_MODEL_DESIGNER", "gpt-6-luna")
 BLOG_IMAGE_COVER = os.getenv("BLOG_IMAGE_COVER", "gpt-image-2")
-BLOG_IMAGE_INLINE = os.getenv("BLOG_IMAGE_INLINE", "gpt-image-1-mini")
+BLOG_IMAGE_COVER_QUALITY = os.getenv("BLOG_IMAGE_COVER_QUALITY", "medium")
+BLOG_IMAGE_INLINE = os.getenv("BLOG_IMAGE_INLINE", "gpt-image-2")
+BLOG_IMAGE_INLINE_QUALITY = os.getenv("BLOG_IMAGE_INLINE_QUALITY", "low")
 
 PRICES: dict[str, dict[str, Decimal]] = {
     "gpt-5-nano": {"input": Decimal("0.05"), "cached_input": Decimal("0.005"), "output": Decimal("0.40")},
-    "gpt-6-astra": {"input": Decimal("5.00"), "cached_input": Decimal("0.50"), "output": Decimal("25.00")},
-    "gpt-6-luna": {"input": Decimal("0.05"), "cached_input": Decimal("0.005"), "output": Decimal("0.25")},
-    "gpt-image-2": {"text_input": Decimal("2.50"), "text_cached_input": Decimal("0.625"), "image_input": Decimal("4.00"), "image_cached_input": Decimal("1.00"), "image_output": Decimal("15.00"), "image_medium_1024": Decimal("0.053")},
+    "gpt-6-astra": {
+        "input": Decimal("10.00"),
+        "cached_input": Decimal("1.00"),
+        "cache_write": Decimal("12.50"),
+        "output": Decimal("50.00"),
+        "batch_input": Decimal("5.00"),
+        "batch_cached_input": Decimal("0.50"),
+        "batch_cache_write": Decimal("6.25"),
+        "batch_output": Decimal("25.00"),
+    },
+    "gpt-6-luna": {
+        "input": Decimal("0.10"),
+        "cached_input": Decimal("0.01"),
+        "cache_write": Decimal("0.125"),
+        "output": Decimal("0.50"),
+        "batch_input": Decimal("0.05"),
+        "batch_cached_input": Decimal("0.005"),
+        "batch_cache_write": Decimal("0.0625"),
+        "batch_output": Decimal("0.25"),
+    },
+    "gpt-image-2": {
+        "text_input": Decimal("2.50"),
+        "text_cached_input": Decimal("0.625"),
+        "image_input": Decimal("4.00"),
+        "image_cached_input": Decimal("1.00"),
+        "image_output": Decimal("15.00"),
+        "batch_text_input": Decimal("1.25"),
+        "batch_text_cached_input": Decimal("0.3125"),
+        "batch_image_input": Decimal("2.00"),
+        "batch_image_cached_input": Decimal("0.50"),
+        "batch_image_output": Decimal("7.50"),
+    },
     "gpt-image-1-mini": {"text_input": Decimal("2.00"), "text_cached_input": Decimal("0.20"), "image_input": Decimal("2.50"), "image_cached_input": Decimal("0.25"), "image_output": Decimal("8.00"), "image_medium_1024": Decimal("0.011")},
 }
 
@@ -119,6 +150,16 @@ def _check_budget() -> None:
         raise RuntimeError(f"BLOG_MONTHLY_BUDGET_USD reached: spent ${spent} of ${BLOG_MONTHLY_BUDGET_USD}")
 
 
+def _reasoning_effort_for(stage: str, model: str) -> str | None:
+    env_name = f"BLOG_REASONING_{stage.upper()}"
+    configured = (os.getenv(env_name) or "").strip().lower()
+    if configured:
+        return configured
+    if model.startswith("gpt-6"):
+        return "medium"
+    return None
+
+
 def call_json(stage: str, *, model: str, system_prompt: str, user_prompt: str) -> LLMResult:
     _check_budget()
     provider = provider_for_model(model)
@@ -131,14 +172,18 @@ def call_json(stage: str, *, model: str, system_prompt: str, user_prompt: str) -
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     last_error: Exception | None = None
     for attempt in range(2):
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt if attempt == 0 else user_prompt + "\n\nReturn valid JSON only."},
             ],
-            response_format={"type": "json_object"},
-        )
+            "response_format": {"type": "json_object"},
+        }
+        reasoning_effort = _reasoning_effort_for(stage, model)
+        if reasoning_effort:
+            request_kwargs["reasoning_effort"] = reasoning_effort
+        response = client.chat.completions.create(**request_kwargs)
         content = response.choices[0].message.content or ""
         try:
             json.loads(content)
