@@ -31,6 +31,11 @@ ACTIVE_TOPIC_STATUSES = ("queued", "in_production", "draft_ready", "published")
 BLOG_MONTHLY_BUDGET_USD = Decimal(os.getenv("BLOG_MONTHLY_BUDGET_USD", "20") or "20")
 BLOG_JUDGE_MIN_SCORE = int(os.getenv("BLOG_JUDGE_MIN_SCORE", "70") or "70")
 BLOG_SCOUT_USER_AGENT = os.getenv("BLOG_SCOUT_USER_AGENT", "MintiStudioBlogScout/1.0 (+https://mintistudio.com)")
+BLOG_AUTO_CATEGORIES = tuple(
+    item.strip().lower()
+    for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow").split(",")
+    if item.strip()
+)
 
 
 def normalize_keyword(value: str | None) -> str | None:
@@ -552,7 +557,10 @@ def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
             """,
             params,
         ).fetchall()
-        return [row_to_dict(conn.description, row) for row in rows]
+        topics = [row_to_dict(conn.description, row) for row in rows]
+        for topic in topics:
+            topic["auto_eligible"] = str(topic.get("category") or "").strip().lower() in BLOG_AUTO_CATEGORIES
+        return topics
     finally:
         conn.close()
 

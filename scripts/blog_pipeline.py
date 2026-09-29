@@ -55,6 +55,11 @@ from app.video_shorts.services.db import get_db, get_db_readonly, table_columns 
 BLOG_REVIEW_PASS = int(os.getenv("BLOG_REVIEW_PASS", "85") or "85")
 BLOG_RUN_MAX_USD = Decimal(os.getenv("BLOG_RUN_MAX_USD", "1.50") or "1.50")
 BLOG_AUTO_PUBLISH = str(os.getenv("BLOG_AUTO_PUBLISH", "true")).strip().lower() not in {"0", "false", "no", "off"}
+BLOG_AUTO_CATEGORIES = tuple(
+    item.strip().lower()
+    for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow").split(",")
+    if item.strip()
+)
 STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
 LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
@@ -454,7 +459,8 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
             [int(topic_id)],
         ).fetchone()
     else:
-        comparison_filter = "" if _competitor_facts_exists() else "AND COALESCE(category, '') <> 'comparison'"
+        auto_categories = BLOG_AUTO_CATEGORIES or ("persona", "craft", "workflow")
+        placeholders = ", ".join(["?"] * len(auto_categories))
         row = conn.execute(
             f"""
             SELECT id, title, primary_keyword, category, intent, brief, source_type, source_name,
@@ -463,11 +469,12 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
             FROM blog_topics
             WHERE status = 'queued'
               AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
-              {comparison_filter}
+              AND LOWER(COALESCE(category, '')) IN ({placeholders})
             ORDER BY fit_score DESC NULLS LAST, created_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1
-            """
+            """,
+            list(auto_categories),
         ).fetchone()
     if not row:
         return None

@@ -262,7 +262,7 @@
             <td>
               <div class="blog-topic-read">
                 <span class="blog-status-badge {{ (topic.status or '')|replace('_', '-') }}">{{ topic.status|replace('_', ' ') }}</span>
-                {% if topic.status == 'queued' and topic.category == 'comparison' %}
+                {% if topic.status == 'queued' and not topic.auto_eligible %}
                   <span class="blog-status-badge queued ms-1">manual only</span>
                 {% endif %}
               </div>
