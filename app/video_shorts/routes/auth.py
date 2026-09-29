@@ -2428,17 +2428,20 @@ def create_brand():
 
 @video_shorts_bp.route("/privacy")
 def privacy_page():
-    return render_template("vs_privacy.html")
+    base_url = (current_app.config.get("BASE_URL") or request.url_root).rstrip("/")
+    return render_template("vs_privacy.html", canonical_url=f"{base_url}{url_for('video_shorts_bp.privacy_page')}")
 
 
 @video_shorts_bp.route("/data-deletion")
 def data_deletion_page():
-    return render_template("vs_data_deletion.html")
+    base_url = (current_app.config.get("BASE_URL") or request.url_root).rstrip("/")
+    return render_template("vs_data_deletion.html", canonical_url=f"{base_url}{url_for('video_shorts_bp.data_deletion_page')}")
 
 
 @video_shorts_bp.route("/terms")
 def terms_page():
-    return render_template("vs_terms.html")
+    base_url = (current_app.config.get("BASE_URL") or request.url_root).rstrip("/")
+    return render_template("vs_terms.html", canonical_url=f"{base_url}{url_for('video_shorts_bp.terms_page')}")
 
 
 @video_shorts_bp.route("/contact", methods=["GET", "POST"])

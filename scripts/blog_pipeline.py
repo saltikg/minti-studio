@@ -530,6 +530,73 @@ def _http_status(url: str, *, timeout: int = 5) -> int | None:
     return None
 
 
+def _indexability_status(url: str, *, timeout: int = 8) -> dict[str, Any]:
+    headers = {"User-Agent": "MintiStudioBlogPipeline/1.0 (+https://mintistudio.com)"}
+    result: dict[str, Any] = {
+        "url": url,
+        "status": None,
+        "final_url": None,
+        "x_robots_tag": None,
+        "meta_robots": None,
+        "canonical": None,
+        "ok": False,
+        "reasons": [],
+    }
+    try:
+        req = request.Request(url, headers=headers)
+        with request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(400_000).decode("utf-8", "ignore")
+            result["status"] = int(resp.status)
+            result["final_url"] = resp.geturl()
+            result["x_robots_tag"] = resp.headers.get("X-Robots-Tag")
+    except HTTPError as exc:
+        result["status"] = int(exc.code)
+        result["final_url"] = exc.geturl()
+        result["x_robots_tag"] = exc.headers.get("X-Robots-Tag")
+        body = exc.read(400_000).decode("utf-8", "ignore")
+    except Exception as exc:
+        result["reasons"].append(f"fetch failed: {str(exc)[:200]}")
+        return result
+
+    meta_match = re.search(
+        r"<meta[^>]+name=[\"']robots[\"'][^>]*content=[\"']([^\"']+)[\"'][^>]*>",
+        body,
+        flags=re.I,
+    )
+    if not meta_match:
+        meta_match = re.search(
+            r"<meta[^>]+content=[\"']([^\"']+)[\"'][^>]*name=[\"']robots[\"'][^>]*>",
+            body,
+            flags=re.I,
+        )
+    canonical_match = re.search(
+        r"<link[^>]+rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']+)[\"'][^>]*>",
+        body,
+        flags=re.I,
+    )
+    if not canonical_match:
+        canonical_match = re.search(
+            r"<link[^>]+href=[\"']([^\"']+)[\"'][^>]*rel=[\"']canonical[\"'][^>]*>",
+            body,
+            flags=re.I,
+        )
+    result["meta_robots"] = meta_match.group(1).strip() if meta_match else None
+    result["canonical"] = canonical_match.group(1).strip() if canonical_match else None
+
+    if result["status"] != 200:
+        result["reasons"].append(f"HTTP status {result['status'] or 'error'}")
+    x_robots = str(result.get("x_robots_tag") or "").lower()
+    meta_robots = str(result.get("meta_robots") or "").lower()
+    if "noindex" in x_robots:
+        result["reasons"].append(f"X-Robots-Tag contains noindex: {result['x_robots_tag']}")
+    if "noindex" in meta_robots:
+        result["reasons"].append(f"meta robots contains noindex: {result['meta_robots']}")
+    if result.get("canonical") != url:
+        result["reasons"].append(f"canonical mismatch: {result.get('canonical') or 'missing'}")
+    result["ok"] = not result["reasons"]
+    return result
+
+
 def _public_blog_url(slug: str) -> str:
     return f"{BASE_URL}/video_shorts/blog/{quote(str(slug).strip())}/"
 
@@ -809,6 +876,8 @@ def _notify_run(
             check_conn.close()
     if status_label == "published":
         subject = f"[Minti Blog] Published — {title}"
+    elif status_label == "published_not_indexable":
+        subject = f"[Minti Blog] Published but NOT indexable — {title}"
     elif status_label == "failed":
         subject = f"[Minti Blog] Run failed — {title}"
     else:
@@ -868,6 +937,7 @@ def _publish_if_clean(
     public_url = _public_blog_url(str(article["slug"]))
     verification["public_url"] = public_url
     verification["http_status"] = _http_status(public_url)
+    verification["indexability"] = _indexability_status(public_url)
     verification["sitemap"] = _sitemap_status(public_url)
     return True, None, verification
 
@@ -1353,6 +1423,14 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         result["published"] = published
         result["publish_reason"] = publish_reason
         result["publish_verification"] = publish_verification
+        published_not_indexable = bool(
+            published and not (publish_verification.get("indexability") or {}).get("ok")
+        )
+        if published_not_indexable:
+            publish_reason = "Published but NOT indexable: " + "; ".join(
+                (publish_verification.get("indexability") or {}).get("reasons") or ["indexability check failed"]
+            )
+            result["publish_reason"] = publish_reason
         conn = get_db()
         try:
             row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [state.run_id]).fetchone()
@@ -1379,7 +1457,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             result["status"] = "published"
         notification = _notify_run(
             state=state,
-            status_label="published" if published else "draft_kept",
+            status_label="published_not_indexable" if published_not_indexable else ("published" if published else "draft_kept"),
             title=str(article.get("title") or topic.get("title") or "Untitled"),
             article=article,
             article_id=article_id,

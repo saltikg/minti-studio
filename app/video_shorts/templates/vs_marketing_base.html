@@ -417,7 +417,10 @@
   {% block extra_styles %}{% endblock %}
 
   {% block seo_meta %}
-    <meta name="robots" content="noindex, nofollow">
+    <meta name="robots" content="{{ seo_robots_content|default('index, follow') }}">
+    {% if canonical_url %}
+      <link rel="canonical" href="{{ canonical_url }}">
+    {% endif %}
   {% endblock %}
 </head>
 

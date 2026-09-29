@@ -6,7 +6,7 @@ from html import escape
 from datetime import datetime, timedelta
 
 
-from flask import Flask, Response, jsonify, redirect, g, request, url_for
+from flask import Flask, Response, jsonify, redirect, g, render_template, request, url_for
 from dotenv import load_dotenv
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir_on_startup
@@ -130,11 +130,19 @@ def create_app():
     else:
         @app.get("/")
         def legacy_root_redirect():
-            return redirect(url_for("video_shorts_bp.home"))
+            return redirect(url_for("video_shorts_bp.home"), code=301)
 
     def _absolute_public_url(path: str) -> str:
-        base_url = (app.config.get("BASE_URL") or request.url_root).rstrip("/")
+        base_url = "https://mintistudio.com"
         return f"{base_url}{path}"
+
+    @app.get("/terms")
+    def terms_page_alias():
+        return render_template("vs_terms.html", canonical_url=_absolute_public_url("/terms"))
+
+    @app.get("/data-deletion")
+    def data_deletion_page_alias():
+        return render_template("vs_data_deletion.html", canonical_url=_absolute_public_url("/data-deletion"))
 
     def _sitemap_lastmod(value):
         if not value:
@@ -152,6 +160,18 @@ def create_app():
         entries = [
             {
                 "loc": _absolute_public_url(url_for("video_shorts_bp.home")),
+                "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url(url_for("video_shorts_bp.privacy_page")),
+                "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url("/terms"),
+                "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url("/data-deletion"),
                 "lastmod": "",
             },
             {

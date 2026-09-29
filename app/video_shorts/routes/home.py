@@ -65,6 +65,7 @@ def home():
         autopilot_tiers=autopilot_tiers,
         register_base_url=url_for("video_shorts_bp.register"),
         latest_blog_articles=latest_articles,
+        canonical_url=f"{(current_app.config.get('BASE_URL') or request.url_root).rstrip('/')}{url_for('video_shorts_bp.home')}",
     )
 
 
