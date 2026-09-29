@@ -44,6 +44,15 @@
       border-radius:8px;
       border:1px solid rgba(255,255,255,.12);
     }
+    .blog-image-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:14px; }
+    .blog-image-card {
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:8px;
+      padding:12px;
+      background:rgba(255,255,255,.03);
+    }
+    .blog-image-card img { width:100%; border-radius:8px; border:1px solid rgba(255,255,255,.12); background:#07101b; }
+    .blog-image-card textarea { min-height:92px; font-size:.85rem; }
   </style>
 {% endblock %}
 
@@ -81,6 +90,57 @@
           <div class="blog-muted mb-2">{{ stage.notes }}</div>
         {% endif %}
         {% if stage.output %}
+          {% if stage.stage in ['images', 'image_regenerate'] %}
+            <div class="blog-image-grid">
+              {% if stage.output.cover %}
+                {% set image = stage.output.cover %}
+                <div class="blog-image-card">
+                  <div class="blog-muted">cover · {{ image.model }} · {{ image.quality }} · ${{ '%.5f'|format(image.cost_usd|float) }}</div>
+                  <img src="{{ image.url }}" alt="{{ image.alt or 'Cover image' }}">
+                  <form class="mt-2" method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_image_regenerate', run_id=run.id) }}">
+                    <input type="hidden" name="kind" value="cover">
+                    <input type="hidden" name="filename" value="{{ image.filename }}">
+                    <input type="hidden" name="model" value="{{ image.model }}">
+                    <input type="hidden" name="quality" value="{{ image.quality }}">
+                    <input type="hidden" name="alt" value="{{ image.alt }}">
+                    <textarea class="form-control mb-2" name="prompt">{{ image.prompt }}</textarea>
+                    <button class="btn btn-sm btn-outline-light" type="submit">Regenerate</button>
+                  </form>
+                </div>
+              {% endif %}
+              {% for image in stage.output.visuals or [] %}
+                <div class="blog-image-card">
+                  <div class="blog-muted">{{ image.marker }} · {{ image.model }} · {{ image.quality }} · ${{ '%.5f'|format(image.cost_usd|float) }}</div>
+                  <img src="{{ image.url }}" alt="{{ image.alt or image.marker }}">
+                  <form class="mt-2" method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_image_regenerate', run_id=run.id) }}">
+                    <input type="hidden" name="kind" value="inline">
+                    <input type="hidden" name="marker" value="{{ image.marker }}">
+                    <input type="hidden" name="filename" value="{{ image.filename }}">
+                    <input type="hidden" name="model" value="{{ image.model }}">
+                    <input type="hidden" name="quality" value="{{ image.quality }}">
+                    <input type="hidden" name="alt" value="{{ image.alt }}">
+                    <textarea class="form-control mb-2" name="prompt">{{ image.prompt }}</textarea>
+                    <button class="btn btn-sm btn-outline-light" type="submit">Regenerate</button>
+                  </form>
+                </div>
+              {% endfor %}
+              {% for variant in stage.output.test_variants or [] %}
+                {% for label, image in variant.items() %}
+                  <div class="blog-image-card">
+                    <div class="blog-muted">{{ image.marker }} {{ label }} test · {{ image.model }} · {{ image.quality }} · ${{ '%.5f'|format(image.cost_usd|float) }}</div>
+                    <img src="{{ image.url }}" alt="{{ image.alt or image.marker }}">
+                  </div>
+                {% endfor %}
+              {% endfor %}
+              {% if stage.output.image %}
+                {% set image = stage.output.image %}
+                <div class="blog-image-card">
+                  <div class="blog-muted">regenerated {{ image.marker or image.kind }} · {{ image.model }} · {{ image.quality }} · ${{ '%.5f'|format(image.cost_usd|float) }}</div>
+                  <img src="{{ image.url }}" alt="{{ image.alt or image.marker or 'Regenerated image' }}">
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
           {% if stage.stage in ['reviewer_1', 'reviewer_2'] and stage.output.scores %}
             <div class="mb-2">
               {% for key, value in stage.output.scores.items() %}

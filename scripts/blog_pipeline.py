@@ -13,6 +13,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from urllib import request
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -25,6 +27,16 @@ from app.video_shorts.services.blog_llm import (  # noqa: E402
     BLOG_MODEL_WRITER,
     call_json,
     log_usage,
+)
+from app.video_shorts.services.blog_images import (  # noqa: E402
+    BLOG_IMAGE_COVER,
+    BLOG_IMAGE_COVER_QUALITY,
+    BLOG_IMAGE_INLINE,
+    BLOG_IMAGE_INLINE_QUALITY,
+    BlogImageResult,
+    generate_blog_image,
+    generated_visual_filename,
+    render_markdown_image,
 )
 from app.video_shorts.services.blog_pipeline import current_month_spend, json_dumps_compact  # noqa: E402
 from app.video_shorts.services.blog_pipeline_runs import (  # noqa: E402
@@ -269,6 +281,21 @@ def _article_links(markdown_text: str) -> list[str]:
     return re.findall(r"\[[^\]]+\]\((https?://[^)]+)\)", markdown_text or "")
 
 
+def _http_status(url: str, *, timeout: int = 5) -> int | None:
+    headers = {"User-Agent": "MintiStudioBlogPipeline/1.0 (+https://mintistudio.com)"}
+    for method in ("HEAD", "GET"):
+        try:
+            req = request.Request(url, method=method, headers=headers)
+            with request.urlopen(req, timeout=timeout) as resp:
+                return int(resp.status)
+        except HTTPError as exc:
+            return int(exc.code)
+        except Exception:
+            if method == "GET":
+                return None
+    return None
+
+
 def _slug_exists(slug: str) -> bool:
     conn = get_db_readonly()
     try:
@@ -282,10 +309,56 @@ def _unique_slug(slug: str) -> str:
     base = _slugify(slug)
     candidate = base
     counter = 2
-    while _slug_exists(candidate):
+    while _slug_blocks_new_draft(candidate):
         candidate = f"{base}-{counter}"
         counter += 1
     return candidate
+
+
+def _slug_blocks_new_draft(slug: str) -> bool:
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT status, import_source
+            FROM blog_articles
+            WHERE slug = ?
+            LIMIT 1
+            """,
+            [slug],
+        ).fetchone()
+        if not row:
+            return False
+        return not (str(row[0] or "") == "archived" and str(row[1] or "") == "blog_pipeline")
+    finally:
+        conn.close()
+
+
+def _rename_archived_pipeline_slug_conflict(conn, slug: str) -> str | None:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM blog_articles
+        WHERE slug = ?
+          AND status = 'archived'
+          AND import_source = 'blog_pipeline'
+        LIMIT 1
+        """,
+        [slug],
+    ).fetchone()
+    if not row:
+        return None
+    archived_id = int(row[0])
+    archived_slug = f"{slug}-archived-{archived_id}"
+    conn.execute(
+        """
+        UPDATE blog_articles
+        SET slug = ?
+        WHERE id = ?
+        """,
+        [archived_slug, archived_id],
+    )
+    return archived_slug
 
 
 def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], published: list[dict[str, Any]]) -> dict[str, Any]:
@@ -316,6 +389,10 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
     for url in _article_links(content):
         if "mintistudio.com" in url and url not in allowed_urls:
             issues.append(f"internal link not in published list: {url}")
+        if "mintistudio.com" in url and "/video_shorts/blog/" in url:
+            status = _http_status(url)
+            if status != 200:
+                issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
         issues.append("MintiStudio self-disclaimer is not allowed")
     screenshot_by_id = {item["id"]: item for item in screenshots}
@@ -406,14 +483,140 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
     return article
 
 
+def _image_prompt_for_cover(article: dict[str, Any]) -> str:
+    cover = article.get("cover") if isinstance(article.get("cover"), dict) else {}
+    prompt = str(cover.get("prompt") or cover.get("description") or "").strip()
+    if prompt:
+        return prompt
+    return f"Editorial cover illustration for a MintiStudio blog article titled: {article.get('title') or 'MintiStudio guide'}"
+
+
+def _image_result_payload(result: BlogImageResult) -> dict[str, Any]:
+    payload = dict(result.__dict__)
+    payload["cost_usd"] = str(result.cost_usd)
+    return payload
+
+
+def _replace_generated_placeholder(content: str, marker: str, markdown: str) -> str:
+    return re.sub(r"<!--\s*" + re.escape(marker) + r"\s*-->", markdown, content, count=1)
+
+
+def _run_image_stage(
+    *,
+    state: PipelineState,
+    article: dict[str, Any],
+    article_id: int | None = None,
+    low_medium_test: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    set_current = state.run_id and not state.dry_run
+    conn = get_db() if set_current else None
+    try:
+        if conn:
+            set_current_stage(conn, state.run_id, "images")
+            conn.commit()
+    finally:
+        if conn:
+            conn.close()
+    output: dict[str, Any] = {"cover": None, "visuals": [], "errors": [], "test_variants": []}
+    run_status = "done"
+    slug = str(article["slug"])
+    try:
+        _check_run_budget(state)
+        cover_result = generate_blog_image(
+            prompt=_image_prompt_for_cover(article),
+            slug=slug,
+            filename="cover.png",
+            kind="cover",
+            marker=None,
+            alt=str(article.get("title") or "Blog cover"),
+            model=BLOG_IMAGE_COVER,
+            quality=BLOG_IMAGE_COVER_QUALITY,
+            topic_id=int(state.topic["id"]),
+            run_id=state.run_id,
+            overwrite=True,
+        )
+        article["cover_image_url"] = cover_result.url
+        output["cover"] = _image_result_payload(cover_result)
+        state.run_cost += cover_result.cost_usd
+    except Exception as exc:
+        run_status = "needs_you"
+        output["errors"].append({"kind": "cover", "error_class": exc.__class__.__name__, "message": str(exc)[:300]})
+
+    content = str(article.get("content_md") or "")
+    generate_index = 1
+    for visual in article.get("visuals") or []:
+        marker = _normalize_marker(visual.get("marker") or visual.get("id"))
+        if visual.get("type") != "generate" or marker not in {"IMAGE_1", "IMAGE_2", "IMAGE_3"}:
+            continue
+        prompt = str(visual.get("prompt") or visual.get("description") or "").strip()
+        filename = generated_visual_filename(visual, generate_index)
+        generate_index += 1
+        try:
+            _check_run_budget(state)
+            result = generate_blog_image(
+                prompt=prompt,
+                slug=slug,
+                filename=filename,
+                kind="inline",
+                marker=marker,
+                alt=str(visual.get("alt") or marker),
+                model=BLOG_IMAGE_INLINE,
+                quality=BLOG_IMAGE_INLINE_QUALITY,
+                topic_id=int(state.topic["id"]),
+                run_id=state.run_id,
+                overwrite=True,
+            )
+            output["visuals"].append(_image_result_payload(result))
+            state.run_cost += result.cost_usd
+            content = _replace_generated_placeholder(content, marker, render_markdown_image(visual, result))
+            if low_medium_test and marker == "IMAGE_1":
+                medium_filename = filename.rsplit(".", 1)[0] + "-medium.png"
+                _check_run_budget(state)
+                medium = generate_blog_image(
+                    prompt=prompt,
+                    slug=slug,
+                    filename=medium_filename,
+                    kind="inline",
+                    marker=marker,
+                    alt=str(visual.get("alt") or marker),
+                    model=BLOG_IMAGE_INLINE,
+                    quality="medium",
+                    topic_id=int(state.topic["id"]),
+                    run_id=state.run_id,
+                    overwrite=True,
+                )
+                state.run_cost += medium.cost_usd
+                output["test_variants"].append({"low": _image_result_payload(result), "medium": _image_result_payload(medium)})
+        except Exception as exc:
+            run_status = "needs_you"
+            output["errors"].append({"kind": "inline", "marker": marker, "error_class": exc.__class__.__name__, "message": str(exc)[:300]})
+    article["content_md"] = content
+    if article_id and not state.dry_run:
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                UPDATE blog_articles
+                SET content = ?, cover_image_url = ?
+                WHERE id = ?
+                """,
+                [article.get("content_md"), article.get("cover_image_url"), int(article_id)],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return article, output, run_status
+
+
 def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_plan: dict[str, Any], run_status: str) -> int:
+    _rename_archived_pipeline_slug_conflict(conn, str(article["slug"]))
     row = conn.execute(
         """
         INSERT INTO blog_articles (
             title, slug, summary, content, cover_image_url, meta_title, meta_description,
             author_name, reading_time, view_count, status, published_at, import_source, import_source_id
         )
-        VALUES (?, ?, ?, ?, NULL, ?, ?, 'MintiStudio Team', ?, 0, 'draft', NULL, 'blog_pipeline', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'MintiStudio Team', ?, 0, 'draft', NULL, 'blog_pipeline', ?)
         RETURNING id
         """,
         [
@@ -421,6 +624,7 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
             article["slug"],
             article.get("summary"),
             article.get("content_md"),
+            article.get("cover_image_url"),
             article.get("meta_title"),
             article.get("meta_description"),
             article.get("reading_time"),
@@ -441,6 +645,124 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
     return article_id
 
 
+def _stage_output_from_run(conn, run_id: int, stage_names: tuple[str, ...]) -> dict[str, Any]:
+    placeholders = ",".join(["?"] * len(stage_names))
+    row = conn.execute(
+        f"""
+        SELECT output
+        FROM blog_pipeline_stages
+        WHERE run_id = ?
+          AND stage IN ({placeholders})
+        ORDER BY seq DESC, id DESC
+        LIMIT 1
+        """,
+        [int(run_id), *stage_names],
+    ).fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        return json.loads(row[0]) if isinstance(row[0], str) else dict(row[0])
+    except Exception:
+        return {}
+
+
+def _article_for_existing_draft(conn, *, article_id: int, run_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    row = conn.execute(
+        """
+        SELECT id, title, slug, summary, content, cover_image_url, meta_title, meta_description, reading_time
+        FROM blog_articles
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [int(article_id)],
+    ).fetchone()
+    if not row:
+        raise RuntimeError(f"blog article {article_id} was not found")
+    topic_row = conn.execute(
+        """
+        SELECT t.id, t.title, t.primary_keyword, t.category, t.intent, t.brief
+        FROM blog_pipeline_runs r
+        LEFT JOIN blog_topics t ON t.id = r.topic_id
+        WHERE r.id = ?
+        LIMIT 1
+        """,
+        [int(run_id)],
+    ).fetchone()
+    if not topic_row:
+        raise RuntimeError(f"blog pipeline run {run_id} was not found")
+    article = {
+        "id": int(row[0]),
+        "title": row[1],
+        "slug": row[2],
+        "summary": row[3],
+        "content_md": row[4],
+        "cover_image_url": row[5],
+        "meta_title": row[6],
+        "meta_description": row[7],
+        "reading_time": row[8],
+    }
+    final_output = _stage_output_from_run(conn, run_id, ("final",))
+    designer_output = _stage_output_from_run(conn, run_id, ("designer",))
+    writer_output = _stage_output_from_run(conn, run_id, ("revision_2", "revision_1", "writer"))
+    plan = final_output.get("visuals") if isinstance(final_output.get("visuals"), dict) else {}
+    visuals = plan.get("visuals") if isinstance(plan, dict) else None
+    if not visuals:
+        visuals = designer_output.get("visuals") or writer_output.get("visuals") or []
+    article["visuals"] = visuals
+    article["cover"] = (plan or {}).get("cover") or writer_output.get("cover") or {}
+    topic = {
+        "id": int(topic_row[0]),
+        "title": topic_row[1],
+        "primary_keyword": topic_row[2],
+        "category": topic_row[3],
+        "intent": topic_row[4],
+        "brief": topic_row[5],
+    }
+    return article, topic
+
+
+def run_images_for_existing_draft(*, run_id: int, article_id: int, low_medium_test: bool = False) -> dict[str, Any]:
+    conn = get_db()
+    try:
+        article, topic = _article_for_existing_draft(conn, article_id=article_id, run_id=run_id)
+        state = PipelineState(topic=topic, run_id=int(run_id), dry_run=False)
+        row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [int(run_id)]).fetchone()
+        state.seq = int(row[0] or 0)
+        conn.commit()
+    finally:
+        conn.close()
+    article, image_output, image_status = _run_image_stage(
+        state=state,
+        article=article,
+        article_id=article_id,
+        low_medium_test=low_medium_test,
+    )
+    image_cost = sum((Decimal(str((item or {}).get("cost_usd") or "0")) for item in ([image_output.get("cover")] + list(image_output.get("visuals") or []))), Decimal("0"))
+    for variant in image_output.get("test_variants") or []:
+        image_cost += Decimal(str((variant.get("medium") or {}).get("cost_usd") or "0"))
+    conn = get_db()
+    try:
+        record_stage(
+            conn,
+            run_id=run_id,
+            seq=state.seq + 1,
+            stage="images",
+            status=image_status,
+            model=f"{BLOG_IMAGE_COVER}/{BLOG_IMAGE_INLINE}",
+            output=image_output,
+            notes="; ".join(f"{item.get('kind')} {item.get('marker') or ''}: {item.get('message')}" for item in image_output.get("errors") or [])[:1000],
+            cost_usd=image_cost,
+        )
+        if image_status != "done":
+            finish_run(conn, run_id, status="needs_you", article_id=article_id, error="Image generation needs review")
+        else:
+            finish_run(conn, run_id, status="draft_ready", article_id=article_id)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": image_status, "article_id": article_id, "run_id": run_id, "images": image_output, "image_cost_usd": str(image_cost)}
+
+
 def _writer_prompt() -> str:
     return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
@@ -449,7 +771,10 @@ content_md must include exactly these three placeholders as standalone HTML comm
 visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. At most 2 may be screenshots. Use type=\"generate\" for the remaining visual and provide a prompt.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
-Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem."""
+Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
+Use the primary keyword naturally, with correct hyphenation such as "done-for-you"; never place it as a standalone bolded SEO phrase.
+When MintiStudio features are mentioned, tie each one to the reader's task in the same sentence; never use a comma-separated feature list.
+Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where MintiStudio helps" section when the screenshot library has a suitable image."""
 
 
 def _reviewer_prompt() -> str:
@@ -579,9 +904,26 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
 
         article = _replace_screenshot_placeholders(article, screenshots, copy_files=not dry_run)
+        article, image_output, image_status = _run_image_stage(state=state, article=article)
+        image_cost = sum((Decimal(str((item or {}).get("cost_usd") or "0")) for item in ([image_output.get("cover")] + list(image_output.get("visuals") or []))), Decimal("0"))
+        for variant in image_output.get("test_variants") or []:
+            image_cost += Decimal(str((variant.get("medium") or {}).get("cost_usd") or "0"))
+        state.seq += 1
+        record_stage(
+            conn,
+            run_id=state.run_id,
+            seq=state.seq,
+            stage="images",
+            status=image_status,
+            model=f"{BLOG_IMAGE_COVER}/{BLOG_IMAGE_INLINE}",
+            output=image_output,
+            notes="; ".join(f"{item.get('kind')} {item.get('marker') or ''}: {item.get('message')}" for item in image_output.get("errors") or [])[:1000],
+            cost_usd=image_cost,
+        )
+        conn.commit()
         run_status = "draft_ready"
         final_score = _review_score(final_review)
-        if final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
+        if image_status != "done" or final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
             run_status = "needs_you"
 
         result = {
@@ -591,6 +933,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             "review": final_review,
             "checks": checks,
             "designer_guard": guard_note,
+            "images": image_output,
             "total_cost_usd": str(state.run_cost),
         }
         if dry_run:
@@ -631,10 +974,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run one MintiStudio blog production pipeline.")
     parser.add_argument("--dry-run", action="store_true", help="Do not save the draft or run rows.")
     parser.add_argument("--topic-id", type=int, default=None, help="Run a specific queued topic.")
+    parser.add_argument("--images-only", action="store_true", help="Run the image stage for an existing pipeline draft.")
+    parser.add_argument("--run-id", type=int, default=None, help="Existing blog_pipeline_runs id for --images-only.")
+    parser.add_argument("--article-id", type=int, default=None, help="Existing blog_articles id for --images-only.")
+    parser.add_argument("--low-medium-test", action="store_true", help="Generate IMAGE_1 low and medium variants for comparison.")
     parser.add_argument("--manifest-report", action="store_true", help="Print screenshot manifest availability and exit.")
     args = parser.parse_args()
     if args.manifest_report:
         print(json.dumps(_all_manifest_entries(), ensure_ascii=False, indent=2))
+        return 0
+    if args.images_only:
+        if not args.run_id or not args.article_id:
+            raise SystemExit("--images-only requires --run-id and --article-id")
+        result = run_images_for_existing_draft(run_id=args.run_id, article_id=args.article_id, low_medium_test=args.low_medium_test)
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
     run_pipeline(topic_id=args.topic_id, dry_run=args.dry_run)
     return 0

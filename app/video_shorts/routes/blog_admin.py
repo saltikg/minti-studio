@@ -29,7 +29,9 @@ from app.video_shorts.services.blog_pipeline import (
     set_blog_source_enabled,
     update_blog_topic_from_form,
 )
-from app.video_shorts.services.blog_pipeline_runs import get_admin_run_detail, list_admin_runs
+from app.video_shorts.services.blog_images import generate_blog_image
+from app.video_shorts.services.blog_pipeline_runs import get_admin_run_detail, list_admin_runs, record_stage
+from app.video_shorts.services.db import get_db
 _ALLOWED_COVER_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -379,6 +381,60 @@ def admin_blog_pipeline_run_detail(run_id: int):
         writer_final_diff=writer_final_diff,
         designer_diff=designer_diff,
     )
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/runs/<int:run_id>/images/regenerate", methods=["POST"])
+@require_admin
+def admin_blog_pipeline_image_regenerate(run_id: int):
+    run = get_admin_run_detail(run_id)
+    if not run or not run.get("article_id") or not run.get("article_slug"):
+        abort(404)
+    kind = (request.form.get("kind") or "inline").strip()
+    marker = (request.form.get("marker") or "").strip() or None
+    filename = (request.form.get("filename") or "").strip()
+    prompt = (request.form.get("prompt") or "").strip()
+    quality = (request.form.get("quality") or "").strip() or None
+    model = (request.form.get("model") or "").strip() or None
+    alt = (request.form.get("alt") or "").strip()
+    if kind not in {"cover", "inline"} or not filename or not prompt:
+        flash("Missing image regenerate fields.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_blog_pipeline_run_detail", run_id=run_id))
+    try:
+        result = generate_blog_image(
+            prompt=prompt,
+            slug=str(run["article_slug"]),
+            filename=filename,
+            kind=kind,
+            marker=marker,
+            alt=alt,
+            model=model,
+            quality=quality,
+            topic_id=int(run["topic_id"]) if run.get("topic_id") else None,
+            run_id=run_id,
+            overwrite=True,
+        )
+        payload = dict(result.__dict__)
+        payload["cost_usd"] = str(result.cost_usd)
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [run_id]).fetchone()
+            record_stage(
+                conn,
+                run_id=run_id,
+                seq=int(row[0] or 0) + 1,
+                stage="image_regenerate",
+                status="done",
+                model=result.model,
+                output={"image": payload},
+                cost_usd=result.cost_usd,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        flash("Image regenerated.", "success")
+    except Exception as exc:
+        flash(f"Image regenerate failed: {exc}", "danger")
+    return redirect(url_for("video_shorts_bp.admin_blog_pipeline_run_detail", run_id=run_id))
 
 
 @video_shorts_bp.route("/admin/blog-pipeline/sources", methods=["GET"])

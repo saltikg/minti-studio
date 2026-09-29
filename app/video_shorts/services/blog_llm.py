@@ -72,6 +72,7 @@ class LLMResult:
     input_tokens: int
     cached_input_tokens: int
     output_tokens: int
+    reasoning_tokens: int
     cost_usd: Decimal
 
 
@@ -104,18 +105,39 @@ def _cached_tokens(usage: Any) -> int:
     return _usage_value(details, "cached_tokens", "cached_input_tokens")
 
 
-def compute_text_cost(model: str, input_tokens: int, cached_input_tokens: int, output_tokens: int) -> Decimal:
+def _reasoning_tokens(usage: Any) -> int:
+    details = getattr(usage, "completion_tokens_details", None) or getattr(usage, "output_tokens_details", None)
+    if not details:
+        return 0
+    return _usage_value(details, "reasoning_tokens")
+
+
+def compute_text_cost(model: str, input_tokens: int, cached_input_tokens: int, output_tokens: int, reasoning_tokens: int = 0) -> Decimal:
     price = PRICES.get(model, PRICES["gpt-5-nano"])
     uncached = max(0, int(input_tokens or 0) - int(cached_input_tokens or 0))
     total = (
         Decimal(uncached) * price["input"]
         + Decimal(cached_input_tokens or 0) * price.get("cached_input", price["input"])
-        + Decimal(output_tokens or 0) * price["output"]
+        + Decimal((output_tokens or 0) + (reasoning_tokens or 0)) * price["output"]
     ) / Decimal(1_000_000)
     return total.quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
 
 
-def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, run_id: int | None = None, images: int = 0) -> None:
+def compute_image_cost(model: str, input_tokens: int, cached_input_tokens: int, output_tokens: int) -> Decimal:
+    price = PRICES.get(model, PRICES["gpt-image-2"])
+    uncached = max(0, int(input_tokens or 0) - int(cached_input_tokens or 0))
+    text_input = price.get("text_input", Decimal("0"))
+    text_cached = price.get("text_cached_input", text_input)
+    image_output = price.get("image_output", Decimal("0"))
+    total = (
+        Decimal(uncached) * text_input
+        + Decimal(cached_input_tokens or 0) * text_cached
+        + Decimal(output_tokens or 0) * image_output
+    ) / Decimal(1_000_000)
+    return total.quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
+
+
+def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, run_id: int | None = None, images: int = 0, quality: str | None = None) -> None:
     conn = get_db()
     try:
         columns = set()
@@ -125,8 +147,19 @@ def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, run
             columns = table_columns(conn, "blog_llm_usage")
         except Exception:
             columns = set()
-        run_id_sql = ", run_id" if "run_id" in columns else ""
-        run_id_value_sql = ", ?" if "run_id" in columns else ""
+        optional_columns: list[str] = []
+        optional_values: list[Any] = []
+        if "run_id" in columns:
+            optional_columns.append("run_id")
+            optional_values.append(run_id)
+        if "reasoning_tokens" in columns:
+            optional_columns.append("reasoning_tokens")
+            optional_values.append(result.reasoning_tokens)
+        if "quality" in columns:
+            optional_columns.append("quality")
+            optional_values.append(quality)
+        optional_sql = "".join(f", {column}" for column in optional_columns)
+        optional_placeholders = "".join(", ?" for _ in optional_columns)
         values = [
             stage,
             topic_id,
@@ -138,15 +171,14 @@ def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, run
             images,
             result.cost_usd,
         ]
-        if "run_id" in columns:
-            values.append(run_id)
+        values.extend(optional_values)
         conn.execute(
             f"""
             INSERT INTO blog_llm_usage (
                 stage, topic_id, provider, model, input_tokens, cached_input_tokens,
-                output_tokens, images, cost_usd{run_id_sql}
+                output_tokens, images, cost_usd{optional_sql}
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?{run_id_value_sql})
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?{optional_placeholders})
             """,
             values,
         )
@@ -208,6 +240,7 @@ def call_json(stage: str, *, model: str, system_prompt: str, user_prompt: str) -
         input_tokens = _usage_value(usage, "prompt_tokens", "input_tokens")
         output_tokens = _usage_value(usage, "completion_tokens", "output_tokens")
         cached_tokens = _cached_tokens(usage)
+        reasoning_tokens = _reasoning_tokens(usage)
         return LLMResult(
             content=content,
             provider="openai",
@@ -215,6 +248,7 @@ def call_json(stage: str, *, model: str, system_prompt: str, user_prompt: str) -
             input_tokens=input_tokens,
             cached_input_tokens=cached_tokens,
             output_tokens=output_tokens,
-            cost_usd=compute_text_cost(model, input_tokens, cached_tokens, output_tokens),
+            reasoning_tokens=reasoning_tokens,
+            cost_usd=compute_text_cost(model, input_tokens, cached_tokens, output_tokens, reasoning_tokens),
         )
     raise RuntimeError(f"Invalid JSON from LLM after retry: {last_error}")

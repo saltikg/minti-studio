@@ -9,7 +9,7 @@ from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 
 
 RUN_STATUSES = ("running", "draft_ready", "needs_you", "failed")
-STAGE_ORDER = ("writer", "checks", "reviewer_1", "revision_1", "reviewer_2", "revision_2", "designer")
+STAGE_ORDER = ("writer", "checks", "reviewer_1", "revision_1", "reviewer_2", "revision_2", "designer", "images")
 
 
 def _row_to_dict(description, row) -> dict[str, Any]:
@@ -159,7 +159,8 @@ def get_admin_run_detail(run_id: int) -> dict[str, Any] | None:
             SELECT r.id, r.topic_id, r.article_id, r.status, r.current_stage, r.final_review_score,
                    r.total_cost_usd, r.error, r.started_at, r.finished_at,
                    t.title AS topic_title, t.brief AS topic_brief,
-                   a.title AS article_title, a.slug AS article_slug, a.content AS article_content
+                   a.title AS article_title, a.slug AS article_slug, a.content AS article_content,
+                   a.cover_image_url AS article_cover_image_url
             FROM blog_pipeline_runs r
             LEFT JOIN blog_topics t ON t.id = r.topic_id
             LEFT JOIN blog_articles a ON a.id = r.article_id
