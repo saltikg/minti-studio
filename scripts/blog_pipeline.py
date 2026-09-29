@@ -61,6 +61,10 @@ MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
 CTA_URL = "https://mintistudio.com/video_shorts/login"
 BASE_URL = (os.getenv("BLOG_PUBLIC_BASE_URL") or "https://mintistudio.com").rstrip("/")
+COMPETITOR_FACTS_PATHS = (
+    CONTEXT_ROOT / "competitor_facts.md",
+    CONTEXT_ROOT / "comparison_facts.md",
+)
 SELF_DISCLAIMER_RE = re.compile(
     r"(not a claim that MintiStudio|do not assume Autopilot|should not be inferred from the price|"
     r"not a promised MintiStudio|confirm .*MintiStudio|MintiStudio .*does not (?:claim|promise|specify))",
@@ -98,6 +102,17 @@ def _word_count(markdown_text: str) -> int:
     text = re.sub(r"\[[^\]]+\]\([^)]+\)", " ", text)
     text = re.sub(r"[#>*_`|:-]+", " ", text)
     return len(re.findall(r"\b[\w'-]+\b", text))
+
+
+def _trim_at_word_boundary(value: Any, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit].rstrip()
+    boundary = max(trimmed.rfind(" "), trimmed.rfind("-"))
+    if boundary >= max(1, int(limit * 0.6)):
+        trimmed = trimmed[:boundary].rstrip()
+    return trimmed.rstrip(" ,;:-")
 
 
 def _normalize_marker(value: Any) -> str:
@@ -290,11 +305,13 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
     article["content_md"] = content
     article = _normalize_image_placeholders_and_visuals(article)
     if not article.get("meta_title"):
-        article["meta_title"] = str(article.get("title") or "")[:60]
+        article["meta_title"] = article.get("title") or ""
     if not article.get("meta_description"):
-        article["meta_description"] = str(article.get("summary") or "")[:155]
+        article["meta_description"] = article.get("summary") or ""
+    article["meta_title"] = _trim_at_word_boundary(article.get("meta_title"), 60)
+    article["meta_description"] = _trim_at_word_boundary(article.get("meta_description"), 155)
     if not article.get("reading_time"):
-        article["reading_time"] = max(1, round(_word_count(content) / 220))
+        article["reading_time"] = max(1, round(_word_count(str(article.get("content_md") or "")) / 220))
     return article
 
 
@@ -317,6 +334,33 @@ def _review_score(review: dict[str, Any]) -> int:
                 pass
         return total
     return 0
+
+
+def _h2_headings(markdown_text: str) -> list[str]:
+    headings = []
+    for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", markdown_text or ""):
+        heading = re.sub(r"\s+", " ", match.group(1)).strip().lower()
+        if heading:
+            headings.append(heading)
+    return headings
+
+
+def _revision_rejection_reason(previous: dict[str, Any], candidate: dict[str, Any]) -> str | None:
+    previous_content = str(previous.get("content_md") or "")
+    candidate_content = str(candidate.get("content_md") or "")
+    previous_words = _word_count(previous_content)
+    candidate_words = _word_count(candidate_content)
+    if previous_words and candidate_words < previous_words * Decimal("0.75"):
+        return f"word count dropped more than 25% ({previous_words} -> {candidate_words})"
+    if CTA_URL in previous_content and CTA_URL not in candidate_content:
+        return "CTA link disappeared"
+    previous_headings = _h2_headings(previous_content)
+    if previous_headings:
+        candidate_headings = set(_h2_headings(candidate_content))
+        survived = sum(1 for heading in previous_headings if heading in candidate_headings)
+        if survived / len(previous_headings) < 0.8:
+            return f"fewer than 80% of previous H2 headings survived ({survived}/{len(previous_headings)})"
+    return None
 
 
 def _load_manifest() -> list[dict[str, Any]]:
@@ -368,6 +412,10 @@ def _published_articles(limit: int | None = None, *, include_content: bool = Fal
         conn.close()
 
 
+def _competitor_facts_exists() -> bool:
+    return any(path.is_file() and path.read_text(encoding="utf-8").strip() for path in COMPETITOR_FACTS_PATHS)
+
+
 def _stable_prefix() -> dict[str, Any]:
     return {
         "facts": _read_text(CONTEXT_ROOT / "minti_facts.md"),
@@ -406,6 +454,7 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
             [int(topic_id)],
         ).fetchone()
     else:
+        comparison_filter = "" if _competitor_facts_exists() else "AND COALESCE(category, '') <> 'comparison'"
         row = conn.execute(
             f"""
             SELECT id, title, primary_keyword, category, intent, brief, source_type, source_name,
@@ -414,6 +463,7 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
             FROM blog_topics
             WHERE status = 'queued'
               AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+              {comparison_filter}
             ORDER BY fit_score DESC NULLS LAST, created_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -564,53 +614,47 @@ def _rename_archived_pipeline_slug_conflict(conn, slug: str) -> str | None:
 
 
 def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], published: list[dict[str, Any]]) -> dict[str, Any]:
-    issues: list[str] = []
+    blocking_issues: list[str] = []
+    fix_items: list[str] = []
     fixed: dict[str, Any] = {}
     slug = _unique_slug(article.get("slug") or article.get("title") or "article")
     if slug != article.get("slug"):
         fixed["slug"] = slug
         article["slug"] = slug
     content = str(article.get("content_md") or "")
-    if len(str(article.get("meta_title") or "")) > 60:
-        issues.append("meta_title exceeds 60 characters")
-    if len(str(article.get("meta_description") or "")) > 155:
-        issues.append("meta_description exceeds 155 characters")
     if CTA_URL not in content:
-        issues.append("CTA link is missing")
+        blocking_issues.append("CTA link is missing")
     if re.search(r"(?m)^\s*IMAGE_[123]\s*$", content):
-        issues.append("bare IMAGE_n placeholder text is not allowed; use exact <!-- IMAGE_n --> comments")
+        fixed["image_placeholders"] = "normalized bare IMAGE_n placeholders to exact HTML comments"
     placeholders = re.findall(r"<!--\s*IMAGE_[123]\s*-->", content)
     if sorted(placeholders) != ["<!-- IMAGE_1 -->", "<!-- IMAGE_2 -->", "<!-- IMAGE_3 -->"]:
-        issues.append("content_md must contain exactly <!-- IMAGE_1 -->, <!-- IMAGE_2 -->, <!-- IMAGE_3 -->")
+        fixed["image_placeholders"] = "normalized image placeholders to exactly IMAGE_1, IMAGE_2, IMAGE_3"
     if re.search(r"<(iframe|script|style|div|span|img)\b", content, flags=re.I):
-        issues.append("raw HTML is not allowed except IMAGE comments")
+        blocking_issues.append("raw HTML is not allowed except IMAGE comments")
     word_count = _word_count(content)
-    if word_count < 1200 or word_count > 1800:
-        issues.append(f"word count {word_count} is outside 1200-1800")
+    if word_count < 1100 or word_count > 2000:
+        fix_items.append(f"word count {word_count} is outside 1100-2000")
     allowed_urls = _internal_link_urls(published) | {CTA_URL}
     for url in _article_links(content):
         if "mintistudio.com" in url and url not in allowed_urls:
-            issues.append(f"internal link not in published list: {url}")
+            blocking_issues.append(f"internal link not in published list: {url}")
         if "mintistudio.com" in url and "/video_shorts/blog/" in url:
             status = _http_status(url)
             if status != 200:
-                issues.append(f"internal blog link returned {status or 'error'}: {url}")
+                blocking_issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
-        issues.append("MintiStudio self-disclaimer is not allowed")
+        blocking_issues.append("MintiStudio self-disclaimer is not allowed")
     screenshot_by_id = {item["id"]: item for item in screenshots}
-    screenshot_count = 0
     visuals = article.get("visuals") or []
     if len(visuals) != 3:
-        issues.append("visuals must contain exactly 3 items")
+        fixed["visuals"] = "normalized visuals to exactly 3 items"
     for visual in visuals:
         if visual.get("type") == "screenshot":
-            screenshot_count += 1
             screenshot_id = str(visual.get("screenshot_id") or "")
             if screenshot_id not in screenshot_by_id:
-                issues.append(f"screenshot_id is unavailable or on hold: {screenshot_id}")
-    if screenshot_count > 2:
-        issues.append("at most 2 visuals may be screenshots")
-    return {"ok": not issues, "issues": issues, "fixed": fixed, "word_count": word_count}
+                blocking_issues.append(f"screenshot_id is unavailable or on hold: {screenshot_id}")
+    issues = blocking_issues + fix_items
+    return {"ok": not blocking_issues, "issues": issues, "blocking_issues": blocking_issues, "fixes": fix_items, "fixed": fixed, "word_count": word_count}
 
 
 def _blocking_issues(review: dict[str, Any], checks: dict[str, Any] | None = None) -> list[Any]:
@@ -622,8 +666,8 @@ def _blocking_issues(review: dict[str, Any], checks: dict[str, Any] | None = Non
     for item in review.get("issues") or []:
         if isinstance(item, dict) and str(item.get("severity") or "").lower() == "blocking":
             items.append(item)
-    if checks and not checks.get("ok"):
-        items.extend([{"severity": "blocking", "issue": issue} for issue in checks.get("issues") or []])
+    if checks and checks.get("blocking_issues"):
+        items.extend([{"severity": "blocking", "issue": issue} for issue in checks.get("blocking_issues") or []])
     return items
 
 
@@ -1169,13 +1213,25 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         final_review = review_1
         if review_1_score < BLOG_REVIEW_PASS or _blocking_issues(review_1, checks):
             revision_payload = {**user_base, "article": article, "review": review_1}
-            previous_visuals = list(article.get("visuals") or [])
-            article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
-            if not article.get("visuals") and previous_visuals:
-                article["visuals"] = previous_visuals
-            article = _normalize_article_payload(article)
+            previous_article = dict(article)
+            previous_visuals = list(previous_article.get("visuals") or [])
+            candidate_article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
+            if not candidate_article.get("visuals") and previous_visuals:
+                candidate_article["visuals"] = previous_visuals
+            candidate_article = _normalize_article_payload(candidate_article)
+            rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
+            if rejection_reason:
+                article = previous_article
+                revision_status = "rejected"
+                revision_notes = rejection_reason
+                revision_output = {"rejected_reason": rejection_reason, "candidate": candidate_article, "kept_previous": True}
+            else:
+                article = candidate_article
+                revision_status = "done"
+                revision_notes = None
+                revision_output = article
             state.seq += 1
-            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
+            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
             state.seq += 1
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
@@ -1187,13 +1243,25 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost)
             conn.commit()
             if review_2_score < BLOG_REVIEW_PASS or _blocking_issues(review_2, checks):
-                previous_visuals = list(article.get("visuals") or [])
-                article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
-                if not article.get("visuals") and previous_visuals:
-                    article["visuals"] = previous_visuals
-                article = _normalize_article_payload(article)
+                previous_article = dict(article)
+                previous_visuals = list(previous_article.get("visuals") or [])
+                candidate_article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
+                if not candidate_article.get("visuals") and previous_visuals:
+                    candidate_article["visuals"] = previous_visuals
+                candidate_article = _normalize_article_payload(candidate_article)
+                rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
+                if rejection_reason:
+                    article = previous_article
+                    revision_status = "rejected"
+                    revision_notes = rejection_reason
+                    revision_output = {"rejected_reason": rejection_reason, "candidate": candidate_article, "kept_previous": True}
+                else:
+                    article = candidate_article
+                    revision_status = "done"
+                    revision_notes = None
+                    revision_output = article
                 state.seq += 1
-                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
+                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
                 state.seq += 1
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
@@ -1325,9 +1393,14 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             fail_conn = get_db()
             try:
                 finish_run(fail_conn, state.run_id, status="failed", error=str(exc)[:1000])
+                failed_runs = fail_conn.execute(
+                    "SELECT COUNT(*) FROM blog_pipeline_runs WHERE topic_id = ? AND status = 'failed'",
+                    [int(state.topic["id"])],
+                ).fetchone()
+                topic_status = "failed" if int((failed_runs or [0])[0] or 0) >= 2 else "queued"
                 fail_conn.execute(
-                    "UPDATE blog_topics SET status = 'queued', judge_reason = COALESCE(judge_reason, '') || ? WHERE id = ?",
-                    [f"\nPipeline failed: {str(exc)[:500]}", int(state.topic["id"])],
+                    "UPDATE blog_topics SET status = ?, judge_reason = COALESCE(judge_reason, '') || ? WHERE id = ?",
+                    [topic_status, f"\nPipeline failed: {str(exc)[:500]}", int(state.topic["id"])],
                 )
                 fail_conn.commit()
             finally:

@@ -533,7 +533,7 @@ def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
         rows = conn.execute(
             f"""
             SELECT id, created_at, title, source_title, source_name, source_url,
-                   source_type, fit_score, status, judge_reason, brief, primary_keyword,
+                   source_type, fit_score, status, judge_reason, brief, primary_keyword, category,
                    {fit_breakdown_sql}, {source_summary_sql}, {adapted_from_sql}
             FROM blog_topics
             {where}
