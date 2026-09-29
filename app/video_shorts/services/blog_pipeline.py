@@ -28,7 +28,7 @@ BLOG_TOPIC_STATUSES = (
     "failed",
 )
 ACTIVE_TOPIC_STATUSES = ("queued", "in_production", "draft_ready", "published")
-BLOG_MONTHLY_BUDGET_USD = Decimal(os.getenv("BLOG_MONTHLY_BUDGET_USD", "15") or "15")
+BLOG_MONTHLY_BUDGET_USD = Decimal(os.getenv("BLOG_MONTHLY_BUDGET_USD", "20") or "20")
 BLOG_JUDGE_MIN_SCORE = int(os.getenv("BLOG_JUDGE_MIN_SCORE", "70") or "70")
 BLOG_SCOUT_USER_AGENT = os.getenv("BLOG_SCOUT_USER_AGENT", "MintiStudioBlogScout/1.0 (+https://mintistudio.com)")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from app.video_shorts.services.blog_pipeline import (
     set_blog_source_enabled,
     update_blog_topic_from_form,
 )
+from app.video_shorts.services.blog_pipeline_runs import get_admin_run_detail, list_admin_runs
 _ALLOWED_COVER_MIME_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -321,6 +323,61 @@ def admin_blog_pipeline_topics():
         selected_status=status,
         statuses=BLOG_TOPIC_STATUSES,
         header_stats=blog_topics_header_stats(),
+    )
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/runs", methods=["GET"])
+@require_admin
+def admin_blog_pipeline_runs():
+    return render_template(
+        "shorts_admin_blog_pipeline_runs.html",
+        admin_title="Blog pipeline runs",
+        runs=list_admin_runs(),
+        header_stats=blog_topics_header_stats(),
+    )
+
+
+def _stage_output(run: dict, stage_name: str) -> dict:
+    for stage in run.get("stages") or []:
+        if stage.get("stage") == stage_name and isinstance(stage.get("output"), dict):
+            return stage["output"]
+    return {}
+
+
+@video_shorts_bp.route("/admin/blog-pipeline/runs/<int:run_id>", methods=["GET"])
+@require_admin
+def admin_blog_pipeline_run_detail(run_id: int):
+    run = get_admin_run_detail(run_id)
+    if not run:
+        abort(404)
+    writer_output = _stage_output(run, "writer")
+    final_content = str(run.get("article_content") or "")
+    writer_content = str(writer_output.get("content_md") or "")
+    writer_final_diff = difflib.HtmlDiff(wrapcolumn=100).make_table(
+        writer_content.splitlines(),
+        final_content.splitlines(),
+        fromdesc="Writer v1",
+        todesc="Final draft",
+        context=True,
+        numlines=3,
+    )
+    designer_output = _stage_output(run, "designer")
+    designer_diff = ""
+    if designer_output.get("content_md"):
+        designer_diff = difflib.HtmlDiff(wrapcolumn=100).make_table(
+            final_content.splitlines(),
+            str(designer_output.get("content_md") or "").splitlines(),
+            fromdesc="Saved draft",
+            todesc="Designer output",
+            context=True,
+            numlines=3,
+        )
+    return render_template(
+        "shorts_admin_blog_pipeline_run_detail.html",
+        admin_title=f"Blog pipeline run #{run_id}",
+        run=run,
+        writer_final_diff=writer_final_diff,
+        designer_diff=designer_diff,
     )
 
 

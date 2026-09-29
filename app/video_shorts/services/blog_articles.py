@@ -498,6 +498,15 @@ def update_blog_article_status(article_id: int, status: str) -> bool:
             """,
             [normalized_status, normalized_status, published_at, normalized_status, int(article_id)],
         )
+        if normalized_status == "published" and (result.rowcount or 0) > 0:
+            source_row = conn.execute(
+                "SELECT import_source FROM blog_articles WHERE id = ?",
+                [int(article_id)],
+            ).fetchone()
+            if source_row and str(source_row[0] or "") == "blog_pipeline":
+                from app.video_shorts.services.blog_pipeline_runs import publish_pipeline_topic_for_article
+
+                publish_pipeline_topic_for_article(conn, article_id=int(article_id))
         conn.commit()
         return (result.rowcount or 0) > 0
     except Exception:

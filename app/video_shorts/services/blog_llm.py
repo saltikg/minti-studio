@@ -49,16 +49,16 @@ PRICES: dict[str, dict[str, Decimal]] = {
         "batch_output": Decimal("0.25"),
     },
     "gpt-image-2": {
-        "text_input": Decimal("2.50"),
-        "text_cached_input": Decimal("0.625"),
-        "image_input": Decimal("4.00"),
-        "image_cached_input": Decimal("1.00"),
-        "image_output": Decimal("15.00"),
-        "batch_text_input": Decimal("1.25"),
-        "batch_text_cached_input": Decimal("0.3125"),
-        "batch_image_input": Decimal("2.00"),
-        "batch_image_cached_input": Decimal("0.50"),
-        "batch_image_output": Decimal("7.50"),
+        "text_input": Decimal("5.00"),
+        "text_cached_input": Decimal("1.25"),
+        "image_input": Decimal("8.00"),
+        "image_cached_input": Decimal("2.00"),
+        "image_output": Decimal("30.00"),
+        "batch_text_input": Decimal("2.50"),
+        "batch_text_cached_input": Decimal("0.625"),
+        "batch_image_input": Decimal("4.00"),
+        "batch_image_cached_input": Decimal("1.00"),
+        "batch_image_output": Decimal("15.00"),
     },
     "gpt-image-1-mini": {"text_input": Decimal("2.00"), "text_cached_input": Decimal("0.20"), "image_input": Decimal("2.50"), "image_cached_input": Decimal("0.25"), "image_output": Decimal("8.00"), "image_medium_1024": Decimal("0.011")},
 }
@@ -115,28 +115,40 @@ def compute_text_cost(model: str, input_tokens: int, cached_input_tokens: int, o
     return total.quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
 
 
-def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, images: int = 0) -> None:
+def log_usage(stage: str, result: LLMResult, *, topic_id: int | None = None, run_id: int | None = None, images: int = 0) -> None:
     conn = get_db()
     try:
+        columns = set()
+        try:
+            from app.video_shorts.services.db import table_columns
+
+            columns = table_columns(conn, "blog_llm_usage")
+        except Exception:
+            columns = set()
+        run_id_sql = ", run_id" if "run_id" in columns else ""
+        run_id_value_sql = ", ?" if "run_id" in columns else ""
+        values = [
+            stage,
+            topic_id,
+            result.provider,
+            result.model,
+            result.input_tokens,
+            result.cached_input_tokens,
+            result.output_tokens,
+            images,
+            result.cost_usd,
+        ]
+        if "run_id" in columns:
+            values.append(run_id)
         conn.execute(
-            """
+            f"""
             INSERT INTO blog_llm_usage (
                 stage, topic_id, provider, model, input_tokens, cached_input_tokens,
-                output_tokens, images, cost_usd
+                output_tokens, images, cost_usd{run_id_sql}
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?{run_id_value_sql})
             """,
-            [
-                stage,
-                topic_id,
-                result.provider,
-                result.model,
-                result.input_tokens,
-                result.cached_input_tokens,
-                result.output_tokens,
-                images,
-                result.cost_usd,
-            ],
+            values,
         )
         conn.commit()
     except Exception:

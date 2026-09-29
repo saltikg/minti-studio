@@ -1,0 +1,122 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_heading %}Blog pipeline run #{{ run.id }}{% endblock %}
+
+{% block admin_subheading %}
+  <p>{{ run.topic_title or 'Untitled topic' }} · {{ run.status|replace('_', ' ') }}</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .blog-detail-grid { display:grid; gap:16px; }
+    .blog-stage-card {
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:8px;
+      padding:14px;
+      background:rgba(255,255,255,.03);
+    }
+    .blog-stage-head {
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-bottom:10px;
+    }
+    .blog-muted { color:rgba(255,255,255,.58); font-size:.88rem; }
+    .blog-json,
+    .blog-diff {
+      max-height:520px;
+      overflow:auto;
+      background:#07101b;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:8px;
+      padding:12px;
+    }
+    .blog-json pre {
+      color:rgba(255,255,255,.86);
+      margin:0;
+      white-space:pre-wrap;
+    }
+    .blog-diff table { color:#e5edf7; width:100%; font-size:.82rem; }
+    .blog-visual-thumb {
+      width:160px;
+      max-width:100%;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,.12);
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="mb-3 d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_runs') }}">Back to runs</a>
+    {% if run.article_id %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('video_shorts_bp.admin_blog_article_edit', article_id=run.article_id) }}">Edit draft</a>
+    {% endif %}
+  </div>
+
+  <section class="vs-admin-card p-3 p-lg-4 mb-4">
+    <div class="row g-3">
+      <div class="col-md-3"><div class="blog-muted">Status</div><div>{{ run.status }}</div></div>
+      <div class="col-md-3"><div class="blog-muted">Final score</div><div>{{ run.final_review_score if run.final_review_score is not none else '—' }}</div></div>
+      <div class="col-md-3"><div class="blog-muted">Cost</div><div>${{ '%.5f'|format(run.total_cost_usd or 0) }}</div></div>
+      <div class="col-md-3"><div class="blog-muted">Finished</div><div>{{ run.finished_at|fmt_dt if run.finished_at else '—' }}</div></div>
+    </div>
+    {% if run.error %}
+      <div class="alert alert-danger mt-3 mb-0">{{ run.error }}</div>
+    {% endif %}
+  </section>
+
+  <div class="blog-detail-grid">
+    {% for stage in run.stages %}
+      <section class="blog-stage-card">
+        <div class="blog-stage-head">
+          <div>
+            <strong>{{ stage.stage|replace('_', ' ') }}</strong>
+            <div class="blog-muted">{{ stage.model or 'deterministic' }} · {{ stage.status }}{% if stage.score is not none %} · score {{ stage.score }}{% endif %}</div>
+          </div>
+          <div class="blog-muted">${{ '%.5f'|format(stage.cost_usd or 0) }} · {{ stage.finished_at|fmt_dt if stage.finished_at else '—' }}</div>
+        </div>
+        {% if stage.notes %}
+          <div class="blog-muted mb-2">{{ stage.notes }}</div>
+        {% endif %}
+        {% if stage.output %}
+          {% if stage.stage in ['reviewer_1', 'reviewer_2'] and stage.output.scores %}
+            <div class="mb-2">
+              {% for key, value in stage.output.scores.items() %}
+                <span class="badge text-bg-secondary me-1">{{ key }} {{ value }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+          {% if stage.output.visuals %}
+            <div class="row g-3 mb-3">
+              {% for visual in stage.output.visuals %}
+                <div class="col-md-4">
+                  <div class="blog-muted">{{ visual.marker }} · {{ visual.type }}</div>
+                  {% if visual.url %}
+                    <img class="blog-visual-thumb" src="{{ visual.url }}" alt="{{ visual.alt or visual.marker }}">
+                  {% endif %}
+                  <div>{{ visual.screenshot_id or visual.filename or 'Generation pending' }}</div>
+                  {% if visual.prompt %}<div class="blog-muted">{{ visual.prompt }}</div>{% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+          <div class="blog-json"><pre>{{ stage.output|tojson(indent=2) }}</pre></div>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+
+  <section class="vs-admin-card p-3 p-lg-4 mt-4">
+    <h2 class="h5">Writer v1 to final draft</h2>
+    <div class="blog-diff">{{ writer_final_diff|safe }}</div>
+  </section>
+
+  {% if designer_diff %}
+    <section class="vs-admin-card p-3 p-lg-4 mt-4">
+      <h2 class="h5">Designer diff</h2>
+      <div class="blog-diff">{{ designer_diff|safe }}</div>
+    </section>
+  {% endif %}
+{% endblock %}

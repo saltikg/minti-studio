@@ -1,0 +1,139 @@
+{% extends "vs_admin_base.html" %}
+
+{% block admin_heading %}Blog pipeline runs{% endblock %}
+
+{% block admin_subheading %}
+  <p>Read-only production runs for Writer, Reviewer, revisions, and Designer.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .blog-pipeline-tabs,
+    .blog-pipeline-stats,
+    .blog-stage-chips {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-items:center;
+    }
+    .blog-pipeline-tabs { margin-bottom:16px; }
+    .blog-pipeline-tab {
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:999px;
+      padding:8px 14px;
+      color:rgba(255,255,255,.72);
+      text-decoration:none;
+    }
+    .blog-pipeline-tab.is-active {
+      background:rgba(45,212,191,.16);
+      border-color:rgba(45,212,191,.32);
+      color:#8ff3d8;
+    }
+    .blog-pipeline-stats { margin-bottom:16px; }
+    .blog-pipeline-stat {
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:8px;
+      padding:10px 12px;
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.76);
+    }
+    .blog-runs-table {
+      width:100%;
+      min-width:1040px;
+      border-collapse:collapse;
+    }
+    .blog-runs-table th,
+    .blog-runs-table td {
+      border-bottom:1px solid rgba(255,255,255,.08);
+      padding:12px;
+      vertical-align:top;
+    }
+    .blog-runs-table th {
+      color:rgba(255,255,255,.56);
+      font-size:.74rem;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .blog-run-wrap { overflow-x:auto; }
+    .blog-run-topic { font-weight:700; color:rgba(255,255,255,.92); }
+    .blog-muted { color:rgba(255,255,255,.58); font-size:.86rem; }
+    .blog-stage-chip,
+    .blog-status-badge {
+      display:inline-flex;
+      border-radius:999px;
+      padding:4px 9px;
+      font-size:.76rem;
+      font-weight:700;
+      background:rgba(148,163,184,.18);
+      color:#dbeafe;
+    }
+    .blog-status-badge.draft_ready,
+    .blog-stage-chip.done { background:rgba(45,212,191,.18); color:#99f6e4; }
+    .blog-status-badge.needs_you { background:rgba(244,196,83,.16); color:#fde68a; }
+    .blog-status-badge.failed,
+    .blog-stage-chip.failed { background:rgba(248,113,113,.16); color:#fecaca; }
+    .blog-stage-chip.skipped { background:rgba(148,163,184,.14); color:#cbd5e1; }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="blog-pipeline-tabs" role="tablist" aria-label="Blog pipeline sections">
+    <a class="blog-pipeline-tab" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Topics</a>
+    <a class="blog-pipeline-tab" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_sources') }}">Sources</a>
+    <a class="blog-pipeline-tab is-active" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_runs') }}">Runs</a>
+  </div>
+
+  <div class="blog-pipeline-stats">
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
+  </div>
+
+  <div class="vs-admin-card blog-run-wrap">
+    <table class="blog-runs-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Topic</th>
+          <th>Status</th>
+          <th>Stages</th>
+          <th>Cost</th>
+          <th>Draft</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td>{{ run.started_at|fmt_dt if run.started_at else '—' }}</td>
+            <td>
+              <div class="blog-run-topic">{{ run.topic_title or ('Topic #' ~ run.topic_id) }}</div>
+              <div class="blog-muted">Run #{{ run.id }}</div>
+            </td>
+            <td><span class="blog-status-badge {{ run.status }}">{{ run.status|replace('_', ' ') }}</span></td>
+            <td>
+              <div class="blog-stage-chips">
+                {% for stage in run.stages %}
+                  <a class="blog-stage-chip {{ stage.status }}" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_run_detail', run_id=run.id) }}">
+                    {{ stage.stage|replace('_', ' ') }}{% if stage.score is not none %} {{ stage.score }}{% endif %}
+                  </a>
+                {% endfor %}
+              </div>
+            </td>
+            <td>${{ '%.5f'|format(run.total_cost_usd or 0) }}</td>
+            <td>
+              <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_run_detail', run_id=run.id) }}">Detail</a>
+                {% if run.article_id %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('video_shorts_bp.admin_blog_article_edit', article_id=run.article_id) }}">Edit draft</a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="6" class="text-center py-4 blog-muted">No runs yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
