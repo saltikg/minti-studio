@@ -73,6 +73,7 @@ def _table_exists(conn) -> bool:
 
 def _row_to_article(row: Any) -> dict[str, Any]:
     published_at = _normalize_datetime(row[13])
+    content_updated_at = _normalize_datetime(row[14])
     created_at = _normalize_datetime(row[11])
     updated_at = _normalize_datetime(row[12])
     return {
@@ -90,9 +91,10 @@ def _row_to_article(row: Any) -> dict[str, Any]:
         "created_at": created_at,
         "updated_at": updated_at,
         "published_at": published_at,
-        "status": row[14] or "draft",
-        "import_source": row[15] or "",
-        "import_source_id": row[16] or "",
+        "content_updated_at": content_updated_at,
+        "status": row[15] or "draft",
+        "import_source": row[16] or "",
+        "import_source_id": row[17] or "",
     }
 
 
@@ -113,6 +115,7 @@ def _select_columns_sql() -> str:
             created_at,
             updated_at,
             published_at,
+            content_updated_at,
             status,
             COALESCE(import_source, ''),
             COALESCE(import_source_id, '')
@@ -221,10 +224,11 @@ def ensure_default_blog_articles_seeded() -> dict[str, int | bool]:
                     view_count,
                     status,
                     published_at,
+                    content_updated_at,
                     import_source,
                     import_source_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
                 ON CONFLICT (slug) DO NOTHING
                 RETURNING id
                 """,
@@ -239,6 +243,7 @@ def ensure_default_blog_articles_seeded() -> dict[str, int | bool]:
                     payload["author_name"],
                     payload["reading_time"],
                     payload["status"],
+                    payload["published_at"],
                     payload["published_at"],
                     payload["import_source"],
                     payload["import_source_id"],
@@ -401,9 +406,10 @@ def create_blog_article(form: Any) -> dict[str, Any]:
                 reading_time,
                 view_count,
                 status,
-                published_at
+                published_at,
+                content_updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP)
             RETURNING id
             """,
             [
@@ -433,6 +439,28 @@ def update_blog_article(article_id: int, form: Any) -> Optional[dict[str, Any]]:
     payload = _save_payload_from_form(form)
     conn = get_db()
     try:
+        existing = conn.execute(
+            """
+            SELECT title, slug, summary, content, cover_image_url, meta_title, meta_description
+            FROM blog_articles
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [int(article_id)],
+        ).fetchone()
+        if not existing:
+            conn.rollback()
+            return None
+        content_values = [
+            payload["title"],
+            payload["slug"],
+            payload["summary"],
+            payload["content"],
+            payload["cover_image_url"],
+            payload["meta_title"],
+            payload["meta_description"],
+        ]
+        content_changed = any((existing[index] or None) != value for index, value in enumerate(content_values))
         row = conn.execute(
             """
             UPDATE blog_articles
@@ -448,6 +476,10 @@ def update_blog_article(article_id: int, form: Any) -> Optional[dict[str, Any]]:
                 reading_time = ?,
                 status = ?,
                 published_at = ?,
+                content_updated_at = CASE
+                    WHEN ? THEN CURRENT_TIMESTAMP
+                    ELSE content_updated_at
+                END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             RETURNING id
@@ -464,6 +496,7 @@ def update_blog_article(article_id: int, form: Any) -> Optional[dict[str, Any]]:
                 payload["reading_time"],
                 payload["status"],
                 payload["published_at"],
+                content_changed,
                 int(article_id),
             ],
         ).fetchone()
@@ -523,8 +556,7 @@ def increment_blog_article_view_count(article_id: int) -> None:
         conn.execute(
             """
             UPDATE blog_articles
-            SET view_count = COALESCE(view_count, 0) + 1,
-                updated_at = CURRENT_TIMESTAMP
+            SET view_count = COALESCE(view_count, 0) + 1
             WHERE id = ?
             """,
             [int(article_id)],

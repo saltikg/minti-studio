@@ -3,7 +3,7 @@ import os
 import json  # <- eklendi
 import logging
 from html import escape
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 from flask import Flask, Response, jsonify, redirect, g, render_template, request, url_for
@@ -147,10 +147,13 @@ def create_app():
     def _sitemap_lastmod(value):
         if not value:
             return ""
-        try:
-            return value.isoformat()
-        except Exception:
-            return str(value)
+        if not isinstance(value, datetime):
+            value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.replace(microsecond=0).isoformat()
 
     @app.get("/sitemap.xml")
     def sitemap_xml():
@@ -180,7 +183,7 @@ def create_app():
             },
         ]
         for article in list_published_blog_articles():
-            lastmod = article.get("updated_at") or article.get("published_at")
+            lastmod = article.get("content_updated_at") or article.get("published_at")
             entries.append(
                 {
                     "loc": _absolute_public_url(url_for("video_shorts_bp.blog_article", slug=article["slug"])),

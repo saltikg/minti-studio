@@ -26,7 +26,7 @@ def _absolute_url(path: str) -> str:
 def _serialize_article(article: dict[str, Any]) -> dict[str, Any]:
     article = dict(article)
     published_at = article["published_at"]
-    updated_at = article.get("updated_at")
+    updated_at = article.get("content_updated_at") or article.get("updated_at")
     article["published_on_iso"] = published_at.isoformat() if published_at else ""
     article["updated_at_iso"] = updated_at.isoformat() if updated_at else article["published_on_iso"]
     article["published_on_display"] = (

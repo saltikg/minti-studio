@@ -1041,7 +1041,10 @@ def _run_image_stage(
             conn.execute(
                 """
                 UPDATE blog_articles
-                SET content = ?, cover_image_url = ?
+                SET content = ?,
+                    cover_image_url = ?,
+                    content_updated_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 [article.get("content_md"), article.get("cover_image_url"), int(article_id)],
@@ -1058,9 +1061,9 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
         """
         INSERT INTO blog_articles (
             title, slug, summary, content, cover_image_url, meta_title, meta_description,
-            author_name, reading_time, view_count, status, published_at, import_source, import_source_id
+            author_name, reading_time, view_count, status, published_at, content_updated_at, import_source, import_source_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'MintiStudio Team', ?, 0, 'draft', NULL, 'blog_pipeline', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'MintiStudio Team', ?, 0, 'draft', NULL, CURRENT_TIMESTAMP, 'blog_pipeline', ?)
         RETURNING id
         """,
         [
