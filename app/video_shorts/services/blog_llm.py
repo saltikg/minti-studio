@@ -15,14 +15,14 @@ except ImportError:  # pragma: no cover
     OpenAI = None
 
 
-BLOG_MODEL_JUDGE = os.getenv("BLOG_MODEL_JUDGE", "gpt-5.4-nano")
+BLOG_MODEL_JUDGE = os.getenv("BLOG_MODEL_JUDGE", "gpt-6-astra")
 BLOG_MODEL_WRITER = os.getenv("BLOG_MODEL_WRITER", "gpt-6-astra")
-BLOG_MODEL_REVIEWER = os.getenv("BLOG_MODEL_REVIEWER", "gpt-5.4-mini")
-BLOG_MODEL_DESIGNER = os.getenv("BLOG_MODEL_DESIGNER", "gpt-5.4-mini")
+BLOG_MODEL_REVIEWER = os.getenv("BLOG_MODEL_REVIEWER", "gpt-6-luna")
+BLOG_MODEL_DESIGNER = os.getenv("BLOG_MODEL_DESIGNER", "gpt-6-luna")
 BLOG_IMAGE_COVER = os.getenv("BLOG_IMAGE_COVER", "gpt-image-2")
 BLOG_IMAGE_COVER_QUALITY = os.getenv("BLOG_IMAGE_COVER_QUALITY", "medium")
-BLOG_IMAGE_INLINE = os.getenv("BLOG_IMAGE_INLINE", "gpt-image-1-mini")
-BLOG_IMAGE_INLINE_QUALITY = os.getenv("BLOG_IMAGE_INLINE_QUALITY", "medium")
+BLOG_IMAGE_INLINE = os.getenv("BLOG_IMAGE_INLINE", "gpt-image-2")
+BLOG_IMAGE_INLINE_QUALITY = os.getenv("BLOG_IMAGE_INLINE_QUALITY", "low")
 
 PRICES: dict[str, dict[str, Decimal]] = {
     "gpt-5-nano": {"input": Decimal("0.05"), "cached_input": Decimal("0.005"), "output": Decimal("0.40")},

@@ -72,6 +72,11 @@ For YouTube creator videos, use source_summary as a lightweight transcript summa
 adapted, the brief must include claims to verify plus official sources to check in Phase 2. Do not
 trust creator commentary as final authority.
 
+For category="news" from youtube_channel sources: if source_summary shows that 2+ channels summarize
+the same platform change, set corroborated=true and mention both channel/source names in judge_reason.
+If it is single-source news, set corroborated=false, cap fit_score at 80 even when otherwise strong,
+and keep the words FACT-CHECK in the brief.
+
 Originality rule: our_title must be written from our audience's problem, not the competitor's SEO
 phrasing. It must not reuse the source headline's main phrase or structure.
 Bad: source "Best Video Repurposing Tools" -> ours "Best Video Repurposing Tools: What to Pick"
@@ -89,7 +94,7 @@ Always fill brief in 2-3 sentences: reader, problem, promise, and where MintiStu
 The competitor headline/summary is a demand signal only. Never reuse that text.
 
 Return JSON object only.
-{"decisions":[{"id":123,"decision":"accept|adapt|duplicate|offtopic|lowfit","fit_score":82,"audience_fit":32,"minti_bridge":26,"intent_score":16,"timeliness":8,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","adapted_from":null,"is_timely":false,"expires_in_days":null}]}
+{"decisions":[{"id":123,"decision":"accept|adapt|duplicate|offtopic|lowfit","fit_score":82,"audience_fit":32,"minti_bridge":26,"intent_score":16,"timeliness":8,"judge_reason":"one line","duplicate_of":null,"our_title":"...","primary_keyword":"...","category":"persona|monetization|comparison|craft|news","intent":"commercial|informational","angle":"...","brief":"2-3 sentences","adapted_from":null,"corroborated":false,"is_timely":false,"expires_in_days":null}]}
 """
 
 BATCH_SIZE = 25
