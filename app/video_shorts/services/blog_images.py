@@ -137,7 +137,6 @@ def generate_blog_image(
                 size=BLOG_IMAGE_SIZE,
                 quality=selected_quality,
                 n=1,
-                response_format="b64_json",
             )
             image_bytes = _decode_image_response(response)
             if target.exists() and overwrite:
