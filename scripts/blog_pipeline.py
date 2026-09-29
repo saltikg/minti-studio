@@ -38,6 +38,8 @@ from app.video_shorts.services.blog_images import (  # noqa: E402
     generated_visual_filename,
     render_markdown_image,
 )
+from app.video_shorts.services.blog_articles import update_blog_article_status  # noqa: E402
+from app.video_shorts.services.blog_notifications import BLOG_NOTIFY_EMAIL, send_blog_run_notification  # noqa: E402
 from app.video_shorts.services.blog_pipeline import current_month_spend, json_dumps_compact  # noqa: E402
 from app.video_shorts.services.blog_pipeline_runs import (  # noqa: E402
     create_run,
@@ -50,6 +52,7 @@ from app.video_shorts.services.db import get_db, get_db_readonly, table_columns 
 
 BLOG_REVIEW_PASS = int(os.getenv("BLOG_REVIEW_PASS", "85") or "85")
 BLOG_RUN_MAX_USD = Decimal(os.getenv("BLOG_RUN_MAX_USD", "1.50") or "1.50")
+BLOG_AUTO_PUBLISH = str(os.getenv("BLOG_AUTO_PUBLISH", "true")).strip().lower() not in {"0", "false", "no", "off"}
 STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
 LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
@@ -297,6 +300,31 @@ def _http_status(url: str, *, timeout: int = 5) -> int | None:
     return None
 
 
+def _public_blog_url(slug: str) -> str:
+    return f"{BASE_URL}/video_shorts/blog/{quote(str(slug).strip())}/"
+
+
+def _admin_edit_url(article_id: int | None) -> str | None:
+    return f"{BASE_URL}/video_shorts/admin/blog/{int(article_id)}/edit" if article_id else None
+
+
+def _run_detail_url(run_id: int | None) -> str | None:
+    return f"{BASE_URL}/video_shorts/admin/blog-pipeline/runs/{int(run_id)}" if run_id else None
+
+
+def _sitemap_status(public_url: str) -> dict[str, Any]:
+    sitemap_url = f"{BASE_URL}/sitemap.xml"
+    try:
+        req = request.Request(sitemap_url, headers={"User-Agent": "MintiStudioBlogPipeline/1.0"})
+        with request.urlopen(req, timeout=5) as resp:
+            body = resp.read(2_000_000).decode("utf-8", "ignore")
+            return {"url": sitemap_url, "status": int(resp.status), "contains_article": public_url in body}
+    except HTTPError as exc:
+        return {"url": sitemap_url, "status": int(exc.code), "contains_article": False}
+    except Exception as exc:
+        return {"url": sitemap_url, "status": None, "contains_article": False, "error": str(exc)[:200]}
+
+
 def _slug_exists(slug: str) -> bool:
     conn = get_db_readonly()
     try:
@@ -500,6 +528,112 @@ def _image_result_payload(result: BlogImageResult) -> dict[str, Any]:
 
 def _replace_generated_placeholder(content: str, marker: str, markdown: str) -> str:
     return re.sub(r"<!--\s*" + re.escape(marker) + r"\s*-->", markdown, content, count=1)
+
+
+def _article_image_urls(article: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    cover = str(article.get("cover_image_url") or "").strip()
+    if cover:
+        urls.append(cover)
+    urls.extend(re.findall(r"!\[[^\]]*\]\((/video_shorts/static/img/blog/[^)]+)\)", str(article.get("content_md") or "")))
+    return urls
+
+
+def _no_publish_reason(*, run_status: str, article: dict[str, Any], checks: dict[str, Any], final_score: int, image_status: str) -> str | None:
+    content = str(article.get("content_md") or "")
+    if run_status != "draft_ready":
+        if image_status != "done":
+            return "image failure"
+        if final_score < BLOG_REVIEW_PASS:
+            return f"reviewer score {final_score} below pass threshold {BLOG_REVIEW_PASS}"
+        if _blocking_issues({}, checks):
+            return "blocking check issues"
+        return run_status
+    if "FACT-CHECK REQUIRED" in content:
+        return "FACT-CHECK REQUIRED marker present"
+    if re.search(r"<!--\s*IMAGE_[123]\s*-->", content):
+        return "remaining IMAGE placeholder"
+    if not article.get("cover_image_url"):
+        return "missing cover_image_url"
+    if not checks.get("ok"):
+        return "final checks failed: " + "; ".join(checks.get("issues") or [])
+    return None
+
+
+def _notify_run(
+    *,
+    state: PipelineState | None,
+    status_label: str,
+    title: str,
+    article: dict[str, Any] | None = None,
+    article_id: int | None = None,
+    reviewer_score: int | None = None,
+    total_cost: str | None = None,
+    reason: str | None = None,
+    published: bool = False,
+) -> dict[str, Any]:
+    article = article or {}
+    if status_label == "published":
+        subject = f"[Minti Blog] Published — {title}"
+    elif status_label == "failed":
+        subject = f"[Minti Blog] Run failed — {title}"
+    else:
+        subject = f"[Minti Blog] Needs your review — {title} ({reason or 'review needed'})"
+    try:
+        result = send_blog_run_notification(
+            subject=subject,
+            status_label=status_label,
+            title=title,
+            public_url=_public_blog_url(str(article.get("slug") or "")) if published and article.get("slug") else None,
+            admin_edit_url=_admin_edit_url(article_id),
+            run_detail_url=_run_detail_url(state.run_id if state else None),
+            reviewer_score=reviewer_score,
+            total_cost=total_cost,
+            images=_article_image_urls(article),
+            reason=reason,
+            to_email=BLOG_NOTIFY_EMAIL,
+        )
+        payload = {"email": result}
+        status = "done"
+        notes = "SMTP accepted"
+    except Exception as exc:
+        payload = {"error_class": exc.__class__.__name__, "message": str(exc)[:500]}
+        status = "failed"
+        notes = str(exc)[:1000]
+    if state and state.run_id and not state.dry_run:
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [state.run_id]).fetchone()
+            record_stage(conn, run_id=state.run_id, seq=int(row[0] or 0) + 1, stage="notification", status=status, output=payload, notes=notes)
+            conn.commit()
+        finally:
+            conn.close()
+    return {"status": status, "notes": notes, "payload": payload}
+
+
+def _publish_if_clean(
+    *,
+    article_id: int,
+    article: dict[str, Any],
+    checks: dict[str, Any],
+    run_status: str,
+    final_score: int,
+    image_status: str,
+) -> tuple[bool, str | None, dict[str, Any]]:
+    reason = _no_publish_reason(run_status=run_status, article=article, checks=checks, final_score=final_score, image_status=image_status)
+    verification: dict[str, Any] = {}
+    if not BLOG_AUTO_PUBLISH:
+        return False, "BLOG_AUTO_PUBLISH disabled", verification
+    if reason:
+        return False, reason, verification
+    updated = update_blog_article_status(article_id, "published")
+    if not updated:
+        return False, "publish helper returned no update", verification
+    public_url = _public_blog_url(str(article["slug"]))
+    verification["public_url"] = public_url
+    verification["http_status"] = _http_status(public_url)
+    verification["sitemap"] = _sitemap_status(public_url)
+    return True, None, verification
 
 
 def _run_image_stage(
@@ -948,6 +1082,44 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         finish_run(conn, state.run_id, status=run_status, article_id=article_id, final_review_score=final_score)
         conn.commit()
         result["article_id"] = article_id
+        published, publish_reason, publish_verification = _publish_if_clean(
+            article_id=article_id,
+            article=article,
+            checks=checks,
+            run_status=run_status,
+            final_score=final_score,
+            image_status=image_status,
+        )
+        result["published"] = published
+        result["publish_reason"] = publish_reason
+        result["publish_verification"] = publish_verification
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM blog_pipeline_stages WHERE run_id = ?", [state.run_id]).fetchone()
+            record_stage(
+                conn,
+                run_id=state.run_id,
+                seq=int(row[0] or 0) + 1,
+                stage="publish",
+                status="done" if published else "skipped",
+                output={"published": published, "reason": publish_reason, "verification": publish_verification},
+                notes=publish_reason,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        notification = _notify_run(
+            state=state,
+            status_label="published" if published else "draft_kept",
+            title=str(article.get("title") or topic.get("title") or "Untitled"),
+            article=article,
+            article_id=article_id,
+            reviewer_score=final_score,
+            total_cost=str(state.run_cost),
+            reason=publish_reason,
+            published=published,
+        )
+        result["notification"] = notification
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return result
     except Exception as exc:
@@ -966,6 +1138,14 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 fail_conn.commit()
             finally:
                 fail_conn.close()
+            _notify_run(
+                state=state,
+                status_label="failed",
+                title=str(state.topic.get("title") or "Untitled topic"),
+                reviewer_score=None,
+                total_cost=str(state.run_cost),
+                reason=str(exc)[:500],
+            )
         raise
     finally:
         try:
