@@ -83,6 +83,7 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         article["summary"] = article.get("excerpt")
     article["slug"] = _slugify(article.get("slug") or article.get("title") or "article")
     content = str(article.get("content_md") or "")
+    content = re.sub(r"(?m)^\\s*(IMAGE_[123])\\s*$", r"<!-- \1 -->", content)
     visuals: list[dict[str, Any]] = []
     for visual in article.get("visuals") or []:
         normalized = dict(visual)
@@ -365,7 +366,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
     return article
 
 
-def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_plan: dict[str, Any]) -> int:
+def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_plan: dict[str, Any], run_status: str) -> int:
     row = conn.execute(
         """
         INSERT INTO blog_articles (
@@ -387,7 +388,8 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
         ],
     ).fetchone()
     article_id = int(row[0])
-    conn.execute("UPDATE blog_topics SET status = 'draft_ready' WHERE id = ?", [int(state.topic["id"])])
+    topic_status = "draft_ready" if run_status == "draft_ready" else "in_production"
+    conn.execute("UPDATE blog_topics SET status = ? WHERE id = ?", [topic_status, int(state.topic["id"])])
     record_stage(
         conn,
         run_id=state.run_id,
@@ -467,8 +469,11 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         final_review = review_1
         if review_1_score < BLOG_REVIEW_PASS or review_1.get("blocking_issues"):
             revision_payload = {**user_base, "article": article, "review": review_1}
+            previous_visuals = list(article.get("visuals") or [])
             article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
             article = _normalize_article_payload(article)
+            if not article.get("visuals") and previous_visuals:
+                article["visuals"] = previous_visuals
             state.seq += 1
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
@@ -482,8 +487,11 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost)
             conn.commit()
             if review_2_score < BLOG_REVIEW_PASS or review_2.get("blocking_issues"):
+                previous_visuals = list(article.get("visuals") or [])
                 article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
                 article = _normalize_article_payload(article)
+                if not article.get("visuals") and previous_visuals:
+                    article["visuals"] = previous_visuals
                 state.seq += 1
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
@@ -524,7 +532,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return result
 
-        article_id = _save_draft(conn, state=state, article=article, visuals_plan={"cover": article.get("cover"), "visuals": article.get("visuals"), "screenshots_placed": article.get("screenshots_placed")})
+        article_id = _save_draft(conn, state=state, article=article, visuals_plan={"cover": article.get("cover"), "visuals": article.get("visuals"), "screenshots_placed": article.get("screenshots_placed")}, run_status=run_status)
         finish_run(conn, state.run_id, status=run_status, article_id=article_id, final_review_score=final_score)
         conn.commit()
         result["article_id"] = article_id
