@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -41,6 +42,11 @@ try:
     from youtube_transcript_api import YouTubeTranscriptApi
 except ImportError:  # pragma: no cover
     YouTubeTranscriptApi = None
+
+try:
+    from youtube_transcript_api.proxies import GenericProxyConfig
+except ImportError:  # pragma: no cover
+    GenericProxyConfig = None
 
 
 YOUTUBE_BLOG_KEYWORDS = (
@@ -226,22 +232,40 @@ def _youtube_channel_videos(source: BlogSource, *, limit: int = 8) -> list[dict[
     return _fresh_items(videos, days=14, limit=5)
 
 
-def _transcript_text(video_id: str, *, use_proxy: bool) -> str:
+def _redact_sensitive(value: str) -> str:
+    text = str(value or "")
+    proxy_url = (os.getenv("INGEST_PROXY_URL") or "").strip()
+    if proxy_url:
+        text = text.replace(proxy_url, "[redacted-proxy-url]")
+    text = re.sub(r"https?://[^/\s:@]+:[^@\s]+@", "https://[redacted]@", text)
+    return text
+
+
+def _attempt_result(method: str, *, exc: Exception | None = None) -> dict[str, str]:
+    if exc is None:
+        return {"method": method, "status": "success"}
+    return {
+        "method": method,
+        "status": "failed",
+        "error_class": exc.__class__.__name__,
+        "message": re.sub(r"\s+", " ", _redact_sensitive(str(exc))).strip()[:300],
+    }
+
+
+def _transcript_text_youtube_api(video_id: str) -> str:
     if YouTubeTranscriptApi is None:
         raise RuntimeError("youtube_transcript_api is not installed")
     proxy_url = (os.getenv("INGEST_PROXY_URL") or "").strip()
-    proxies = None
-    if use_proxy:
-        if not proxy_url:
-            raise RuntimeError("INGEST_PROXY_URL is not configured")
-        proxy_url = inject_dataimpulse_sessid(proxy_url)
-        proxies = {"http": proxy_url, "https": proxy_url}
+    if not proxy_url:
+        raise RuntimeError("INGEST_PROXY_URL is not configured")
+    proxy_url = inject_dataimpulse_sessid(proxy_url)
+    proxies = {"http": proxy_url, "https": proxy_url}
+    proxy_config = GenericProxyConfig(http_url=proxy_url, https_url=proxy_url) if GenericProxyConfig else None
     try:
-        api = YouTubeTranscriptApi(proxies=proxies) if proxies else YouTubeTranscriptApi()
+        api = YouTubeTranscriptApi(proxy_config=proxy_config) if proxy_config else YouTubeTranscriptApi(proxies=proxies)
     except TypeError:
         api = YouTubeTranscriptApi()
-        if proxies:
-            setattr(api, "proxies", proxies)
+        setattr(api, "proxies", proxies)
     fetched = api.fetch(video_id, languages=["en"])
     pieces = []
     for segment in fetched:
@@ -251,16 +275,84 @@ def _transcript_text(video_id: str, *, use_proxy: bool) -> str:
     return re.sub(r"\s+", " ", " ".join(pieces)).strip()
 
 
+def _subtitle_text_from_file(path: Path) -> str:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.upper() == "WEBVTT" or "-->" in line:
+            continue
+        if re.fullmatch(r"\d+", line) or line.startswith(("Kind:", "Language:", "NOTE ")):
+            continue
+        line = re.sub(r"<[^>]+>", " ", line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            lines.append(line)
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def _transcript_text_ytdlp(video_id: str, video_url: str) -> str:
+    if yt_dlp is None:
+        raise RuntimeError("yt_dlp is not installed")
+    proxy_url = (os.getenv("INGEST_PROXY_URL") or "").strip()
+    if not proxy_url:
+        raise RuntimeError("INGEST_PROXY_URL is not configured")
+    proxy_url = inject_dataimpulse_sessid(proxy_url)
+    cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
+    with tempfile.TemporaryDirectory(prefix=f"blog_subs_{video_id}_") as tmp:
+        work_dir = Path(tmp)
+        opts: dict[str, Any] = {
+            "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
+            "skip_download": True,
+            "writesubtitles": False,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["en.*"],
+            "subtitlesformat": "vtt",
+            "quiet": True,
+            "noprogress": True,
+            "legacy_server_connect": True,
+            "nocheckcertificate": True,
+            "retries": 5,
+            "fragment_retries": 5,
+            "proxy": proxy_url,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["mweb", "default"]
+                }
+            },
+            "js_runtimes": {"node": {}},
+        }
+        if cookies_path:
+            opts["cookiefile"] = cookies_path
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([video_url or f"https://www.youtube.com/watch?v={video_id}"])
+        candidates = sorted(
+            path
+            for path in work_dir.glob(f"{video_id}.*")
+            if path.is_file() and path.suffix.lower() in {".vtt", ".srv1", ".srv2", ".srv3", ".ttml"}
+        )
+        for candidate in candidates:
+            transcript = _subtitle_text_from_file(candidate)
+            if transcript:
+                return transcript
+    raise RuntimeError("yt-dlp did not return usable English subtitles")
+
+
 def _summarize_transcript(video: dict[str, Any]) -> tuple[dict[str, Any], str]:
     video_id = str(video.get("video_id") or "")
     if not video_id:
         return {"transcript_status": "skipped", "transcript_error": "missing video id"}, "skipped"
-    errors: list[str] = []
-    for label, use_proxy in (("direct", False), ("proxy", True)):
+    attempts: list[dict[str, str]] = []
+    video_url = str(video.get("url") or "")
+    for label, fetcher in (
+        ("youtube_transcript_api_proxy", lambda: _transcript_text_youtube_api(video_id)),
+        ("yt_dlp_proxy_auto_subs", lambda: _transcript_text_ytdlp(video_id, video_url)),
+    ):
         try:
-            transcript = _transcript_text(video_id, use_proxy=use_proxy)
+            transcript = fetcher()
             if not transcript:
                 raise RuntimeError("empty transcript")
+            attempts.append(_attempt_result(label))
             result = call_json(
                 "transcript_summary",
                 model=BLOG_MODEL_REVIEWER,
@@ -270,12 +362,16 @@ def _summarize_transcript(video: dict[str, Any]) -> tuple[dict[str, Any], str]:
             log_usage("transcript_summary", result)
             payload = json.loads(result.content)
             payload["transcript_status"] = label
+            payload["transcript_attempts"] = attempts
             return payload, label
         except Exception as exc:
-            errors.append(f"{label}: {exc}")
-            if label == "direct" and not (os.getenv("INGEST_PROXY_URL") or "").strip():
-                break
-    return {"transcript_status": "failed", "transcript_error": "; ".join(errors)[:500]}, "failed"
+            attempts.append(_attempt_result(label, exc=exc))
+    error_text = "; ".join(
+        f"{attempt['method']}: {attempt.get('error_class', 'Error')}: {attempt.get('message', '')}"
+        for attempt in attempts
+        if attempt.get("status") == "failed"
+    )
+    return {"transcript_status": "failed", "transcript_error": error_text[:1000], "transcript_attempts": attempts}, "failed"
 
 
 def _with_transcript_summaries(items: list[dict[str, Any]], stats: dict[str, int]) -> list[dict[str, Any]]:
