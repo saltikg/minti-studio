@@ -1749,6 +1749,11 @@ def run_worker_loop() -> None:
                 except Exception:
                     app.logger.exception("Planned lead auto-generate polling failed")
                 try:
+                    if generation.process_awaiting_approval_lead_autoapprove():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Awaiting approval lead auto-approve polling failed")
+                try:
                     if generation.process_approved_lead_autoschedule():
                         processed_any = True
                 except Exception:

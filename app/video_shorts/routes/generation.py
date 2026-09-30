@@ -5913,6 +5913,117 @@ def process_approved_lead_autoschedule(*, limit: int = 1, now: Optional[datetime
     return processed_any
 
 
+def _record_lead_approved_event(
+    conn,
+    *,
+    lead_id: str,
+    brand_id: str,
+    acting_admin_id: str = "",
+    mechanism: str = "manual_admin",
+) -> Optional[Dict[str, Any]]:
+    detail = {
+        "acting_admin_id": str(acting_admin_id or "").strip(),
+        "brand_id": str(brand_id or "").strip(),
+    }
+    if mechanism:
+        detail["mechanism"] = str(mechanism)
+    return record_lead_pipeline_event(
+        conn,
+        lead_id=lead_id,
+        event_type="lead_approved",
+        to_state="approved",
+        detail=detail,
+    )
+
+
+def process_awaiting_approval_lead_autoapprove(*, limit: int = 1) -> bool:
+    conn = get_db()
+    processed_any = False
+    try:
+        if not lead_pipeline_available(conn):
+            conn.commit()
+            return False
+        rows = conn.execute(
+            """
+            SELECT
+                CAST(l.id AS VARCHAR),
+                COALESCE(l.creator_email, ''),
+                COALESCE(l.youtube_channel_id, ''),
+                CAST(l.brand_id AS VARCHAR)
+            FROM autopilot_leads l
+            WHERE l.converted_at IS NULL
+              AND l.user_id IS NOT NULL
+              AND l.brand_id IS NOT NULL
+              AND l.first_video_id IS NOT NULL
+              AND COALESCE(l.pipeline_state, 'new') = 'awaiting_approval'
+              AND COALESCE(l.creator_email, '') <> ''
+              AND COALESCE(l.creator_email, '') LIKE '%@%'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM short_share_links sl_declined
+                  WHERE lower(trim(COALESCE(sl_declined.recipient_email, ''))) = lower(trim(COALESCE(l.creator_email, '')))
+                    AND COALESCE(sl_declined.declined, false) = true
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM autopilot_leads other
+                  WHERE CAST(other.id AS VARCHAR) <> CAST(l.id AS VARCHAR)
+                    AND (
+                        lower(trim(COALESCE(other.creator_email, ''))) = lower(trim(COALESCE(l.creator_email, '')))
+                        OR (
+                            COALESCE(other.youtube_channel_id, '') <> ''
+                            AND COALESCE(other.youtube_channel_id, '') = COALESCE(l.youtube_channel_id, '')
+                        )
+                    )
+                    AND (
+                        other.converted_at IS NOT NULL
+                        OR COALESCE(other.pipeline_state, 'new') NOT IN ('failed')
+                    )
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM short_share_links sl_existing
+                  JOIN outreach_scheduled_emails ose_existing
+                    ON ose_existing.share_link_id = sl_existing.id
+                  WHERE (
+                      CAST(sl_existing.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                      OR lower(trim(COALESCE(sl_existing.recipient_email, ''))) = lower(trim(COALESCE(l.creator_email, '')))
+                  )
+                    AND ose_existing.status IN ('scheduled', 'processing', 'sent')
+              )
+            ORDER BY l.created_at ASC NULLS LAST, l.id ASC
+            LIMIT 20
+            """
+        ).fetchall()
+        approved_count = 0
+        for row in rows:
+            lead_id = str(row[0] or "").strip()
+            creator_email = str(row[1] or "").strip()
+            brand_id = str(row[3] or "").strip()
+            if not lead_id or not creator_email or "@" not in creator_email:
+                continue
+            if is_recipient_declined(conn, creator_email):
+                continue
+            _record_lead_approved_event(
+                conn,
+                lead_id=lead_id,
+                brand_id=brand_id,
+                acting_admin_id="autopilot_cron",
+                mechanism="cron_auto_approve",
+            )
+            approved_count += 1
+            processed_any = True
+            if approved_count >= max(1, int(limit)):
+                break
+        conn.commit()
+        return processed_any
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _build_render_job_options(
     *,
     plan_index: int,
@@ -17765,15 +17876,11 @@ def admin_operation_approve_lead(brand_id: str):
     conn = get_db()
     try:
         current_user = getattr(g, "vs_current_user", None) or {}
-        record_lead_pipeline_event(
+        _record_lead_approved_event(
             conn,
             lead_id=lead["id"],
-            event_type="lead_approved",
-            to_state="approved",
-            detail={
-                "acting_admin_id": str(current_user.get("id") or "").strip(),
-                "brand_id": brand_id,
-            },
+            brand_id=brand_id,
+            acting_admin_id=str(current_user.get("id") or "").strip(),
         )
         conn.commit()
     except Exception:
