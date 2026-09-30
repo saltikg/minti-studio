@@ -420,6 +420,23 @@ def _remove_invalid_markdown_images(content: str) -> tuple[str, list[str]]:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), notes
 
 
+def _limit_component_blocks(content: str, component_type: str, keep_count: int) -> tuple[str, list[str]]:
+    pattern = FLOW_BLOCK_RE if component_type == "flow" else COMPARE_BLOCK_RE
+    seen = 0
+    notes: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal seen
+        seen += 1
+        if seen <= keep_count:
+            return match.group(0)
+        notes.append(f"removed extra :::{component_type} block beyond visual plan")
+        return ""
+
+    cleaned = pattern.sub(replace, content or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), notes
+
+
 def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
     repaired: list[dict[str, Any]] = []
@@ -663,6 +680,16 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
                 existing_repairs.append(note)
         article["visual_repairs"] = existing_repairs
     article["visuals"] = normalized_visuals
+    flow_keep = sum(1 for visual in normalized_visuals if visual.get("type") == "flow")
+    compare_keep = sum(1 for visual in normalized_visuals if visual.get("type") == "compare")
+    content, flow_notes = _limit_component_blocks(content, "flow", flow_keep)
+    content, compare_notes = _limit_component_blocks(content, "compare", compare_keep)
+    if flow_notes or compare_notes:
+        existing_repairs = list(article.get("visual_repairs") or [])
+        for note in flow_notes + compare_notes:
+            if note not in existing_repairs:
+                existing_repairs.append(note)
+        article["visual_repairs"] = existing_repairs
     image_markers = tuple(visual["marker"] for visual in normalized_visuals if visual.get("type") in IMAGE_VISUAL_TYPES)
     content = _remove_unneeded_image_placeholders(content, set(image_markers))
     for marker in set(IMAGE_MARKERS) - set(image_markers):

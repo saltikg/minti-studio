@@ -370,6 +370,33 @@ def test_pre_rendered_article_markdown_image_is_removed(monkeypatch):
     assert any("removed pre-rendered article image markdown" in note for note in article["visual_repairs"])
 
 
+def test_extra_component_blocks_are_removed(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## One",
+                    "First context.",
+                    ":::flow Planned",
+                    "video | Long video | Full recording",
+                    "clips | Five Shorts | Best moments",
+                    ":::",
+                    ":::flow Extra",
+                    "calendar | Schedule | Keep cadence",
+                    "check | Review | Approve clips",
+                    ":::",
+                ]
+            ),
+            visuals=[{"marker": "IMAGE_1", "type": "flow"}],
+        )
+    )
+
+    assert article["content_md"].count(":::flow") == 1
+    assert "Extra" not in article["content_md"]
+    assert "removed extra :::flow block beyond visual plan" in article["visual_repairs"]
+
+
 def test_extra_generate_slot_repairs_to_relevant_screenshot(monkeypatch):
     monkeypatch.setattr(
         blog_pipeline,
