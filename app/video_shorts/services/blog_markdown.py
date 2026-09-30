@@ -15,6 +15,8 @@ _YOUTUBE_EMBED_TOKEN_RE = re.compile(r"(?:<p>)?YOUTUBE_EMBED_([A-Za-z0-9_-]{11})
 _COMPONENT_START_RE = re.compile(r"^:::(?P<type>[A-Za-z]+)(?:\s+(?P<title>.*))?$")
 _COMPONENT_TOKEN_RE = re.compile(r"(?:<p>)?BLOG_COMPONENT_(\d+)(?:</p>)?")
 _CALLOUT_TYPES = {"warning", "tip", "info"}
+_DIAGRAM_TYPES = {"flow", "compare"}
+_DIAGRAM_ICONS = {"video", "clips", "scissors", "calendar", "clock", "eye", "users", "chart", "mic", "upload", "check", "sparkles"}
 _CHECK_CELL_RE = re.compile(r"(<td[^>]*>)(.*?)(</td>)", re.I | re.S)
 _IMAGE_WITH_EM_CAPTION_RE = re.compile(r"<p>\s*(<img\b[^>]*>)\s*</p>\s*<p>\s*<em>(.*?)</em>\s*</p>", re.I | re.S)
 _IMAGE_RE = re.compile(r"<p>\s*(<img\b[^>]*>)\s*</p>", re.I)
@@ -64,7 +66,23 @@ def _svg_icon(name: str) -> str:
         "arrow": '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
         "zoom": '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
         "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+        "video": '<path d="M15 10.5 21 7v10l-6-3.5V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3.5Z"/>',
+        "clips": '<rect x="4" y="5" width="14" height="10" rx="2"/><path d="M8 19h10a2 2 0 0 0 2-2V9"/><path d="m10 8 4 2.5-4 2.5V8Z"/>',
+        "scissors": '<circle cx="6" cy="7" r="3"/><circle cx="6" cy="17" r="3"/><path d="M8.6 8.6 19 19"/><path d="M8.6 15.4 19 5"/>',
+        "calendar": '<path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>',
+        "clock": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        "eye": '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+        "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        "chart": '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/>',
+        "mic": '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/><path d="M8 22h8"/>',
+        "upload": '<path d="M12 16V3"/><path d="m7 8 5-5 5 5"/><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/>',
+        "check": '<path d="m20 6-11 11-5-5"/>',
+        "up": '<path d="m5 15 7-7 7 7"/><path d="M12 8v13"/>',
+        "down": '<path d="m19 9-7 7-7-7"/><path d="M12 3v13"/>',
+        "flat": '<path d="M5 12h14"/>',
     }
+    if name not in paths:
+        name = "sparkles"
     return (
         '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" '
         'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
@@ -225,9 +243,89 @@ def _steps_html(body: str) -> str:
     return f'<div class="steps">{"".join(items)}</div>'
 
 
+def _limit_words(text: str, limit: int) -> str:
+    words = re.findall(r"\S+", re.sub(r"\s+", " ", text or "").strip())
+    return " ".join(words[:limit])
+
+
+def _diagram_figure(inner_html: str, caption: str) -> str:
+    safe_caption = escape((caption or "").strip())
+    caption_html = f"<figcaption>{safe_caption}</figcaption>" if safe_caption else ""
+    return f'<figure class="diagram-figure">{inner_html}{caption_html}</figure>'
+
+
+def _flow_html(body: str, caption: str) -> str:
+    steps: list[tuple[str, str, str]] = []
+    for line in (body or "").splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) != 3:
+            continue
+        icon, title, subtitle = parts
+        icon = icon.lower() if icon.lower() in _DIAGRAM_ICONS else "sparkles"
+        steps.append((icon, _limit_words(title, 4), _limit_words(subtitle, 8)))
+    if len(steps) < 2:
+        return ""
+    steps = steps[:5]
+    items = []
+    for index, (icon, title, subtitle) in enumerate(steps, start=1):
+        items.append(
+            '<div class="flow-step">'
+            f'<div class="flow-icon">{_svg_icon(icon)}</div>'
+            f'<div class="flow-num">{index}</div>'
+            '<div>'
+            f'<div class="flow-title">{escape(title)}</div>'
+            f'<div class="flow-subtitle">{escape(subtitle)}</div>'
+            '</div>'
+            '</div>'
+        )
+    return _diagram_figure(f'<div class="diagram-card flow-card">{"".join(items)}</div>', caption)
+
+
+def _compare_direction(direction: str) -> str:
+    direction = (direction or "").strip().lower()
+    return direction if direction in {"up", "down", "flat"} else "flat"
+
+
+def _compare_html(body: str, caption: str) -> str:
+    metric_lines: list[list[str]] = []
+    note = ""
+    for line in (body or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith("note:"):
+            note = stripped.split(":", 1)[1].strip()
+            continue
+        parts = [part.strip() for part in stripped.split("|")]
+        if len(parts) == 4:
+            metric_lines.append(parts)
+    if len(metric_lines) < 2:
+        return ""
+    sides = []
+    for icon, value, label, direction in metric_lines[:2]:
+        icon = icon.lower() if icon.lower() in _DIAGRAM_ICONS else "chart"
+        direction = _compare_direction(direction)
+        direction_label = {"up": "Up", "down": "Down", "flat": "Flat"}[direction]
+        sides.append(
+            f'<div class="compare-side compare-side--{direction}">'
+            f'<div class="compare-icon">{_svg_icon(icon)}</div>'
+            f'<div class="compare-value">{escape(_limit_words(value, 3))}</div>'
+            f'<div class="compare-label">{escape(_limit_words(label, 6))}</div>'
+            f'<div class="compare-trend"><span>{_svg_icon(direction)}</span>{direction_label}</div>'
+            '</div>'
+        )
+    note_html = f'<div class="compare-note">{escape(note)}</div>' if note else ""
+    card = f'<div class="diagram-card compare-card">{sides[0]}<div class="compare-mark">≠</div>{sides[1]}{note_html}</div>'
+    return _diagram_figure(card, caption)
+
+
 def _component_html(component_type: str, title: str, body: str) -> str:
-    body_html = _render_markdown(body, expand_components=False)
     safe_title = escape((title or "").strip())
+    if component_type == "flow":
+        return _flow_html(body, title)
+    if component_type == "compare":
+        return _compare_html(body, title)
+    body_html = _render_markdown(body, expand_components=False)
     if component_type in _CALLOUT_TYPES:
         labels = {"tip": "Tip", "info": "Note", "warning": "Watch out"}
         icons = {"tip": "sparkles", "info": "info", "warning": "alert"}
@@ -274,7 +372,7 @@ def _extract_component_blocks(markdown_text: str) -> tuple[str, list[str]]:
             continue
 
         component_type = start_match.group("type").lower()
-        if component_type not in _CALLOUT_TYPES | {"key", "action", "steps"} | set(_SPECIMEN_TAGS):
+        if component_type not in _CALLOUT_TYPES | _DIAGRAM_TYPES | {"key", "action", "steps"} | set(_SPECIMEN_TAGS):
             output.append(lines[index])
             index += 1
             continue

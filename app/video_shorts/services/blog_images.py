@@ -31,6 +31,12 @@ except ImportError:  # pragma: no cover
 ROOT = Path(__file__).resolve().parents[3]
 STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
 IMAGE_STYLE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "image_style.md"
+COVER_STYLE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "style" / "cover_style.md"
+COVER_REFERENCE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "style" / "cover_reference.png"
+LOGO_BADGE_PATHS = (
+    ROOT / "app" / "video_shorts" / "static" / "img" / "favicon.ico",
+    ROOT / "app" / "static" / "favicon.ico",
+)
 BLOG_IMAGE_SIZE = os.getenv("BLOG_IMAGE_SIZE", "1536x1024")
 
 
@@ -51,8 +57,14 @@ class BlogImageResult:
     attempts: list[dict[str, str]]
 
 
-def image_style_suffix() -> str:
+def image_style_suffix(kind: str = "inline") -> str:
+    if kind == "cover" and COVER_STYLE_PATH.is_file():
+        return COVER_STYLE_PATH.read_text(encoding="utf-8").strip()
     return IMAGE_STYLE_PATH.read_text(encoding="utf-8").strip()
+
+
+def _cover_reference_path() -> Path | None:
+    return COVER_REFERENCE_PATH if COVER_REFERENCE_PATH.is_file() else None
 
 
 def article_image_dir(slug: str) -> Path:
@@ -108,6 +120,81 @@ def _decode_image_response(response: Any) -> bytes:
     return base64.b64decode(b64_value)
 
 
+_FORBIDDEN_COVER_PROMPT_RE = re.compile(
+    r"\b(?:text|words?|headline|title|caption|typography|font|logo|watermark|ui|interface|screenshot|"
+    r"youtube|instagram|tiktok|realistic people|photorealistic people|photo-realistic people|portrait|"
+    r"brand colors?|mint|teal|palette|style)\b",
+    re.I,
+)
+
+
+def clean_cover_scene_prompt(prompt: str) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", str(prompt or "").strip())
+    kept = [sentence for sentence in sentences if sentence and not _FORBIDDEN_COVER_PROMPT_RE.search(sentence)]
+    cleaned = " ".join(kept).strip()
+    if not cleaned:
+        cleaned = _FORBIDDEN_COVER_PROMPT_RE.sub("", str(prompt or "")).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;:-")
+    return cleaned or "A simple editorial scene with two to four symbolic objects."
+
+
+def _logo_badge_path() -> Path | None:
+    return next((path for path in LOGO_BADGE_PATHS if path.is_file()), None)
+
+
+def _add_logo_badge(image_path: Path) -> None:
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:  # pragma: no cover
+        return
+    logo_path = _logo_badge_path()
+    if not logo_path:
+        return
+    with Image.open(image_path).convert("RGBA") as base:
+        with Image.open(logo_path).convert("RGBA") as logo:
+            badge_size = max(42, round(base.width * 0.04))
+            padding = max(14, round(badge_size * 0.32))
+            box_size = badge_size + padding * 2
+            resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+            logo.thumbnail((badge_size, badge_size), resample)
+            badge = Image.new("RGBA", (box_size, box_size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(badge)
+            draw.rounded_rectangle(
+                (0, 0, box_size, box_size),
+                radius=max(12, round(box_size * 0.25)),
+                fill=(6, 18, 20, 188),
+                outline=(255, 255, 255, 42),
+                width=1,
+            )
+            x = (box_size - logo.width) // 2
+            y = (box_size - logo.height) // 2
+            badge.alpha_composite(logo, (x, y))
+            outer_padding = max(22, round(base.width * 0.018))
+            base.alpha_composite(badge, (base.width - box_size - outer_padding, base.height - box_size - outer_padding))
+        base.convert("RGB").save(image_path)
+
+
+def _image_request(client: Any, *, kind: str, model: str, prompt: str, size: str, quality: str) -> Any:
+    reference_path = _cover_reference_path() if kind == "cover" else None
+    if reference_path:
+        with reference_path.open("rb") as reference:
+            return client.images.edit(
+                model=model,
+                image=reference,
+                prompt=prompt,
+                size=size,
+                quality=quality,
+                n=1,
+            )
+    return client.images.generate(
+        model=model,
+        prompt=prompt,
+        size=size,
+        quality=quality,
+        n=1,
+    )
+
+
 def generate_blog_image(
     *,
     prompt: str,
@@ -130,7 +217,8 @@ def generate_blog_image(
         raise RuntimeError("OPENAI_API_KEY is not configured")
     selected_model = model or (BLOG_IMAGE_COVER if kind == "cover" else BLOG_IMAGE_INLINE)
     selected_quality = quality or (BLOG_IMAGE_COVER_QUALITY if kind == "cover" else BLOG_IMAGE_INLINE_QUALITY)
-    full_prompt = f"{str(prompt or '').strip()}\n\n{image_style_suffix()}".strip()
+    scene_prompt = clean_cover_scene_prompt(prompt) if kind == "cover" else str(prompt or "").strip()
+    full_prompt = f"{scene_prompt}\n\n{image_style_suffix(kind)}".strip()
     target_dir = article_image_dir(slug)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / filename
@@ -139,18 +227,21 @@ def generate_blog_image(
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     for attempt_index in range(2):
         try:
-            response = client.images.generate(
+            response = _image_request(
+                client,
+                kind=kind,
                 model=selected_model,
                 prompt=full_prompt,
                 size=BLOG_IMAGE_SIZE,
                 quality=selected_quality,
-                n=1,
             )
             image_bytes = _decode_image_response(response)
             if target.exists() and overwrite:
                 previous = target.with_name(f"{target.stem}-prev{target.suffix}")
                 shutil.copy2(target, previous)
             target.write_bytes(image_bytes)
+            if kind == "cover":
+                _add_logo_badge(target)
             usage = getattr(response, "usage", None)
             input_tokens = _usage_value(usage, "input_tokens", "prompt_tokens")
             cached_tokens = _cached_tokens(usage)
@@ -175,7 +266,7 @@ def generate_blog_image(
                 filename=filename,
                 url=article_image_url(slug, filename),
                 alt=alt,
-                prompt=prompt,
+                prompt=scene_prompt,
                 model=selected_model,
                 quality=selected_quality,
                 cost_usd=cost,

@@ -76,6 +76,10 @@ SELF_DISCLAIMER_RE = re.compile(
     re.I,
 )
 IMAGE_MARKERS = ("IMAGE_1", "IMAGE_2", "IMAGE_3")
+VISUAL_TYPES = {"screenshot", "flow", "compare", "generate"}
+IMAGE_VISUAL_TYPES = {"screenshot", "generate"}
+FLOW_BLOCK_RE = re.compile(r"(?ms)^:::flow(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
+COMPARE_BLOCK_RE = re.compile(r"(?ms)^:::compare(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
 IMAGE_COMMENT_RE = re.compile(r"<!--\s*IMAGE_([123])\s*-->")
 IMAGE_PLACEHOLDER_VARIANT_RE = re.compile(
     r"<!--\s*IMAGE_([123])\s*-->|"
@@ -199,10 +203,10 @@ def _fallback_insert_position(lines: list[str]) -> int:
     return len(lines)
 
 
-def _insert_missing_image_placeholders(content: str) -> str:
+def _insert_missing_image_placeholders(content: str, expected_markers: tuple[str, ...] = IMAGE_MARKERS) -> str:
     lines = (content or "").splitlines()
     present = {f"IMAGE_{match.group(1)}" for match in IMAGE_COMMENT_RE.finditer(content or "")}
-    missing = [marker for marker in IMAGE_MARKERS if marker not in present]
+    missing = [marker for marker in expected_markers if marker not in present]
     if not missing:
         return content
 
@@ -254,11 +258,74 @@ def _generated_visual_for_marker(content: str, marker: str) -> dict[str, Any]:
     }
 
 
+def _valid_flow_blocks(content: str) -> list[str]:
+    valid: list[str] = []
+    for match in FLOW_BLOCK_RE.finditer(content or ""):
+        rows = []
+        for line in match.group("body").splitlines():
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) == 3 and all(parts):
+                rows.append(parts)
+        if 2 <= len(rows) <= 5:
+            valid.append(match.group(0))
+    return valid
+
+
+def _valid_compare_blocks(content: str) -> list[str]:
+    valid: list[str] = []
+    for match in COMPARE_BLOCK_RE.finditer(content or ""):
+        rows = []
+        for line in match.group("body").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.lower().startswith("note:"):
+                continue
+            parts = [part.strip() for part in stripped.split("|")]
+            if len(parts) == 4 and parts[3].lower() in {"up", "down", "flat"} and all(parts[:3]):
+                rows.append(parts)
+        if len(rows) == 2:
+            valid.append(match.group(0))
+    return valid
+
+
+def _expected_image_placeholders(visuals: list[dict[str, Any]]) -> list[str]:
+    return [_image_comment(str(visual.get("marker"))) for visual in visuals if visual.get("type") in IMAGE_VISUAL_TYPES and visual.get("marker") in IMAGE_MARKERS]
+
+
+def _compare_metric_values(content: str) -> list[str]:
+    values: list[str] = []
+    for match in COMPARE_BLOCK_RE.finditer(content or ""):
+        for line in match.group("body").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.lower().startswith("note:"):
+                continue
+            parts = [part.strip() for part in stripped.split("|")]
+            if len(parts) == 4:
+                values.append(parts[1])
+    return values
+
+
+def _missing_compare_numbers(content: str) -> list[str]:
+    article_text = COMPARE_BLOCK_RE.sub(" ", content or "")
+    normalized_article = re.sub(r"[^a-z0-9+.%]+", " ", article_text.lower())
+    missing: list[str] = []
+    for value in _compare_metric_values(content):
+        tokens = [token.lower().replace(",", "") for token in re.findall(r"[+]?\d[\d,.]*(?:k|m|%|x)?", value, flags=re.I)]
+        if tokens and not any(token in normalized_article for token in tokens):
+            missing.append(value)
+    return missing
+
+
+def _remove_unneeded_image_placeholders(content: str, keep_markers: set[str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        marker = f"IMAGE_{match.group(1)}"
+        return _image_comment(marker) if marker in keep_markers else ""
+
+    return re.sub(r"\n{3,}", "\n\n", IMAGE_COMMENT_RE.sub(replace, content or "")).strip()
+
+
 def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[str, Any]:
     content = _normalize_image_placeholder_syntax(str(article.get("content_md") or ""))
     content = _remove_duplicate_image_placeholders(content)
-    content = _insert_missing_image_placeholders(content)
-    article["content_md"] = content
 
     visual_by_marker: dict[str, dict[str, Any]] = {}
     for visual in article.get("visuals") or []:
@@ -267,7 +334,7 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
             continue
         normalized = dict(visual)
         normalized["marker"] = marker
-        if normalized.get("type") not in {"screenshot", "generate"}:
+        if normalized.get("type") not in VISUAL_TYPES:
             normalized["type"] = "generate"
         if normalized.get("type") == "generate" and not normalized.get("prompt"):
             generated = _generated_visual_for_marker(content, marker)
@@ -285,6 +352,10 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
                 visual = _generated_visual_for_marker(content, marker)
         normalized_visuals.append(visual)
     article["visuals"] = normalized_visuals
+    image_markers = tuple(visual["marker"] for visual in normalized_visuals if visual.get("type") in IMAGE_VISUAL_TYPES)
+    content = _remove_unneeded_image_placeholders(content, set(image_markers))
+    content = _insert_missing_image_placeholders(content, image_markers)
+    article["content_md"] = content
     return article
 
 
@@ -301,7 +372,7 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(visual)
         marker = _normalize_marker(normalized.get("marker") or normalized.get("id"))
         normalized["marker"] = marker
-        if normalized.get("type") not in {"screenshot", "generate"}:
+        if normalized.get("type") not in VISUAL_TYPES:
             normalized["type"] = "generate"
         if normalized.get("type") == "generate" and not normalized.get("prompt"):
             normalized["prompt"] = normalized.get("brief") or normalized.get("description") or ""
@@ -430,6 +501,8 @@ def _stable_prefix() -> dict[str, Any]:
         "allowed_components": {
             "callouts": [":::key\\nOne key sentence.\\n:::", ":::info\\nBody\\n:::", ":::tip\\nBody\\n:::", ":::warning\\nBody\\n:::", ":::action\\nCTA sentence.\\n:::"],
             "steps": ":::steps\\n### Step title\\nOne or two sentences.\\n\\n### Next step title\\nOne or two sentences.\\n:::",
+            "flow": ":::flow Optional short caption\\nvideo | Long video | Your full recording\\nclips | 5 Shorts | Best moments, captioned\\ncalendar | Weekly calendar | Mon, Wed, Fri\\n:::",
+            "compare": ":::compare Optional short caption\\neye | 100K | Views on Shorts | up\\nusers | +120 | New subscribers | flat\\nnote: Views are great. Growth comes from turning viewers into subscribers.\\n:::",
             "specimens": [":::short\\nShort example text.\\n:::", ":::long\\nLong-form example text.\\n:::"],
             "tables": "Markdown pipe tables are allowed and encouraged whenever options are compared.",
             "youtube": "[youtube: https://www.youtube.com/watch?v=VIDEO_ID]",
@@ -699,9 +772,11 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
         blocking_issues.append("CTA link is missing")
     if re.search(r"(?m)^\s*IMAGE_[123]\s*$", content):
         fixed["image_placeholders"] = "normalized bare IMAGE_n placeholders to exact HTML comments"
-    placeholders = re.findall(r"<!--\s*IMAGE_[123]\s*-->", content)
-    if sorted(placeholders) != ["<!-- IMAGE_1 -->", "<!-- IMAGE_2 -->", "<!-- IMAGE_3 -->"]:
-        fixed["image_placeholders"] = "normalized image placeholders to exactly IMAGE_1, IMAGE_2, IMAGE_3"
+    visuals = article.get("visuals") or []
+    expected_placeholders = sorted(_expected_image_placeholders(visuals))
+    placeholders = sorted(re.findall(r"<!--\s*IMAGE_[123]\s*-->", content))
+    if placeholders != expected_placeholders:
+        fixed["image_placeholders"] = "normalized image placeholders to match screenshot/generate visual slots"
     if re.search(r"<(iframe|script|style|div|span|img)\b", content, flags=re.I):
         blocking_issues.append("raw HTML is not allowed except IMAGE comments")
     word_count = _word_count(content)
@@ -717,11 +792,26 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
                 blocking_issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
         blocking_issues.append("MintiStudio self-disclaimer is not allowed")
-    screenshot_by_id = {item["id"]: item for item in screenshots}
-    visuals = article.get("visuals") or []
     if len(visuals) != 3:
         fixed["visuals"] = "normalized visuals to exactly 3 items"
+    generate_count = sum(1 for visual in visuals if visual.get("type") == "generate")
+    if generate_count > 1:
+        blocking_issues.append(f"generate visual is limited to one per article ({generate_count})")
+    flow_count = sum(1 for visual in visuals if visual.get("type") == "flow")
+    compare_count = sum(1 for visual in visuals if visual.get("type") == "compare")
+    valid_flow_count = len(_valid_flow_blocks(content))
+    valid_compare_count = len(_valid_compare_blocks(content))
+    if valid_flow_count < flow_count:
+        blocking_issues.append(f"flow visual requires valid :::flow blocks ({valid_flow_count}/{flow_count})")
+    if valid_compare_count < compare_count:
+        blocking_issues.append(f"compare visual requires valid :::compare blocks ({valid_compare_count}/{compare_count})")
+    missing_compare = _missing_compare_numbers(content)
+    if missing_compare:
+        blocking_issues.append("compare metric numbers not found in article text: " + ", ".join(missing_compare[:4]))
+    screenshot_by_id = {item["id"]: item for item in screenshots}
     for visual in visuals:
+        if visual.get("type") not in VISUAL_TYPES:
+            blocking_issues.append(f"unknown visual type: {visual.get('type')}")
         if visual.get("type") == "screenshot":
             screenshot_id = str(visual.get("screenshot_id") or "")
             if screenshot_id not in screenshot_by_id:
@@ -808,7 +898,7 @@ def _image_prompt_for_cover(article: dict[str, Any]) -> str:
     prompt = str(cover.get("prompt") or cover.get("description") or "").strip()
     if prompt:
         return prompt
-    return f"Editorial cover illustration for a MintiStudio blog article titled: {article.get('title') or 'MintiStudio guide'}"
+    return f"Two to four symbolic objects showing the article idea: {article.get('title') or 'MintiStudio guide'}"
 
 
 def _image_result_payload(result: BlogImageResult) -> dict[str, Any]:
@@ -1214,9 +1304,14 @@ def _writer_prompt() -> str:
     return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
-content_md must include exactly these three placeholders as standalone HTML comments: <!-- IMAGE_1 -->, <!-- IMAGE_2 -->, <!-- IMAGE_3 -->. Bare IMAGE_1 text is forbidden.
-visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. At most 2 may be screenshots. Use type=\"generate\" for the remaining visual and provide a prompt.
-Each visual must include a short caption, maximum 12 words, suitable for the markdown image title.
+cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
+visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Valid visual types are screenshot, flow, compare, generate.
+Use flow for a process/workflow and compare for metric or option comparisons. Use screenshots for product features. Use generate at most once per article, only when flow, compare, and screenshot do not fit.
+For screenshot or generate visuals, content_md must include that marker as a standalone HTML comment such as <!-- IMAGE_1 -->. Bare IMAGE_1 text is forbidden.
+For flow or compare visuals, put the full :::flow or :::compare block directly in content_md where that visual belongs; do not also include an IMAGE comment for that slot.
+Flow syntax is 2-5 lines of: icon | title max 4 words | subtitle max 8 words. Allowed icons: video, clips, scissors, calendar, clock, eye, users, chart, mic, upload, check, sparkles.
+Compare syntax is exactly two metric lines of: icon | value | label | direction. Direction must be up, down, or flat. Any number in the value must already appear in the article text. Add an optional note: line.
+Each visual must include a short caption, maximum 12 words, suitable for the markdown image title or component caption.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
 Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
@@ -1230,7 +1325,8 @@ def _reviewer_prompt() -> str:
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing exact IMAGE comment placeholders; visuals not exactly 3 items.
+Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; visuals not exactly 3 items; invalid flow/compare syntax; compare metric numbers not present in the article text.
+Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Do not allow invented metrics, features, platform logos, or third-party brand claims.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
 
 
@@ -1241,7 +1337,7 @@ def _revision_prompt() -> str:
 def _designer_prompt() -> str:
     return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or IMAGE placeholders.
 
-Use :::steps for any sequential workflow, a markdown table whenever options are compared, at least one :::key, and :::tip or :::warning where useful. Keep the similarity guard passing by preserving sentence text exactly."""
+Use :::steps for any sequential workflow, a markdown table whenever options are compared, at least one :::key, and :::tip or :::warning where useful. If the writer already included :::flow or :::compare, preserve it exactly. Keep the similarity guard passing by preserving sentence text exactly."""
 
 
 def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[str, Any]:
