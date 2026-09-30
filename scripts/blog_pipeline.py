@@ -81,6 +81,8 @@ IMAGE_VISUAL_TYPES = {"screenshot", "generate"}
 FLOW_BLOCK_RE = re.compile(r"(?ms)^:::flow(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
 COMPARE_BLOCK_RE = re.compile(r"(?ms)^:::compare(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
 IMAGE_COMMENT_RE = re.compile(r"<!--\s*IMAGE_([123])\s*-->")
+MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\([^\)\n]+\)")
+PROTECTED_TOKEN_RE = re.compile(r"\[\[BLOCK_(\d+)\]\]")
 IMAGE_PLACEHOLDER_VARIANT_RE = re.compile(
     r"<!--\s*IMAGE_([123])\s*-->|"
     r"\{\{\s*IMAGE_([123])\s*\}\}|"
@@ -96,6 +98,14 @@ class PipelineState:
     dry_run: bool
     run_cost: Decimal = Decimal("0")
     seq: int = 0
+
+
+@dataclass(frozen=True)
+class MaskedBlock:
+    token: str
+    content: str
+    start: int
+    end: int
 
 
 def _row_to_dict(description, row) -> dict[str, Any]:
@@ -436,6 +446,97 @@ def _remove_unneeded_image_placeholders(content: str, keep_markers: set[str]) ->
     return re.sub(r"\n{3,}", "\n\n", IMAGE_COMMENT_RE.sub(replace, content or "")).strip()
 
 
+def _protected_block_spans(content: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for pattern in (FLOW_BLOCK_RE, COMPARE_BLOCK_RE, IMAGE_COMMENT_RE, MARKDOWN_IMAGE_RE):
+        spans.extend((match.start(), match.end()) for match in pattern.finditer(content or ""))
+    spans.sort()
+    filtered: list[tuple[int, int]] = []
+    last_end = -1
+    for start, end in spans:
+        if start < last_end:
+            continue
+        filtered.append((start, end))
+        last_end = end
+    return filtered
+
+
+def _mask_protected_blocks(content: str) -> tuple[str, list[MaskedBlock]]:
+    source = content or ""
+    spans = _protected_block_spans(source)
+    if not spans:
+        return source, []
+    pieces: list[str] = []
+    blocks: list[MaskedBlock] = []
+    cursor = 0
+    for index, (start, end) in enumerate(spans, start=1):
+        token = f"[[BLOCK_{index}]]"
+        pieces.append(source[cursor:start])
+        pieces.append(token)
+        blocks.append(MaskedBlock(token=token, content=source[start:end], start=start, end=end))
+        cursor = end
+    pieces.append(source[cursor:])
+    return "".join(pieces), blocks
+
+
+def _dedupe_mask_token(text: str, token: str) -> tuple[str, bool]:
+    first = text.find(token)
+    if first < 0:
+        return text, False
+    before = text[: first + len(token)]
+    after = text[first + len(token) :]
+    cleaned = after.replace(token, "")
+    return before + cleaned, cleaned != after
+
+
+def _reinsert_missing_token(source_masked: str, candidate: str, token: str, ordered_tokens: list[str]) -> str:
+    source_index = source_masked.find(token)
+    previous_tokens = [item for item in ordered_tokens if source_masked.find(item) < source_index and item in candidate]
+    next_tokens = [item for item in ordered_tokens if source_masked.find(item) > source_index and item in candidate]
+    if previous_tokens:
+        previous = previous_tokens[-1]
+        insert_at = candidate.find(previous) + len(previous)
+        return candidate[:insert_at] + f"\n\n{token}" + candidate[insert_at:]
+    if next_tokens:
+        next_token = next_tokens[0]
+        insert_at = candidate.find(next_token)
+        return candidate[:insert_at] + f"{token}\n\n" + candidate[insert_at:]
+    return (candidate.rstrip() + f"\n\n{token}").strip()
+
+
+def _restore_masked_blocks(source_masked: str, candidate_masked: str, blocks: list[MaskedBlock]) -> tuple[str, list[str]]:
+    candidate = str(candidate_masked or "")
+    repairs: list[str] = []
+    ordered_tokens = [block.token for block in blocks]
+    for token in ordered_tokens:
+        candidate, removed_duplicate = _dedupe_mask_token(candidate, token)
+        if removed_duplicate:
+            repairs.append(f"{token}: removed duplicate protected token")
+    for token in ordered_tokens:
+        if token not in candidate:
+            candidate = _reinsert_missing_token(source_masked, candidate, token, ordered_tokens)
+            repairs.append(f"{token}: reinserted missing protected token")
+    restored = candidate
+    for block in blocks:
+        restored = restored.replace(block.token, block.content, 1)
+    return restored, repairs
+
+
+def _masked_article(article: dict[str, Any]) -> tuple[dict[str, Any], str, list[MaskedBlock]]:
+    masked_article = dict(article or {})
+    masked_content, blocks = _mask_protected_blocks(str(masked_article.get("content_md") or ""))
+    masked_article["content_md"] = masked_content
+    return masked_article, masked_content, blocks
+
+
+def _restore_candidate_article(candidate: dict[str, Any], source_masked: str, blocks: list[MaskedBlock]) -> tuple[dict[str, Any], list[str]]:
+    restored = dict(candidate or {})
+    content = restored.get("content_md") or restored.get("content") or restored.get("content_markdown") or ""
+    restored_content, repairs = _restore_masked_blocks(source_masked, str(content), blocks)
+    restored["content_md"] = restored_content
+    return restored, repairs
+
+
 def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[str, Any]:
     content = _normalize_image_placeholder_syntax(str(article.get("content_md") or ""))
     content = _remove_duplicate_image_placeholders(content)
@@ -534,8 +635,8 @@ def _h2_headings(markdown_text: str) -> list[str]:
 
 
 def _revision_rejection_reason(previous: dict[str, Any], candidate: dict[str, Any]) -> str | None:
-    previous_content = str(previous.get("content_md") or "")
-    candidate_content = str(candidate.get("content_md") or "")
+    previous_content, _previous_blocks = _mask_protected_blocks(str(previous.get("content_md") or ""))
+    candidate_content, _candidate_blocks = _mask_protected_blocks(str(candidate.get("content_md") or ""))
     previous_words = _word_count(previous_content)
     candidate_words = _word_count(candidate_content)
     if previous_words and candidate_words < previous_words * Decimal("0.75"):
@@ -942,6 +1043,18 @@ def _checks_notes(checks: dict[str, Any]) -> str:
     return "; ".join(str(item) for item in notes)
 
 
+def _join_notes(*groups: Any) -> str | None:
+    notes: list[str] = []
+    for group in groups:
+        if not group:
+            continue
+        if isinstance(group, str):
+            notes.append(group)
+        else:
+            notes.extend(str(item) for item in group if item)
+    return "; ".join(notes) if notes else None
+
+
 def _blocking_issues(review: dict[str, Any], checks: dict[str, Any] | None = None) -> list[Any]:
     items: list[Any] = []
     for key in ("blocking_issues", "required_fixes"):
@@ -970,11 +1083,13 @@ def _strip_design_syntax(text: str) -> str:
 
 
 def _guard_designer(before: str, after: str) -> tuple[bool, str]:
-    before_links = _article_links(before)
-    after_links = _article_links(after)
-    before_markers = re.findall(r"<!--\s*IMAGE_[123]\s*-->", before)
-    after_markers = re.findall(r"<!--\s*IMAGE_[123]\s*-->", after)
-    ratio = difflib.SequenceMatcher(None, _strip_design_syntax(before), _strip_design_syntax(after)).ratio()
+    before_masked, _before_blocks = _mask_protected_blocks(before)
+    after_masked, _after_blocks = _mask_protected_blocks(after)
+    before_links = _article_links(before_masked)
+    after_links = _article_links(after_masked)
+    before_markers = PROTECTED_TOKEN_RE.findall(before_masked)
+    after_markers = PROTECTED_TOKEN_RE.findall(after_masked)
+    ratio = difflib.SequenceMatcher(None, _strip_design_syntax(before_masked), _strip_design_syntax(after_masked)).ratio()
     if before_links != after_links:
         return False, "designer changed links"
     if before_markers != after_markers:
@@ -1453,11 +1568,11 @@ Non-blocking fix: a MintiStudio section that reads as a feature list without tyi
 
 
 def _revision_prompt() -> str:
-    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Preserve valid metadata, links, cover, visuals, and exact IMAGE comment placeholders unless a fix explicitly requires changing them. Never drop the visuals array."""
+    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Return the full article, not a patch or excerpt. Never shorten, summarize, delete, or rewrite sections that are not mentioned in the fixes. Preserve valid metadata, links, cover, visuals, and exact [[BLOCK_N]] protected tokens unless a fix explicitly requires moving the surrounding paragraph. Keep every [[BLOCK_N]] token exactly once and in the same relative position. Never drop the visuals array."""
 
 
 def _designer_prompt() -> str:
-    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or IMAGE placeholders.
+    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
 
 Use :::steps for any sequential workflow, a markdown table whenever options are compared, at least one :::key, and :::tip or :::warning where useful. If the writer already included :::flow or :::compare, preserve it exactly. Keep the similarity guard passing by preserving sentence text exactly."""
 
@@ -1513,10 +1628,12 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
         final_review = review_1
         if review_1_score < BLOG_REVIEW_PASS or _blocking_issues(review_1, checks):
-            revision_payload = {**user_base, "article": article, "review": review_1}
             previous_article = dict(article)
+            masked_previous, previous_masked_content, previous_blocks = _masked_article(previous_article)
+            revision_payload = {**user_base, "article": masked_previous, "review": review_1}
             previous_visuals = list(previous_article.get("visuals") or [])
             candidate_article, cost = _call_stage(state, "revision_1", BLOG_MODEL_WRITER, _revision_prompt(), revision_payload)
+            candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
             if not candidate_article.get("visuals") and previous_visuals:
                 candidate_article["visuals"] = previous_visuals
             candidate_article = _normalize_article_payload(candidate_article)
@@ -1524,13 +1641,13 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             if rejection_reason:
                 article = previous_article
                 revision_status = "rejected"
-                revision_notes = rejection_reason
-                revision_output = {"rejected_reason": rejection_reason, "candidate": candidate_article, "kept_previous": True}
+                revision_notes = _join_notes(rejection_reason, token_repairs)
+                revision_output = {"rejected_reason": rejection_reason, "token_repairs": token_repairs, "candidate": candidate_article, "kept_previous": True}
             else:
                 article = candidate_article
                 revision_status = "done"
-                revision_notes = None
-                revision_output = article
+                revision_notes = _join_notes(token_repairs)
+                revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
             state.seq += 1
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
@@ -1545,8 +1662,10 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             conn.commit()
             if review_2_score < BLOG_REVIEW_PASS or _blocking_issues(review_2, checks):
                 previous_article = dict(article)
+                masked_previous, previous_masked_content, previous_blocks = _masked_article(previous_article)
                 previous_visuals = list(previous_article.get("visuals") or [])
-                candidate_article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": article, "review": review_2})
+                candidate_article, cost = _call_stage(state, "revision_2", BLOG_MODEL_WRITER, _revision_prompt(), {**user_base, "article": masked_previous, "review": review_2})
+                candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
                 if not candidate_article.get("visuals") and previous_visuals:
                     candidate_article["visuals"] = previous_visuals
                 candidate_article = _normalize_article_payload(candidate_article)
@@ -1554,13 +1673,13 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 if rejection_reason:
                     article = previous_article
                     revision_status = "rejected"
-                    revision_notes = rejection_reason
-                    revision_output = {"rejected_reason": rejection_reason, "candidate": candidate_article, "kept_previous": True}
+                    revision_notes = _join_notes(rejection_reason, token_repairs)
+                    revision_output = {"rejected_reason": rejection_reason, "token_repairs": token_repairs, "candidate": candidate_article, "kept_previous": True}
                 else:
                     article = candidate_article
                     revision_status = "done"
-                    revision_notes = None
-                    revision_output = article
+                    revision_notes = _join_notes(token_repairs)
+                    revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
                 state.seq += 1
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
@@ -1569,23 +1688,26 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 conn.commit()
 
         before_design = str(article.get("content_md") or "")
+        masked_design_content, design_blocks = _mask_protected_blocks(before_design)
         designer_payload = {
             "stable_context": {
                 "allowed_components": prefix["allowed_components"],
                 "style_guide": prefix["style_guide"],
             },
-            "content_md": article.get("content_md") or "",
+            "content_md": masked_design_content,
         }
         designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), designer_payload)
-        after_design = str(designer_output.get("content_md") or "")
+        after_design, token_repairs = _restore_masked_blocks(masked_design_content, str(designer_output.get("content_md") or ""), design_blocks)
         guard_ok, guard_note = _guard_designer(before_design, after_design)
+        if token_repairs:
+            guard_note = _join_notes(guard_note, token_repairs) or guard_note
         if guard_ok:
             article["content_md"] = after_design
             designer_status = "done"
         else:
             designer_status = "failed"
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "content_md": after_design, "visuals": article.get("visuals")}, notes=guard_note, cost_usd=cost)
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost)
         conn.commit()
 
         checks = _code_checks(article, screenshots, published)

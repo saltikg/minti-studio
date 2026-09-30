@@ -348,3 +348,126 @@ def test_revision_guard_rejects_missing_cta():
     )
 
     assert _revision_rejection_reason(previous, candidate) == "CTA link disappeared"
+
+
+def test_protected_blocks_round_trip():
+    content = "\n\n".join(
+        [
+            "## Plan",
+            "Keep the prose visible to the model.",
+            ":::flow Workflow",
+            "video | Long video | Full recording",
+            "clips | Five Shorts | Best moments",
+            ":::",
+            "![Clips dashboard](/video_shorts/static/img/blog/library/transcript-clips.png \"Clips dashboard\")",
+            ":::compare Metrics",
+            "eye | 100K | Views on Shorts | up",
+            "users | +120 | New subscribers | flat",
+            "note: Views are useful.",
+            ":::",
+            "<!-- IMAGE_3 -->",
+        ]
+    )
+
+    masked, blocks = blog_pipeline._mask_protected_blocks(content)
+    restored, repairs = blog_pipeline._restore_masked_blocks(masked, masked, blocks)
+
+    assert [block.token for block in blocks] == ["[[BLOCK_1]]", "[[BLOCK_2]]", "[[BLOCK_3]]", "[[BLOCK_4]]"]
+    assert ":::flow" not in masked
+    assert ":::compare" not in masked
+    assert "<!-- IMAGE_3 -->" not in masked
+    assert "![Clips dashboard]" not in masked
+    assert restored == content
+    assert repairs == []
+
+
+def test_missing_protected_token_is_reinserted():
+    content = "\n\n".join(
+        [
+            "## Plan",
+            "Keep this paragraph.",
+            ":::flow Workflow",
+            "video | Long video | Full recording",
+            "clips | Five Shorts | Best moments",
+            ":::",
+            "## Proof",
+            "Keep the screenshot nearby.",
+            "<!-- IMAGE_2 -->",
+        ]
+    )
+    masked, blocks = blog_pipeline._mask_protected_blocks(content)
+    candidate = masked.replace("[[BLOCK_1]]", "").replace("Keep this paragraph.", "Keep this paragraph. Add one fix.")
+
+    restored, repairs = blog_pipeline._restore_masked_blocks(masked, candidate, blocks)
+
+    assert ":::flow Workflow" in restored
+    assert "<!-- IMAGE_2 -->" in restored
+    assert "[[BLOCK_" not in restored
+    assert any("[[BLOCK_1]]: reinserted missing protected token" == repair for repair in repairs)
+
+
+def test_duplicate_protected_token_is_repaired_once():
+    content = "## Plan\n\nFirst paragraph.\n\n<!-- IMAGE_1 -->"
+    masked, blocks = blog_pipeline._mask_protected_blocks(content)
+    candidate = masked + "\n\n[[BLOCK_1]]"
+
+    restored, repairs = blog_pipeline._restore_masked_blocks(masked, candidate, blocks)
+
+    assert restored.count("<!-- IMAGE_1 -->") == 1
+    assert repairs == ["[[BLOCK_1]]: removed duplicate protected token"]
+
+
+def test_designer_guard_ignores_protected_block_text():
+    before = "\n\n".join(
+        [
+            "## Plan",
+            f"Send readers to {CTA_URL}. The article sentence stays the same.",
+            ":::flow Workflow",
+            "video | Long video | Full recording",
+            "clips | Five Shorts | Best moments",
+            ":::",
+            "<!-- IMAGE_2 -->",
+        ]
+    )
+    after = before.replace(
+        "video | Long video | Full recording\nclips | Five Shorts | Best moments",
+        "calendar | Weekly calendar | Mon Wed Fri\ncheck | Done | Ready to publish",
+    )
+
+    ok, reason = blog_pipeline._guard_designer(before, after)
+
+    assert ok
+    assert reason == "similarity 1.000"
+
+
+def test_revision_guard_ignores_protected_block_text():
+    previous = _base_article(
+        "\n\n".join(
+            [
+                "## Plan",
+                f"Keep the CTA {CTA_URL}. " + "Stable prose only. " * 80,
+                ":::compare Metrics",
+                ("eye | noisy block words | not prose | up\n" * 120).strip(),
+                "users | +120 | New subscribers | flat",
+                ":::",
+                "## Produce",
+                "This section survives. " * 80,
+            ]
+        )
+    )
+    candidate = _base_article(
+        "\n\n".join(
+            [
+                "## Plan",
+                f"Keep the CTA {CTA_URL}. " + "Stable prose only. " * 80,
+                ":::compare Metrics",
+                "eye | compact | block | up",
+                "users | +120 | New subscribers | flat",
+                ":::",
+                "## Produce",
+                "This section survives. " * 80,
+            ]
+        )
+    )
+
+    assert _revision_rejection_reason(previous, candidate) is None
