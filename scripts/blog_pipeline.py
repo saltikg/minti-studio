@@ -247,8 +247,26 @@ def _previous_h2_and_first_paragraph(content: str, marker: str) -> tuple[str, st
     return heading or "MintiStudio workflow", paragraph
 
 
+def _section_context_for_marker(content: str, marker: str) -> tuple[str, str]:
+    if _image_comment(marker) in (content or ""):
+        return _previous_h2_and_first_paragraph(content, marker)
+    marker_index = IMAGE_MARKERS.index(marker) if marker in IMAGE_MARKERS else 0
+    headings = list(re.finditer(r"(?m)^##\s+(.+?)\s*$", content or ""))
+    if not headings:
+        return "MintiStudio workflow", ""
+    heading_match = headings[min(marker_index, len(headings) - 1)]
+    heading = heading_match.group(1).strip()
+    end = headings[min(marker_index + 1, len(headings) - 1)].start() if marker_index + 1 < len(headings) else len(content or "")
+    paragraph = ""
+    for line in (content or "")[heading_match.end() : end].splitlines():
+        if _is_safe_paragraph_line(line):
+            paragraph = line.strip()
+            break
+    return heading or "MintiStudio workflow", paragraph
+
+
 def _generated_visual_for_marker(content: str, marker: str) -> dict[str, Any]:
-    heading, paragraph = _previous_h2_and_first_paragraph(content, marker)
+    heading, paragraph = _section_context_for_marker(content, marker)
     prompt_detail = f" Section context: {paragraph[:320]}" if paragraph else ""
     return {
         "marker": marker,
@@ -315,6 +333,101 @@ def _missing_compare_numbers(content: str) -> list[str]:
     return missing
 
 
+def _component_type_for_marker(content: str, marker: str) -> str | None:
+    lines = (content or "").splitlines()
+    marker_line = next((index for index, line in enumerate(lines) if _image_comment(marker) in line), None)
+    if marker_line is not None:
+        start = max(0, marker_line - 4)
+        end = min(len(lines), marker_line + 5)
+        window = "\n".join(lines[start:end])
+        if _valid_flow_blocks(window):
+            return "flow"
+        if _valid_compare_blocks(window):
+            return "compare"
+    marker_index = IMAGE_MARKERS.index(marker) if marker in IMAGE_MARKERS else 0
+    components: list[tuple[int, str]] = []
+    for match in FLOW_BLOCK_RE.finditer(content or ""):
+        components.append((match.start(), "flow"))
+    for match in COMPARE_BLOCK_RE.finditer(content or ""):
+        components.append((match.start(), "compare"))
+    components.sort()
+    if marker_line is None and marker_index < len(components):
+        return components[marker_index][1]
+    return None
+
+
+def _token_set(text: str) -> set[str]:
+    stop = {"a", "an", "and", "for", "from", "how", "into", "of", "on", "or", "the", "to", "with", "your"}
+    return {token for token in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(token) > 2 and token not in stop}
+
+
+def _best_screenshot_for_section(screenshots: list[dict[str, Any]], heading: str) -> dict[str, Any] | None:
+    heading_tokens = _token_set(heading)
+    best: tuple[int, dict[str, Any]] | None = None
+    for item in screenshots:
+        use_for = item.get("use_for") or []
+        use_text = " ".join(str(value) for value in use_for)
+        score = len(heading_tokens & _token_set(use_text))
+        if score <= 0:
+            continue
+        if best is None or score > best[0]:
+            best = (score, item)
+    return best[1] if best else None
+
+
+def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
+    repaired: list[dict[str, Any]] = []
+    notes: list[str] = []
+    screenshot_count = 0
+    for visual in visuals:
+        current = dict(visual)
+        marker = str(current.get("marker") or "")
+        if current.get("type") == "screenshot":
+            screenshot_id = str(current.get("screenshot_id") or "").strip()
+            if screenshot_id in available_by_id and screenshot_count < 2:
+                screenshot_count += 1
+                repaired.append(current)
+                continue
+            component_type = _component_type_for_marker(content, marker)
+            if component_type:
+                current["type"] = component_type
+                current.pop("screenshot_id", None)
+                notes.append(f"{marker}: repaired screenshot slot with invalid id '{screenshot_id}' to {component_type}")
+                repaired.append(current)
+                continue
+            heading, _paragraph = _section_context_for_marker(content, marker)
+            candidate = _best_screenshot_for_section(screenshots, heading) if screenshot_count < 2 else None
+            if candidate:
+                current["screenshot_id"] = candidate["id"]
+                current.setdefault("alt", candidate.get("alt") or heading)
+                screenshot_count += 1
+                notes.append(f"{marker}: repaired screenshot slot with invalid id '{screenshot_id}' to screenshot_id '{candidate['id']}'")
+                repaired.append(current)
+                continue
+            replacement = _generated_visual_for_marker(content, marker)
+            replacement["caption"] = current.get("caption") or replacement["alt"]
+            notes.append(f"{marker}: repaired screenshot slot with invalid id '{screenshot_id}' to generate")
+            repaired.append(replacement)
+            continue
+        if current.get("type") == "screenshot":
+            screenshot_count += 1
+        repaired.append(current)
+    capped: list[dict[str, Any]] = []
+    screenshot_count = 0
+    for visual in repaired:
+        current = dict(visual)
+        if current.get("type") == "screenshot":
+            screenshot_count += 1
+            if screenshot_count > 2:
+                replacement = _generated_visual_for_marker(content, str(current.get("marker") or ""))
+                replacement["caption"] = current.get("caption") or replacement["alt"]
+                notes.append(f"{current.get('marker')}: repaired screenshot cap overflow to generate")
+                current = replacement
+        capped.append(current)
+    return capped, notes
+
+
 def _remove_unneeded_image_placeholders(content: str, keep_markers: set[str]) -> str:
     def replace(match: re.Match[str]) -> str:
         marker = f"IMAGE_{match.group(1)}"
@@ -326,6 +439,7 @@ def _remove_unneeded_image_placeholders(content: str, keep_markers: set[str]) ->
 def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[str, Any]:
     content = _normalize_image_placeholder_syntax(str(article.get("content_md") or ""))
     content = _remove_duplicate_image_placeholders(content)
+    screenshots = _load_manifest()
 
     visual_by_marker: dict[str, dict[str, Any]] = {}
     for visual in article.get("visuals") or []:
@@ -342,15 +456,13 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
             normalized.setdefault("alt", generated["alt"])
         visual_by_marker[marker] = normalized
 
-    screenshot_count = 0
     normalized_visuals: list[dict[str, Any]] = []
     for marker in IMAGE_MARKERS:
         visual = dict(visual_by_marker.get(marker) or _generated_visual_for_marker(content, marker))
-        if visual.get("type") == "screenshot":
-            screenshot_count += 1
-            if screenshot_count > 2:
-                visual = _generated_visual_for_marker(content, marker)
         normalized_visuals.append(visual)
+    normalized_visuals, repair_notes = _repair_visual_slots(content, normalized_visuals, screenshots)
+    if repair_notes:
+        article["visual_repairs"] = list(article.get("visual_repairs") or []) + repair_notes
     article["visuals"] = normalized_visuals
     image_markers = tuple(visual["marker"] for visual in normalized_visuals if visual.get("type") in IMAGE_VISUAL_TYPES)
     content = _remove_unneeded_image_placeholders(content, set(image_markers))
@@ -816,8 +928,18 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
             screenshot_id = str(visual.get("screenshot_id") or "")
             if screenshot_id not in screenshot_by_id:
                 blocking_issues.append(f"screenshot_id is unavailable or on hold: {screenshot_id}")
+    repair_notes = list(article.get("visual_repairs") or [])
+    if repair_notes:
+        fixed["visual_repairs"] = repair_notes
     issues = blocking_issues + fix_items
     return {"ok": not blocking_issues, "issues": issues, "blocking_issues": blocking_issues, "fixes": fix_items, "fixed": fixed, "word_count": word_count}
+
+
+def _checks_notes(checks: dict[str, Any]) -> str:
+    notes = list(checks.get("issues") or [])
+    repairs = ((checks.get("fixed") or {}).get("visual_repairs") or [])
+    notes.extend(f"visual repair: {item}" for item in repairs)
+    return "; ".join(str(item) for item in notes)
 
 
 def _blocking_issues(review: dict[str, Any], checks: dict[str, Any] | None = None) -> list[Any]:
@@ -1379,7 +1501,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
         checks = _code_checks(article, screenshots, published)
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
         conn.commit()
 
         reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
@@ -1413,7 +1535,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
             state.seq += 1
-            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
+            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
             reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
             review_2, cost = _call_stage(state, "reviewer_2", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
             final_review = review_2
@@ -1443,7 +1565,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
                 state.seq += 1
-                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
+                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
                 conn.commit()
 
         before_design = str(article.get("content_md") or "")
@@ -1468,7 +1590,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
         checks = _code_checks(article, screenshots, published)
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes="; ".join(checks["issues"]))
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
         conn.commit()
         if not checks.get("ok"):
             raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
@@ -1577,29 +1699,31 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         except Exception:
             pass
         if state and not state.dry_run:
-            fail_conn = get_db()
             try:
-                finish_run(fail_conn, state.run_id, status="failed", error=str(exc)[:1000])
-                failed_runs = fail_conn.execute(
-                    "SELECT COUNT(*) FROM blog_pipeline_runs WHERE topic_id = ? AND status = 'failed'",
-                    [int(state.topic["id"])],
-                ).fetchone()
-                topic_status = "failed" if int((failed_runs or [0])[0] or 0) >= 2 else "queued"
-                fail_conn.execute(
-                    "UPDATE blog_topics SET status = ?, judge_reason = COALESCE(judge_reason, '') || ? WHERE id = ?",
-                    [topic_status, f"\nPipeline failed: {str(exc)[:500]}", int(state.topic["id"])],
-                )
-                fail_conn.commit()
+                fail_conn = get_db()
+                try:
+                    finish_run(fail_conn, state.run_id, status="failed", error=str(exc)[:1000])
+                    failed_runs = fail_conn.execute(
+                        "SELECT COUNT(*) FROM blog_pipeline_runs WHERE topic_id = ? AND status = 'failed'",
+                        [int(state.topic["id"])],
+                    ).fetchone()
+                    topic_status = "failed" if int((failed_runs or [0])[0] or 0) >= 2 else "queued"
+                    fail_conn.execute(
+                        "UPDATE blog_topics SET status = ?, judge_reason = COALESCE(judge_reason, '') || ? WHERE id = ?",
+                        [topic_status, f"\nPipeline failed: {str(exc)[:500]}", int(state.topic["id"])],
+                    )
+                    fail_conn.commit()
+                finally:
+                    fail_conn.close()
             finally:
-                fail_conn.close()
-            _notify_run(
-                state=state,
-                status_label="failed",
-                title=str(state.topic.get("title") or "Untitled topic"),
-                reviewer_score=None,
-                total_cost=str(state.run_cost),
-                reason=str(exc)[:500],
-            )
+                _notify_run(
+                    state=state,
+                    status_label="failed",
+                    title=str(state.topic.get("title") or "Untitled topic"),
+                    reviewer_score=None,
+                    total_cost=str(state.run_cost),
+                    reason=str(exc)[:500],
+                )
         raise
     finally:
         try:

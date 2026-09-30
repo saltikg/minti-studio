@@ -1,3 +1,4 @@
+import scripts.blog_pipeline as blog_pipeline
 from scripts.blog_pipeline import CTA_URL, _normalize_article_payload, _revision_rejection_reason
 
 
@@ -88,7 +89,16 @@ def test_inserts_missing_placeholders_after_section_paragraphs():
     assert content.index("<!-- IMAGE_3 -->") < content.index("## Final CTA")
 
 
-def test_visuals_are_filled_and_screenshot_count_is_capped():
+def test_visuals_are_filled_and_screenshot_count_is_capped(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [
+            {"id": "a", "alt": "A", "use_for": ["one"]},
+            {"id": "b", "alt": "B", "use_for": ["two"]},
+            {"id": "c", "alt": "C", "use_for": ["three"]},
+        ],
+    )
     article = _normalize_article_payload(
         _base_article(
             "\n\n".join(
@@ -116,6 +126,142 @@ def test_visuals_are_filled_and_screenshot_count_is_capped():
     assert sum(1 for visual in article["visuals"] if visual["type"] == "screenshot") == 2
     assert article["visuals"][2]["type"] == "generate"
     assert article["visuals"][2]["prompt"]
+
+
+def test_empty_screenshot_id_repairs_to_relevant_available_screenshot(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [
+            {"id": "workflow-shot", "alt": "Workflow screenshot", "use_for": ["workflow", "shorts later"]},
+            {"id": "analytics-shot", "alt": "Analytics screenshot", "use_for": ["analytics"]},
+        ],
+    )
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## How this becomes Shorts later",
+                    "This section explains the workflow.",
+                    "<!-- IMAGE_1 -->",
+                    "## Second",
+                    "More body.",
+                    "<!-- IMAGE_2 -->",
+                    "## Third",
+                    "More body.",
+                    "<!-- IMAGE_3 -->",
+                ]
+            ),
+            visuals=[{"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": ""}],
+        )
+    )
+
+    assert article["visuals"][0]["type"] == "screenshot"
+    assert article["visuals"][0]["screenshot_id"] == "workflow-shot"
+    assert "IMAGE_1: repaired screenshot slot" in article["visual_repairs"][0]
+
+
+def test_held_or_unknown_screenshot_id_repairs_to_generate(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## Objection planning",
+                    "Use buyer questions as the source.",
+                    "<!-- IMAGE_1 -->",
+                    "## Second",
+                    "More body.",
+                    "<!-- IMAGE_2 -->",
+                    "## Third",
+                    "More body.",
+                    "<!-- IMAGE_3 -->",
+                ]
+            ),
+            visuals=[{"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "held-shot"}],
+        )
+    )
+
+    assert article["visuals"][0]["type"] == "generate"
+    assert "Objection planning" in article["visuals"][0]["prompt"]
+    assert "invalid id 'held-shot' to generate" in article["visual_repairs"][0]
+
+
+def test_mislabeled_flow_and_compare_screenshot_slots_are_retyped(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## Flow",
+                    "A workflow section.",
+                    ":::flow Workflow caption",
+                    "video | Long video | Full recording",
+                    "clips | Five Shorts | Best moments",
+                    ":::",
+                    "## Compare",
+                    "The article mentions 100K views and +120 subscribers.",
+                    ":::compare Metric caption",
+                    "eye | 100K | Views on Shorts | up",
+                    "users | +120 | New subscribers | flat",
+                    "note: Views are useful.",
+                    ":::",
+                    "## Third",
+                    "More body.",
+                    "<!-- IMAGE_3 -->",
+                ]
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": ""},
+                {"marker": "IMAGE_2", "type": "screenshot", "screenshot_id": ""},
+                {"marker": "IMAGE_3", "type": "generate", "prompt": "A text-free support visual"},
+            ],
+        )
+    )
+
+    assert article["visuals"][0]["type"] == "flow"
+    assert article["visuals"][1]["type"] == "compare"
+    assert "<!-- IMAGE_1 -->" not in article["content_md"]
+    assert "<!-- IMAGE_2 -->" not in article["content_md"]
+    assert any("to flow" in note for note in article["visual_repairs"])
+    assert any("to compare" in note for note in article["visual_repairs"])
+
+
+def test_screenshot_cap_overflow_repairs_to_generate(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [
+            {"id": "a", "alt": "A", "use_for": ["one"]},
+            {"id": "b", "alt": "B", "use_for": ["two"]},
+            {"id": "c", "alt": "C", "use_for": ["three"]},
+        ],
+    )
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## One",
+                    "First context.",
+                    "<!-- IMAGE_1 -->",
+                    "## Two",
+                    "Second context.",
+                    "<!-- IMAGE_2 -->",
+                    "## Three",
+                    "Third context.",
+                    "<!-- IMAGE_3 -->",
+                ]
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "a"},
+                {"marker": "IMAGE_2", "type": "screenshot", "screenshot_id": "b"},
+                {"marker": "IMAGE_3", "type": "screenshot", "screenshot_id": "c"},
+            ],
+        )
+    )
+
+    assert [visual["type"] for visual in article["visuals"]] == ["screenshot", "screenshot", "generate"]
+    assert "IMAGE_3: repaired screenshot slot with invalid id 'c' to generate" in article["visual_repairs"]
 
 
 def test_meta_fields_trim_at_word_boundary():
