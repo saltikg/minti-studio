@@ -142,7 +142,7 @@ def _logo_badge_path() -> Path | None:
     return next((path for path in LOGO_BADGE_PATHS if path.is_file()), None)
 
 
-def _add_logo_badge(image_path: Path) -> None:
+def _add_logo_badge(image_path: Path, *, badge_ratio: float = 0.04) -> None:
     try:
         from PIL import Image, ImageDraw
     except ImportError:  # pragma: no cover
@@ -152,7 +152,7 @@ def _add_logo_badge(image_path: Path) -> None:
         return
     with Image.open(image_path).convert("RGBA") as base:
         with Image.open(logo_path).convert("RGBA") as logo:
-            badge_size = max(42, round(base.width * 0.04))
+            badge_size = max(32, round(base.width * badge_ratio))
             padding = max(14, round(badge_size * 0.32))
             box_size = badge_size + padding * 2
             resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")

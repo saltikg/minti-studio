@@ -34,6 +34,7 @@ from app.video_shorts.services.blog_images import (  # noqa: E402
     BLOG_IMAGE_INLINE,
     BLOG_IMAGE_INLINE_QUALITY,
     BlogImageResult,
+    _add_logo_badge,
     generate_blog_image,
     generated_visual_filename,
     render_markdown_image,
@@ -385,6 +386,21 @@ def _best_screenshot_for_section(screenshots: list[dict[str, Any]], heading: str
     return best[1] if best else None
 
 
+def _visual_section_heading(content: str, visual: dict[str, Any]) -> str:
+    marker = str(visual.get("marker") or "")
+    caption = str(visual.get("caption") or visual.get("alt") or "")
+    heading, _paragraph = _section_context_for_marker(content, marker)
+    return " ".join(part for part in (heading, caption) if part).strip()
+
+
+def _strip_visual_marker(content: str, marker: str) -> str:
+    marker = _normalize_marker(marker)
+    if marker not in IMAGE_MARKERS:
+        return content or ""
+    content = re.sub(r"\n{0,2}<!--\s*" + re.escape(marker) + r"\s*-->\n{0,2}", "\n\n", content or "")
+    return re.sub(r"\n{3,}", "\n\n", content).strip()
+
+
 def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
     repaired: list[dict[str, Any]] = []
@@ -423,9 +439,32 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
         if current.get("type") == "screenshot":
             screenshot_count += 1
         repaired.append(current)
+    flow_count = 0
+    compare_count = 0
+    valid_flow_count = len(_valid_flow_blocks(content))
+    valid_compare_count = len(_valid_compare_blocks(content))
+    component_checked: list[dict[str, Any]] = []
+    for visual in repaired:
+        current = dict(visual)
+        visual_type = current.get("type")
+        if visual_type == "flow":
+            flow_count += 1
+            if flow_count > valid_flow_count:
+                replacement = _generated_visual_for_marker(content, str(current.get("marker") or ""))
+                replacement["caption"] = current.get("caption") or replacement["alt"]
+                notes.append(f"{current.get('marker')}: repaired flow slot without valid :::flow block to generate")
+                current = replacement
+        elif visual_type == "compare":
+            compare_count += 1
+            if compare_count > valid_compare_count:
+                replacement = _generated_visual_for_marker(content, str(current.get("marker") or ""))
+                replacement["caption"] = current.get("caption") or replacement["alt"]
+                notes.append(f"{current.get('marker')}: repaired compare slot without valid :::compare block to generate")
+                current = replacement
+        component_checked.append(current)
     capped: list[dict[str, Any]] = []
     screenshot_count = 0
-    for visual in repaired:
+    for visual in component_checked:
         current = dict(visual)
         if current.get("type") == "screenshot":
             screenshot_count += 1
@@ -435,7 +474,41 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
                 notes.append(f"{current.get('marker')}: repaired screenshot cap overflow to generate")
                 current = replacement
         capped.append(current)
-    return capped, notes
+    final: list[dict[str, Any]] = []
+    screenshot_count = sum(1 for visual in capped if visual.get("type") == "screenshot")
+    generate_seen = False
+    used_screenshot_ids = {str(visual.get("screenshot_id") or "") for visual in capped if visual.get("type") == "screenshot"}
+    for visual in capped:
+        current = dict(visual)
+        if current.get("type") != "generate":
+            final.append(current)
+            continue
+        marker = str(current.get("marker") or "")
+        if not generate_seen:
+            generate_seen = True
+            final.append(current)
+            continue
+        heading = _visual_section_heading(content, current)
+        candidate = _best_screenshot_for_section(
+            [item for item in screenshots if str(item.get("id") or "") not in used_screenshot_ids],
+            heading,
+        ) if screenshot_count < 2 else None
+        if candidate:
+            replacement = {
+                **current,
+                "type": "screenshot",
+                "screenshot_id": candidate["id"],
+                "alt": current.get("alt") or candidate.get("alt") or heading,
+                "caption": current.get("caption") or candidate.get("alt") or heading,
+            }
+            replacement.pop("prompt", None)
+            screenshot_count += 1
+            used_screenshot_ids.add(str(candidate["id"]))
+            notes.append(f"{marker}: repaired extra generate slot to screenshot_id '{candidate['id']}'")
+            final.append(replacement)
+        else:
+            notes.append(f"{marker}: removed extra generate slot and marker")
+    return final, notes
 
 
 def _remove_unneeded_image_placeholders(content: str, keep_markers: set[str]) -> str:
@@ -563,10 +636,16 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
         normalized_visuals.append(visual)
     normalized_visuals, repair_notes = _repair_visual_slots(content, normalized_visuals, screenshots)
     if repair_notes:
-        article["visual_repairs"] = list(article.get("visual_repairs") or []) + repair_notes
+        existing_repairs = list(article.get("visual_repairs") or [])
+        for note in repair_notes:
+            if note not in existing_repairs:
+                existing_repairs.append(note)
+        article["visual_repairs"] = existing_repairs
     article["visuals"] = normalized_visuals
     image_markers = tuple(visual["marker"] for visual in normalized_visuals if visual.get("type") in IMAGE_VISUAL_TYPES)
     content = _remove_unneeded_image_placeholders(content, set(image_markers))
+    for marker in set(IMAGE_MARKERS) - set(image_markers):
+        content = _strip_visual_marker(content, marker)
     content = _insert_missing_image_placeholders(content, image_markers)
     article["content_md"] = content
     return article
@@ -722,6 +801,46 @@ def _stable_prefix() -> dict[str, Any]:
             "images": "Markdown images only with short title captions: ![alt](/video_shorts/static/img/blog/slug/file.png \"Caption under 12 words\")",
         },
     }
+
+
+def _screenshot_prompt_list(screenshots: list[dict[str, Any]]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for item in screenshots:
+        use_for = ", ".join(str(value) for value in (item.get("use_for") or [])[:4])
+        description = str(item.get("alt") or item.get("title") or use_for or item.get("filename") or "").strip()
+        items.append({"id": str(item.get("id") or ""), "description": description[:160]})
+    return items
+
+
+def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[str, Any]]) -> list[str]:
+    violations: list[str] = []
+    visuals = article.get("visuals") if isinstance(article.get("visuals"), list) else []
+    available_ids = {str(item.get("id") or "") for item in screenshots if item.get("id")}
+    if len(visuals) != 3:
+        violations.append(f"visuals must contain exactly 3 items before repair; got {len(visuals)}")
+    seen_markers: set[str] = set()
+    for index, visual in enumerate(visuals, start=1):
+        if not isinstance(visual, dict):
+            violations.append(f"visual {index} is not an object")
+            continue
+        marker = _normalize_marker(visual.get("marker") or visual.get("id"))
+        if marker not in IMAGE_MARKERS:
+            violations.append(f"visual {index} marker must be one of {', '.join(IMAGE_MARKERS)}")
+        elif marker in seen_markers:
+            violations.append(f"{marker} is duplicated")
+        seen_markers.add(marker)
+        visual_type = str(visual.get("type") or "")
+        if visual_type not in VISUAL_TYPES:
+            violations.append(f"{marker or index}: type must be one of {', '.join(sorted(VISUAL_TYPES))}")
+            continue
+        if visual_type == "screenshot":
+            screenshot_id = str(visual.get("screenshot_id") or "").strip()
+            if screenshot_id not in available_ids:
+                violations.append(f"{marker}: screenshot_id must be a listed available id, got {screenshot_id!r}")
+    generate_count = sum(1 for visual in visuals if isinstance(visual, dict) and visual.get("type") == "generate")
+    if generate_count > 1:
+        violations.append(f"generate may be used at most once before repair; got {generate_count}")
+    return violations
 
 
 def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str, Any] | None:
@@ -973,6 +1092,9 @@ def _rename_archived_pipeline_slug_conflict(conn, slug: str) -> str | None:
 
 
 def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], published: list[dict[str, Any]]) -> dict[str, Any]:
+    normalized_article = _normalize_article_payload(article)
+    article.clear()
+    article.update(normalized_article)
     blocking_issues: list[str] = []
     fix_items: list[str] = []
     fixed: dict[str, Any] = {}
@@ -981,6 +1103,9 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
         fixed["slug"] = slug
         article["slug"] = slug
     content = str(article.get("content_md") or "")
+    word_count = _word_count(content)
+    if word_count < 100:
+        blocking_issues.append("article body is missing or too short")
     if CTA_URL not in content:
         blocking_issues.append("CTA link is missing")
     if re.search(r"(?m)^\s*IMAGE_[123]\s*$", content):
@@ -1005,30 +1130,30 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
                 blocking_issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
         blocking_issues.append("MintiStudio self-disclaimer is not allowed")
-    if len(visuals) != 3:
-        fixed["visuals"] = "normalized visuals to exactly 3 items"
+    if len(visuals) > 3:
+        fixed["visuals"] = "trimmed visuals to at most 3 items"
     generate_count = sum(1 for visual in visuals if visual.get("type") == "generate")
     if generate_count > 1:
-        blocking_issues.append(f"generate visual is limited to one per article ({generate_count})")
+        fixed["visuals"] = f"repaired generate visual cap ({generate_count})"
     flow_count = sum(1 for visual in visuals if visual.get("type") == "flow")
     compare_count = sum(1 for visual in visuals if visual.get("type") == "compare")
     valid_flow_count = len(_valid_flow_blocks(content))
     valid_compare_count = len(_valid_compare_blocks(content))
     if valid_flow_count < flow_count:
-        blocking_issues.append(f"flow visual requires valid :::flow blocks ({valid_flow_count}/{flow_count})")
+        fixed["visuals"] = f"repaired flow visual block count ({valid_flow_count}/{flow_count})"
     if valid_compare_count < compare_count:
-        blocking_issues.append(f"compare visual requires valid :::compare blocks ({valid_compare_count}/{compare_count})")
+        fixed["visuals"] = f"repaired compare visual block count ({valid_compare_count}/{compare_count})"
     missing_compare = _missing_compare_numbers(content)
     if missing_compare:
         blocking_issues.append("compare metric numbers not found in article text: " + ", ".join(missing_compare[:4]))
     screenshot_by_id = {item["id"]: item for item in screenshots}
     for visual in visuals:
         if visual.get("type") not in VISUAL_TYPES:
-            blocking_issues.append(f"unknown visual type: {visual.get('type')}")
+            fixed["visuals"] = f"repaired unknown visual type: {visual.get('type')}"
         if visual.get("type") == "screenshot":
             screenshot_id = str(visual.get("screenshot_id") or "")
             if screenshot_id not in screenshot_by_id:
-                blocking_issues.append(f"screenshot_id is unavailable or on hold: {screenshot_id}")
+                fixed["visuals"] = f"repaired screenshot_id is unavailable or on hold: {screenshot_id}"
     repair_notes = list(article.get("visual_repairs") or [])
     if repair_notes:
         fixed["visual_repairs"] = repair_notes
@@ -1119,6 +1244,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
         if copy_files:
             target = target_dir / source.name
             shutil.copy2(source, target)
+            _add_logo_badge(target, badge_ratio=0.03)
             target_name = target.name
         url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target_name)}"
         alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
@@ -1543,6 +1669,7 @@ def _writer_prompt() -> str:
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
 visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Valid visual types are screenshot, flow, compare, generate.
+For type=screenshot, screenshot_id is required and must exactly match one of requirements.available_screenshots ids. Never leave screenshot_id empty. If none of the listed screenshots fits the section, choose flow, compare, or generate instead.
 Use flow for a process/workflow and compare for metric or option comparisons. Use screenshots for product features. Use generate at most once per article, only when flow, compare, and screenshot do not fit.
 For screenshot or generate visuals, content_md must include that marker as a standalone HTML comment such as <!-- IMAGE_1 -->. Bare IMAGE_1 text is forbidden.
 For flow or compare visuals, put the full :::flow or :::compare block directly in content_md where that visual belongs; do not also include an IMAGE comment for that slot.
@@ -1604,14 +1731,33 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 "writer_model": BLOG_MODEL_WRITER,
                 "reviewer_model": BLOG_MODEL_REVIEWER,
                 "designer_model": BLOG_MODEL_DESIGNER,
+                "available_screenshots": _screenshot_prompt_list(screenshots),
             },
         }
         article, cost = _call_stage(state, "writer", BLOG_MODEL_WRITER, _writer_prompt(), user_base)
+        writer_schema_violations = _writer_schema_violations(article, screenshots)
+        writer_retry_notes: list[str] = []
+        if writer_schema_violations:
+            retry_payload = {
+                **user_base,
+                "previous_output": article,
+                "schema_violations": writer_schema_violations,
+                "instruction": (
+                    "Return the complete corrected article JSON. Change only the visuals and matching "
+                    "IMAGE/component placements needed to satisfy these schema violations."
+                ),
+            }
+            article, retry_cost = _call_stage(state, "writer_retry", BLOG_MODEL_WRITER, _writer_prompt(), retry_payload)
+            cost += retry_cost
+            retry_violations = _writer_schema_violations(article, screenshots)
+            writer_retry_notes = [f"writer schema retry: {item}" for item in writer_schema_violations]
+            if retry_violations:
+                writer_retry_notes.extend(f"writer schema still repaired by code: {item}" for item in retry_violations)
         article = _normalize_article_payload(article)
         conn = get_db()
         state.seq += 1
         set_current_stage(conn, state.run_id, "writer")
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="writer", status="done", model=BLOG_MODEL_WRITER, output=article, cost_usd=cost)
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="writer", status="done", model=BLOG_MODEL_WRITER, output=article, notes=_join_notes(writer_retry_notes), cost_usd=cost)
         conn.commit()
 
         checks = _code_checks(article, screenshots, published)

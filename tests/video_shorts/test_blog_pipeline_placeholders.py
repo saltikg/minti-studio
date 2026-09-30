@@ -12,7 +12,12 @@ def _base_article(content_md: str, visuals=None):
     }
 
 
-def test_normalizes_bare_and_wrong_placeholder_syntax():
+def test_normalizes_bare_and_wrong_placeholder_syntax(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [{"id": "s1", "alt": "One"}, {"id": "s2", "alt": "Two"}],
+    )
     article = _normalize_article_payload(
         _base_article(
             "\n\n".join(
@@ -25,7 +30,12 @@ def test_normalizes_bare_and_wrong_placeholder_syntax():
                     "## Third",
                     "Use {{ IMAGE_3 }} here.",
                 ]
-            )
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "s1"},
+                {"marker": "IMAGE_2", "type": "screenshot", "screenshot_id": "s2"},
+                {"marker": "IMAGE_3", "type": "generate", "prompt": "A text-free support visual"},
+            ],
         )
     )
 
@@ -37,7 +47,12 @@ def test_normalizes_bare_and_wrong_placeholder_syntax():
     assert "{{ IMAGE_3 }}" not in article["content_md"]
 
 
-def test_removes_duplicate_placeholders():
+def test_removes_duplicate_placeholders(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [{"id": "s1", "alt": "One"}, {"id": "s2", "alt": "Two"}],
+    )
     article = _normalize_article_payload(
         _base_article(
             "\n\n".join(
@@ -52,7 +67,12 @@ def test_removes_duplicate_placeholders():
                     "## Third",
                     "IMAGE_3",
                 ]
-            )
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "s1"},
+                {"marker": "IMAGE_2", "type": "screenshot", "screenshot_id": "s2"},
+                {"marker": "IMAGE_3", "type": "generate", "prompt": "A text-free support visual"},
+            ],
         )
     )
 
@@ -61,7 +81,12 @@ def test_removes_duplicate_placeholders():
     assert article["content_md"].count("<!-- IMAGE_3 -->") == 1
 
 
-def test_inserts_missing_placeholders_after_section_paragraphs():
+def test_inserts_missing_placeholders_after_section_paragraphs(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [{"id": "s1", "alt": "One"}, {"id": "s2", "alt": "Two"}],
+    )
     article = _normalize_article_payload(
         _base_article(
             "\n\n".join(
@@ -76,7 +101,12 @@ def test_inserts_missing_placeholders_after_section_paragraphs():
                     "## Final CTA",
                     "Start creating clips today.",
                 ]
-            )
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "s1"},
+                {"marker": "IMAGE_2", "type": "screenshot", "screenshot_id": "s2"},
+                {"marker": "IMAGE_3", "type": "generate", "prompt": "A text-free support visual"},
+            ],
         )
     )
 
@@ -262,6 +292,131 @@ def test_screenshot_cap_overflow_repairs_to_generate(monkeypatch):
 
     assert [visual["type"] for visual in article["visuals"]] == ["screenshot", "screenshot", "generate"]
     assert "IMAGE_3: repaired screenshot slot with invalid id 'c' to generate" in article["visual_repairs"]
+
+
+def test_extra_generate_slot_is_removed_when_no_screenshot_fits(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## One",
+                    "First context.",
+                    "<!-- IMAGE_1 -->",
+                    "## Two",
+                    "Second context.",
+                    ":::flow Workflow",
+                    "video | Long video | Full recording",
+                    "clips | Five Shorts | Best moments",
+                    ":::",
+                    "## Three",
+                    "Third context.",
+                    "<!-- IMAGE_3 -->",
+                ]
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "generate", "prompt": "A text-free support visual"},
+                {"marker": "IMAGE_2", "type": "flow"},
+                {"marker": "IMAGE_3", "type": "generate", "prompt": "Another text-free support visual"},
+            ],
+        )
+    )
+
+    assert [(visual["marker"], visual["type"]) for visual in article["visuals"]] == [
+        ("IMAGE_1", "generate"),
+        ("IMAGE_2", "flow"),
+    ]
+    assert "<!-- IMAGE_3 -->" not in article["content_md"]
+    assert "IMAGE_3: removed extra generate slot and marker" in article["visual_repairs"]
+
+
+def test_extra_generate_slot_repairs_to_relevant_screenshot(monkeypatch):
+    monkeypatch.setattr(
+        blog_pipeline,
+        "_load_manifest",
+        lambda: [{"id": "analytics-shot", "alt": "Analytics screenshot", "use_for": ["analytics"]}],
+    )
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## Creative",
+                    "First context.",
+                    "<!-- IMAGE_1 -->",
+                    "## Analytics",
+                    "Second context.",
+                    "<!-- IMAGE_2 -->",
+                    "## Ending",
+                    "Final context.",
+                    ":::flow Workflow",
+                    "video | Long video | Full recording",
+                    "clips | Five Shorts | Best moments",
+                    ":::",
+                ]
+            ),
+            visuals=[
+                {"marker": "IMAGE_1", "type": "generate", "prompt": "A text-free support visual"},
+                {"marker": "IMAGE_2", "type": "generate", "prompt": "Another text-free support visual"},
+                {"marker": "IMAGE_3", "type": "flow"},
+            ],
+        )
+    )
+
+    assert [(visual["marker"], visual["type"]) for visual in article["visuals"]] == [
+        ("IMAGE_1", "generate"),
+        ("IMAGE_2", "screenshot"),
+        ("IMAGE_3", "flow"),
+    ]
+    assert article["visuals"][1]["screenshot_id"] == "analytics-shot"
+    assert "IMAGE_2: repaired extra generate slot to screenshot_id 'analytics-shot'" in article["visual_repairs"]
+
+
+def test_code_checks_repairs_mechanical_generate_cap(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    monkeypatch.setattr(blog_pipeline, "_unique_slug", lambda slug: slug)
+    article = _base_article(
+        "\n\n".join(
+            [
+                "## One",
+                f"Read more at {CTA_URL}. " + "Useful planning copy. " * 80,
+                "<!-- IMAGE_1 -->",
+                "## Two",
+                "Useful production copy. " * 80,
+                "<!-- IMAGE_2 -->",
+                "## Three",
+                "Useful review copy. " * 80,
+                "<!-- IMAGE_3 -->",
+            ]
+        ),
+        visuals=[
+            {"marker": "IMAGE_1", "type": "generate", "prompt": "A text-free support visual"},
+            {"marker": "IMAGE_2", "type": "generate", "prompt": "Another text-free support visual"},
+            {"marker": "IMAGE_3", "type": "generate", "prompt": "A third text-free support visual"},
+        ],
+    )
+
+    checks = blog_pipeline._code_checks(article, [], [{"url": CTA_URL, "title": "CTA"}])
+
+    assert checks["ok"]
+    assert len([visual for visual in article["visuals"] if visual["type"] == "generate"]) == 1
+    assert article["content_md"].count("<!-- IMAGE_") == 1
+    assert any("removed extra generate slot" in note for note in article["visual_repairs"])
+
+
+def test_writer_schema_flags_empty_screenshot_id():
+    violations = blog_pipeline._writer_schema_violations(
+        _base_article(
+            "## One\n\nBody.\n\n<!-- IMAGE_1 -->",
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": ""},
+                {"marker": "IMAGE_2", "type": "flow"},
+                {"marker": "IMAGE_3", "type": "compare"},
+            ],
+        ),
+        [{"id": "valid-shot", "alt": "Valid shot"}],
+    )
+
+    assert "IMAGE_1: screenshot_id must be a listed available id, got ''" in violations
 
 
 def test_meta_fields_trim_at_word_boundary():

@@ -647,12 +647,30 @@
   }
 
   .vs-blog-article-page .diagram-card {
+    position: relative;
     border: 1px solid rgba(39, 52, 62, 0.95);
     border-radius: 16px;
     background:
       radial-gradient(circle at 12% 10%, rgba(45, 212, 191, 0.12), transparent 28%),
       #0f1720;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+  }
+
+  .vs-blog-article-page .diagram-card::after {
+    content: "";
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    z-index: 2;
+    width: 26px;
+    height: 26px;
+    border-radius: 9px;
+    background:
+      linear-gradient(rgba(6, 18, 20, 0.74), rgba(6, 18, 20, 0.74)),
+      url("/video_shorts/static/img/favicon.ico") center / 15px 15px no-repeat;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+    pointer-events: none;
   }
 
   .vs-blog-article-page .flow-card {
