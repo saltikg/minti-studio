@@ -330,6 +330,26 @@ def test_extra_generate_slot_is_removed_when_no_screenshot_fits(monkeypatch):
     assert "IMAGE_3: removed extra generate slot and marker" in article["visual_repairs"]
 
 
+def test_invalid_empty_markdown_image_url_is_removed(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## One",
+                    "First context.",
+                    "![Broken visual](/video_shorts/static/img/blog/example/.png \"Broken\")",
+                    "<!-- IMAGE_1 -->",
+                ]
+            ),
+            visuals=[{"marker": "IMAGE_1", "type": "generate", "prompt": "A text-free support visual"}],
+        )
+    )
+
+    assert "/.png" not in article["content_md"]
+    assert "removed invalid markdown image URL: /video_shorts/static/img/blog/example/.png" in article["visual_repairs"]
+
+
 def test_extra_generate_slot_repairs_to_relevant_screenshot(monkeypatch):
     monkeypatch.setattr(
         blog_pipeline,

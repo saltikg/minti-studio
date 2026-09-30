@@ -401,6 +401,22 @@ def _strip_visual_marker(content: str, marker: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", content).strip()
 
 
+def _remove_invalid_markdown_images(content: str) -> tuple[str, list[str]]:
+    notes: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        image = match.group(0)
+        url_match = re.search(r"\]\(([^)\s]+)", image)
+        url = str(url_match.group(1) if url_match else "")
+        if re.search(r"/\.(?:png|jpe?g|webp)(?:[\"')\s]|$)", url, flags=re.I):
+            notes.append(f"removed invalid markdown image URL: {url}")
+            return ""
+        return image
+
+    cleaned = MARKDOWN_IMAGE_RE.sub(replace, content or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), notes
+
+
 def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
     repaired: list[dict[str, Any]] = []
@@ -613,6 +629,7 @@ def _restore_candidate_article(candidate: dict[str, Any], source_masked: str, bl
 def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[str, Any]:
     content = _normalize_image_placeholder_syntax(str(article.get("content_md") or ""))
     content = _remove_duplicate_image_placeholders(content)
+    content, image_repair_notes = _remove_invalid_markdown_images(content)
     screenshots = _load_manifest()
 
     visual_by_marker: dict[str, dict[str, Any]] = {}
@@ -635,6 +652,7 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
         visual = dict(visual_by_marker.get(marker) or _generated_visual_for_marker(content, marker))
         normalized_visuals.append(visual)
     normalized_visuals, repair_notes = _repair_visual_slots(content, normalized_visuals, screenshots)
+    repair_notes = image_repair_notes + repair_notes
     if repair_notes:
         existing_repairs = list(article.get("visual_repairs") or [])
         for note in repair_notes:
@@ -1689,7 +1707,8 @@ def _reviewer_prompt() -> str:
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; visuals not exactly 3 items; invalid flow/compare syntax; compare metric numbers not present in the article text.
+Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than 3 visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
+Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
 Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Do not allow invented metrics, features, platform logos, or third-party brand claims.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
 
