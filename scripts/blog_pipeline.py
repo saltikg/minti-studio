@@ -411,6 +411,9 @@ def _remove_invalid_markdown_images(content: str) -> tuple[str, list[str]]:
         if re.search(r"/\.(?:png|jpe?g|webp)(?:[\"')\s]|$)", url, flags=re.I):
             notes.append(f"removed invalid markdown image URL: {url}")
             return ""
+        if url.startswith("/video_shorts/static/img/blog/") and "/library/" not in url:
+            notes.append(f"removed pre-rendered article image markdown: {url}")
+            return ""
         return image
 
     cleaned = MARKDOWN_IMAGE_RE.sub(replace, content or "")

@@ -350,6 +350,26 @@ def test_invalid_empty_markdown_image_url_is_removed(monkeypatch):
     assert "removed invalid markdown image URL: /video_shorts/static/img/blog/example/.png" in article["visual_repairs"]
 
 
+def test_pre_rendered_article_markdown_image_is_removed(monkeypatch):
+    monkeypatch.setattr(blog_pipeline, "_load_manifest", lambda: [])
+    article = _normalize_article_payload(
+        _base_article(
+            "\n\n".join(
+                [
+                    "## One",
+                    "First context.",
+                    "![Duplicate screenshot](/video_shorts/static/img/blog/example/transcript-selection.png \"Duplicate\")",
+                    "<!-- IMAGE_1 -->",
+                ]
+            ),
+            visuals=[{"marker": "IMAGE_1", "type": "generate", "prompt": "A text-free support visual"}],
+        )
+    )
+
+    assert "transcript-selection.png" not in article["content_md"]
+    assert any("removed pre-rendered article image markdown" in note for note in article["visual_repairs"])
+
+
 def test_extra_generate_slot_repairs_to_relevant_screenshot(monkeypatch):
     monkeypatch.setattr(
         blog_pipeline,
