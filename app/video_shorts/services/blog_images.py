@@ -201,8 +201,10 @@ def generated_visual_filename(visual: dict[str, Any], index: int) -> str:
 
 def render_markdown_image(visual: dict[str, Any], result: BlogImageResult) -> str:
     alt = str(visual.get("alt") or result.alt or result.marker or "Blog illustration").strip()
-    caption = str(visual.get("caption") or "").strip()
-    markdown = f"![{alt}]({result.url})"
+    caption = str(visual.get("caption") or alt or "").strip()
+    caption = caption.replace('"', "'")
+    title = f' "{caption}"' if caption else ""
+    markdown = f"![{alt}]({result.url}{title})"
     if caption:
-        markdown = f"{markdown}\n\n*{caption}*"
+        return markdown
     return markdown

@@ -360,6 +360,336 @@
     border-bottom: 0;
   }
 
+  .vs-blog-article-page .table-shell {
+    width: 100%;
+    margin: 1.75rem 0;
+    border: 1px solid rgba(39, 52, 62, 0.95);
+    border-radius: 16px;
+    overflow: hidden;
+    background: #0f1720;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  }
+
+  .vs-blog-article-page .table-shell table {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    border-collapse: collapse;
+    font-size: 0.98rem;
+  }
+
+  .vs-blog-article-page .table-shell thead {
+    background: linear-gradient(90deg, rgba(45, 212, 191, 0.17), rgba(45, 212, 191, 0.055));
+  }
+
+  .vs-blog-article-page .table-shell th {
+    padding: 15px 18px;
+    text-align: left;
+    font-size: 0.69rem;
+    letter-spacing: 0.105em;
+    text-transform: uppercase;
+    color: #dff9f3;
+    font-weight: 800;
+    border: 0;
+  }
+
+  .vs-blog-article-page .table-shell td {
+    padding: 17px 18px;
+    border: 0;
+    border-top: 1px solid rgba(39, 52, 62, 0.95);
+    vertical-align: top;
+    color: #cbd1d7;
+    line-height: 1.5;
+  }
+
+  .vs-blog-article-page .table-shell tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.018);
+  }
+
+  .vs-blog-article-page .table-shell td:first-child {
+    width: 24%;
+    font-weight: 650;
+    color: #f0f2f4;
+  }
+
+  .vs-blog-article-page .check {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: var(--mint);
+    color: #06251f;
+    font-size: 0.75rem;
+    font-weight: 900;
+    vertical-align: -2px;
+  }
+
+  .vs-blog-article-page .callout {
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 13px;
+    margin: 1.75rem 0;
+    padding: 18px 19px;
+    border: 1px solid rgba(39, 52, 62, 0.95);
+    border-radius: 14px;
+    background: #0f1720;
+  }
+
+  .vs-blog-article-page .callout .icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: #17232c;
+    color: rgba(231, 234, 238, 0.94);
+  }
+
+  .vs-blog-article-page .callout .icon svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .vs-blog-article-page .callout .label {
+    margin-bottom: 4px;
+    font-size: 0.75rem;
+    line-height: 1.3;
+    text-transform: uppercase;
+    letter-spacing: 0.095em;
+    font-weight: 800;
+  }
+
+  .vs-blog-article-page .callout p {
+    margin: 0;
+    color: #c9d0d5;
+    line-height: 1.65;
+  }
+
+  .vs-blog-article-page .callout p + p {
+    margin-top: 0.5rem;
+  }
+
+  .vs-blog-article-page .callout--key {
+    border-color: rgba(45, 212, 191, 0.34);
+    background: linear-gradient(100deg, rgba(45, 212, 191, 0.1), #0f1720);
+  }
+
+  .vs-blog-article-page .callout--key .label,
+  .vs-blog-article-page .callout--action .label {
+    color: var(--mint);
+  }
+
+  .vs-blog-article-page .callout--tip .label {
+    color: #82d8c8;
+  }
+
+  .vs-blog-article-page .callout--info .label {
+    color: #8fb8e8;
+  }
+
+  .vs-blog-article-page .callout--warning {
+    border-color: rgba(233, 189, 105, 0.28);
+  }
+
+  .vs-blog-article-page .callout--warning .label {
+    color: #e9bd69;
+  }
+
+  .vs-blog-article-page .callout--action {
+    border-color: rgba(45, 212, 191, 0.25);
+  }
+
+  .vs-blog-article-page .figure {
+    margin: 1.75rem 0 0;
+  }
+
+  .vs-blog-article-page .media {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(39, 52, 62, 0.95);
+    border-radius: 16px;
+    background: #0b1117;
+    cursor: zoom-in;
+  }
+
+  .vs-blog-article-page .media img,
+  .vs-blog-richtext .figure .media img {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    transition: transform 0.25s ease, filter 0.25s ease;
+  }
+
+  .vs-blog-article-page .media:hover img,
+  .vs-blog-article-page .media:focus-within img {
+    transform: scale(1.008);
+    filter: brightness(0.88);
+  }
+
+  .vs-blog-article-page .tag {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: rgba(6, 12, 17, 0.84);
+    backdrop-filter: blur(8px);
+    font-size: 0.69rem;
+    font-weight: 750;
+    color: #dbe3e8;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .vs-blog-article-page .zoom {
+    position: absolute;
+    right: 14px;
+    top: 14px;
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    background: rgba(6, 12, 17, 0.88);
+    color: #fff;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    cursor: pointer;
+  }
+
+  .vs-blog-article-page .zoom svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .vs-blog-article-page .media:hover .zoom,
+  .vs-blog-article-page .zoom:focus {
+    opacity: 1;
+    transform: none;
+  }
+
+  .vs-blog-article-page figcaption {
+    margin-top: 10px;
+    padding-left: 2px;
+    font-size: 0.82rem;
+    color: #85919a;
+  }
+
+  .vs-blog-article-page .steps {
+    counter-reset: step;
+    display: grid;
+    gap: 0;
+    margin: 1.75rem 0 0;
+  }
+
+  .vs-blog-article-page .step {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 50px 1fr;
+    gap: 16px;
+    position: relative;
+    padding-bottom: 28px;
+  }
+
+  .vs-blog-article-page .step:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: 24px;
+    top: 44px;
+    bottom: 0;
+    width: 1px;
+    background: rgba(39, 52, 62, 0.95);
+  }
+
+  .vs-blog-article-page .step-num {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    border: 1px solid rgba(45, 212, 191, 0.34);
+    background: rgba(45, 212, 191, 0.1);
+    color: var(--mint);
+    font-weight: 800;
+  }
+
+  .vs-blog-article-page .step-num::after {
+    content: counter(step);
+  }
+
+  .vs-blog-article-page .step h3 {
+    margin: 1px 0 4px;
+    font-size: 1.125rem;
+    line-height: 1.3;
+  }
+
+  .vs-blog-article-page .step p {
+    margin: 0;
+    color: var(--text-2);
+  }
+
+  .vs-blog-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    background: rgba(0, 0, 0, 0.86);
+  }
+
+  .vs-blog-lightbox.open {
+    display: flex;
+  }
+
+  .vs-blog-lightbox__panel {
+    display: grid;
+    gap: 12px;
+    max-width: min(1200px, 94vw);
+  }
+
+  .vs-blog-lightbox img {
+    max-width: min(1200px, 94vw);
+    max-height: 82vh;
+    border-radius: 12px;
+    box-shadow: 0 24px 90px #000;
+  }
+
+  .vs-blog-lightbox__caption {
+    margin: 0;
+    color: #c7cdd3;
+    font-size: 0.9rem;
+    text-align: center;
+  }
+
+  .vs-blog-lightbox__close {
+    position: fixed;
+    top: 22px;
+    right: 26px;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 50%;
+    background: rgba(10, 15, 20, 0.75);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .vs-blog-lightbox__close svg {
+    width: 22px;
+    height: 22px;
+  }
+
   .vs-blog-related {
     display: grid;
     gap: 1rem;
@@ -392,6 +722,20 @@
   }
 
   @media (max-width: 620px) {
+    .vs-blog-article-page .table-shell {
+      overflow-x: auto;
+    }
+
+    .vs-blog-article-page .table-shell table {
+      min-width: 680px;
+    }
+
+    .vs-blog-article-page .table-shell th,
+    .vs-blog-article-page .table-shell td {
+      padding: 13px 12px;
+      font-size: 0.82rem;
+    }
+
     .vs-blog-richtext .vs-callout {
       padding-left: 2.8rem;
     }
@@ -424,8 +768,14 @@
   </header>
 
   {% if article.cover_image_url %}
-    <figure class="vs-blog-cover">
-      <img src="{{ article.cover_image_url }}" alt="{{ article.title }}" loading="eager">
+    <figure class="vs-blog-cover figure">
+      <div class="media" tabindex="0" role="button" aria-label="Open image in lightbox">
+        <img src="{{ article.cover_image_url }}" alt="{{ article.title }}" loading="eager">
+        <button class="zoom" type="button" aria-label="Enlarge image">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+        </button>
+      </div>
+      <figcaption>{{ article.title }}</figcaption>
     </figure>
   {% endif %}
 
@@ -448,4 +798,103 @@
     </section>
   {% endif %}
 </article>
+
+<div class="vs-blog-lightbox" id="vs-blog-lightbox" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Image preview">
+  <button class="vs-blog-lightbox__close" type="button" data-lightbox-close aria-label="Close lightbox">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+  </button>
+  <div class="vs-blog-lightbox__panel" role="document">
+    <img src="" alt="" data-lightbox-image>
+    <p class="vs-blog-lightbox__caption" data-lightbox-caption></p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const lightbox = document.getElementById("vs-blog-lightbox");
+      if (!lightbox) return;
+
+      const image = lightbox.querySelector("[data-lightbox-image]");
+      const caption = lightbox.querySelector("[data-lightbox-caption]");
+      const closeButton = lightbox.querySelector("[data-lightbox-close]");
+      const focusableSelector = "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+      let lastTrigger = null;
+
+      function figureCaption(media) {
+        const figure = media.closest(".figure");
+        const captionNode = figure ? figure.querySelector("figcaption") : null;
+        return captionNode ? captionNode.textContent.trim() : "";
+      }
+
+      function openLightbox(media) {
+        const img = media.querySelector("img");
+        if (!img) return;
+        lastTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : media;
+        const text = figureCaption(media);
+        image.src = img.currentSrc || img.src;
+        image.alt = img.alt || text || "Expanded image";
+        caption.textContent = text;
+        caption.hidden = !text;
+        lightbox.classList.add("open");
+        lightbox.setAttribute("aria-hidden", "false");
+        document.body.style.overflow = "hidden";
+        closeButton.focus();
+      }
+
+      function closeLightbox() {
+        lightbox.classList.remove("open");
+        lightbox.setAttribute("aria-hidden", "true");
+        document.body.style.overflow = "";
+        image.removeAttribute("src");
+        if (lastTrigger && typeof lastTrigger.focus === "function") {
+          lastTrigger.focus();
+        }
+      }
+
+      document.querySelectorAll(".vs-blog-article-page .media").forEach(function (media) {
+        media.addEventListener("click", function (event) {
+          event.preventDefault();
+          openLightbox(media);
+        });
+        media.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openLightbox(media);
+          }
+        });
+      });
+
+      closeButton.addEventListener("click", closeLightbox);
+      lightbox.addEventListener("click", function (event) {
+        if (event.target === lightbox) {
+          closeLightbox();
+        }
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (!lightbox.classList.contains("open")) return;
+        if (event.key === "Escape") {
+          closeLightbox();
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = Array.from(lightbox.querySelectorAll(focusableSelector)).filter(function (element) {
+          return !element.disabled && element.offsetParent !== null;
+        });
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+    });
+  </script>
 {% endblock %}

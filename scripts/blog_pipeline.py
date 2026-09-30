@@ -428,13 +428,12 @@ def _stable_prefix() -> dict[str, Any]:
         "example_articles": _published_articles(1, include_content=True),
         "screenshots": _load_manifest(),
         "allowed_components": {
-            "callouts": [":::info Optional title\\nBody\\n:::", ":::tip Optional title\\nBody\\n:::", ":::warning Optional title\\nBody\\n:::"],
-            "key": ":::key\\nOne key sentence.\\n:::",
-            "action": ":::action Optional title\\nCTA sentence.\\n:::",
+            "callouts": [":::key\\nOne key sentence.\\n:::", ":::info\\nBody\\n:::", ":::tip\\nBody\\n:::", ":::warning\\nBody\\n:::", ":::action\\nCTA sentence.\\n:::"],
+            "steps": ":::steps\\n### Step title\\nOne or two sentences.\\n\\n### Next step title\\nOne or two sentences.\\n:::",
             "specimens": [":::short\\nShort example text.\\n:::", ":::long\\nLong-form example text.\\n:::"],
-            "tables": "Markdown pipe tables are allowed.",
+            "tables": "Markdown pipe tables are allowed and encouraged whenever options are compared.",
             "youtube": "[youtube: https://www.youtube.com/watch?v=VIDEO_ID]",
-            "images": "Markdown images only: ![alt](/video_shorts/static/img/blog/slug/file.png)",
+            "images": "Markdown images only with short title captions: ![alt](/video_shorts/static/img/blog/slug/file.png \"Caption under 12 words\")",
         },
     }
 
@@ -795,8 +794,9 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
             shutil.copy2(source, target)
             target_name = target.name
         url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target_name)}"
-        alt = str(screenshot.get("alt") or visual.get("alt") or "")
-        content = content.replace(f"<!-- {marker} -->", f"![{alt}]({url})")
+        alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
+        caption = str(visual.get("caption") or alt or "MintiStudio workflow screenshot").strip().replace('"', "'")
+        content = content.replace(f"<!-- {marker} -->", f"![{alt}]({url} \"{caption} [screenshot]\")")
         placed.append({"marker": marker, "filename": target_name, "url": url, "alt": alt})
     article["content_md"] = content
     article["screenshots_placed"] = placed
@@ -1216,6 +1216,7 @@ def _writer_prompt() -> str:
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
 content_md must include exactly these three placeholders as standalone HTML comments: <!-- IMAGE_1 -->, <!-- IMAGE_2 -->, <!-- IMAGE_3 -->. Bare IMAGE_1 text is forbidden.
 visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. At most 2 may be screenshots. Use type=\"generate\" for the remaining visual and provide a prompt.
+Each visual must include a short caption, maximum 12 words, suitable for the markdown image title.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
 Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
@@ -1238,7 +1239,9 @@ def _revision_prompt() -> str:
 
 
 def _designer_prompt() -> str:
-    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or IMAGE placeholders."""
+    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or IMAGE placeholders.
+
+Use :::steps for any sequential workflow, a markdown table whenever options are compared, at least one :::key, and :::tip or :::warning where useful. Keep the similarity guard passing by preserving sentence text exactly."""
 
 
 def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[str, Any]:
