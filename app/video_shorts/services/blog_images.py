@@ -33,11 +33,16 @@ STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
 IMAGE_STYLE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "image_style.md"
 COVER_STYLE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "style" / "cover_style.md"
 COVER_REFERENCE_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "style" / "cover_reference.png"
+COVER_REFERENCE_OBJECTS_PATH = ROOT / "app" / "video_shorts" / "blog_pipeline" / "style" / "cover_reference_objects.png"
 LOGO_BADGE_PATHS = (
-    ROOT / "app" / "video_shorts" / "static" / "img" / "favicon.ico",
-    ROOT / "app" / "static" / "favicon.ico",
+    ROOT / "app" / "video_shorts" / "static" / "img" / "brand" / "minti_badge.png",
 )
 BLOG_IMAGE_SIZE = os.getenv("BLOG_IMAGE_SIZE", "1536x1024")
+COVER_DIRECTIVES_MARKER = "\n\nCover directives:\n"
+COVER_REFERENCE_SCOPE = (
+    "The reference images define ONLY the rendering style (soft 3D material, lighting, palette, "
+    "background motifs). Do NOT reuse their characters, clothing, composition, layout, or objects."
+)
 
 
 @dataclass
@@ -59,12 +64,12 @@ class BlogImageResult:
 
 def image_style_suffix(kind: str = "inline") -> str:
     if kind == "cover" and COVER_STYLE_PATH.is_file():
-        return COVER_STYLE_PATH.read_text(encoding="utf-8").strip()
+        return f"{COVER_REFERENCE_SCOPE}\n\n{COVER_STYLE_PATH.read_text(encoding='utf-8').strip()}"
     return IMAGE_STYLE_PATH.read_text(encoding="utf-8").strip()
 
 
-def _cover_reference_path() -> Path | None:
-    return COVER_REFERENCE_PATH if COVER_REFERENCE_PATH.is_file() else None
+def _cover_reference_paths() -> list[Path]:
+    return [path for path in (COVER_REFERENCE_PATH, COVER_REFERENCE_OBJECTS_PATH) if path.is_file()]
 
 
 def article_image_dir(slug: str) -> Path:
@@ -138,13 +143,21 @@ def clean_cover_scene_prompt(prompt: str) -> str:
     return cleaned or "A simple editorial scene with two to four symbolic objects."
 
 
+def _clean_cover_prompt(prompt: str) -> str:
+    raw = str(prompt or "")
+    if COVER_DIRECTIVES_MARKER in raw:
+        scene, directives = raw.split(COVER_DIRECTIVES_MARKER, 1)
+        return f"{clean_cover_scene_prompt(scene)}{COVER_DIRECTIVES_MARKER}{directives.strip()}"
+    return clean_cover_scene_prompt(raw)
+
+
 def _logo_badge_path() -> Path | None:
     return next((path for path in LOGO_BADGE_PATHS if path.is_file()), None)
 
 
-def _add_logo_badge(image_path: Path, *, badge_ratio: float = 0.04) -> None:
+def _add_logo_badge(image_path: Path, *, badge_ratio: float = 0.18, margin_ratio: float = 0.02) -> None:
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image
     except ImportError:  # pragma: no cover
         return
     logo_path = _logo_badge_path()
@@ -152,40 +165,32 @@ def _add_logo_badge(image_path: Path, *, badge_ratio: float = 0.04) -> None:
         return
     with Image.open(image_path).convert("RGBA") as base:
         with Image.open(logo_path).convert("RGBA") as logo:
-            badge_size = max(32, round(base.width * badge_ratio))
-            padding = max(14, round(badge_size * 0.32))
-            box_size = badge_size + padding * 2
+            badge_width = max(1, round(base.width * badge_ratio))
+            badge_width = min(badge_width, logo.width)
+            badge_height = max(1, round(logo.height * (badge_width / logo.width)))
             resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
-            logo.thumbnail((badge_size, badge_size), resample)
-            badge = Image.new("RGBA", (box_size, box_size), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(badge)
-            draw.rounded_rectangle(
-                (0, 0, box_size, box_size),
-                radius=max(12, round(box_size * 0.25)),
-                fill=(6, 18, 20, 188),
-                outline=(255, 255, 255, 42),
-                width=1,
-            )
-            x = (box_size - logo.width) // 2
-            y = (box_size - logo.height) // 2
-            badge.alpha_composite(logo, (x, y))
-            outer_padding = max(22, round(base.width * 0.018))
-            base.alpha_composite(badge, (base.width - box_size - outer_padding, base.height - box_size - outer_padding))
+            badge = logo.resize((badge_width, badge_height), resample)
+            margin = max(1, round(base.width * margin_ratio))
+            base.alpha_composite(badge, (base.width - badge.width - margin, base.height - badge.height - margin))
         base.convert("RGB").save(image_path)
 
 
 def _image_request(client: Any, *, kind: str, model: str, prompt: str, size: str, quality: str) -> Any:
-    reference_path = _cover_reference_path() if kind == "cover" else None
-    if reference_path:
-        with reference_path.open("rb") as reference:
+    reference_paths = _cover_reference_paths() if kind == "cover" else []
+    if reference_paths:
+        references = [path.open("rb") for path in reference_paths]
+        try:
             return client.images.edit(
                 model=model,
-                image=reference,
+                image=references if len(references) > 1 else references[0],
                 prompt=prompt,
                 size=size,
                 quality=quality,
                 n=1,
             )
+        finally:
+            for reference in references:
+                reference.close()
     return client.images.generate(
         model=model,
         prompt=prompt,
@@ -217,7 +222,7 @@ def generate_blog_image(
         raise RuntimeError("OPENAI_API_KEY is not configured")
     selected_model = model or (BLOG_IMAGE_COVER if kind == "cover" else BLOG_IMAGE_INLINE)
     selected_quality = quality or (BLOG_IMAGE_COVER_QUALITY if kind == "cover" else BLOG_IMAGE_INLINE_QUALITY)
-    scene_prompt = clean_cover_scene_prompt(prompt) if kind == "cover" else str(prompt or "").strip()
+    scene_prompt = _clean_cover_prompt(prompt) if kind == "cover" else str(prompt or "").strip()
     full_prompt = f"{scene_prompt}\n\n{image_style_suffix(kind)}".strip()
     target_dir = article_image_dir(slug)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -240,8 +245,8 @@ def generate_blog_image(
                 previous = target.with_name(f"{target.stem}-prev{target.suffix}")
                 shutil.copy2(target, previous)
             target.write_bytes(image_bytes)
-            if kind == "cover":
-                _add_logo_badge(target)
+            if kind in {"cover", "inline"}:
+                _add_logo_badge(target, badge_ratio=0.18, margin_ratio=0.02)
             usage = getattr(response, "usage", None)
             input_tokens = _usage_value(usage, "input_tokens", "prompt_tokens")
             cached_tokens = _cached_tokens(usage)

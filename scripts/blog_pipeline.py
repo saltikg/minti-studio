@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -65,6 +66,7 @@ STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
 LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
+COVER_ARCHETYPES_PATH = CONTEXT_ROOT / "style" / "cover_archetypes.md"
 CTA_URL = "https://mintistudio.com/video_shorts/login"
 BASE_URL = (os.getenv("BLOG_PUBLIC_BASE_URL") or "https://mintistudio.com").rstrip("/")
 COMPETITOR_FACTS_PATHS = (
@@ -90,6 +92,21 @@ IMAGE_PLACEHOLDER_VARIANT_RE = re.compile(
     r"\[\s*IMAGE_([123])\s*\]|"
     r"(?<![A-Za-z0-9_])IMAGE_([123])(?![A-Za-z0-9_])"
 )
+COVER_ARCHETYPE_LABELS = {
+    "A": "Object still life, no people",
+    "B": "Workflow landscape, no people",
+    "C": "Metaphor object, no people",
+    "D": "Phone close-up, hands only",
+    "E": "Solo creator at work",
+    "F": "Educator teaching",
+    "G": "Coach on a video call",
+    "H": "Podcast duo",
+}
+PEOPLE_COVER_ARCHETYPES = {"E", "F", "G", "H"}
+CHARACTER_GENDERS = ("woman", "man", "nonbinary creator")
+CHARACTER_AGES = ("25-34", "35-44", "45-54", "55-60")
+CHARACTER_HAIR = ("short dark hair", "curly black hair", "silver cropped hair", "shoulder-length brown hair", "tied-back dark hair")
+CHARACTER_OUTFITS = ("charcoal sweater", "soft white shirt", "deep mint overshirt", "warm gray jacket", "black studio tee", "burgundy cardigan")
 
 
 @dataclass
@@ -828,6 +845,131 @@ def _published_articles(limit: int | None = None, *, include_content: bool = Fal
         conn.close()
 
 
+def _recent_cover_metadata(limit: int = 6) -> list[dict[str, Any]]:
+    conn = get_db_readonly()
+    try:
+        columns = table_columns(conn, "blog_articles")
+        if "cover_archetype" not in columns:
+            return []
+        character_sql = "cover_character_json" if "cover_character_json" in columns else "NULL AS cover_character_json"
+        rows = conn.execute(
+            f"""
+            SELECT cover_archetype, {character_sql}
+            FROM blog_articles
+            WHERE status = 'published'
+              AND cover_archetype IS NOT NULL
+              AND cover_archetype <> ''
+            ORDER BY published_at DESC NULLS LAST, created_at DESC
+            LIMIT ?
+            """,
+            [int(limit)],
+        ).fetchall()
+    finally:
+        conn.close()
+    items: list[dict[str, Any]] = []
+    for archetype, character_json in rows:
+        character: dict[str, Any] = {}
+        if character_json:
+            try:
+                character = json.loads(character_json) if isinstance(character_json, str) else dict(character_json)
+            except Exception:
+                character = {}
+        items.append({"archetype": str(archetype or "").upper(), "character": character})
+    return items
+
+
+def _stable_index(seed: str, length: int) -> int:
+    if length <= 0:
+        return 0
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % length
+
+
+def _cover_archetype_proposals(article: dict[str, Any], topic: dict[str, Any] | None = None) -> list[str]:
+    cover = article.get("cover") if isinstance(article.get("cover"), dict) else {}
+    raw = cover.get("archetypes") or cover.get("archetype_proposals") or cover.get("top_archetypes") or []
+    if isinstance(raw, str):
+        raw = re.findall(r"\b[A-H]\b", raw.upper())
+    proposals: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        code = str(item or "").strip().upper()[:1]
+        if code in COVER_ARCHETYPE_LABELS and code not in proposals:
+            proposals.append(code)
+    if proposals:
+        return proposals[:3]
+    text = " ".join(str(value or "") for value in (article.get("title"), (topic or {}).get("title"), (topic or {}).get("category"), (topic or {}).get("brief"))).lower()
+    if any(word in text for word in ("coach", "client", "objection", "sales call")):
+        return ["G", "C", "A"]
+    if any(word in text for word in ("podcast", "interview", "hosts")):
+        return ["H", "B", "A"]
+    if any(word in text for word in ("teacher", "educator", "lesson", "course", "webinar")):
+        return ["F", "B", "A"]
+    if any(word in text for word in ("workflow", "calendar", "publish", "batch")):
+        return ["B", "A", "C"]
+    if any(word in text for word in ("metric", "views", "subscriber", "conversion")):
+        return ["C", "A", "B"]
+    return ["A", "C", "B"]
+
+
+def _choose_cover_archetype(proposals: list[str]) -> str:
+    recent = _recent_cover_metadata(6)
+    last_three = {item["archetype"] for item in recent[:3]}
+    people_count = sum(1 for item in recent if item["archetype"] in PEOPLE_COVER_ARCHETYPES)
+    valid = [item for item in proposals if item in COVER_ARCHETYPE_LABELS]
+    candidates = list(dict.fromkeys(valid + ["A", "C", "B"]))
+    for code in candidates:
+        if code in last_three:
+            continue
+        if code in PEOPLE_COVER_ARCHETYPES and people_count >= 3 and any(item not in PEOPLE_COVER_ARCHETYPES for item in candidates):
+            continue
+        return code
+    return candidates[0]
+
+
+def _choose_cover_character(article: dict[str, Any], archetype: str) -> dict[str, str] | None:
+    if archetype not in PEOPLE_COVER_ARCHETYPES:
+        return None
+    seed = f"{article.get('slug') or article.get('title') or ''}:{archetype}"
+    recent = _recent_cover_metadata(3)
+    recent_burgundy = sum(
+        1
+        for item in recent
+        if "burgundy" in json.dumps(item.get("character") or {}, ensure_ascii=False).lower()
+    )
+    outfits = [item for item in CHARACTER_OUTFITS if "burgundy" not in item or recent_burgundy < 1]
+    outfit = outfits[_stable_index(seed + ":outfit", len(outfits))]
+    return {
+        "gender": CHARACTER_GENDERS[_stable_index(seed + ":gender", len(CHARACTER_GENDERS))],
+        "age_range": CHARACTER_AGES[_stable_index(seed + ":age", len(CHARACTER_AGES))],
+        "hair": CHARACTER_HAIR[_stable_index(seed + ":hair", len(CHARACTER_HAIR))],
+        "outfit": outfit,
+        "face_style": "featureless face",
+    }
+
+
+def _prepare_cover_plan(article: dict[str, Any], topic: dict[str, Any] | None = None) -> dict[str, Any]:
+    article = dict(article or {})
+    cover = dict(article.get("cover") if isinstance(article.get("cover"), dict) else {})
+    proposals = _cover_archetype_proposals(article, topic)
+    archetype = str(cover.get("archetype") or "").strip().upper()[:1]
+    if archetype not in COVER_ARCHETYPE_LABELS:
+        archetype = _choose_cover_archetype(proposals)
+    character = cover.get("character") if isinstance(cover.get("character"), dict) else None
+    if archetype in PEOPLE_COVER_ARCHETYPES and not character:
+        character = _choose_cover_character(article, archetype)
+    cover["archetypes"] = proposals
+    cover["archetype"] = archetype
+    cover["archetype_label"] = COVER_ARCHETYPE_LABELS[archetype]
+    if character:
+        cover["character"] = character
+    else:
+        cover.pop("character", None)
+    article["cover"] = cover
+    article["cover_archetype"] = archetype
+    article["cover_character"] = character
+    return article
+
+
 def _competitor_facts_exists() -> bool:
     return any(path.is_file() and path.read_text(encoding="utf-8").strip() for path in COMPETITOR_FACTS_PATHS)
 
@@ -836,6 +978,7 @@ def _stable_prefix() -> dict[str, Any]:
     return {
         "facts": _read_text(CONTEXT_ROOT / "minti_facts.md"),
         "style_guide": _read_text(CONTEXT_ROOT / "style_guide.md"),
+        "cover_archetypes": _read_text(COVER_ARCHETYPES_PATH) if COVER_ARCHETYPES_PATH.is_file() else "",
         "example_articles": _published_articles(1, include_content=True),
         "screenshots": _load_manifest(),
         "allowed_components": {
@@ -1292,7 +1435,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
         if copy_files:
             target = target_dir / source.name
             shutil.copy2(source, target)
-            _add_logo_badge(target, badge_ratio=0.03)
+            _add_logo_badge(target, badge_ratio=0.14, margin_ratio=0.02)
             target_name = target.name
         url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target_name)}"
         alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
@@ -1307,9 +1450,27 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
 def _image_prompt_for_cover(article: dict[str, Any]) -> str:
     cover = article.get("cover") if isinstance(article.get("cover"), dict) else {}
     prompt = str(cover.get("prompt") or cover.get("description") or "").strip()
-    if prompt:
-        return prompt
-    return f"Two to four symbolic objects showing the article idea: {article.get('title') or 'MintiStudio guide'}"
+    if not prompt:
+        prompt = f"Two to four symbolic objects showing the article idea: {article.get('title') or 'MintiStudio guide'}"
+    archetype = str(cover.get("archetype") or article.get("cover_archetype") or "").strip().upper()[:1]
+    label = COVER_ARCHETYPE_LABELS.get(archetype)
+    additions = [
+        "The reference images define ONLY the rendering style (soft 3D material, lighting, palette, background motifs). Do NOT reuse their characters, clothing, composition, layout, or objects."
+    ]
+    if label:
+        additions.append(f"Use cover archetype {archetype}: {label}.")
+    character = cover.get("character") if isinstance(cover.get("character"), dict) else article.get("cover_character")
+    if isinstance(character, dict) and character:
+        additions.append(
+            "Character attributes: "
+            + ", ".join(
+                str(character.get(key))
+                for key in ("gender", "age_range", "hair", "outfit", "face_style")
+                if character.get(key)
+            )
+            + "."
+        )
+    return f"{prompt}\n\nCover directives:\n" + "\n".join(additions)
 
 
 def _image_result_payload(result: BlogImageResult) -> dict[str, Any]:
@@ -1320,6 +1481,24 @@ def _image_result_payload(result: BlogImageResult) -> dict[str, Any]:
 
 def _replace_generated_placeholder(content: str, marker: str, markdown: str) -> str:
     return re.sub(r"<!--\s*" + re.escape(marker) + r"\s*-->", markdown, content, count=1)
+
+
+def _ensure_cover_metadata_columns(conn) -> None:
+    desired = {
+        "blog_articles": {
+            "cover_archetype": "VARCHAR",
+            "cover_character_json": "TEXT",
+        },
+        "blog_pipeline_runs": {
+            "cover_archetype": "VARCHAR",
+        },
+    }
+    for table, columns in desired.items():
+        existing = table_columns(conn, table)
+        for column, column_type in columns.items():
+            if column in existing:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _article_image_urls(article: dict[str, Any]) -> list[str]:
@@ -1539,16 +1718,25 @@ def _run_image_stage(
     if article_id and not state.dry_run:
         conn = get_db()
         try:
+            _ensure_cover_metadata_columns(conn)
             conn.execute(
                 """
                 UPDATE blog_articles
                 SET content = ?,
                     cover_image_url = ?,
+                    cover_archetype = ?,
+                    cover_character_json = ?,
                     content_updated_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                [article.get("content_md"), article.get("cover_image_url"), int(article_id)],
+                [
+                    article.get("content_md"),
+                    article.get("cover_image_url"),
+                    article.get("cover_archetype"),
+                    json.dumps(article.get("cover_character") or {}, ensure_ascii=False),
+                    int(article_id),
+                ],
             )
             conn.commit()
         finally:
@@ -1557,6 +1745,7 @@ def _run_image_stage(
 
 
 def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_plan: dict[str, Any], run_status: str) -> int:
+    _ensure_cover_metadata_columns(conn)
     _rename_archived_pipeline_slug_conflict(conn, str(article["slug"]))
     row = conn.execute(
         """
@@ -1580,6 +1769,26 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
         ],
     ).fetchone()
     article_id = int(row[0])
+    conn.execute(
+        """
+        UPDATE blog_articles
+        SET cover_archetype = ?, cover_character_json = ?
+        WHERE id = ?
+        """,
+        [
+            article.get("cover_archetype"),
+            json.dumps(article.get("cover_character") or {}, ensure_ascii=False),
+            article_id,
+        ],
+    )
+    conn.execute(
+        """
+        UPDATE blog_pipeline_runs
+        SET cover_archetype = ?
+        WHERE id = ?
+        """,
+        [article.get("cover_archetype"), int(state.run_id)],
+    )
     topic_status = "draft_ready" if run_status == "draft_ready" else "in_production"
     conn.execute("UPDATE blog_topics SET status = ? WHERE id = ?", [topic_status, int(state.topic["id"])])
     record_stage(
@@ -1679,6 +1888,7 @@ def run_images_for_existing_draft(*, run_id: int, article_id: int, low_medium_te
         conn.commit()
     finally:
         conn.close()
+    article = _prepare_cover_plan(article, topic)
     article, image_output, image_status = _run_image_stage(
         state=state,
         article=article,
@@ -1716,6 +1926,7 @@ def _writer_prompt() -> str:
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
+cover.archetypes must be the top 3 archetype letters from stable_context.cover_archetypes that fit the topic. Code chooses the final archetype for variety; do not force one in the prose.
 visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Valid visual types are screenshot, flow, compare, generate.
 For type=screenshot, screenshot_id is required and must exactly match one of requirements.available_screenshots ids. Never leave screenshot_id empty. If none of the listed screenshots fits the section, choose flow, compare, or generate instead.
 Use flow for a process/workflow and compare for metric or option comparisons. Use screenshots for product features. Use generate at most once per article, only when flow, compare, and screenshot do not fit.
@@ -1802,7 +2013,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             writer_retry_notes = [f"writer schema retry: {item}" for item in writer_schema_violations]
             if retry_violations:
                 writer_retry_notes.extend(f"writer schema still repaired by code: {item}" for item in retry_violations)
-        article = _normalize_article_payload(article)
+        article = _prepare_cover_plan(_normalize_article_payload(article), topic)
         conn = get_db()
         state.seq += 1
         set_current_stage(conn, state.run_id, "writer")
@@ -1831,7 +2042,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
             if not candidate_article.get("visuals") and previous_visuals:
                 candidate_article["visuals"] = previous_visuals
-            candidate_article = _normalize_article_payload(candidate_article)
+            candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article), topic)
             rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
             if rejection_reason:
                 article = previous_article
@@ -1863,7 +2074,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
                 if not candidate_article.get("visuals") and previous_visuals:
                     candidate_article["visuals"] = previous_visuals
-                candidate_article = _normalize_article_payload(candidate_article)
+                candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article), topic)
                 rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
                 if rejection_reason:
                     article = previous_article
@@ -1912,6 +2123,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         if not checks.get("ok"):
             raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
 
+        article = _prepare_cover_plan(article, topic)
         article = _replace_screenshot_placeholders(article, screenshots, copy_files=not dry_run)
         article, image_output, image_status = _run_image_stage(state=state, article=article)
         image_cost = sum((Decimal(str((item or {}).get("cost_usd") or "0")) for item in ([image_output.get("cover")] + list(image_output.get("visuals") or []))), Decimal("0"))
