@@ -1406,6 +1406,72 @@ def _normalize_category_keyword_items(raw_items: Any, *, limit: int = 20) -> Lis
     return items
 
 
+_DISCOVERY_KEYWORD_VARIANT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "from",
+    "how",
+    "in",
+    "into",
+    "my",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
+    "without",
+    "your",
+}
+
+
+def _discovery_keyword_variant_tokens(value: Any) -> set[str]:
+    tokens = set()
+    for token in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+        if len(token) < 3 or token in _DISCOVERY_KEYWORD_VARIANT_STOPWORDS:
+            continue
+        if token.endswith("ing") and len(token) > 5:
+            token = token[:-3]
+        elif token.endswith("tion") and len(token) > 6:
+            token = token[:-4]
+        elif token.endswith("s") and len(token) > 4:
+            token = token[:-1]
+        tokens.add(token)
+    return tokens
+
+
+def _is_close_discovery_keyword_variant(keyword: str, blocked_keywords: List[str]) -> bool:
+    candidate_tokens = _discovery_keyword_variant_tokens(keyword)
+    if len(candidate_tokens) < 2:
+        return False
+    for blocked in blocked_keywords:
+        blocked_tokens = _discovery_keyword_variant_tokens(blocked)
+        if len(blocked_tokens) < 2:
+            continue
+        overlap = candidate_tokens & blocked_tokens
+        if len(overlap) >= 3:
+            return True
+        if len(overlap) >= 2 and len(overlap) >= min(len(candidate_tokens), len(blocked_tokens)):
+            return True
+    return False
+
+
+def _filter_close_discovery_keyword_variants(
+    items: List[Dict[str, str]],
+    blocked_keywords: List[str],
+) -> tuple[List[Dict[str, str]], List[str]]:
+    kept: List[Dict[str, str]] = []
+    dropped: List[str] = []
+    for item in items:
+        keyword = str(item.get("keyword") or "").strip()
+        if keyword and _is_close_discovery_keyword_variant(keyword, blocked_keywords):
+            dropped.append(keyword)
+            continue
+        kept.append(item)
+    return kept, dropped
+
+
 def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]], *, source: str, default_category_id: Optional[int] = None, priority: int = 100, due_now: bool = False) -> Dict[str, Any]:
     inserted = 0
     already_present = 0
@@ -2876,10 +2942,21 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
     profile_text = str((existing_profile or [None])[0] or "").strip()
     exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(conn, limit=200)
     generated_items = _generate_seed_search_keyword_items(pool, existing_keywords=exclusions, conn=conn)
+    generated_raw_count = len(generated_items)
+    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=60, category_limit=20)
+    exhaustion_keywords = [
+        str(item.get("keyword") or "").strip()
+        for item in exhaustion.get("low_yield_keywords", [])
+        if str(item.get("keyword") or "").strip()
+    ]
+    generated_items, variant_dropped_keywords = _filter_close_discovery_keyword_variants(
+        generated_items,
+        list(exclusions or []) + exhaustion_keywords,
+    )
     generated_keywords = [item["keyword"] for item in generated_items]
     filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
     keywords = filter_result["kept"]
-    dropped_keywords = filter_result["dropped"]
+    dropped_keywords = list(variant_dropped_keywords) + filter_result["dropped"]
     item_by_keyword = {item["keyword"].lower(): item for item in generated_items}
     kept_items = [
         {
@@ -2909,7 +2986,7 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
     return {
         "success": True,
         "generated": len(keywords),
-        "generated_raw": len(generated_keywords),
+        "generated_raw": generated_raw_count,
         "newly_enqueued": int(queue_counts["newly_enqueued"]),
         "already_present": int(queue_counts["already_present"]),
         "keywords": keywords,
