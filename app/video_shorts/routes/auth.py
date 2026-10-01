@@ -704,6 +704,7 @@ def _render_login_page(*, resend_email: str = "", prefill_email: str = "", statu
             auth_plan=route_kwargs.get("plan", ""),
             register_url=url_for("video_shorts_bp.register", **route_kwargs),
             google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
+            seo_robots_content="noindex, follow",
         ),
         status_code,
     )
@@ -722,6 +723,7 @@ def _render_register_page(*, pending_email: str = "", status_code: int = 200):
             auth_plan=route_kwargs.get("plan", ""),
             login_url=url_for("video_shorts_bp.login", **route_kwargs),
             google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
+            seo_robots_content="noindex, follow",
         ),
         status_code,
     )

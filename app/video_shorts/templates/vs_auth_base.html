@@ -1,7 +1,7 @@
 {% extends "vs_marketing_base.html" %}
 
 {% block seo_meta %}
-  <meta name="robots" content="noindex, nofollow">
+  <meta name="robots" content="{{ seo_robots_content|default('noindex, nofollow') }}">
 {% endblock %}
 
 {% block extra_styles %}

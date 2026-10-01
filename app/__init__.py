@@ -138,11 +138,15 @@ def create_app():
 
     @app.get("/terms")
     def terms_page_alias():
-        return render_template("vs_terms.html", canonical_url=_absolute_public_url("/terms"))
+        return redirect(url_for("video_shorts_bp.terms_page"), code=301)
 
     @app.get("/data-deletion")
     def data_deletion_page_alias():
-        return render_template("vs_data_deletion.html", canonical_url=_absolute_public_url("/data-deletion"))
+        return redirect(url_for("video_shorts_bp.data_deletion_page"), code=301)
+
+    @app.get("/privacy")
+    def privacy_page_alias():
+        return redirect(url_for("video_shorts_bp.privacy_page"), code=301)
 
     def _sitemap_lastmod(value):
         if not value:
@@ -170,11 +174,15 @@ def create_app():
                 "lastmod": "",
             },
             {
-                "loc": _absolute_public_url("/terms"),
+                "loc": _absolute_public_url(url_for("video_shorts_bp.terms_page")),
                 "lastmod": "",
             },
             {
-                "loc": _absolute_public_url("/data-deletion"),
+                "loc": _absolute_public_url(url_for("video_shorts_bp.data_deletion_page")),
+                "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url(url_for("video_shorts_bp.contact_page")),
                 "lastmod": "",
             },
             {
@@ -199,7 +207,7 @@ def create_app():
             lines.append("  </url>")
         lines.append("</urlset>")
         response = Response("\n".join(lines) + "\n", mimetype="application/xml")
-        response.headers["Cache-Control"] = "public, max-age=3600"
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
     @app.get("/robots.txt")
