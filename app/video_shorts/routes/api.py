@@ -80,7 +80,6 @@ LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
 LEAD_DISCOVERY_EMAIL_ENRICH_LIMIT = 100
 LEAD_DISCOVERY_QUEUE_TAKE_DEFAULT = 10
 LEAD_DISCOVERY_QUEUE_TAKE_MAX = 20
-RESEARCH_INTERVAL_DAYS = 7
 SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
 DISCOVERY_STARTING_CATEGORIES = [
     "Finance/retirement",
@@ -1262,6 +1261,102 @@ def _load_discovery_category_metrics(conn, *, days: int = 14) -> List[Dict[str, 
     return metrics
 
 
+def _load_discovery_exhaustion_signals(
+    conn,
+    *,
+    days: int = 14,
+    keyword_limit: int = 40,
+    category_limit: int = 20,
+) -> Dict[str, Any]:
+    if not table_columns(conn, "discovery_run_keyword_stats"):
+        return {"low_yield_keywords": [], "low_yield_categories": []}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).replace(tzinfo=None)
+    keyword_rows = conn.execute(
+        """
+        SELECT
+            s.keyword,
+            COALESCE(c.name, '') AS category,
+            COUNT(*) AS searches,
+            COALESCE(SUM(s.raw_results), 0) AS raw_results,
+            COALESCE(SUM(s.new_candidates), 0) AS new_candidates,
+            COALESCE(SUM(s.enriched), 0) AS enriched,
+            COALESCE(SUM(s.icp_email_found), 0) AS icp_email_found
+        FROM discovery_run_keyword_stats s
+        LEFT JOIN discovery_categories c ON c.id = s.category_id
+        WHERE s.run_started_at >= ?
+          AND COALESCE(s.keyword, '') <> ''
+        GROUP BY s.keyword, COALESCE(c.name, '')
+        HAVING COALESCE(SUM(s.raw_results), 0) > 0
+           AND (
+                COALESCE(SUM(s.new_candidates), 0) = 0
+                OR (CAST(COALESCE(SUM(s.new_candidates), 0) AS REAL) / NULLIF(COALESCE(SUM(s.raw_results), 0), 0)) < 0.40
+           )
+        ORDER BY COALESCE(SUM(s.icp_email_found), 0) ASC,
+                 (CAST(COALESCE(SUM(s.new_candidates), 0) AS REAL) / NULLIF(COALESCE(SUM(s.raw_results), 0), 0)) ASC,
+                 COALESCE(SUM(s.raw_results), 0) DESC
+        LIMIT ?
+        """,
+        [cutoff, max(1, int(keyword_limit))],
+    ).fetchall()
+    category_rows = conn.execute(
+        """
+        SELECT
+            COALESCE(c.name, 'Uncategorized') AS category,
+            COUNT(DISTINCT lower(trim(s.keyword))) AS keywords,
+            COALESCE(SUM(s.raw_results), 0) AS raw_results,
+            COALESCE(SUM(s.new_candidates), 0) AS new_candidates,
+            COALESCE(SUM(s.enriched), 0) AS enriched,
+            COALESCE(SUM(s.icp_email_found), 0) AS icp_email_found
+        FROM discovery_run_keyword_stats s
+        LEFT JOIN discovery_categories c ON c.id = s.category_id
+        WHERE s.run_started_at >= ?
+        GROUP BY COALESCE(c.name, 'Uncategorized')
+        HAVING COALESCE(SUM(s.raw_results), 0) >= 50
+           AND (
+                COALESCE(SUM(s.new_candidates), 0) = 0
+                OR (CAST(COALESCE(SUM(s.new_candidates), 0) AS REAL) / NULLIF(COALESCE(SUM(s.raw_results), 0), 0)) < 0.40
+           )
+        ORDER BY COALESCE(SUM(s.icp_email_found), 0) ASC,
+                 (CAST(COALESCE(SUM(s.new_candidates), 0) AS REAL) / NULLIF(COALESCE(SUM(s.raw_results), 0), 0)) ASC,
+                 COALESCE(SUM(s.raw_results), 0) DESC
+        LIMIT ?
+        """,
+        [cutoff, max(1, int(category_limit))],
+    ).fetchall()
+    low_yield_keywords = []
+    for row in keyword_rows:
+        raw = int(row[3] or 0)
+        new_candidates = int(row[4] or 0)
+        low_yield_keywords.append(
+            {
+                "keyword": str(row[0] or "").strip(),
+                "category": str(row[1] or "").strip(),
+                "searches": int(row[2] or 0),
+                "raw": raw,
+                "new": new_candidates,
+                "freshness": round((new_candidates / raw), 4) if raw else 0,
+                "enriched": int(row[5] or 0),
+                "icp_email_found": int(row[6] or 0),
+            }
+        )
+    low_yield_categories = []
+    for row in category_rows:
+        raw = int(row[2] or 0)
+        new_candidates = int(row[3] or 0)
+        low_yield_categories.append(
+            {
+                "category": str(row[0] or "").strip(),
+                "keywords": int(row[1] or 0),
+                "raw": raw,
+                "new": new_candidates,
+                "freshness": round((new_candidates / raw), 4) if raw else 0,
+                "enriched": int(row[4] or 0),
+                "icp_email_found": int(row[5] or 0),
+            }
+        )
+    return {"low_yield_keywords": low_yield_keywords, "low_yield_categories": low_yield_categories}
+
+
 def _load_top_icp_channels_for_category_discovery(conn, *, limit: int = 10) -> List[Dict[str, Any]]:
     rows = conn.execute(
         """
@@ -1364,6 +1459,7 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
     if not _openai_client:
         return {"categories": [], "keywords": [], "newly_enqueued": 0, "already_present": 0, "errors": [{"error": "openai_not_configured"}]}
     metrics = _load_discovery_category_metrics(conn, days=14)
+    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=30, category_limit=12)
     top_channels = _load_top_icp_channels_for_category_discovery(conn, limit=10)
     blocked_statuses = set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"}
     blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=blocked_statuses)]
@@ -1377,10 +1473,13 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
         "their own video, aimed at consumers/B2C audiences, not at businesses. "
         "Exclude B2B services, agencies, law/accounting firms, corporate consulting, news, product review, faceless channels, "
         "compilation channels, and categories aimed at entrepreneurs, business owners, companies, or internal teams. "
+        "Balance two moves: propose genuinely new categories, and propose categories that open fresh long-tail subtopics adjacent "
+        "to proven categories without repeating saturated head terms. Avoid exhausted keywords/categories and close variants. "
         "Do NOT propose dropped, saturated, current testing categories, or close variants. Return STRICT JSON only: "
         "{\"categories\":[{\"name\":\"...\",\"persona\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
         f"Top ICP-fit channels: {json.dumps(top_channels, ensure_ascii=False)}\n\n"
         f"Existing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
+        f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}\n\n"
         f"Do NOT propose these or close variants: {json.dumps(blocked, ensure_ascii=False)}"
     )
     current_app.logger.info("Discovery category discovery prompt: %s", prompt)
@@ -2274,6 +2373,7 @@ def _generate_seed_search_keyword_items(
         )
     category_text = ""
     blocked_text = ""
+    exhaustion_text = ""
     if conn is not None:
         try:
             ensure_starting_discovery_categories(conn)
@@ -2283,12 +2383,21 @@ def _generate_seed_search_keyword_items(
                 if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
             ]
             blocked = [item["name"] for item in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+            exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=40, category_limit=16)
             category_text = (
-                "\n\nGenerate for active/kept categories only. Favor categories with high icp_email_found and high freshness. "
+                "\n\nGenerate for active/kept categories only. Favor categories with high icp_email_found AND stable/high freshness. "
+                "Do not keep choosing a category whose freshness is low or falling; if a proven category is getting saturated, "
+                "go more specific into fresh long-tail subtopics instead of repeating the same head topic. "
+                "Balance genuinely new category exploration with deeper fresh subtopic discovery inside proven categories. "
                 "Return each keyword with the category name you used.\n"
                 f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}"
             )
             blocked_text = f"\n\nNever generate for these dropped/saturated categories or close variants: {json.dumps(blocked, ensure_ascii=False)}"
+            exhaustion_text = (
+                "\n\nAvoid these exhausted or low-yield keywords/categories and close variants. They recently produced zero new leads "
+                "or freshness below 40%; do not paraphrase them. If you use a related category, move into a narrower unexplored angle:\n"
+                + json.dumps(exhaustion, ensure_ascii=False)
+            )
         except Exception:
             _log_discovery_exception("Could not load discovery category metrics for seed keyword generation")
     prompt = (
@@ -2300,13 +2409,16 @@ def _generate_seed_search_keyword_items(
         "Avoid meta or industry labels like: solo educator, online coach, consultant, consultant YouTube channel, "
         "expert creator, personal brand, content creator.\n"
         "Each query must be 2-5 words, specific to a topic/audience/problem, not a job title. "
+        "Make the queries more specific, niche, and long-tail; avoid the most popular generic head terms and broad saturated niches. "
         "Return STRICT JSON only: {\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
         "Seed channel signals:\n"
         + json.dumps(compact_items, ensure_ascii=False)
         + category_text
         + blocked_text
+        + exhaustion_text
         + exclusion_text
     )
+    current_app.logger.info("Discovery keyword generator prompt: %s", prompt)
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
@@ -2846,12 +2958,6 @@ def _update_keyword_queue_after_run(
     for item in queue_keywords:
         keyword = str(item.get("keyword") or "").strip()
         found_count = int(qualified_by_keyword.get(keyword.lower(), 0))
-        existing_row = conn.execute(
-            "SELECT found_count FROM keyword_queue WHERE id = ?",
-            [item["id"]],
-        ).fetchone()
-        lifetime_found_count = int((existing_row[0] if existing_row else 0) or 0) + found_count
-        requeue_at = (datetime.now(timezone.utc) + timedelta(days=RESEARCH_INTERVAL_DAYS)).replace(tzinfo=None)
         fully_enriched = True
         if fully_enriched_by_keyword is not None:
             fully_enriched = bool(fully_enriched_by_keyword.get(keyword.lower(), True))
@@ -2859,8 +2965,8 @@ def _update_keyword_queue_after_run(
             next_status = "queued"
             next_run_at = datetime.now(timezone.utc).replace(tzinfo=None)
         else:
-            next_status = "queued" if lifetime_found_count > 0 else "searched"
-            next_run_at = requeue_at if lifetime_found_count > 0 else None
+            next_status = "searched"
+            next_run_at = None
         conn.execute(
             """
             UPDATE keyword_queue
