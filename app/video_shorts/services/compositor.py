@@ -1923,6 +1923,7 @@ def _compose_trimmed_with_background(
     crop_w = max(0.01, min(1.0 - crop_x, _normalize(crop_settings.get("crop_w_ratio"), 1.0)))
     crop_h = max(0.01, min(1.0 - crop_y, _normalize(crop_settings.get("crop_h_ratio"), 1.0)))
     split_enabled = bool(crop_settings.get("split_enabled"))
+    crop_locked = bool(crop_settings.get("crop_locked"))
     has_crop2 = all(
         crop_settings.get(key) is not None
         for key in ("crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio")
@@ -2002,6 +2003,7 @@ def _compose_trimmed_with_background(
         face_track_points = []
         if (
             not is_default_crop
+            and not crop_locked
             and face_track_smooth_path
             and not podcast_mode
             and not video_override_source
@@ -2011,6 +2013,14 @@ def _compose_trimmed_with_background(
                 clip_start=start,
                 crop_w=crop_w,
                 crop_h=crop_h,
+            )
+        elif crop_locked and face_track_smooth_path and not split_stack_enabled:
+            current_app.logger.info(
+                "Face-track skipped: crop_locked crop_x=%.6f crop_y=%.6f crop_w=%.6f crop_h=%.6f",
+                crop_x,
+                crop_y,
+                crop_w,
+                crop_h,
             )
         dynamic_crop_enabled = len(face_track_points) >= 2
         if dynamic_crop_enabled:

@@ -11135,6 +11135,7 @@ def save_crop_area(video_pk):
             "crop_y_ratio = ?",
             "crop_w_ratio = ?",
             "crop_h_ratio = ?",
+            "crop_locked = ?",
         ]
         update_params: List[Any] = [
             split_enabled,
@@ -11142,6 +11143,7 @@ def save_crop_area(video_pk):
             y_val,
             w_val,
             h_val,
+            True,
         ]
         if has_crop2_values:
             update_set_parts.extend(
@@ -23252,6 +23254,8 @@ def autoclip_video(video_pk):
         )
         if "subtitle_preset" in crop_columns:
             crop_sql += ", subtitle_preset"
+        if "crop_locked" in crop_columns:
+            crop_sql += ", crop_locked"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -23293,6 +23297,9 @@ def autoclip_video(video_pk):
                     "subtitle_style": 37,
                     "subtitle_preset": 38,
                 }
+                if "subtitle_preset" not in crop_columns:
+                    query_indexes["subtitle_preset"] = None
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 38:
                 query_indexes = {
                     "split_enabled": 0,
@@ -23326,6 +23333,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": 36,
                     "subtitle_style": 37,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 37:
                 query_indexes = {
                     "split_enabled": 0,
@@ -23359,6 +23367,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": 36,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 35:
                 query_indexes = {
                     "split_enabled": 0,
@@ -23392,6 +23401,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": 34,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 30:
                 query_indexes = {
                     "split_enabled": None,
@@ -23425,6 +23435,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": 29,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 29:
                 query_indexes = {
                     "split_enabled": None,
@@ -23458,6 +23469,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 23:
                 query_indexes = {
                     "split_enabled": None,
@@ -23491,6 +23503,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 22:
                 query_indexes = {
                     "split_enabled": None,
@@ -23524,6 +23537,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 21:
                 # Has title_line_spacing + podcast_audio_filename, but no visual_mode.
                 query_indexes = {
@@ -23558,6 +23572,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             elif len(crop_row) >= 20:
                 # Has podcast_audio_filename, but no title_line_spacing/visual_mode.
                 query_indexes = {
@@ -23592,6 +23607,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             else:
                 # Legacy: no podcast_audio_filename, no title_line_spacing/visual_mode.
                 query_indexes = {
@@ -23626,6 +23642,7 @@ def autoclip_video(video_pk):
                     "subtitle_text_alpha": None,
                     "subtitle_style": None,
                 }
+                crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
@@ -23637,6 +23654,7 @@ def autoclip_video(video_pk):
                 "crop2_y_ratio": crop_row[6] if has_split_columns else None,
                 "crop2_w_ratio": crop_row[7] if has_split_columns else None,
                 "crop2_h_ratio": crop_row[8] if has_split_columns else None,
+                "crop_locked": bool(crop_row[crop_locked_index]) if crop_locked_index is not None else False,
             }
             video_crop_aspect = crop_row[query_indexes["crop_aspect"]] or "landscape"
             video_font_key = crop_row[query_indexes["title_font_key"]]
@@ -24272,6 +24290,7 @@ def autoclip_video(video_pk):
                 "crop2_y_ratio",
                 "crop2_w_ratio",
                 "crop2_h_ratio",
+                "crop_locked",
             }
         }
         preferred_bg_key = load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None

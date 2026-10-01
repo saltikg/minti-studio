@@ -520,6 +520,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("crop2_y_ratio", "DOUBLE", None),
         ("crop2_w_ratio", "DOUBLE", None),
         ("crop2_h_ratio", "DOUBLE", None),
+        ("crop_locked", "BOOLEAN", False),
         ("crop_aspect", "VARCHAR", "landscape"),
         ("title_font_key", "VARCHAR", DEFAULT_EDITOR_TITLE_FONT_KEY),
         ("title_font_size", "INTEGER", DEFAULT_TITLE_FONT_SIZE),
