@@ -13,6 +13,7 @@
   <meta property="og:site_name" content="MintiStudio">
   {% if article.cover_image_absolute_url %}
     <meta property="og:image" content="{{ article.cover_image_absolute_url }}">
+    <meta name="twitter:image" content="{{ article.cover_image_absolute_url }}">
   {% endif %}
   {% if article.published_on_iso %}
     <meta property="article:published_time" content="{{ article.published_on_iso }}">
@@ -1026,6 +1027,9 @@
       <div class="vs-blog-related-grid">
         {% for related in related_articles %}
           <article class="vs-blog-related-card">
+            {% if related.cover_image_url %}
+              <img src="{{ related.cover_image_url }}" alt="{{ related.title }}" loading="lazy">
+            {% endif %}
             <div class="vs-admin-muted">{{ related.published_on_display }}</div>
             <h3><a href="{{ related.url }}">{{ related.title }}</a></h3>
             <p>{{ related.summary }}</p>

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from flask import abort, current_app, render_template, request, url_for
 
@@ -20,15 +22,30 @@ def _base_url() -> str:
 
 
 def _absolute_url(path: str) -> str:
+    parsed = urlparse(str(path or ""))
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return str(path)
     return f"{_base_url()}{path}"
+
+
+def _iso_utc(value: Any) -> str:
+    if not value:
+        return ""
+    if not isinstance(value, datetime):
+        value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.replace(microsecond=0).isoformat()
 
 
 def _serialize_article(article: dict[str, Any]) -> dict[str, Any]:
     article = dict(article)
     published_at = article["published_at"]
     updated_at = article.get("content_updated_at") or article.get("updated_at")
-    article["published_on_iso"] = published_at.isoformat() if published_at else ""
-    article["updated_at_iso"] = updated_at.isoformat() if updated_at else article["published_on_iso"]
+    article["published_on_iso"] = _iso_utc(published_at)
+    article["updated_at_iso"] = _iso_utc(updated_at) or article["published_on_iso"]
     article["published_on_display"] = (
         f"{published_at.strftime('%B')} {published_at.day}, {published_at.year}" if published_at else ""
     )

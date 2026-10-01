@@ -89,7 +89,7 @@ def _article_image_public_url(slug: str, filename: str) -> str:
     return f"/video_shorts/static/img/blog/{quote(safe_slug)}/{quote(safe_name)}"
 
 
-def _article_image_markdown_snippet(slug: str, filename: str, alt_text: str = "Alt text") -> str:
+def _article_image_markdown_snippet(slug: str, filename: str, alt_text: str = "Blog image") -> str:
     return f"![{alt_text}]({_article_image_public_url(slug, filename)})"
 
 

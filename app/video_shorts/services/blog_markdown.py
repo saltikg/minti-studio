@@ -22,6 +22,7 @@ _IMAGE_WITH_EM_CAPTION_RE = re.compile(r"<p>\s*(<img\b[^>]*>)\s*</p>\s*<p>\s*<em
 _IMAGE_RE = re.compile(r"<p>\s*(<img\b[^>]*>)\s*</p>", re.I)
 _TABLE_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.I | re.S)
 _SPECIMEN_TAGS = {"short": "Short", "long": "Long-form"}
+_PLACEHOLDER_ALT_VALUES = {"alt text", "image", "placeholder"}
 
 _ALLOWED_TAGS = [
     "a",
@@ -140,6 +141,10 @@ def _is_screenshot_image(src: str, title: str) -> bool:
 
 def _caption_from_image(alt: str, title: str) -> str:
     caption = re.sub(r"\s*(?:\|\|\||\[)\s*(?:screenshot|data-screenshot)\s*\]?\s*$", "", title, flags=re.I).strip()
+    if caption.lower() in _PLACEHOLDER_ALT_VALUES:
+        return ""
+    if not caption and alt.lower().strip() in _PLACEHOLDER_ALT_VALUES:
+        return ""
     return caption or alt
 
 
@@ -149,6 +154,8 @@ def _figure_html(match: re.Match[str]) -> str:
     src = attrs.get("src", "")
     alt = attrs.get("alt", "")
     title = attrs.get("title", "")
+    if alt.lower().strip() in _PLACEHOLDER_ALT_VALUES:
+        alt = "Blog image"
     safe_src = escape(src, quote=True)
     safe_alt = escape(alt, quote=True)
     caption = _caption_from_image(alt, title)

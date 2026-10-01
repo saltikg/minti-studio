@@ -67,7 +67,7 @@ LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
 COVER_ARCHETYPES_PATH = CONTEXT_ROOT / "style" / "cover_archetypes.md"
-CTA_URL = "https://mintistudio.com/video_shorts/login"
+CTA_URL = "https://mintistudio.com/video_shorts/register"
 BASE_URL = (os.getenv("BLOG_PUBLIC_BASE_URL") or "https://mintistudio.com").rstrip("/")
 COMPETITOR_FACTS_PATHS = (
     CONTEXT_ROOT / "competitor_facts.md",
@@ -1028,6 +1028,12 @@ def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[st
             screenshot_id = str(visual.get("screenshot_id") or "").strip()
             if screenshot_id not in available_ids:
                 violations.append(f"{marker}: screenshot_id must be a listed available id, got {screenshot_id!r}")
+        alt_text = str(visual.get("alt") or "").strip().lower()
+        caption_text = str(visual.get("caption") or "").strip().lower()
+        if alt_text in {"alt text", "image", "placeholder"}:
+            violations.append(f"{marker}: alt must be a real descriptive phrase, not {visual.get('alt')!r}")
+        if caption_text in {"alt text", "image", "placeholder"}:
+            violations.append(f"{marker}: caption must be real or omitted, not {visual.get('caption')!r}")
     generate_count = sum(1 for visual in visuals if isinstance(visual, dict) and visual.get("type") == "generate")
     if generate_count > 1:
         violations.append(f"generate may be used at most once before repair; got {generate_count}")
@@ -1935,6 +1941,7 @@ For flow or compare visuals, put the full :::flow or :::compare block directly i
 Flow syntax is 2-5 lines of: icon | title max 4 words | subtitle max 8 words. Allowed icons: video, clips, scissors, calendar, clock, eye, users, chart, mic, upload, check, sparkles.
 Compare syntax is exactly two metric lines of: icon | value | label | direction. Direction must be up, down, or flat. Any number in the value must already appear in the article text. Add an optional note: line.
 Each visual must include a short caption, maximum 12 words, suitable for the markdown image title or component caption.
+Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; every visual alt must describe the actual visual.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
 Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
