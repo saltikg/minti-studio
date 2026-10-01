@@ -1415,6 +1415,17 @@
   .clip-schedule-all-preview-row:last-child {
     border-bottom: 0;
   }
+  .clip-schedule-all-success-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(34, 197, 94, 0.14);
+    color: #4ade80;
+    font-size: 1.35rem;
+  }
   .clip-pane-title {
     color: #fff;
     font-weight: 700;
@@ -4534,23 +4545,35 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="mb-3">
-          <label class="form-label fw-semibold" for="schedule-all-start-input">Start date/time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
-          <input type="datetime-local" class="form-control" id="schedule-all-start-input">
+        <div id="schedule-all-form-view">
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="schedule-all-start-input">Start date/time (<span data-timezone-label>{{ user_time_zone_label }}</span>)</label>
+            <input type="datetime-local" class="form-control" id="schedule-all-start-input">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" for="schedule-all-interval-input">Interval (hours)</label>
+            <input type="number" class="form-control" id="schedule-all-interval-input" min="1" step="1" value="24">
+          </div>
+          <div class="clip-schedule-all-feedback text-white-50 mb-2" id="schedule-all-eligibility" aria-live="polite"></div>
+          <div class="clip-schedule-all-preview text-white-50" id="schedule-all-preview" aria-live="polite"></div>
+          <div class="clip-schedule-all-feedback text-white-50 d-none mt-3" id="schedule-all-feedback" aria-live="polite"></div>
         </div>
-        <div class="mb-3">
-          <label class="form-label fw-semibold" for="schedule-all-interval-input">Interval (hours)</label>
-          <input type="number" class="form-control" id="schedule-all-interval-input" min="1" step="1" value="10">
+        <div class="d-none" id="schedule-all-success-view" aria-live="polite">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span class="clip-schedule-all-success-icon" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+            <div>
+              <div class="fw-semibold fs-5" id="schedule-all-success-title">Clips scheduled</div>
+              <div class="text-white-50 small">Pacific times</div>
+            </div>
+          </div>
+          <div class="clip-schedule-all-preview text-white-50" id="schedule-all-success-list"></div>
         </div>
-        <div class="clip-schedule-all-feedback text-white-50 mb-2" id="schedule-all-eligibility" aria-live="polite"></div>
-        <div class="clip-schedule-all-preview text-white-50" id="schedule-all-preview" aria-live="polite"></div>
-        <div class="clip-schedule-all-feedback text-white-50 d-none mt-3" id="schedule-all-feedback" aria-live="polite"></div>
       </div>
       <div class="modal-footer border-0">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-secondary" id="schedule-all-cancel-btn" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary d-inline-flex align-items-center gap-2" id="schedule-all-confirm-btn" disabled>
           <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-          <span class="btn-label">Schedule 0 clips</span>
+          <span class="btn-label">Schedule clips</span>
         </button>
       </div>
     </div>
@@ -8438,6 +8461,7 @@ const initScoreThresholdBatchControls = () => {
 
 const scheduleAllState = {
   running: false,
+  success: false,
 };
 
 const connectedPublishPlatforms = {
@@ -8449,11 +8473,16 @@ const connectedPublishPlatforms = {
 const scheduleAllElements = () => ({
   button: document.getElementById("clip-schedule-all-btn"),
   modal: document.getElementById("scheduleAllClipsModal"),
+  formView: document.getElementById("schedule-all-form-view"),
+  successView: document.getElementById("schedule-all-success-view"),
+  successTitle: document.getElementById("schedule-all-success-title"),
+  successList: document.getElementById("schedule-all-success-list"),
   startInput: document.getElementById("schedule-all-start-input"),
   intervalInput: document.getElementById("schedule-all-interval-input"),
   eligibility: document.getElementById("schedule-all-eligibility"),
   preview: document.getElementById("schedule-all-preview"),
   feedback: document.getElementById("schedule-all-feedback"),
+  cancel: document.getElementById("schedule-all-cancel-btn"),
   confirm: document.getElementById("schedule-all-confirm-btn"),
   confirmLabel: document.querySelector("#schedule-all-confirm-btn .btn-label"),
   spinner: document.querySelector("#schedule-all-confirm-btn .spinner-border"),
@@ -8569,6 +8598,65 @@ const getScheduleAllNotCreatedCount = () => {
     .length;
 };
 
+const getScheduleAllCreatedCount = () => {
+  return Array.from(document.querySelectorAll(".clip-rail-item"))
+    .filter((railItem) => String(railItem.dataset.status || "").trim().toLowerCase() === "created")
+    .length;
+};
+
+const buildScheduleAllRows = (clips, startValue, intervalHours) => {
+  return clips.map((clip, index) => ({
+    clip,
+    title: clip.title || `Clip ${index + 1}`,
+    publishAt: addHoursToScheduleLocalValue(startValue, index * intervalHours),
+    label: `Clip ${index + 1}`,
+  }));
+};
+
+const renderScheduleAllRows = (rows) => {
+  return rows.map((row) => (
+    `<div class="clip-schedule-all-preview-row"><span>${escapeHtml(row.label)} · ${escapeHtml(row.title)}</span><strong>${escapeHtml(formatSchedulePreviewValue(row.publishAt))}</strong></div>`
+  )).join("");
+};
+
+const setScheduleAllSuccessView = (rows) => {
+  const { formView, successView, successTitle, successList, cancel, confirm, confirmLabel, spinner } = scheduleAllElements();
+  scheduleAllState.success = true;
+  formView?.classList.add("d-none");
+  successView?.classList.remove("d-none");
+  if (successTitle) {
+    const count = rows.length;
+    successTitle.textContent = `${count} ${count === 1 ? "clip" : "clips"} scheduled`;
+  }
+  if (successList) {
+    successList.innerHTML = renderScheduleAllRows(rows);
+  }
+  if (cancel) {
+    cancel.classList.add("d-none");
+  }
+  if (confirm) {
+    confirm.disabled = false;
+    confirm.dataset.doneMode = "1";
+  }
+  if (confirmLabel) {
+    confirmLabel.textContent = "Done";
+  }
+  spinner?.classList.add("d-none");
+};
+
+const resetScheduleAllModalView = () => {
+  const { formView, successView, cancel, confirm } = scheduleAllElements();
+  scheduleAllState.success = false;
+  formView?.classList.remove("d-none");
+  successView?.classList.add("d-none");
+  if (cancel) {
+    cancel.classList.remove("d-none");
+  }
+  if (confirm) {
+    confirm.dataset.doneMode = "0";
+  }
+};
+
 const updateScheduleAllButtonState = () => {
   const { button } = scheduleAllElements();
   if (!button) {
@@ -8578,11 +8666,14 @@ const updateScheduleAllButtonState = () => {
     button.dataset.instagramConnected === "1" ||
     button.dataset.facebookConnected === "1";
   const eligibleCount = getScheduleAllEligibleClips().length;
-  button.disabled = scheduleAllState.running || !hasConnectedPlatform || eligibleCount === 0;
+  const createdCount = getScheduleAllCreatedCount();
+  button.disabled = scheduleAllState.running || !hasConnectedPlatform || createdCount === 0;
   if (!hasConnectedPlatform) {
     button.title = "Connect a publishing platform first";
-  } else if (!eligibleCount) {
+  } else if (!createdCount) {
     button.title = "No created clips to schedule yet — use Create clips first.";
+  } else if (!eligibleCount) {
+    button.title = "All clips are already scheduled.";
   } else {
     button.title = "";
   }
@@ -8593,20 +8684,29 @@ const updateScheduleAllPreview = () => {
   if (!startInput || !intervalInput || !preview || !confirm || !confirmLabel) {
     return;
   }
+  if (scheduleAllState.success) {
+    spinner?.classList.add("d-none");
+    return;
+  }
   const clips = getScheduleAllEligibleClips();
   updateScheduleAllButtonState();
   const notCreatedCount = getScheduleAllNotCreatedCount();
-  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
+  const createdCount = getScheduleAllCreatedCount();
+  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "24", 10) || 24);
   intervalInput.value = intervalHours;
   const minStartValue = getScheduleMinStartValue();
   startInput.min = minStartValue;
   const startValue = String(startInput.value || "").trim();
   const validStart = Boolean(parseScheduleLocalValue(startValue)) && startValue >= minStartValue;
   if (eligibility) {
-    if (!clips.length) {
+    if (!createdCount) {
       eligibility.textContent = "No created clips to schedule yet — use Create clips first.";
       eligibility.classList.remove("text-white-50");
       eligibility.classList.add("text-warning");
+    } else if (!clips.length) {
+      eligibility.textContent = "All clips are already scheduled.";
+      eligibility.classList.remove("text-warning");
+      eligibility.classList.add("text-white-50");
     } else {
       const createdLabel = `${clips.length} created ${clips.length === 1 ? "clip" : "clips"}`;
       const skippedLabel = notCreatedCount
@@ -8622,13 +8722,11 @@ const updateScheduleAllPreview = () => {
   } else if (!validStart) {
     preview.innerHTML = '<div class="text-warning">Start time must be in the future.</div>';
   } else {
-    preview.innerHTML = clips.map((clip, index) => {
-      const scheduledAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
-      const title = clip.title || `Clip ${index + 1}`;
-      return `<div class="clip-schedule-all-preview-row"><span>Clip ${index + 1} · ${escapeHtml(title)}</span><strong>${escapeHtml(formatSchedulePreviewValue(scheduledAt))}</strong></div>`;
-    }).join("");
+    preview.innerHTML = renderScheduleAllRows(buildScheduleAllRows(clips, startValue, intervalHours));
   }
-  confirmLabel.textContent = `Schedule ${clips.length} ${clips.length === 1 ? "clip" : "clips"}`;
+  confirmLabel.textContent = scheduleAllState.running
+    ? "Scheduling…"
+    : (clips.length ? `Schedule ${clips.length} ${clips.length === 1 ? "clip" : "clips"}` : "Schedule clips");
   confirm.disabled = scheduleAllState.running || !clips.length || !validStart;
   spinner?.classList.toggle("d-none", !scheduleAllState.running);
 };
@@ -8711,7 +8809,7 @@ const runScheduleAllClips = async () => {
   }
   const clips = getScheduleAllEligibleClips();
   const startValue = String(startInput.value || "").trim();
-  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "10", 10) || 10);
+  const intervalHours = Math.max(1, Number.parseInt(intervalInput.value || "24", 10) || 24);
   const guardValue = getScheduleSubmitGuardValue();
   if (!clips.length || !parseScheduleLocalValue(startValue) || startValue < guardValue) {
     if (startValue && startValue < guardValue) {
@@ -8728,30 +8826,35 @@ const runScheduleAllClips = async () => {
       return;
     }
   }
+  const scheduledRows = buildScheduleAllRows(clips, startValue, intervalHours);
   scheduleAllState.running = true;
   updateScheduleAllPreview();
-  setScheduleAllFeedback(`Scheduled 0 of ${clips.length} clips…`, "text-white-50");
+  setScheduleAllFeedback("");
   let scheduledCount = 0;
-  for (const [index, clip] of clips.entries()) {
-    const publishAt = addHoursToScheduleLocalValue(startValue, index * intervalHours);
+  let scheduleError = null;
+  for (const row of scheduledRows) {
+    const { clip, publishAt } = row;
     try {
       await scheduleOneClipToConnectedPlatforms(clip, publishAt);
       scheduledCount += 1;
       markClipAsScheduled(clip, publishAt);
-      setScheduleAllFeedback(`Scheduled ${scheduledCount} of ${clips.length} clips…`, "text-white-50");
     } catch (error) {
-      if (error.status === 403) {
-        setScheduleAllFeedback(`Scheduled ${scheduledCount} clips; YouTube connection failed — reconnect to continue.`, "text-warning");
-        break;
-      }
-      setScheduleAllFeedback(`Scheduled ${scheduledCount} clips; one clip could not be scheduled.`, "text-warning");
+      scheduleError = error;
       break;
     }
   }
-  if (scheduledCount === clips.length) {
-    setScheduleAllFeedback(`All ${scheduledCount} ${scheduledCount === 1 ? "clip has" : "clips have"} been scheduled.`, "text-success");
-  }
   scheduleAllState.running = false;
+  if (!scheduleError && scheduledCount === clips.length) {
+    setScheduleAllFeedback("");
+    setScheduleAllSuccessView(scheduledRows);
+    updateScheduleAllButtonState();
+    return;
+  }
+  const detail = scheduleError?.status === 403
+    ? "Connection failed — reconnect to continue."
+    : (scheduleError?.message || "One clip could not be scheduled.");
+  const prefix = scheduledCount ? `Scheduled ${scheduledCount} of ${clips.length} clips. ` : "";
+  setScheduleAllFeedback(`${prefix}${detail}`, "text-danger");
   updateScheduleAllPreview();
 };
 
@@ -8771,6 +8874,7 @@ const initScheduleAllClipsControls = () => {
     if (button.disabled) {
       return;
     }
+    resetScheduleAllModalView();
     setScheduleAllFeedback("");
     const minStartValue = getScheduleMinStartValue();
     startInput.min = minStartValue;
@@ -8778,7 +8882,7 @@ const initScheduleAllClipsControls = () => {
       startInput.value = minStartValue;
     }
     if (!intervalInput.value) {
-      intervalInput.value = "10";
+      intervalInput.value = "24";
     }
     updateScheduleAllPreview();
     modalInstance?.show();
@@ -8793,8 +8897,19 @@ const initScheduleAllClipsControls = () => {
       setScheduleAllFeedback("");
       updateScheduleAllPreview();
     });
-    confirm.addEventListener("click", runScheduleAllClips);
+    confirm.addEventListener("click", () => {
+      if (confirm.dataset.doneMode === "1") {
+        modalInstance?.hide();
+        return;
+      }
+      runScheduleAllClips();
+    });
     modal.addEventListener("show.bs.modal", updateScheduleAllPreview);
+    modal.addEventListener("hidden.bs.modal", () => {
+      resetScheduleAllModalView();
+      setScheduleAllFeedback("");
+      updateScheduleAllPreview();
+    });
   }
   updateScheduleAllButtonState();
 };
