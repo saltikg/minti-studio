@@ -8491,7 +8491,7 @@ const scheduleAllElements = () => ({
 const padSchedulePart = (value) => String(value).padStart(2, "0");
 
 const formatDateInUserTimeZone = (date) => {
-  const timeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
+  const timeZone = youtubeModalContext?.getUserTimeZone?.() || {{ (user_time_zone or "America/Los_Angeles") | tojson }};
   try {
     const formatter = new Intl.DateTimeFormat("en-CA", {
       timeZone,
@@ -8733,8 +8733,15 @@ const updateScheduleAllPreview = () => {
 
 const markClipAsScheduled = (clip, publishAt, options = {}) => {
   const showCardFeedback = Boolean(options.showCardFeedback);
+  const payload = options.payload || {};
+  const youtubeVideoId = String(payload.youtube_video_id || payload.yt_video_id || "").trim();
+  const publishAtValue = String(payload.publish_at_local || publishAt || "").trim();
   clip.railItem.dataset.publishStatus = "scheduled";
-  clip.railItem.dataset.publishAt = publishAt;
+  clip.railItem.dataset.dbPublishStatus = "scheduled";
+  clip.railItem.dataset.publishAt = publishAtValue;
+  if (youtubeVideoId) {
+    clip.railItem.dataset.ytVideoId = youtubeVideoId;
+  }
   const deleteBtn = document.querySelector(`[data-delete-clip-btn][data-plan-index="${CSS.escape(String(clip.planIndex || ""))}"]`);
   if (deleteBtn) {
     deleteBtn.disabled = true;
@@ -8744,14 +8751,16 @@ const markClipAsScheduled = (clip, publishAt, options = {}) => {
   const railStatusText = clip.railItem.querySelector(".clip-rail-status-text");
   if (railStatus && railStatusText) {
     railStatus.classList.remove("d-none");
-    railStatusText.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
+    railStatusText.textContent = `Scheduled ${formatSchedulePreviewValue(publishAtValue)}`;
   }
   if (clip.card) {
     clip.card.dataset.publish = "scheduled";
+    clip.card.dataset.modalYtTooltip = `Schedule date: ${formatSchedulePreviewValue(publishAtValue)}`;
+    clip.card.dataset.modalYtIconClass = "text-warning";
     const feedback = clip.card.querySelector(".clip-card-save-feedback");
     if (feedback) {
       if (showCardFeedback) {
-        feedback.textContent = `Scheduled ${formatSchedulePreviewValue(publishAt)}`;
+        feedback.textContent = `Scheduled ${formatSchedulePreviewValue(publishAtValue)}`;
         feedback.classList.remove("d-none", "text-danger", "text-warning");
         feedback.classList.add("text-success");
       } else {
@@ -8760,6 +8769,15 @@ const markClipAsScheduled = (clip, publishAt, options = {}) => {
         feedback.classList.remove("text-success", "text-danger", "text-warning");
       }
     }
+  }
+  if (clip.planIndex) {
+    document.querySelectorAll(`.send-to-youtube-btn[data-plan-index="${CSS.escape(String(clip.planIndex))}"]`).forEach((button) => {
+      button.dataset.publishAt = publishAtValue;
+      button.dataset.buttonLabel = "Update schedule";
+      if (youtubeVideoId) {
+        button.dataset.ytVideoId = youtubeVideoId;
+      }
+    });
   }
 };
 
@@ -8835,9 +8853,9 @@ const runScheduleAllClips = async () => {
   for (const row of scheduledRows) {
     const { clip, publishAt } = row;
     try {
-      await scheduleOneClipToConnectedPlatforms(clip, publishAt);
+      const payload = await scheduleOneClipToConnectedPlatforms(clip, publishAt);
       scheduledCount += 1;
-      markClipAsScheduled(clip, publishAt);
+      markClipAsScheduled(clip, publishAt, { payload });
     } catch (error) {
       scheduleError = error;
       break;
@@ -8846,6 +8864,7 @@ const runScheduleAllClips = async () => {
   scheduleAllState.running = false;
   if (!scheduleError && scheduledCount === clips.length) {
     setScheduleAllFeedback("");
+    await refreshClipList();
     setScheduleAllSuccessView(scheduledRows);
     updateScheduleAllButtonState();
     return;
@@ -9285,7 +9304,7 @@ const youtubeModalContext = (() => {
   const timeZoneUpdateUrl = {{ timezone_update_url | tojson }};
   let userTimeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
   const timezoneLabels = {{ timezone_label_map | tojson }};
-  const timezoneLabelEls = Array.from(form.querySelectorAll("[data-timezone-label]"));
+  const timezoneLabelEls = Array.from(document.querySelectorAll("[data-timezone-label]"));
   const timezoneEditorEls = Array.from(form.querySelectorAll("[data-timezone-editor]"));
   const timezoneTriggerEls = Array.from(form.querySelectorAll("[data-timezone-editor-trigger]"));
   const hideTimezoneEditors = () => {
@@ -9665,6 +9684,7 @@ const youtubeModalContext = (() => {
     resetDescriptionStatus,
     decodeDescriptionValue,
     encodeDescriptionValue,
+    getUserTimeZone: () => userTimeZone,
     syncDescriptionCounter,
     setActiveSendBtn: (btn) => {
       activeSendBtn = btn;

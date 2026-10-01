@@ -20852,8 +20852,10 @@ def upload_clip_to_youtube():
     def _ajax_fail(message: str, status: int = 400):
         return jsonify(success=False, message=message), status
 
-    def _ajax_ok(message: str = "Publish queued."):
-        return jsonify(success=True, message=message)
+    def _ajax_ok(message: str = "Publish queued.", **extra: Any):
+        payload = {"success": True, "message": message}
+        payload.update(extra)
+        return jsonify(payload)
 
     def _notify(message: str, category: str) -> None:
         if not is_ajax:
@@ -21393,7 +21395,13 @@ def upload_clip_to_youtube():
                     _notify("TikTok kuyruğu oluşturulamadı; logları kontrol edin.", "danger")
 
     if is_ajax:
-        return _ajax_ok()
+        return _ajax_ok(
+            youtube_video_id=youtube_short_id,
+            yt_video_id=youtube_short_id,
+            publish_status="scheduled" if publish_at else ("uploaded" if youtube_short_id else None),
+            publish_at=publish_at,
+            publish_at_local=publish_at_value or None,
+        )
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
 
