@@ -13,6 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import logging, urllib.request
@@ -125,7 +126,7 @@ class PermanentRenderJobError(RuntimeError):
 ACCESS_LOG_PATH = Path(os.getenv("GUNICORN_ACCESS_LOG_PATH", "/home/ubuntu/apps/minti_studio/logs/gunicorn-access.log"))
 ACCESS_LOG_TIME_RE = re.compile(r"\[(?P<ts>[^\]]+)\]")
 BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|uptime|monitor|health)", re.I)
-ADMIN_OR_STATIC_PATH_RE = re.compile(r"\\s(?:GET|POST|HEAD|OPTIONS)\\s+(/[^\\s?]*)")
+ACCESS_LOG_REQUEST_RE = re.compile(r'"(?:GET|POST|HEAD|OPTIONS)\s+(?P<target>\S+)')
 _PT = ZoneInfo("America/Los_Angeles")
 _last_idle_skip_log: Dict[str, float] = {}
 _last_discovery_temp_janitor_run = 0.0
@@ -182,8 +183,12 @@ def _parse_access_log_time(line: str) -> Optional[datetime]:
 
 
 def _access_log_path(line: str) -> str:
-    match = ADMIN_OR_STATIC_PATH_RE.search(line)
-    return str(match.group(1) if match else "")
+    match = ACCESS_LOG_REQUEST_RE.search(line)
+    if not match:
+        return ""
+    target = str(match.group("target") or "")
+    parsed = urlsplit(target)
+    return parsed.path or target.split("?", 1)[0]
 
 
 def _is_ignored_web_hit(line: str) -> bool:

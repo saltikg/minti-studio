@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -24,7 +25,7 @@ DEFAULT_ENV_PATH = ROOT / ".env"
 ACCESS_LOG_PATH = Path("/home/ubuntu/apps/minti_studio/logs/gunicorn-access.log")
 RECENT_WEB_WINDOW = timedelta(minutes=5)
 ACCESS_LOG_TIME_RE = re.compile(r"\[(?P<ts>[^\]]+)\]")
-ACCESS_LOG_PATH_RE = re.compile(r"\s(?:GET|POST|HEAD|OPTIONS)\s+(/[^\s?]*)")
+ACCESS_LOG_REQUEST_RE = re.compile(r'"(?:GET|POST|HEAD|OPTIONS)\s+(?P<target>\S+)')
 BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|uptime|monitor|health)", re.I)
 
 
@@ -170,8 +171,12 @@ def _parse_access_log_time(line: str) -> Optional[datetime]:
 
 
 def _access_log_path(line: str) -> str:
-    match = ACCESS_LOG_PATH_RE.search(line)
-    return str(match.group(1) if match else "")
+    match = ACCESS_LOG_REQUEST_RE.search(line)
+    if not match:
+        return ""
+    target = str(match.group("target") or "")
+    parsed = urlsplit(target)
+    return parsed.path or target.split("?", 1)[0]
 
 
 def _is_ignored_web_hit(line: str) -> bool:
