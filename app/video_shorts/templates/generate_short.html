@@ -8517,9 +8517,9 @@ const formatDateInUserTimeZone = (date) => {
   return `${date.getFullYear()}-${padSchedulePart(date.getMonth() + 1)}-${padSchedulePart(date.getDate())}T${padSchedulePart(date.getHours())}:${padSchedulePart(date.getMinutes())}`;
 };
 
-const getScheduleMinStartValue = () => formatDateInUserTimeZone(new Date(Date.now() + 60 * 60 * 1000));
+const getScheduleMinStartValue = () => formatDateInUserTimeZone(new Date());
 
-const getScheduleSubmitGuardValue = () => formatDateInUserTimeZone(new Date(Date.now() + 15 * 60 * 1000));
+const getScheduleSubmitGuardValue = getScheduleMinStartValue;
 
 const parseScheduleLocalValue = (value) => {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
