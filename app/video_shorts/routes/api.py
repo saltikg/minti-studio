@@ -93,6 +93,11 @@ DISCOVERY_STARTING_CATEGORIES = [
 ]
 DISCOVERY_CATEGORY_ACTIVE_STATUSES = {"active", "testing", "kept"}
 DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated"}
+DISCOVERY_KEYWORD_LANE_TARGETS = {
+    "seed": 8,
+    "icp_exploration": 8,
+    "category_deepening": 4,
+}
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
 DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
 
@@ -2502,6 +2507,60 @@ def _generate_seed_search_keyword_items(
         return _normalize_category_keyword_items(content, limit=20)
 
 
+def _generate_icp_definition_keyword_items(conn, *, lane: str = "icp_exploration") -> List[Dict[str, str]]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    ensure_starting_discovery_categories(conn)
+    metrics = [
+        item
+        for item in _load_discovery_category_metrics(conn, days=14)
+        if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
+    ]
+    blocked = [item["name"] for item in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=60, category_limit=20)
+    lane_name = "good-category deepening" if lane == "category_deepening" else "seed-independent ICP exploration"
+    lane_instruction = (
+        "Focus on proven categories with non-falling freshness and real ICP+email output, but go narrower into unexplored "
+        "long-tail subtopics. Do not repeat the category's broad head terms."
+        if lane == "category_deepening"
+        else "Propose new verticals that are not represented by the current seed pool or recent categories. Explore different "
+        "consumer-facing subject areas, not lookalikes of any seed channel."
+    )
+    prompt = (
+        f"You are generating YouTube discovery keywords for Minti's {lane_name} lane. "
+        "Do NOT use seed channel examples. Use only the ICP definition and performance signals below.\n\n"
+        "ICP definition: an individual B2C creator who talks to camera in long-form YouTube videos, shares information, "
+        "teaches from expertise or lived experience, and likely has an offer, coaching, course, community, service, book, "
+        "curriculum, paid newsletter, or other thing to sell. Prefer solo educators, coaches, consultants, and subject-matter "
+        "experts. Exclude B2B agencies, corporate consulting, law/accounting firms, news, product review, faceless, compilation, "
+        "and pure entertainment channels.\n\n"
+        f"{lane_instruction}\n"
+        "Return 20 YouTube search queries. Each query must be 2-5 words, specific, niche, long-tail, consumer-facing/B2C, "
+        "and written like something a viewer would search or a creator would title a long-form educational video. Avoid "
+        "popular/generic head terms and close variants of exhausted keywords/categories. Return STRICT JSON only: "
+        "{\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
+        f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
+        f"Dropped/saturated categories to avoid: {json.dumps(blocked, ensure_ascii=False)}\n\n"
+        f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}"
+    )
+    current_app.logger.info("Discovery %s keyword generator prompt: %s", lane, prompt)
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You create seed-independent, long-tail YouTube discovery keywords for B2C creator outreach. Return JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.45 if lane == "icp_exploration" else 0.35,
+    )
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose=lane, conn=conn)
+    content = (response.choices[0].message.content or "").strip()
+    try:
+        payload = json.loads(content)
+        return _normalize_category_keyword_items(payload.get("keywords"), limit=20)
+    except Exception:
+        return _normalize_category_keyword_items(content, limit=20)
+
+
 def _generate_seed_search_keywords(profile_items: List[Dict[str, Any]], existing_keywords: Optional[List[str]] = None) -> List[str]:
     return [item["keyword"] for item in _generate_seed_search_keyword_items(profile_items, existing_keywords=existing_keywords)]
 
@@ -2551,6 +2610,34 @@ def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str
     return {"kept": final_kept, "dropped": final_dropped}
 
 
+def _filter_generated_keyword_items(
+    items: List[Dict[str, str]],
+    *,
+    blocked_keywords: List[str],
+    profile_text: str,
+    limit: int,
+) -> Dict[str, Any]:
+    normalized_items = _normalize_category_keyword_items(items, limit=max(len(items), 1))
+    filtered_items, variant_dropped_keywords = _filter_close_discovery_keyword_variants(normalized_items, blocked_keywords)
+    generated_keywords = [item["keyword"] for item in filtered_items]
+    filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
+    keywords = filter_result["kept"][: max(0, int(limit))]
+    item_by_keyword = {item["keyword"].lower(): item for item in filtered_items}
+    kept_items = [
+        {
+            "keyword": keyword,
+            "category": item_by_keyword.get(keyword.lower(), {}).get("category", ""),
+        }
+        for keyword in keywords
+    ]
+    return {
+        "items": kept_items,
+        "keywords": keywords,
+        "dropped_keywords": list(variant_dropped_keywords) + filter_result["dropped"],
+        "generated_raw": len(normalized_items),
+    }
+
+
 def _fetch_recent_channel_titles(channel_id: str, *, limit: int = LEAD_DISCOVERY_SEED_RECENT_TITLES) -> List[str]:
     clean_channel_id = str(channel_id or "").strip()
     if not clean_channel_id:
@@ -2597,6 +2684,67 @@ def _summarize_promoted_discovery_seed(lead: Dict[str, Any], recent_titles: List
     )
     summary = " ".join((response.choices[0].message.content or "").strip().split())[:2800]
     return f"{SYNTHETIC_SEED_PREFIX} {summary}".strip()
+
+
+def _promote_discovery_lead_to_seed(conn, lead: Dict[str, Any], *, seed_notes: str = "manual seed promotion") -> Dict[str, Any]:
+    lead_id = int(lead.get("id") or 0)
+    channel_id = str(lead.get("youtube_channel_id") or "").strip()
+    creator_email = str(lead.get("creator_email") or "").strip()
+    status = str(lead.get("status") or "").strip()
+    if not creator_email:
+        return {"promoted": False, "summary_created": False, "reason": "missing_email"}
+    if status != "email_enriched":
+        return {"promoted": False, "summary_created": False, "reason": "status_not_email_enriched"}
+    if not channel_id:
+        return {"promoted": False, "summary_created": False, "reason": "missing_channel_id"}
+
+    existing_seed = conn.execute(
+        """
+        SELECT source_video_id, transcript_summary
+        FROM seed_channel_profiles
+        WHERE channel_id = ?
+        LIMIT 1
+        """,
+        [channel_id],
+    ).fetchone()
+    existing_summary = str((existing_seed or [None, ""])[1] or "").strip()
+    should_create_summary = not existing_summary or existing_summary.startswith(SYNTHETIC_SEED_PREFIX)
+    summary_created = False
+    if should_create_summary:
+        recent_titles = _fetch_recent_channel_titles(channel_id)
+        summary = _summarize_promoted_discovery_seed(lead, recent_titles)
+        summary_created = True
+        if existing_seed:
+            conn.execute(
+                """
+                UPDATE seed_channel_profiles
+                SET source_video_id = NULL,
+                    transcript_summary = ?
+                WHERE channel_id = ?
+                """,
+                [summary, channel_id],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO seed_channel_profiles (
+                    channel_id, source_video_id, transcript_summary, created_at
+                )
+                VALUES (?, NULL, ?, CURRENT_TIMESTAMP)
+                """,
+                [channel_id, summary],
+            )
+    conn.execute(
+        """
+        UPDATE discovery_leads
+        SET is_seed = true,
+            promoted_at = COALESCE(promoted_at, CURRENT_TIMESTAMP),
+            seed_notes = COALESCE(seed_notes, ?)
+        WHERE id = ?
+        """,
+        [seed_notes, lead_id],
+    )
+    return {"promoted": True, "summary_created": summary_created, "reason": ""}
 
 
 def load_seed_pool(conn=None) -> List[Dict[str, Any]]:
@@ -2926,7 +3074,7 @@ def count_eligible_keyword_queue(conn) -> int:
 
 def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
     pool = load_seed_pool(conn)
-    if not pool:
+    if not pool and not _openai_client:
         return {
             "success": False,
             "generated": 0,
@@ -2941,31 +3089,56 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
     existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
     profile_text = str((existing_profile or [None])[0] or "").strip()
     exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(conn, limit=200)
-    generated_items = _generate_seed_search_keyword_items(pool, existing_keywords=exclusions, conn=conn)
-    generated_raw_count = len(generated_items)
     exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=60, category_limit=20)
     exhaustion_keywords = [
         str(item.get("keyword") or "").strip()
         for item in exhaustion.get("low_yield_keywords", [])
         if str(item.get("keyword") or "").strip()
     ]
-    generated_items, variant_dropped_keywords = _filter_close_discovery_keyword_variants(
-        generated_items,
-        list(exclusions or []) + exhaustion_keywords,
-    )
-    generated_keywords = [item["keyword"] for item in generated_items]
-    filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
-    keywords = filter_result["kept"]
-    dropped_keywords = list(variant_dropped_keywords) + filter_result["dropped"]
-    item_by_keyword = {item["keyword"].lower(): item for item in generated_items}
-    kept_items = [
-        {
-            "keyword": keyword,
-            "category": item_by_keyword.get(keyword.lower(), {}).get("category", ""),
-        }
-        for keyword in keywords
+    blocked_keywords = list(exclusions or []) + exhaustion_keywords
+    generated_raw_count = 0
+    dropped_keywords: List[str] = []
+    keywords: List[str] = []
+    all_kept_items: List[Dict[str, str]] = []
+    lane_counts: Dict[str, Dict[str, int]] = {}
+    lane_keywords: Dict[str, List[str]] = {}
+    lane_sources = [
+        ("seed", DISCOVERY_KEYWORD_LANE_TARGETS["seed"]),
+        ("icp_exploration", DISCOVERY_KEYWORD_LANE_TARGETS["icp_exploration"]),
+        ("category_deepening", DISCOVERY_KEYWORD_LANE_TARGETS["category_deepening"]),
     ]
-    queue_counts = _insert_category_keyword_items_into_queue(conn, kept_items, source="seed", priority=100, due_now=False)
+
+    for lane, target in lane_sources:
+        if target <= 0:
+            continue
+        try:
+            raw_items = (
+                _generate_seed_search_keyword_items(pool, existing_keywords=blocked_keywords, conn=conn)
+                if lane == "seed" and pool
+                else _generate_icp_definition_keyword_items(conn, lane=lane)
+            )
+        except Exception as exc:
+            current_app.logger.exception("Discovery %s keyword generation failed", lane)
+            lane_counts[lane] = {"generated_raw": 0, "kept": 0, "newly_enqueued": 0, "already_present": 0}
+            dropped_keywords.append(f"{lane}: {str(exc) or 'generation_failed'}")
+            continue
+        filtered = _filter_generated_keyword_items(raw_items, blocked_keywords=blocked_keywords, profile_text=profile_text, limit=target)
+        generated_raw_count += int(filtered.get("generated_raw") or 0)
+        kept_items = list(filtered.get("items") or [])
+        all_kept_items.extend(kept_items)
+        dropped_keywords.extend(filtered.get("dropped_keywords") or [])
+        queue_counts = _insert_category_keyword_items_into_queue(conn, kept_items, source=lane, priority=100, due_now=False)
+        inserted_keywords = list(queue_counts.get("keywords") or [])
+        keywords.extend(inserted_keywords)
+        lane_keywords[lane] = inserted_keywords
+        lane_counts[lane] = {
+            "generated_raw": int(filtered.get("generated_raw") or 0),
+            "kept": len(kept_items),
+            "newly_enqueued": int(queue_counts["newly_enqueued"]),
+            "already_present": int(queue_counts["already_present"]),
+        }
+        blocked_keywords.extend([item["keyword"] for item in kept_items])
+
     if existing_profile:
         conn.execute(
             """
@@ -2987,12 +3160,15 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
         "success": True,
         "generated": len(keywords),
         "generated_raw": generated_raw_count,
-        "newly_enqueued": int(queue_counts["newly_enqueued"]),
-        "already_present": int(queue_counts["already_present"]),
+        "newly_enqueued": sum(lane["newly_enqueued"] for lane in lane_counts.values()),
+        "already_present": sum(lane["already_present"] for lane in lane_counts.values()),
         "keywords": keywords,
-        "keyword_items": kept_items,
+        "keyword_items": all_kept_items,
         "dropped_keywords": dropped_keywords,
         "seed_pool_count": len(pool),
+        "lane_counts": lane_counts,
+        "lane_keywords": lane_keywords,
+        "lane_targets": DISCOVERY_KEYWORD_LANE_TARGETS,
         "errors": [],
     }
 
@@ -3737,51 +3913,12 @@ def admin_discovery_promote_seed():
                 skipped.append({"id": lead_id, "reason": "missing_channel_id"})
                 continue
 
-            existing_seed = conn.execute(
-                """
-                SELECT source_video_id, transcript_summary
-                FROM seed_channel_profiles
-                WHERE channel_id = ?
-                LIMIT 1
-                """,
-                [lead["youtube_channel_id"]],
-            ).fetchone()
-            existing_summary = str((existing_seed or [None, ""])[1] or "").strip()
-            should_create_summary = not existing_summary or existing_summary.startswith(SYNTHETIC_SEED_PREFIX)
-            if should_create_summary:
-                recent_titles = _fetch_recent_channel_titles(lead["youtube_channel_id"])
-                summary = _summarize_promoted_discovery_seed(lead, recent_titles)
+            seed_result = _promote_discovery_lead_to_seed(conn, lead, seed_notes="manual seed promotion")
+            if not seed_result.get("promoted"):
+                skipped.append({"id": lead_id, "reason": str(seed_result.get("reason") or "not_promoted")})
+                continue
+            if seed_result.get("summary_created"):
                 summaries_created += 1
-                if existing_seed:
-                    conn.execute(
-                        """
-                        UPDATE seed_channel_profiles
-                        SET source_video_id = NULL,
-                            transcript_summary = ?
-                        WHERE channel_id = ?
-                        """,
-                        [summary, lead["youtube_channel_id"]],
-                    )
-                else:
-                    conn.execute(
-                        """
-                        INSERT INTO seed_channel_profiles (
-                            channel_id, source_video_id, transcript_summary, created_at
-                        )
-                        VALUES (?, NULL, ?, CURRENT_TIMESTAMP)
-                        """,
-                        [lead["youtube_channel_id"], summary],
-                    )
-            conn.execute(
-                """
-                UPDATE discovery_leads
-                SET is_seed = true,
-                    promoted_at = COALESCE(promoted_at, CURRENT_TIMESTAMP),
-                    seed_notes = COALESCE(seed_notes, ?)
-                WHERE id = ?
-                """,
-                ["manual seed promotion", lead_id],
-            )
             promoted += 1
         conn.commit()
         return jsonify({"success": True, "promoted": promoted, "skipped": skipped, "summaries_created": summaries_created, "errors": []})

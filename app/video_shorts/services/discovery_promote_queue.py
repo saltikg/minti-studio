@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from flask import current_app
+
+from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.youtube_api import fetch_playlist_items_batch, get_channel_metadata
 
 
 QUEUE_TABLE = "discovery_promote_requests"
 ACTIVE_STATUSES = {"queued", "processing"}
 TERMINAL_STATUSES = {"done", "failed"}
+SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
+LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
 
 
 def ensure_discovery_promote_queue_schema(conn) -> None:
@@ -52,6 +59,118 @@ def ensure_discovery_promote_queue_schema(conn) -> None:
 
 def _json_value_sql(conn) -> str:
     return "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"
+
+
+def _fetch_recent_seed_titles(channel_id: str, *, limit: int = LEAD_DISCOVERY_SEED_RECENT_TITLES) -> List[str]:
+    clean_channel_id = str(channel_id or "").strip()
+    if not clean_channel_id:
+        return []
+    try:
+        channel_meta = get_channel_metadata(f"https://www.youtube.com/channel/{clean_channel_id}")
+        uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
+        if not uploads_playlist_id:
+            return []
+        batch = fetch_playlist_items_batch(
+            playlist_id=uploads_playlist_id,
+            max_results=max(1, min(int(limit or LEAD_DISCOVERY_SEED_RECENT_TITLES), LEAD_DISCOVERY_SEED_RECENT_TITLES)),
+        )
+    except Exception:
+        current_app.logger.exception("Could not fetch recent titles for auto seed channel=%s", clean_channel_id)
+        return []
+    titles: List[str] = []
+    for video in batch.get("videos") or []:
+        title = " ".join(str(video.get("title") or "").strip().split())
+        if title and title not in titles:
+            titles.append(title[:180])
+    return titles[:LEAD_DISCOVERY_SEED_RECENT_TITLES]
+
+
+def _summarize_auto_discovery_seed(lead: Dict[str, Any], recent_titles: List[str]) -> str:
+    if not _openai_client:
+        description = " ".join(str(lead.get("channel_description") or "").split())[:2600]
+        return f"{SYNTHETIC_SEED_PREFIX} {description}".strip()
+    prompt = (
+        "Create a 3-5 sentence synthetic seed summary for this promoted YouTube discovery lead. "
+        "There is no transcript, so infer only from the channel title, channel description, and recent video titles. "
+        "Focus on creator persona, audience, teaching style, expertise, offer signals, and recurring topics. "
+        "Return plain text only.\n\n"
+        f"Channel: {lead.get('channel_title') or lead.get('youtube_channel_id')}\n"
+        f"Channel description: {str(lead.get('channel_description') or '')[:1600]}\n"
+        f"Recent titles: {json.dumps(recent_titles[:LEAD_DISCOVERY_SEED_RECENT_TITLES], ensure_ascii=False)}"
+    )
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "You summarize promoted creator-channel leads for seed-based ICP keyword discovery."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+    )
+    summary = " ".join((response.choices[0].message.content or "").strip().split())[:2800]
+    return f"{SYNTHETIC_SEED_PREFIX} {summary}".strip()
+
+
+def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, Any]:
+    lead_id = int(lead.get("id") or 0)
+    channel_id = str(lead.get("youtube_channel_id") or "").strip()
+    creator_email = str(lead.get("creator_email") or "").strip()
+    status = str(lead.get("status") or "email_enriched").strip()
+    if not creator_email:
+        return {"promoted": False, "reason": "missing_email"}
+    if status != "email_enriched":
+        return {"promoted": False, "reason": "status_not_email_enriched"}
+    if not channel_id:
+        return {"promoted": False, "reason": "missing_channel_id"}
+    columns = table_columns(conn, "discovery_leads")
+    if any(column not in columns for column in ("is_seed", "promoted_at", "seed_notes")):
+        return {"promoted": False, "reason": "schema_missing"}
+
+    existing_seed = conn.execute(
+        """
+        SELECT source_video_id, transcript_summary
+        FROM seed_channel_profiles
+        WHERE channel_id = ?
+        LIMIT 1
+        """,
+        [channel_id],
+    ).fetchone()
+    existing_summary = str((existing_seed or [None, ""])[1] or "").strip()
+    summary_created = False
+    if not existing_summary or existing_summary.startswith(SYNTHETIC_SEED_PREFIX):
+        recent_titles = _fetch_recent_seed_titles(channel_id)
+        summary = _summarize_auto_discovery_seed(lead, recent_titles)
+        summary_created = True
+        if existing_seed:
+            conn.execute(
+                """
+                UPDATE seed_channel_profiles
+                SET source_video_id = NULL,
+                    transcript_summary = ?
+                WHERE channel_id = ?
+                """,
+                [summary, channel_id],
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO seed_channel_profiles (
+                    channel_id, source_video_id, transcript_summary, created_at
+                )
+                VALUES (?, NULL, ?, CURRENT_TIMESTAMP)
+                """,
+                [channel_id, summary],
+            )
+    conn.execute(
+        """
+        UPDATE discovery_leads
+        SET is_seed = true,
+            promoted_at = COALESCE(promoted_at, CURRENT_TIMESTAMP),
+            seed_notes = COALESCE(seed_notes, ?)
+        WHERE id = ?
+        """,
+        ["auto seed from promoted discovery lead", lead_id],
+    )
+    return {"promoted": True, "summary_created": summary_created}
 
 
 def enqueue_discovery_promote_request(
@@ -392,6 +511,11 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                 """,
                 [str(existing[0]), existing[1], lead_id],
             )
+            try:
+                seed_result = _auto_seed_promoted_discovery_lead(conn, {**lead, "status": "email_enriched"})
+                current_app.logger.info("Auto-seeded linked discovery lead id=%s result=%s", lead_id, seed_result)
+            except Exception:
+                current_app.logger.exception("Auto seed failed for linked discovery lead id=%s", lead_id)
             conn.commit()
             return {"id": lead_id, "autopilot_lead_id": str(existing[0]), "reason": "already_a_lead_linked"}
 
@@ -448,6 +572,11 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                 lead_id,
             ],
         )
+        try:
+            seed_result = _auto_seed_promoted_discovery_lead(conn, {**lead, "status": "email_enriched"})
+            current_app.logger.info("Auto-seeded promoted discovery lead id=%s result=%s", lead_id, seed_result)
+        except Exception:
+            current_app.logger.exception("Auto seed failed for promoted discovery lead id=%s", lead_id)
         conn.commit()
         return {
             "id": lead_id,
