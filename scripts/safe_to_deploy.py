@@ -24,6 +24,8 @@ DEFAULT_ENV_PATH = ROOT / ".env"
 ACCESS_LOG_PATH = Path("/home/ubuntu/apps/minti_studio/logs/gunicorn-access.log")
 RECENT_WEB_WINDOW = timedelta(minutes=5)
 ACCESS_LOG_TIME_RE = re.compile(r"\[(?P<ts>[^\]]+)\]")
+ACCESS_LOG_PATH_RE = re.compile(r"\s(?:GET|POST|HEAD|OPTIONS)\s+(/[^\s?]*)")
+BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|uptime|monitor|health)", re.I)
 
 
 @dataclass
@@ -167,6 +169,36 @@ def _parse_access_log_time(line: str) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _access_log_path(line: str) -> str:
+    match = ACCESS_LOG_PATH_RE.search(line)
+    return str(match.group(1) if match else "")
+
+
+def _is_ignored_web_hit(line: str) -> bool:
+    lowered = line.lower()
+    path = _access_log_path(line).lower()
+    if BOT_UA_RE.search(line):
+        return True
+    if path.startswith(
+        (
+            "/video_shorts/api/admin",
+            "/video_shorts/admin",
+            "/video_shorts/static",
+            "/admin",
+            "/static",
+            "/assets",
+            "/favicon",
+            "/health",
+        )
+    ):
+        return True
+    if "/api/client-error" in path:
+        return True
+    if "gokhansaltik" in lowered:
+        return True
+    return False
+
+
 def _recent_web_hits(now: datetime) -> list[datetime]:
     cutoff = now - RECENT_WEB_WINDOW
     hits: list[datetime] = []
@@ -176,7 +208,8 @@ def _recent_web_hits(now: datetime) -> list[datetime]:
             continue
         if parsed < cutoff:
             break
-        hits.append(parsed)
+        if not _is_ignored_web_hit(line):
+            hits.append(parsed)
     hits.reverse()
     return hits
 

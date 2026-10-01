@@ -191,7 +191,18 @@ def _is_ignored_web_hit(line: str) -> bool:
     path = _access_log_path(line).lower()
     if BOT_UA_RE.search(line):
         return True
-    if path.startswith(("/video_shorts/admin", "/admin", "/static", "/assets", "/favicon", "/health")):
+    if path.startswith(
+        (
+            "/video_shorts/api/admin",
+            "/video_shorts/admin",
+            "/video_shorts/static",
+            "/admin",
+            "/static",
+            "/assets",
+            "/favicon",
+            "/health",
+        )
+    ):
         return True
     if "/api/client-error" in path:
         return True
