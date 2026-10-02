@@ -28,7 +28,7 @@ def test_normalizes_bare_and_wrong_placeholder_syntax(monkeypatch):
                     "## Second",
                     "Use [IMAGE_2] here.",
                     "## Third",
-                    "Use {{ IMAGE_3 }} here.",
+                    "Use [[ IMAGE_3 ]] here.",
                 ]
             ),
             visuals=[
@@ -44,7 +44,7 @@ def test_normalizes_bare_and_wrong_placeholder_syntax(monkeypatch):
     assert article["content_md"].count("<!-- IMAGE_3 -->") == 1
     assert "IMAGE_1 here" not in article["content_md"]
     assert "[IMAGE_2]" not in article["content_md"]
-    assert "{{ IMAGE_3 }}" not in article["content_md"]
+    assert "[[ IMAGE_3 ]]" not in article["content_md"]
 
 
 def test_removes_duplicate_placeholders(monkeypatch):

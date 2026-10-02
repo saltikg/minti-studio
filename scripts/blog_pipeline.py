@@ -89,6 +89,7 @@ PROTECTED_TOKEN_RE = re.compile(r"\[\[BLOCK_(\d+)\]\]")
 IMAGE_PLACEHOLDER_VARIANT_RE = re.compile(
     r"<!--\s*IMAGE_([123])\s*-->|"
     r"\{\{\s*IMAGE_([123])\s*\}\}|"
+    r"\[\[\s*IMAGE_([123])\s*\]\]|"
     r"\[\s*IMAGE_([123])\s*\]|"
     r"(?<![A-Za-z0-9_])IMAGE_([123])(?![A-Za-z0-9_])"
 )
@@ -2114,6 +2115,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         }
         designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), designer_payload)
         after_design, token_repairs = _restore_masked_blocks(masked_design_content, str(designer_output.get("content_md") or ""), design_blocks)
+        after_design = _normalize_image_placeholder_syntax(after_design)
         guard_ok, guard_note = _guard_designer(before_design, after_design)
         if token_repairs:
             guard_note = _join_notes(guard_note, token_repairs) or guard_note
