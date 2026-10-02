@@ -88,7 +88,7 @@ mintistudio.com""",
         subject="Want the rest of your Shorts?",
         text="""Hi [Name],
 
-Following up on the Short we made from [video_title]. We turned the best moments into a set of ready-to-post Shorts for you.
+Following up on the Short we made from "[video_title]" — we turned the best moments into a set of ready-to-post Shorts for you.
 
 [signal]
 
@@ -141,7 +141,7 @@ No reply and I won't email again.""",
         subject="There are more Shorts inside",
         text="""Hi [Name],
 
-Thanks for checking out the Short from [video_title] — there are more from the same video, all ready.
+Thanks for checking out the Short from "[video_title]" — there are more from the same video, all ready.
 
 [signal]
 
@@ -157,7 +157,7 @@ Gokhan""",
         subject="Want the rest of your Shorts?",
         text="""Hi [Name],
 
-You watched the Short we made from [video_title] — glad it landed. We turned the best moments into a set of ready-to-post Shorts for you.
+You watched the Short we made from "[video_title]" — glad it landed. We turned the best moments into a set of ready-to-post Shorts for you.
 
 [signal]
 
@@ -173,7 +173,7 @@ Gokhan""",
         subject="Your Shorts are ready — extra month's on us",
         text="""Hi [Name],
 
-You watched the Short we made from [video_title]. We turned the best moments into ready-to-post Shorts for you — and your complimentary access is still on, [trial] free.
+You watched the Short we made from "[video_title]" — we turned the best moments into ready-to-post Shorts for you, and your complimentary access is still on, [trial] free.
 
 [signal]
 
