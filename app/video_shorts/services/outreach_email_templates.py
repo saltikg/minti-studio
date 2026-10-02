@@ -26,6 +26,14 @@ class OutreachEmailTemplate:
     text: str
 
 
+LONGFORM_NO_SHORTS_MIN_LONGFORM_60D = 2
+LONGFORM_NO_SHORTS_MAX_SHORTS_15D = 0
+LONGFORM_NO_SHORTS_SIGNAL_EN = (
+    "I noticed you seem to publish long-form consistently, while Shorts don't look like a regular "
+    "part of the rhythm yet. That's exactly the gap Minti is built to handle."
+)
+
+
 OUTREACH_EMAIL_TEMPLATES: dict[str, OutreachEmailTemplate] = {
     "FIRST_EN": OutreachEmailTemplate(
         key="FIRST_EN",
@@ -38,6 +46,8 @@ Instead of explaining, I pointed it at one of your recent videos and made you a 
 
 [video_title]
 [link]
+
+[signal]
 
 You keep making your long videos; we turn the best moments into captioned Shorts and email them to you ready to post — you just publish. First month free, no account access, cancel anytime.
 
@@ -80,6 +90,8 @@ mintistudio.com""",
 
 Following up on the Short we made from [video_title]. We turned the best moments into a set of ready-to-post Shorts for you.
 
+[signal]
+
 Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access, first month free.
 
 See them here: [link]
@@ -111,12 +123,16 @@ OUTREACH_BUCKET_FOLLOWUP_TEMPLATES: dict[str, OutreachEmailTemplate] = {
         subject="The Short I made from your video",
         text="""Hi [Name], a little while back I turned one of your videos into a Short - it might've slipped past you. Takes 30 seconds to see: [link].
 
+[signal]
+
 Not for you? Just reply and I'll stop.""",
     ),
     "SENT_NO_VISIT_SEQ3_EN": OutreachEmailTemplate(
         key="SENT_NO_VISIT_SEQ3_EN",
         subject="I'll close the loop on this",
         text="""Hi [Name], last one from me - your Short is still up if you'd like a look: [link].
+
+[signal]
 
 No reply and I won't email again.""",
     ),
@@ -126,6 +142,8 @@ No reply and I won't email again.""",
         text="""Hi [Name],
 
 Thanks for checking out the Short from [video_title] — there are more from the same video, all ready.
+
+[signal]
 
 Want them sent to you? Reply "yes" and we'll email them ready to post — you just publish. First month free, no account access.
 
@@ -141,6 +159,8 @@ Gokhan""",
 
 You watched the Short we made from [video_title] — glad it landed. We turned the best moments into a set of ready-to-post Shorts for you.
 
+[signal]
+
 Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access, first month free.
 
 See them here: [link]
@@ -155,6 +175,8 @@ Gokhan""",
 
 You watched the Short we made from [video_title]. We turned the best moments into ready-to-post Shorts for you — and your complimentary access is still on, [trial] free.
 
+[signal]
+
 Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access needed.
 
 See them here: [link]
@@ -168,6 +190,8 @@ Gokhan""",
         text="""Hi [Name],
 
 Looks like you came back for another look — happy to just get you started.
+
+[signal]
 
 Reply "yes" and we'll email you your Shorts ready to post — you just publish. First month free, no account access, cancel anytime.
 
@@ -280,6 +304,52 @@ def outreach_template_key(*, stage: object, language: object) -> str:
     return f"{normalized_stage.upper()}_{normalized_language}"
 
 
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def should_include_longform_no_shorts_signal(
+    *,
+    language: object = "EN",
+    longform_last_60d: object = None,
+    shorts_last_15d: object = None,
+) -> bool:
+    if normalize_outreach_template_language(language) != "EN":
+        return False
+    longform_count = _coerce_optional_int(longform_last_60d)
+    shorts_count = _coerce_optional_int(shorts_last_15d)
+    if longform_count is None or shorts_count is None:
+        return False
+    return (
+        longform_count >= LONGFORM_NO_SHORTS_MIN_LONGFORM_60D
+        and shorts_count <= LONGFORM_NO_SHORTS_MAX_SHORTS_15D
+    )
+
+
+def longform_no_shorts_signal_text(
+    *,
+    language: object = "EN",
+    longform_last_60d: object = None,
+    shorts_last_15d: object = None,
+) -> str:
+    if not should_include_longform_no_shorts_signal(
+        language=language,
+        longform_last_60d=longform_last_60d,
+        shorts_last_15d=shorts_last_15d,
+    ):
+        return ""
+    return LONGFORM_NO_SHORTS_SIGNAL_EN
+
+
+def _normalize_template_spacing(text: str) -> str:
+    return re.sub(r"\n{3,}", "\n\n", str(text or "")).strip()
+
+
 def _simple_html_email(*, subject: str, body_text: str) -> str:
     paragraphs = []
     for block in body_text.split("\n\n"):
@@ -304,6 +374,8 @@ def render_outreach_email(
     share_url: str,
     trial_days: object,
     video_title: object = "",
+    longform_last_60d: object = None,
+    shorts_last_15d: object = None,
 ) -> dict[str, str]:
     normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
@@ -312,10 +384,16 @@ def render_outreach_email(
     safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
     trial_phrase = trial_duration_text(trial_days, normalized_language)
     safe_video_title = str(video_title or "").strip()
-    text = (
+    signal_text = longform_no_shorts_signal_text(
+        language=normalized_language,
+        longform_last_60d=longform_last_60d,
+        shorts_last_15d=shorts_last_15d,
+    )
+    text = _normalize_template_spacing(
         template.text.replace("[Name]", safe_name)
         .replace("[link]", str(share_url or "").strip())
         .replace("[trial]", trial_phrase)
+        .replace("[signal]", signal_text)
         .replace("[video_title]\n", f"{safe_video_title}\n" if safe_video_title else "")
         .replace("[video_title]", safe_video_title)
     )
@@ -338,6 +416,8 @@ def render_bucket_followup_outreach_email(
     share_url: str,
     trial_days: object = None,
     video_title: object = "",
+    longform_last_60d: object = None,
+    shorts_last_15d: object = None,
 ) -> dict[str, str]:
     normalized_language = normalize_outreach_template_language(language)
     normalized_bucket = normalize_outreach_followup_bucket(bucket)
@@ -363,10 +443,16 @@ def render_bucket_followup_outreach_email(
     safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
     safe_video_title = str(video_title or "").strip() or "your video"
     trial_phrase = trial_duration_text(trial_days, normalized_language)
-    text = (
+    signal_text = longform_no_shorts_signal_text(
+        language=normalized_language,
+        longform_last_60d=longform_last_60d,
+        shorts_last_15d=shorts_last_15d,
+    )
+    text = _normalize_template_spacing(
         template.text.replace("[Name]", safe_name)
         .replace("[link]", str(share_url or "").strip())
         .replace("[trial]", trial_phrase)
+        .replace("[signal]", signal_text)
         .replace("[video_title]", safe_video_title)
     )
     return {
@@ -388,6 +474,8 @@ def render_outreach_clipboard_text(
     share_url: str,
     trial_days: object,
     video_title: object = "",
+    longform_last_60d: object = None,
+    shorts_last_15d: object = None,
 ) -> str:
     rendered = render_outreach_email(
         stage=stage,
@@ -396,5 +484,7 @@ def render_outreach_clipboard_text(
         share_url=share_url,
         trial_days=trial_days,
         video_title=video_title,
+        longform_last_60d=longform_last_60d,
+        shorts_last_15d=shorts_last_15d,
     )
     return f"Subject: {rendered['subject']}\n\n{rendered['text']}"

@@ -80,6 +80,40 @@ def load_share_link_recipient_email(conn, share_link_id: int) -> str:
     return normalize_outreach_recipient_email(row[0] if row else "")
 
 
+def load_share_link_discovery_signal(conn, autopilot_lead_id: object) -> dict[str, object]:
+    lead_id = str(autopilot_lead_id or "").strip()
+    if not lead_id:
+        return {}
+    discovery_columns = table_columns(conn, "discovery_leads")
+    required_columns = {"autopilot_lead_id", "longform_last_60d", "shorts_last_15d"}
+    if not required_columns.issubset(discovery_columns):
+        return {}
+    order_columns = []
+    if "promoted_at" in discovery_columns:
+        order_columns.append("promoted_at DESC")
+    if "updated_at" in discovery_columns:
+        order_columns.append("updated_at DESC")
+    if "id" in discovery_columns:
+        order_columns.append("id DESC")
+    order_sql = ", ".join(order_columns) or "autopilot_lead_id"
+    row = conn.execute(
+        f"""
+        SELECT longform_last_60d, shorts_last_15d
+        FROM discovery_leads
+        WHERE CAST(autopilot_lead_id AS VARCHAR) = ?
+        ORDER BY {order_sql}
+        LIMIT 1
+        """,
+        [lead_id],
+    ).fetchone()
+    if not row:
+        return {}
+    return {
+        "longform_last_60d": row[0],
+        "shorts_last_15d": row[1],
+    }
+
+
 def is_share_link_recipient_declined(
     conn,
     share_link_id: int,
@@ -328,6 +362,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
     recipient_name = str(row[2] or "").strip()
     source_video_title = str(row[11] or "").strip()
+    discovery_signal = load_share_link_discovery_signal(conn, row[13])
     rendered_email = render_outreach_email(
         stage=normalized_stage,
         language=normalized_language,
@@ -335,6 +370,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         share_url=share_url,
         trial_days=trial_days,
         video_title=source_video_title,
+        longform_last_60d=discovery_signal.get("longform_last_60d"),
+        shorts_last_15d=discovery_signal.get("shorts_last_15d"),
     )
     return {
         "row": row,
@@ -343,6 +380,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         "share_url": share_url,
         "trial_days": trial_days,
         "video_title": source_video_title,
+        "discovery_signal": discovery_signal,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
             stage=normalized_stage,
@@ -351,6 +389,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
             share_url=share_url,
             trial_days=trial_days,
             video_title=source_video_title,
+            longform_last_60d=discovery_signal.get("longform_last_60d"),
+            shorts_last_15d=discovery_signal.get("shorts_last_15d"),
         ),
         "emailed_at": row[6],
         "first_email_template_key": str(row[7] or "").strip(),
@@ -406,6 +446,9 @@ def send_share_link_outreach_email(
             recipient_name=rendered["recipient_name"],
             share_url=rendered["share_url"],
             trial_days=rendered["trial_days"],
+            video_title=rendered.get("video_title", ""),
+            longform_last_60d=rendered.get("discovery_signal", {}).get("longform_last_60d"),
+            shorts_last_15d=rendered.get("discovery_signal", {}).get("shorts_last_15d"),
         )
     else:
         rendered_email = rendered["email"]
