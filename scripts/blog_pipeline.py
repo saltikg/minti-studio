@@ -1404,21 +1404,24 @@ def _strip_design_syntax(text: str) -> str:
     return " ".join(re.findall(r"\b[\w'-]+\b", text.lower()))
 
 
+def _strip_designer_wrappers(text: str) -> str:
+    text = re.sub(r"(?m)^:::[A-Za-z][^\n]*$", "", text or "")
+    text = re.sub(r"(?m)^:::\s*$", "", text)
+    text = re.sub(r"<!--\s*IMAGE_[123]\s*-->", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _guard_designer(before: str, after: str) -> tuple[bool, str]:
-    before_masked, _before_blocks = _mask_protected_blocks(before)
-    after_masked, _after_blocks = _mask_protected_blocks(after)
-    before_links = _article_links(before_masked)
-    after_links = _article_links(after_masked)
-    before_markers = PROTECTED_TOKEN_RE.findall(before_masked)
-    after_markers = PROTECTED_TOKEN_RE.findall(after_masked)
-    ratio = difflib.SequenceMatcher(None, _strip_design_syntax(before_masked), _strip_design_syntax(after_masked)).ratio()
+    before_links = _article_links(before)
+    after_links = _article_links(after)
     if before_links != after_links:
         return False, "designer changed links"
-    if before_markers != after_markers:
-        return False, "designer changed image placeholders"
-    if ratio < 0.97:
-        return False, f"designer changed wording too much: similarity {ratio:.3f}"
-    return True, f"similarity {ratio:.3f}"
+    before_prose = _strip_designer_wrappers(before)
+    after_prose = _strip_designer_wrappers(after)
+    if before_prose != after_prose:
+        ratio = difflib.SequenceMatcher(None, before_prose, after_prose).ratio()
+        return False, f"designer altered approved prose: similarity {ratio:.3f}"
+    return True, "prose preserved"
 
 
 def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[dict[str, Any]], *, copy_files: bool = True) -> dict[str, Any]:
@@ -1966,9 +1969,9 @@ def _revision_prompt() -> str:
 
 
 def _designer_prompt() -> str:
-    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You may only add presentation syntax from the allowed component vocabulary. Never add, remove, or rewrite sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
+    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You are given final, approved prose. Do not change any wording. Only wrap existing passages in ::: component blocks and insert image markers. Return the same text with components/markers added. Never reword, rewrite, re-summarize, regenerate, add, or delete sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
 
-Use :::steps for any sequential workflow, a markdown table whenever options are compared, at least one :::key, and :::tip or :::warning where useful. If the writer already included :::flow or :::compare, preserve it exactly. Keep the similarity guard passing by preserving sentence text exactly."""
+Use :::steps for any sequential workflow, at least one :::key, and :::tip or :::warning where useful. If the writer already included :::flow or :::compare, preserve it exactly. Keep the preservation guard passing by preserving approved prose exactly."""
 
 
 def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[str, Any]:
@@ -2120,7 +2123,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         else:
             designer_status = "failed"
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost)
+        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "source_content_md": before_design, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost)
         conn.commit()
 
         checks = _code_checks(article, screenshots, published)
@@ -2151,7 +2154,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         conn.commit()
         run_status = "draft_ready"
         final_score = _review_score(final_review)
-        if image_status != "done" or final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
+        if designer_status != "done" or image_status != "done" or final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
             run_status = "needs_you"
 
         result = {

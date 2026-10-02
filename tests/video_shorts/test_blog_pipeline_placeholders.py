@@ -639,7 +639,7 @@ def test_duplicate_protected_token_is_repaired_once():
     assert repairs == ["[[BLOCK_1]]: removed duplicate protected token"]
 
 
-def test_designer_guard_ignores_protected_block_text():
+def test_designer_guard_rejects_component_block_text_changes():
     before = "\n\n".join(
         [
             "## Plan",
@@ -651,15 +651,63 @@ def test_designer_guard_ignores_protected_block_text():
             "<!-- IMAGE_2 -->",
         ]
     )
-    after = before.replace(
-        "video | Long video | Full recording\nclips | Five Shorts | Best moments",
-        "calendar | Weekly calendar | Mon Wed Fri\ncheck | Done | Ready to publish",
+    after = "\n\n".join(
+        [
+            "## Plan",
+            f"Send readers to {CTA_URL}. The article sentence stays the same.",
+            ":::flow Workflow",
+            "calendar | Weekly calendar | Mon Wed Fri",
+            "check | Done | Ready to publish",
+            ":::",
+            "<!-- IMAGE_2 -->",
+        ]
+    )
+
+    ok, reason = blog_pipeline._guard_designer(before, after)
+
+    assert not ok
+    assert reason.startswith("designer altered approved prose")
+
+
+def test_designer_guard_rejects_prose_changes():
+    before = "\n\n".join(
+        [
+            "## Plan",
+            f"Send readers to {CTA_URL}. A Short can give them one clear idea quickly.",
+            "<!-- IMAGE_1 -->",
+        ]
+    )
+    after = before.replace("one clear idea", "a 1 clear idea")
+
+    ok, reason = blog_pipeline._guard_designer(before, after)
+
+    assert not ok
+    assert reason.startswith("designer altered approved prose")
+
+
+def test_designer_guard_allows_component_wrapping_and_markers():
+    before = "\n\n".join(
+        [
+            "## Plan",
+            f"Send readers to {CTA_URL}. A Short can give them one clear idea quickly.",
+            "It can also protect one private story.",
+        ]
+    )
+    after = "\n\n".join(
+        [
+            "## Plan",
+            ":::key",
+            f"Send readers to {CTA_URL}. A Short can give them one clear idea quickly.",
+            ":::",
+            "<!-- IMAGE_1 -->",
+            "It can also protect one private story.",
+        ]
     )
 
     ok, reason = blog_pipeline._guard_designer(before, after)
 
     assert ok
-    assert reason == "similarity 1.000"
+    assert reason == "prose preserved"
 
 
 def test_revision_guard_ignores_protected_block_text():
