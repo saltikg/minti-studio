@@ -1950,6 +1950,8 @@ Use only the supplied published_articles URLs for internal links. Do not invent 
 Never claim anything about MintiStudio unless it is in minti_facts.md.
 Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
 Use the primary keyword naturally, with correct hyphenation such as "done-for-you"; never place it as a standalone bolded SEO phrase.
+Do not force the exact-match keyword phrase awkwardly into a sentence or repeat it for SEO. One natural use is enough. If the exact phrase reads stiffly, rephrase it for a human, such as "short-form video can be such a useful channel for consultants" instead of "youtube shorts for consultants can be such a useful channel."
+In body prose, spell out small quantities as words: one, two, three. Never write constructions like "a 1 clear idea" or "a 1 private story"; write "one clear idea" or "one private story." Digits are allowed only for real data/statistics such as "10 million views", "15 videos/month", percentages, years, or component/infographic specs, not ordinary prose.
 When MintiStudio features are mentioned, tie each one to the reader's task in the same sentence; never use a comma-separated feature list.
 Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where MintiStudio helps" section when the screenshot library has a suitable image."""
 
