@@ -106,6 +106,7 @@ from app.video_shorts.services.clip_planner_agents import propose_clips_with_age
 from app.video_shorts.services.clip_planner_agents_v2 import propose_clips_with_agents_v2
 from app.video_shorts.services.clip_planner_agents_v3 import propose_clips_with_agents_v3
 from app.video_shorts.services.clip_planner_agents_v4 import propose_clips_with_agents_v4
+from app.video_shorts.services.clip_planner_v10 import propose_clips_v10
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
@@ -22131,23 +22132,64 @@ def _generate_clip_plan_for_video(
     plan_path = SHORTS_DIR / f"{vid}_plan.json"
     existing_plan_entries = _load_plan_entries(vid)
     used_fallback_plan = False
+    planner_used = "v1"
+    planner_fallback = False
+    planner_started_at = time.monotonic()
+    current_user = getattr(g, "vs_current_user", None) or {}
+    request_user_role = str(current_user.get("role") or form_data.get("_request_user_role") or "").strip().lower()
+    use_v10 = request_user_role == "admin" or str(os.getenv("CLIP_PLANNER_V10_ALL") or "").strip() == "1"
 
-    try:
-        _emit("llm_plan", "Generating clip plan with AI.")
-        clip_plan, debug_info = propose_clips_with_agents(
-            segments,
-            transcript_text,
-            computed_duration,
-            _openai_client,
-            OPENAI_MODEL,
-            debug=debug_flag,
-            plan_focus=plan_focus,
-            focus_categories=focus_categories,
-            language=plan_language,
-        )
-    except Exception as ag:
-        current_app.logger.warning("Agent pipeline failed, falling back. %s", ag)
-        _emit("fallback", "Primary planner failed; using fallback plan.")
+    if use_v10:
+        try:
+            _emit("llm_plan", "Generating clip plan with AI.")
+            clip_plan, debug_info = propose_clips_v10(
+                segments,
+                transcript_text,
+                computed_duration,
+                _openai_client,
+                debug=debug_flag,
+                plan_focus=plan_focus,
+                focus_categories=focus_categories,
+                language=plan_language,
+                video_title=_video_title,
+            )
+            if not clip_plan:
+                raise RuntimeError("planner v10 returned no clips")
+            planner_used = "v10"
+        except Exception as ag:
+            current_app.logger.warning("Planner v10 failed; falling back to v1. %s", ag)
+            planner_fallback = True
+            clip_plan = []
+            debug_info = {}
+            _emit("fallback", "Planner v10 failed; using v1 planner.")
+
+    if not clip_plan:
+        planner_used = "v1"
+        try:
+            _emit("llm_plan", "Generating clip plan with AI.")
+            clip_plan, debug_info = propose_clips_with_agents(
+                segments,
+                transcript_text,
+                computed_duration,
+                _openai_client,
+                OPENAI_MODEL,
+                debug=debug_flag,
+                plan_focus=plan_focus,
+                focus_categories=focus_categories,
+                language=plan_language,
+            )
+        except Exception as ag:
+            current_app.logger.warning("Agent pipeline failed, falling back. %s", ag)
+            _emit("fallback", "Primary planner failed; using fallback plan.")
+
+    current_app.logger.info(
+        "clip_plan_generated planner=%s clip_count=%s llm_calls=%s wall_seconds=%.2f fallback=%s",
+        planner_used,
+        len(clip_plan or []),
+        (debug_info or {}).get("openai_call_count") or 0,
+        time.monotonic() - planner_started_at,
+        "yes" if planner_fallback else "no",
+    )
 
     if debug_info:
         try:
@@ -22202,6 +22244,7 @@ def _generate_clip_plan_for_video(
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
         plan_entry["origin"] = "ai"
+        plan_entry["planner"] = planner_used
         if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
             _mark_plan_entry_placeholder_title(plan_entry)
         else:
@@ -22384,6 +22427,8 @@ def create_clip_plan_start(video_pk):
 
         editor_context = _active_editor_context()
         form_data = dict(request.form.items())
+        current_user = getattr(g, "vs_current_user", None) or {}
+        form_data["_request_user_role"] = str(current_user.get("role") or "")
         form_data["_owner_user_id"] = editor_context["owner_user_id"]
         form_data["_brand_id"] = editor_context["brand_id"]
         with _PLAN_JOB_LOCK:
