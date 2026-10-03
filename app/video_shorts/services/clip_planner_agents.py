@@ -633,10 +633,7 @@ def _call_agent2_fix_clip(
         return None
     clip_excerpt = clip_data.get("excerpt") or candidate_clip.get("excerpt") or ""
     return {
-        "title": generate_clip_title(
-            _clip_text_for_range(segments, start, end, excerpt=str(clip_excerpt or "")),
-            language_hint=resolved_language,
-        ),
+        "title": clip_data.get("title") or candidate_clip.get("title") or "",
         "start": round(start, 2),
         "end": round(end, 2),
         "excerpt": clip_excerpt,
@@ -691,15 +688,7 @@ def run_window_agent(
     except Exception:
         clips = []
     for clip in clips:
-        clip["title"] = generate_clip_title(
-            _clip_text_for_range(
-                segments,
-                clip.get("start"),
-                clip.get("end"),
-                excerpt=str(clip.get("excerpt") or ""),
-            ),
-            language_hint=resolved_language,
-        )
+        clip["title"] = clip.get("title") or ""
     return clips, raw, excerpt_text
 
 
@@ -974,7 +963,6 @@ def _select_clips_globally_with_llm(
                 "start": candidate.get("start"),
                 "end": candidate.get("end"),
                 "duration": round(float(candidate.get("end") or 0.0) - float(candidate.get("start") or 0.0), 2),
-                "title": candidate.get("title") or "",
                 "excerpt": candidate.get("excerpt") or "",
             }
         )
