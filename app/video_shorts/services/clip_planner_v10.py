@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 
 STAGE3_MAX_ELIGIBLE_SECONDS = 63.0
 MAX_WORKERS = 8
+WORD_RE = re.compile(r"[\wÇĞİÖŞÜçğıöşü'’]+", re.UNICODE)
+TR_LOWER = str.maketrans({"İ": "i", "I": "ı"})
+TITLE_STOPWORDS = {
+    "bir",
+    "gibi",
+    "için",
+    "with",
+    "that",
+    "this",
+    "from",
+    "your",
+    "video",
+    "short",
+}
 
 V10_STAGE1_PROMPT_TEMPLATE = """You pick the best short clips (YouTube Shorts) from a full talk, lecture, or
 Q&A transcript. The transcript is given as numbered sentences with
@@ -92,6 +106,50 @@ Return only JSON: {"end_sentence": <id or null>, "reason": "<short>"}"""
 def _language_name(language: str) -> str:
     value = normalize_planning_language(language)
     return {"tr": "Turkish", "en": "English", "ar": "Arabic"}.get(value, value or "unknown")
+
+
+def _title_tokens(text: str) -> List[str]:
+    tokens = []
+    for raw in WORD_RE.findall(str(text or "")):
+        token = raw.translate(TR_LOWER).lower().strip("'’")
+        if len(token) < 5 or token in TITLE_STOPWORDS:
+            continue
+        tokens.append(token)
+    return tokens
+
+
+def _title_anchor_candidate(video_title: str, sentences: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    title_tokens = _title_tokens(video_title)
+    if len(title_tokens) < 2:
+        return None
+    best_sentence = None
+    best_score = 0
+    title_set = set(title_tokens)
+    for sentence in sentences:
+        sentence_tokens = set(_title_tokens(str(sentence.get("text") or "")))
+        score = len(title_set.intersection(sentence_tokens))
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence
+    if not best_sentence or best_score < 2:
+        return None
+    return {
+        "start_sentence": int(best_sentence["id"]),
+        "end_sentence": int(best_sentence["id"]),
+        "idea": f"Moment that delivers the video title: {video_title}",
+        "why_start_here": "This sentence closely matches the video title.",
+        "why_end_here": "Boundary will be refined later.",
+        "_title_anchor": True,
+    }
+
+
+def _candidate_start_id(candidate: Any) -> Optional[int]:
+    if not isinstance(candidate, dict):
+        return None
+    try:
+        return int(candidate.get("start_sentence"))
+    except Exception:
+        return None
 
 
 def _fmt_time(seconds: float) -> str:
@@ -448,6 +506,17 @@ def propose_clips_v10(
         sentences=sentences,
         target_count=target_count,
     )
+    title_anchor = _title_anchor_candidate(video_title, sentences)
+    if title_anchor:
+        anchor_start = int(title_anchor["start_sentence"])
+        raw_candidates = [
+            title_anchor,
+            *[
+                candidate
+                for candidate in raw_candidates
+                if _candidate_start_id(candidate) != anchor_start
+            ],
+        ]
     debug_info["stage1_candidates"] = raw_candidates
 
     candidate_pairs = []
