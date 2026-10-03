@@ -34,6 +34,41 @@ TITLE_STOPWORDS = {
     "video",
     "short",
 }
+STRONG_PHRASES = [
+    "onun için",
+    "bu yüzden",
+    "bu sebeple",
+    "o halde",
+    "o zaman",
+    "oysa ki",
+    "that's why",
+    "for example",
+]
+STRONG_WORDS = {
+    "ama",
+    "fakat",
+    "lakin",
+    "ancak",
+    "çünkü",
+    "zira",
+    "dolayısıyla",
+    "oysa",
+    "mesela",
+    "örneğin",
+    "yani",
+    "neden",
+    "niye",
+    "ve",
+    "hatta",
+    "ayrıca",
+    "but",
+    "so",
+    "because",
+    "which",
+    "and",
+    "also",
+}
+QUESTION_HOOKS = {"neden", "niye", "why"}
 
 V10_STAGE1_PROMPT_TEMPLATE = """You pick the best short clips (YouTube Shorts) from a full talk, lecture, or
 Q&A transcript. The transcript is given as numbered sentences with
@@ -98,6 +133,10 @@ clip ended at that sentence; only lines marked ✓ are allowed.
 Pick the ✓ sentence where the idea is complete: after the conclusion, the
 punchline, or the answer. Never end in the middle of an explanation, on a
 sentence that sets up something new, or on a dangling question.
+Longer is NOT better. Pick the EARLIEST ✓ sentence where the idea is
+complete. Never end on a sentence that starts a new point, a new example,
+a new list, or a new topic (for example "In another place he also says...",
+or a new short statement that the next part goes on to explain).
 If no ✓ sentence lets the idea finish properly, return
 {"end_sentence": null, "reason": "<short>"} instead of cutting it short.
 Return only JSON: {"end_sentence": <id or null>, "reason": "<short>"}"""
@@ -116,6 +155,52 @@ def _title_tokens(text: str) -> List[str]:
             continue
         tokens.append(token)
     return tokens
+
+
+def _normalized_words(text: str) -> List[Tuple[str, str]]:
+    pairs = []
+    for raw in WORD_RE.findall(str(text or "")):
+        normalized = raw.translate(TR_LOWER).lower().strip("'’.,!?…;:()[]{}\"“”")
+        if normalized:
+            pairs.append((normalized, raw.strip("'’.,!?…;:()[]{}\"“”")))
+    return pairs
+
+
+def _question_word_hook(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped.endswith("?"):
+        return False
+    tokens = [token for token, _raw in _normalized_words(stripped)]
+    return len(tokens) == 1 and tokens[0] in QUESTION_HOOKS
+
+
+def _strong_connector_match(text: str, language: str) -> str:
+    resolved = normalize_planning_language(language)
+    if resolved not in {"tr", "en"} or _question_word_hook(text):
+        return ""
+    pairs = _normalized_words(text)
+    tokens = [token for token, _raw in pairs]
+    if not tokens:
+        return ""
+    match_len = 0
+    for phrase in sorted(STRONG_PHRASES, key=lambda item: len(item.split()), reverse=True):
+        phrase_tokens = [part.translate(TR_LOWER).lower() for part in phrase.split()]
+        if resolved == "tr" and any(part in {"that's", "why", "for", "example"} for part in phrase_tokens):
+            continue
+        if resolved == "en" and any(part in {"onun", "için", "bu", "yüzden", "sebep", "halde", "zaman", "oysa", "ki"} for part in phrase_tokens):
+            continue
+        if tokens[: len(phrase_tokens)] == phrase_tokens:
+            match_len = len(phrase_tokens)
+            break
+    if not match_len and tokens[0] in STRONG_WORDS:
+        match_len = 1
+    if not match_len:
+        return ""
+    if resolved == "tr" and len(tokens) > match_len and tokens[match_len] == "diyor":
+        match_len += 1
+        if len(tokens) > match_len and tokens[match_len] == "ki":
+            match_len += 1
+    return " ".join(raw for _token, raw in pairs[:match_len])
 
 
 def _title_anchor_candidate(video_title: str, sentences: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -324,6 +409,11 @@ def _chat_json(client: Any, stats: _CallStats, *, messages: List[Dict[str, str]]
     return {"raw": raw or "{}", "data": json.loads(raw or "{}")}
 
 
+def _parse_start_response(raw: str) -> int:
+    data = json.loads(raw or "{}")
+    return int(data.get("start_sentence"))
+
+
 def _run_stage1(
     client: Any,
     stats: _CallStats,
@@ -372,11 +462,12 @@ def _refine_start(
     window = [sentence for sentence in sentences if window_start <= int(sentence["id"]) <= window_end]
     lines = [f"[{sentence['id']}] {sentence['text']}" for sentence in window]
     user_message = f"Language: {_language_name(language)}\nIdea: {candidate.get('idea') or ''}\n\n" + "\n".join(lines)
+    messages = [{"role": "system", "content": START_PROMPT}, {"role": "user", "content": user_message}]
     try:
         result = _chat_json(
             client,
             stats,
-            messages=[{"role": "system", "content": START_PROMPT}, {"role": "user", "content": user_message}],
+            messages=messages,
             temperature=0,
         )
         data = result["data"] or {}
@@ -385,12 +476,39 @@ def _refine_start(
         return {"rank": rank, "candidate": candidate, "drop_reason": f"bad id: start parse error {exc}"}
     if chosen not in {int(sentence["id"]) for sentence in window}:
         return {"rank": rank, "candidate": candidate, "drop_reason": f"bad id: start {chosen} outside window"}
+    feedback = None
+    chosen_sentence = by_id.get(chosen)
+    matched = _strong_connector_match(str((chosen_sentence or {}).get("text") or ""), language)
+    if matched:
+        old_id = chosen
+        messages.append({"role": "assistant", "content": result["raw"]})
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f'The sentence you chose starts with "{matched}", which usually continues something said before it. '
+                    "Choose a start that a viewer can follow without the earlier part — an earlier setup sentence if "
+                    "the idea needs it, otherwise a later sentence. If you are sure this sentence already works on "
+                    "its own, return the same id."
+                ),
+            }
+        )
+        try:
+            retry = _chat_json(client, stats, messages=messages, temperature=0)
+            new_id = _parse_start_response(retry["raw"])
+            if new_id in {int(sentence["id"]) for sentence in window}:
+                chosen = new_id
+        except Exception:
+            new_id = old_id
+        feedback = {"matched": matched, "old_id": old_id, "new_id": chosen}
+        logger.info('v10_start_feedback matched="%s" old_id=%s new_id=%s', matched, old_id, chosen)
     return {
         "rank": rank,
         "candidate": candidate,
         "stage1_start": original_start,
         "stage2_start": chosen,
         "start_reason": str(data.get("reason") or "").strip(),
+        "start_feedback": feedback,
     }
 
 
@@ -541,6 +659,7 @@ def propose_clips_v10(
                 candidate_pairs,
             )
         )
+    debug_info["start_feedback"] = [item["start_feedback"] for item in start_items if item.get("start_feedback")]
     eligible_start_items = []
     for item in start_items:
         if item.get("drop_reason"):
