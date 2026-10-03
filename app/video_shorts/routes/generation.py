@@ -4124,6 +4124,32 @@ def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _mark_plan_entry_ai_title(plan_entry: Dict[str, Any]) -> None:
+    plan_entry["title_source"] = "ai"
+
+
+def _mark_plan_entry_placeholder_title(plan_entry: Dict[str, Any]) -> None:
+    plan_entry["title_source"] = "placeholder"
+
+
+def _mark_plan_entry_user_title_edit(plan_entry: Dict[str, Any], new_title: str) -> None:
+    current_title = str(plan_entry.get("title") or "").strip()
+    if (
+        plan_entry.get("title_source") != "user"
+        and not plan_entry.get("original_ai_title")
+        and current_title
+        and not _is_placeholder_clip_title(current_title)
+    ):
+        plan_entry["original_ai_title"] = current_title
+    plan_entry["title"] = new_title
+    plan_entry["title_source"] = "user"
+    plan_entry["title_user_edited_at"] = _utc_now_iso()
+
+
 def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallback_entries: List[Dict[str, Any]]) -> bool:
     target_index = _coerce_positive_plan_index(updated_entry.get("plan_index"))
     if target_index is None:
@@ -6421,6 +6447,7 @@ def _schedule_async_clip_title_suggestion(
                 if existing_title and existing_title != safe_placeholder:
                     return
                 plan_entry["title"] = new_title
+                _mark_plan_entry_ai_title(plan_entry)
                 _write_plan_entries(safe_video_id, entries)
             except Exception:
                 current_app.logger.exception(
@@ -19022,6 +19049,7 @@ def add_clip_section(video_pk):
                 pass
 
     clip_title = title or _build_placeholder_clip_title(transcript_full, next_plan_index)
+    title_source = "user" if title else "placeholder"
     inferred_language = _infer_clip_language_from_segments(
         segments,
         start_time,
@@ -19032,6 +19060,7 @@ def add_clip_section(video_pk):
         "origin": "manual",
         "plan_index": next_plan_index,
         "title": clip_title,
+        "title_source": title_source,
         "start": round(start_time, 3),
         "end": round(end_time, 3),
         "clip_filename": f"{next_plan_index}_{video_id}.mp4",
@@ -19248,7 +19277,7 @@ def adjust_clip_timing(video_pk):
             new_end,
         )
     if title_candidate:
-        plan_entry["title"] = title_candidate
+        _mark_plan_entry_user_title_edit(plan_entry, title_candidate)
 
     try:
         _write_plan_entries(video_id, plan_entries)
@@ -19331,7 +19360,7 @@ def update_clip_title(video_pk):
         flash("Selected clip was not found in the plan.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
-    plan_entry["title"] = new_title
+    _mark_plan_entry_user_title_edit(plan_entry, new_title)
     try:
         _write_plan_entries(video_id, plan_entries)
     except Exception as exc:
@@ -19474,6 +19503,7 @@ def suggest_clip_title(video_pk):
     if not new_title:
         return jsonify(success=False, message="Başlık önerisi alınamadı"), 500
     plan_entry["title"] = new_title
+    _mark_plan_entry_ai_title(plan_entry)
     try:
         _write_plan_entries(video_id, entries)
     except Exception as exc:
@@ -22100,6 +22130,7 @@ def _generate_clip_plan_for_video(
     debug_info: Dict[str, Any] = {}
     plan_path = SHORTS_DIR / f"{vid}_plan.json"
     existing_plan_entries = _load_plan_entries(vid)
+    used_fallback_plan = False
 
     try:
         _emit("llm_plan", "Generating clip plan with AI.")
@@ -22147,6 +22178,7 @@ def _generate_clip_plan_for_video(
     if not clip_plan:
         _emit("fallback", "Using fallback clip plan.")
         clip_plan = _fallback_clip_plan(computed_duration)
+        used_fallback_plan = True
     if not clip_plan:
         raise RuntimeError("LLM did not return any clip suggestions and fallback couldn't generate clips.")
 
@@ -22170,6 +22202,10 @@ def _generate_clip_plan_for_video(
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
         plan_entry["origin"] = "ai"
+        if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
+            _mark_plan_entry_placeholder_title(plan_entry)
+        else:
+            _mark_plan_entry_ai_title(plan_entry)
         plan_entry["score"] = clip.get("score")
         plan_entry["score_breakdown"] = clip.get("score_breakdown")
         plan_entry["focus_categories"] = list(focus_categories)
@@ -22532,6 +22568,7 @@ def create_clip_plan_v2(video_pk):
     debug_info = {}
     plan_path = SHORTS_DIR / f"{vid}_plan_v2.json"
     v1_entries = _load_plan_entries(vid)
+    used_fallback_plan = False
     if v1_entries:
         target_clip_count = len(v1_entries)
     else:
@@ -22577,6 +22614,7 @@ def create_clip_plan_v2(video_pk):
     if not clip_plan:
         fallback = _fallback_clip_plan(computed_duration)
         clip_plan = fallback
+        used_fallback_plan = True
     if not clip_plan:
         flash("LLM did not return any clip suggestions and fallback couldn't generate clips.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -22597,6 +22635,10 @@ def create_clip_plan_v2(video_pk):
             end,
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
+        if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
+            _mark_plan_entry_placeholder_title(plan_entry)
+        else:
+            _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -22661,6 +22703,7 @@ def create_clip_plan_v3(video_pk):
     clip_plan = []
     debug_info = {}
     plan_path = SHORTS_DIR / f"{vid}_plan_v3.json"
+    used_fallback_plan = False
     try:
         clip_plan, debug_info = propose_clips_with_agents_v3(
             segments,
@@ -22683,6 +22726,7 @@ def create_clip_plan_v3(video_pk):
     if not clip_plan:
         fallback = _fallback_clip_plan(computed_duration)
         clip_plan = fallback
+        used_fallback_plan = True
     if not clip_plan:
         flash("LLM did not return any clip suggestions and fallback couldn't generate clips.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -22705,6 +22749,10 @@ def create_clip_plan_v3(video_pk):
             end,
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
+        if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
+            _mark_plan_entry_placeholder_title(plan_entry)
+        else:
+            _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -22769,6 +22817,7 @@ def create_clip_plan_v4(video_pk):
     clip_plan = []
     debug_info = {}
     plan_path = SHORTS_DIR / f"{vid}_plan_v4.json"
+    used_fallback_plan = False
     try:
         clip_plan, debug_info = propose_clips_with_agents_v4(
             segments,
@@ -22791,6 +22840,7 @@ def create_clip_plan_v4(video_pk):
     if not clip_plan:
         fallback = _fallback_clip_plan(computed_duration)
         clip_plan = fallback
+        used_fallback_plan = True
     if not clip_plan:
         flash("LLM did not return any clip suggestions and fallback couldn't generate clips.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -22813,6 +22863,10 @@ def create_clip_plan_v4(video_pk):
             end,
             excerpt=plan_entry.get("transcript_full") or plan_entry.get("excerpt") or "",
         )
+        if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
+            _mark_plan_entry_placeholder_title(plan_entry)
+        else:
+            _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
         plan_entry["publish_status"] = "not_ready"
@@ -23775,7 +23829,7 @@ def autoclip_video(video_pk):
 
     title_override = (request.form.get("title") or "").strip()
     if title_override:
-        plan_entry["title"] = title_override
+        _mark_plan_entry_user_title_edit(plan_entry, title_override)
         try:
             _write_plan_entries(vid, plan_entries)
         except Exception as exc:

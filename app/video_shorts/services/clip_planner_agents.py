@@ -1153,19 +1153,20 @@ def propose_clips_with_agents(
         snapped = _trim_candidate_to_duration_limit(snapped, sentence_segments)
         if snapped is None:
             continue
-        snapped["title"] = generate_clip_title(
+        aligned_candidates.append(snapped)
+
+    final_plan = _prune_overlapping_selected_clips(aligned_candidates)
+    for clip in final_plan:
+        clip["title"] = generate_clip_title(
             _clip_text_for_range(
                 sentence_segments,
-                snapped.get("start"),
-                snapped.get("end"),
-                excerpt=str(snapped.get("excerpt") or ""),
+                clip.get("start"),
+                clip.get("end"),
+                excerpt=str(clip.get("excerpt") or ""),
             ),
             language_hint=resolved_language,
         )
         debug_info["openai_call_count"] += 1
-        aligned_candidates.append(snapped)
-
-    final_plan = _prune_overlapping_selected_clips(aligned_candidates)
     debug_info["clips_after_selector_count"] = len(final_plan)
     debug_info["selector_raw_response"] = selector_raw_response
     debug_info["final_plan"] = final_plan
