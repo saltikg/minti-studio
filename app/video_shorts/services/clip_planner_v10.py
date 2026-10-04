@@ -792,11 +792,26 @@ def _append_drop(dropped: List[Dict[str, Any]], item: Dict[str, Any]) -> None:
     )
 
 
+def _overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    try:
+        a_start = float(a.get("start") or 0.0)
+        a_end = float(a.get("end") or a_start)
+        b_start = float(b.get("start") or 0.0)
+        b_end = float(b.get("end") or b_start)
+    except Exception:
+        return 0.0
+    overlap = max(0.0, min(a_end, b_end) - max(a_start, b_start))
+    if overlap <= 0:
+        return 0.0
+    shorter = min(max(a_end - a_start, 0.0), max(b_end - b_start, 0.0))
+    if shorter <= 0:
+        return 0.0
+    return overlap / shorter
+
+
 def _overlaps_existing(item: Dict[str, Any], ranges: List[Tuple[float, float]]) -> bool:
-    item_start = float(item["start"])
-    item_end = float(item["end"])
     return any(
-        max(0.0, min(item_end, float(end)) - max(item_start, float(start))) >= 0.3
+        _overlap_ratio(item, {"start": start, "end": end}) >= 0.3
         for start, end in ranges
     )
 
@@ -827,10 +842,7 @@ def _select_balanced_clips(
                 }
             )
             continue
-        overlaps = any(
-            max(float(item["start"]), float(clip["start"])) < min(float(item["end"]), float(clip["end"]))
-            for clip in survivors
-        )
+        overlaps = any(_overlap_ratio(item, clip) >= 0.3 for clip in survivors)
         if overlaps:
             dropped.append(
                 {

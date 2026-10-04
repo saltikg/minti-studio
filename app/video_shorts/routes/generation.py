@@ -4267,10 +4267,6 @@ def _is_removable_ai_suggestion(entry: Dict[str, Any]) -> bool:
 def _clip_plan_existing_ranges_for_ai_suggestions(plan_entries: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
     ranges: List[Tuple[float, float]] = []
     for entry in plan_entries or []:
-        title_source = str(entry.get("title_source") or "").strip().lower()
-        user_edited_at = str(entry.get("title_user_edited_at") or "").strip()
-        if _is_removable_ai_suggestion(entry) and title_source != "user" and not user_edited_at:
-            continue
         try:
             start = float(entry.get("start"))
             end = float(entry.get("end"))
