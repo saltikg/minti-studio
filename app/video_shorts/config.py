@@ -40,6 +40,7 @@ CLOUDFRONT_DISTRIBUTION_ID = (os.getenv("CLOUDFRONT_DISTRIBUTION_ID", "") or "")
 SHORTS_DIR = Path(__file__).resolve().parent / "static" / "shorts"
 VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 VIDEO_SHORTS_TMP_DIR = Path(os.getenv("VIDEO_SHORTS_TMP_DIR") or (Path(__file__).resolve().parent / "tmp"))
+SOURCE_CACHE_DIR = Path(os.getenv("SOURCE_CACHE_DIR") or (Path(__file__).resolve().parent / "source_cache"))
 BGCOVER_PATH = VIDEOS_DIR / "1-short_bg_8.png"
 FFMPEG_BIN = os.getenv("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
 
@@ -72,6 +73,9 @@ def _env_bool(name: str, default: bool, *, warn_invalid: bool = False, logger=No
     if warn_invalid and logger is not None:
         logger.warning("Invalid boolean env var %s=%r; treating as disabled.", name, raw)
     return False
+
+
+SOURCE_CACHE_MAX_GB = _env_int("SOURCE_CACHE_MAX_GB", 15)
 
 
 DEFAULT_STORAGE_PLANS = [

@@ -5,6 +5,10 @@ import shutil
 import subprocess
 import tempfile
 import time
+import fcntl
+import hashlib
+import threading
+import uuid
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -12,6 +16,8 @@ from app.video_shorts.config import (
     FFMPEG_BIN,
     FFMPEG_SHORT_TIMEOUT,
     S3_BUCKET_NAME,
+    SOURCE_CACHE_DIR,
+    SOURCE_CACHE_MAX_GB,
     SHORTS_DIR,
     VIDEOS_DIR,
 )
@@ -21,6 +27,10 @@ from app.video_shorts.services.storage import get_media_storage
 logger = logging.getLogger(__name__)
 SOURCE_FASTSTART_TIMEOUT_SECONDS = 120
 _FASTSTART_COMPATIBLE_SUFFIXES = {".mp4", ".mov", ".m4v"}
+_SOURCE_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
+_SOURCE_CACHE_MIN_FREE_BYTES = 10 * 1024**3
+_SOURCE_CACHE_ACTIVE_LEASES: dict[Path, list[Path]] = {}
+_SOURCE_CACHE_LEASE_LOCK = threading.Lock()
 
 
 class MediaSubprocessTimeoutError(RuntimeError):
@@ -250,6 +260,265 @@ def _find_source_video(video_id: str):
     return None
 
 
+def _safe_cache_token(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or ""))
+    return safe.strip("._") or "source"
+
+
+def _source_cache_dirs() -> tuple[Path, Path, Path]:
+    root = SOURCE_CACHE_DIR.resolve()
+    locks = root / ".locks"
+    leases = root / ".leases"
+    root.mkdir(parents=True, exist_ok=True)
+    locks.mkdir(parents=True, exist_ok=True)
+    leases.mkdir(parents=True, exist_ok=True)
+    return root, locks, leases
+
+
+def _source_cache_key_id(key: str) -> str:
+    return hashlib.sha256(str(key or "").strip().lstrip("/").encode("utf-8")).hexdigest()
+
+
+def _source_cache_lock_path(key: str) -> Path:
+    _, locks, _ = _source_cache_dirs()
+    return locks / f"{_source_cache_key_id(key)}.lock"
+
+
+def _source_cache_identity(video_id: str, key: str, size: int, etag: str) -> Path:
+    root, _, _ = _source_cache_dirs()
+    suffix = Path(key).suffix.lower() or ".bin"
+    clean_video_id = _safe_cache_token(video_id)
+    clean_etag = _safe_cache_token(etag.strip('"') or "noetag")
+    return root / f"{clean_video_id}.{int(size)}.{clean_etag}{suffix}"
+
+
+def _source_cache_candidates(video_id: str) -> list[Path]:
+    root, _, _ = _source_cache_dirs()
+    clean_video_id = _safe_cache_token(video_id)
+    return [p for p in root.glob(f"{clean_video_id}.*") if p.is_file() and not p.name.endswith(".part")]
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+
+
+def _active_source_cache_paths() -> set[Path]:
+    root, _, leases = _source_cache_dirs()
+    active: set[Path] = set()
+    for lease in leases.glob("*.lease"):
+        try:
+            payload = json.loads(lease.read_text() or "{}")
+            pid = int(payload.get("pid") or 0)
+            path = Path(str(payload.get("path") or "")).resolve()
+        except Exception:
+            try:
+                lease.unlink(missing_ok=True)
+            except Exception:
+                pass
+            continue
+        if not _pid_is_alive(pid):
+            try:
+                lease.unlink(missing_ok=True)
+            except Exception:
+                pass
+            continue
+        try:
+            path.relative_to(root)
+        except Exception:
+            continue
+        active.add(path)
+    return active
+
+
+def _acquire_source_cache_lease(path: Path) -> None:
+    _, _, leases = _source_cache_dirs()
+    lease = leases / f"{os.getpid()}-{threading.get_ident()}-{uuid.uuid4().hex}.lease"
+    payload = {"pid": os.getpid(), "path": str(path.resolve()), "created_at": time.time()}
+    lease.write_text(json.dumps(payload, sort_keys=True))
+    with _SOURCE_CACHE_LEASE_LOCK:
+        _SOURCE_CACHE_ACTIVE_LEASES.setdefault(path.resolve(), []).append(lease)
+
+
+def _release_source_cache_lease(path: Path) -> bool:
+    resolved = Path(path).resolve()
+    with _SOURCE_CACHE_LEASE_LOCK:
+        leases = _SOURCE_CACHE_ACTIVE_LEASES.get(resolved) or []
+        lease = leases.pop() if leases else None
+        if leases:
+            _SOURCE_CACHE_ACTIVE_LEASES[resolved] = leases
+        else:
+            _SOURCE_CACHE_ACTIVE_LEASES.pop(resolved, None)
+    if lease:
+        try:
+            lease.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return True
+    return False
+
+
+def _is_source_cache_path(path: Path | str | None) -> bool:
+    if not path:
+        return False
+    try:
+        Path(path).resolve().relative_to(SOURCE_CACHE_DIR.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _source_cache_bytes() -> int:
+    root, _, _ = _source_cache_dirs()
+    total = 0
+    for item in root.iterdir():
+        if item.is_file() and not item.name.endswith(".part"):
+            try:
+                total += item.stat().st_size
+            except Exception:
+                pass
+    return total
+
+
+def _evict_source_cache(*, keep: Optional[Path] = None) -> None:
+    root, _, _ = _source_cache_dirs()
+    max_bytes = max(1, int(SOURCE_CACHE_MAX_GB or 15)) * 1024**3
+    keep_path = keep.resolve() if keep else None
+    active = _active_source_cache_paths()
+
+    def free_bytes() -> int:
+        try:
+            return shutil.disk_usage(root).free
+        except Exception:
+            return _SOURCE_CACHE_MIN_FREE_BYTES
+
+    candidates = []
+    for item in root.iterdir():
+        if not item.is_file() or item.name.endswith(".part"):
+            continue
+        resolved = item.resolve()
+        if keep_path and resolved == keep_path:
+            continue
+        if resolved in active:
+            continue
+        try:
+            stat = item.stat()
+        except Exception:
+            continue
+        candidates.append((stat.st_atime, stat.st_mtime, item, stat.st_size))
+    candidates.sort(key=lambda row: (row[0], row[1]))
+
+    total = _source_cache_bytes()
+    for _, _, item, size in candidates:
+        if total <= max_bytes and free_bytes() >= _SOURCE_CACHE_MIN_FREE_BYTES:
+            break
+        try:
+            item.unlink()
+            total -= size
+        except Exception:
+            continue
+
+
+def purge_source_cache_for_video(video_id: str) -> None:
+    for candidate in _source_cache_candidates(video_id):
+        try:
+            candidate.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("source_cache purge failed video_id=%s path=%s", video_id, candidate)
+
+
+def _head_s3_source(storage, key: str) -> tuple[int, str]:
+    response = storage.client.head_object(Bucket=storage.bucket_name, Key=key)
+    return int(response.get("ContentLength") or 0), str(response.get("ETag") or "").strip()
+
+
+def resolve_s3_source_video_cached(
+    video_id: str,
+    source_key: str,
+    storage=None,
+    *,
+    log_missing: bool = True,
+) -> Optional[Path]:
+    clean_video_id = str(video_id or "").strip()
+    clean_key = str(source_key or "").strip().lstrip("/")
+    if not clean_video_id or not clean_key:
+        return None
+    storage = storage or get_media_storage()
+    if getattr(storage, "backend_name", "local") != "s3" or not getattr(storage, "client", None):
+        return None
+    lock_path = _source_cache_lock_path(clean_key)
+    with lock_path.open("a+") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                size, etag = _head_s3_source(storage, clean_key)
+            except Exception:
+                if log_missing:
+                    logger.warning("source_cache MISS video_id=%s bytes=0 key=%s reason=head_failed", clean_video_id, clean_key)
+                return None
+            target = _source_cache_identity(clean_video_id, clean_key, size, etag)
+            active = _active_source_cache_paths()
+            for stale in _source_cache_candidates(clean_video_id):
+                if stale.resolve() != target.resolve():
+                    if stale.resolve() in active:
+                        continue
+                    try:
+                        stale.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            if target.exists() and target.is_file():
+                try:
+                    if int(target.stat().st_size) == int(size):
+                        os.utime(target, None)
+                        _acquire_source_cache_lease(target)
+                        logger.info("source_cache HIT video_id=%s bytes=%s key=%s", clean_video_id, size, clean_key)
+                        _evict_source_cache(keep=target)
+                        return target
+                except Exception:
+                    pass
+                try:
+                    target.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            part_path = target.with_name(f"{target.name}.part")
+            try:
+                part_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            storage.client.download_file(storage.bucket_name, clean_key, str(part_path))
+            downloaded_size = part_path.stat().st_size
+            if int(downloaded_size) != int(size):
+                try:
+                    part_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                logger.warning(
+                    "source_cache MISS video_id=%s bytes=%s key=%s reason=size_mismatch downloaded=%s",
+                    clean_video_id,
+                    size,
+                    clean_key,
+                    downloaded_size,
+                )
+                return None
+            part_path.replace(target)
+            os.utime(target, None)
+            _acquire_source_cache_lease(target)
+            logger.info("source_cache MISS video_id=%s bytes=%s key=%s", clean_video_id, size, clean_key)
+            _evict_source_cache(keep=target)
+            return target
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def _resolve_source_video(video_id: str):
     local_path = _find_source_video(video_id)
     if local_path and local_path.exists():
@@ -264,15 +533,16 @@ def _resolve_source_video(video_id: str):
         except Exception:
             logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
 
-    for suffix in (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
+    for suffix in _SOURCE_SUFFIXES:
         key = f"videos/{video_id}{suffix}"
         for storage in storages:
             if getattr(storage, "backend_name", "local") != "s3":
                 continue
             try:
-                if storage.exists(key):
-                    logger.info("source video resolved from s3 video_id=%s key=%s", video_id, key)
-                    return storage.download_to_temp(key), True
+                cached = resolve_s3_source_video_cached(video_id, key, storage=storage, log_missing=False)
+                if cached and cached.exists():
+                    logger.info("source video resolved from source_cache video_id=%s key=%s", video_id, key)
+                    return cached, True
             except Exception:
                 logger.exception("source video s3 download failed video_id=%s key=%s", video_id, key)
                 continue
@@ -281,6 +551,9 @@ def _resolve_source_video(video_id: str):
 
 def _cleanup_resolved_source_video(path: Path | None, is_temp: bool) -> None:
     if not is_temp or not path:
+        return
+    if _is_source_cache_path(path):
+        _release_source_cache_lease(path)
         return
     try:
         path.unlink()

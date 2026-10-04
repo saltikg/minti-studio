@@ -34,6 +34,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
+from app.video_shorts.services.media_utils import purge_source_cache_for_video
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import (
     upsert_comment_records,
@@ -145,6 +146,7 @@ def _delete_source_video_media(video_id: str) -> None:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
         return
+    purge_source_cache_for_video(clean_video_id)
     storage = get_media_storage()
     local_storage = get_media_storage("local")
     for suffix in SOURCE_VIDEO_SUFFIXES:

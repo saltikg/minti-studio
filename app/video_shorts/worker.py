@@ -49,6 +49,7 @@ from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _resolve_source_video,
     normalize_s3_source_video_for_upload,
+    resolve_s3_source_video_cached,
 )
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts.services.quick_short_flow import (
@@ -1248,7 +1249,9 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             user_id=owner_user_id,
             normalize={"status": "processing", "message": "Preparing your video on the server...", "percent": 0},
         )
-        source_path = storage.download_to_temp(source_key)
+        source_path = resolve_s3_source_video_cached(video_id, source_key, storage=storage)
+        if not source_path:
+            raise PermanentRenderJobError("Uploaded source file could not be found in S3.")
         new_key = normalize_s3_source_video_for_upload(
             video_id,
             source_key,
@@ -1370,7 +1373,9 @@ def _execute_preview_frame_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     storage = get_media_storage()
     source_path = None
     try:
-        source_path = storage.download_to_temp(source_key)
+        source_path = resolve_s3_source_video_cached(video_id, source_key, storage=storage)
+        if not source_path:
+            raise PermanentRenderJobError("Preview frame source file could not be found in S3.")
         with app.app_context():
             preview_path = generation._ensure_preview_frame(video_id, Path(source_path), duration_seconds)
             if not preview_path:

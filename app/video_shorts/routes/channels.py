@@ -17,6 +17,7 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
+from app.video_shorts.services.media_utils import purge_source_cache_for_video
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_events import track_event
@@ -386,6 +387,7 @@ def _delete_source_video_media(video_id: str) -> None:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
         return
+    purge_source_cache_for_video(clean_video_id)
     storage = get_media_storage()
     local_storage = get_media_storage("local")
     for suffix in SOURCE_VIDEO_SUFFIXES:
