@@ -360,7 +360,7 @@ def _word_timed_text_for_overlap(
         except Exception:
             continue
         saw_timed_word = True
-        if word_end <= clip_start or word_start >= clip_end:
+        if word_start < clip_start or word_end > clip_end:
             continue
         kept.append((word_text, max(word_start, clip_start), min(word_end, clip_end)))
     if not saw_timed_word:
