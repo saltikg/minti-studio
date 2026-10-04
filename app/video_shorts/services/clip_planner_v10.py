@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -93,7 +94,11 @@ A good clip:
 - Is one of the strongest, most interesting, or most quotable moments of the
   talk. Skip greetings, logistics, housekeeping, and filler.
 
-- List clips from strongest to weakest.
+- Go through EVERY part. From each part, propose up to {per_part} clips
+  (fewer if a part has no worthwhile moment). Do not favor the beginning
+  of the video; late moments are just as valuable.
+- Give each clip a "strength" score from 1 to 10 (10 = most compelling,
+  quotable, and self-contained).
 - Never pick greetings, introductions of the stream or guests, program
   logistics, or "let's start with your questions" moments.
 - Do not worry about exact length here; boundaries will be refined later.
@@ -108,6 +113,7 @@ Rules:
 Return only JSON:
 {{"clips": [
   {{"start_sentence": <id>, "end_sentence": <id>,
+   "part": <k>, "strength": <1-10>,
    "idea": "<one short sentence: what this clip says>",
    "why_start_here": "<short reason>",
    "why_end_here": "<short reason>"}}
@@ -240,6 +246,58 @@ def _candidate_start_id(candidate: Any) -> Optional[int]:
 def _fmt_time(seconds: float) -> str:
     seconds = max(0, int(round(float(seconds or 0))))
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _clamp_strength(value: Any) -> int:
+    try:
+        strength = int(round(float(value)))
+    except Exception:
+        strength = 5
+    return max(1, min(10, strength))
+
+
+def _part_for_time(seconds: float, duration_seconds: float, n_parts: int) -> int:
+    if n_parts <= 1:
+        return 1
+    duration = max(float(duration_seconds or 0.0), 0.01)
+    index = int(max(0.0, min(float(seconds or 0.0), duration - 0.001)) / (duration / n_parts))
+    return max(1, min(n_parts, index + 1))
+
+
+def _build_sentence_parts(
+    sentences: List[Dict[str, Any]],
+    duration_seconds: float,
+    n_parts: int,
+) -> List[Dict[str, Any]]:
+    duration = max(float(duration_seconds or 0.0), float((sentences[-1] or {}).get("end") or 0.0), 0.01)
+    parts = []
+    for part_number in range(1, n_parts + 1):
+        start = duration * (part_number - 1) / n_parts
+        end = duration * part_number / n_parts
+        parts.append({"part": part_number, "start": start, "end": end, "sentences": []})
+    for sentence in sentences:
+        part_number = _part_for_time(float(sentence.get("start") or 0.0), duration, n_parts)
+        parts[part_number - 1]["sentences"].append(sentence)
+    return parts
+
+
+def _candidate_part(
+    candidate: Dict[str, Any],
+    sentences_by_id: Dict[int, Dict[str, Any]],
+    duration_seconds: float,
+    n_parts: int,
+) -> int:
+    try:
+        part = int(candidate.get("part"))
+    except Exception:
+        part = 0
+    if 1 <= part <= n_parts:
+        return part
+    start_id = _candidate_start_id(candidate)
+    sentence = sentences_by_id.get(start_id or -1)
+    if sentence:
+        return _part_for_time(float(sentence.get("start") or 0.0), duration_seconds, n_parts)
+    return 1
 
 
 def _seg_start_end(seg: Dict[str, Any]) -> Tuple[float, float]:
@@ -422,13 +480,25 @@ def _run_stage1(
     language: str,
     sentences: List[Dict[str, Any]],
     target_count: int,
+    duration_seconds: float,
+    n_parts: int,
+    per_part: int,
 ) -> List[Dict[str, Any]]:
     prompt = V10_STAGE1_PROMPT_TEMPLATE.format(
         min_s=int(MIN_CLIP_SECONDS),
         max_s=int(MAX_CLIP_SECONDS),
         target_count=target_count + 3,
+        per_part=per_part,
     )
-    lines = [f"[{sentence['id']}] ({_fmt_time(sentence['start'])}) {sentence['text']}" for sentence in sentences]
+    lines = []
+    for part in _build_sentence_parts(sentences, duration_seconds, n_parts):
+        lines.append(
+            f"=== PART {part['part']} of {n_parts} ({_fmt_time(part['start'])}-{_fmt_time(part['end'])}) ==="
+        )
+        lines.extend(
+            f"[{sentence['id']}] ({_fmt_time(sentence['start'])}) {sentence['text']}"
+            for sentence in part["sentences"]
+        )
     title_line = f"Video title: {video_title}\n" if str(video_title or "").strip() else ""
     user_message = f"{title_line}Transcript language: {_language_name(language)}\n\n" + "\n".join(lines)
     result = _chat_json(
@@ -578,10 +648,127 @@ def _append_drop(dropped: List[Dict[str, Any]], item: Dict[str, Any]) -> None:
     dropped.append(
         {
             "rank": item.get("rank"),
+            "part": (item.get("candidate") or {}).get("part"),
+            "strength": (item.get("candidate") or {}).get("strength"),
             "reason": item.get("drop_reason") or item.get("reason") or "",
             "idea": (item.get("candidate") or {}).get("idea") or item.get("idea") or "",
         }
     )
+
+
+def _overlaps_existing(item: Dict[str, Any], ranges: List[Tuple[float, float]]) -> bool:
+    item_start = float(item["start"])
+    item_end = float(item["end"])
+    return any(max(item_start, float(start)) < min(item_end, float(end)) for start, end in ranges)
+
+
+def _item_sort_key(item: Dict[str, Any]) -> Tuple[int, float]:
+    candidate = item.get("candidate") or {}
+    return (-_clamp_strength(candidate.get("strength")), float(item.get("start") or 0.0))
+
+
+def _select_balanced_clips(
+    refined: List[Dict[str, Any]],
+    *,
+    target_count: int,
+    n_parts: int,
+    existing_ranges: List[Tuple[float, float]],
+    dropped: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    survivors: List[Dict[str, Any]] = []
+    for item in sorted(refined, key=_item_sort_key):
+        if _overlaps_existing(item, existing_ranges):
+            dropped.append(
+                {
+                    "rank": item.get("rank"),
+                    "part": (item.get("candidate") or {}).get("part"),
+                    "strength": (item.get("candidate") or {}).get("strength"),
+                    "reason": "overlap existing range",
+                    "idea": (item.get("candidate") or {}).get("idea") or "",
+                }
+            )
+            continue
+        overlaps = any(
+            max(float(item["start"]), float(clip["start"])) < min(float(item["end"]), float(clip["end"]))
+            for clip in survivors
+        )
+        if overlaps:
+            dropped.append(
+                {
+                    "rank": item.get("rank"),
+                    "part": (item.get("candidate") or {}).get("part"),
+                    "strength": (item.get("candidate") or {}).get("strength"),
+                    "reason": "overlap",
+                    "idea": (item.get("candidate") or {}).get("idea") or "",
+                }
+            )
+            continue
+        survivors.append(item)
+
+    grouped: Dict[int, List[Dict[str, Any]]] = {part: [] for part in range(1, n_parts + 1)}
+    for item in survivors:
+        part = int((item.get("candidate") or {}).get("part") or 1)
+        grouped.setdefault(max(1, min(n_parts, part)), []).append(item)
+    for items in grouped.values():
+        items.sort(key=_item_sort_key)
+
+    selected: List[Dict[str, Any]] = []
+    selected_ids = set()
+    base_slots = target_count // max(1, n_parts)
+    for part in range(1, n_parts + 1):
+        for item in grouped.get(part, [])[:base_slots]:
+            selected.append(item)
+            selected_ids.add(id(item))
+
+    leftovers = [item for item in survivors if id(item) not in selected_ids]
+    for item in sorted(leftovers, key=_item_sort_key):
+        if len(selected) >= target_count:
+            break
+        selected.append(item)
+        selected_ids.add(id(item))
+
+    title_anchors = [item for item in survivors if (item.get("candidate") or {}).get("_title_anchor")]
+    for anchor in title_anchors:
+        if id(anchor) in selected_ids:
+            continue
+        part = int((anchor.get("candidate") or {}).get("part") or 1)
+        same_part = [item for item in selected if int((item.get("candidate") or {}).get("part") or 1) == part]
+        if same_part:
+            weakest = sorted(same_part, key=lambda item: (_clamp_strength((item.get("candidate") or {}).get("strength")), -float(item.get("start") or 0.0)))[0]
+            selected.remove(weakest)
+            selected_ids.discard(id(weakest))
+            selected.append(anchor)
+            selected_ids.add(id(anchor))
+        elif len(selected) < target_count:
+            selected.append(anchor)
+            selected_ids.add(id(anchor))
+        elif selected:
+            weakest = sorted(
+                selected,
+                key=lambda item: (
+                    _clamp_strength((item.get("candidate") or {}).get("strength")),
+                    -float(item.get("start") or 0.0),
+                ),
+            )[0]
+            selected.remove(weakest)
+            selected_ids.discard(id(weakest))
+            selected.append(anchor)
+            selected_ids.add(id(anchor))
+
+    selected = sorted(selected, key=lambda item: float(item.get("start") or 0.0))[:target_count]
+    selected_ids = {id(item) for item in selected}
+    for item in survivors:
+        if id(item) not in selected_ids:
+            dropped.append(
+                {
+                    "rank": item.get("rank"),
+                    "part": (item.get("candidate") or {}).get("part"),
+                    "strength": (item.get("candidate") or {}).get("strength"),
+                    "reason": "rank cut",
+                    "idea": (item.get("candidate") or {}).get("idea") or "",
+                }
+            )
+    return selected
 
 
 def propose_clips_v10(
@@ -597,6 +784,7 @@ def propose_clips_v10(
     language: str = "tr",
     video_title: str = "",
     target_clip_count: Optional[int] = None,
+    existing_ranges: Optional[List[Tuple[float, float]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     del transcript_text, model, debug, plan_focus, focus_categories
     started_at = time.monotonic()
@@ -604,11 +792,15 @@ def propose_clips_v10(
     resolved_language = normalize_planning_language(language)
     target_count = target_clip_count or _target_clip_count_for_duration(duration_seconds)
     sentences = build_v10_sentences(segments)
+    n_parts = max(2, min(6, int(math.ceil(float(duration_seconds or 0.0) / 900.0))))
+    per_part = int(math.ceil((target_count + 3) / n_parts)) + 1
     debug_info: Dict[str, Any] = {
         "planner": "v10",
         "model": CLIP_PLANNER_V10_MODEL,
         "target_clip_count": target_count,
         "sentence_count": len(sentences),
+        "n_parts": n_parts,
+        "per_part": per_part,
         "dropped_candidates": [],
     }
     if not client:
@@ -623,9 +815,15 @@ def propose_clips_v10(
         language=resolved_language,
         sentences=sentences,
         target_count=target_count,
+        duration_seconds=float(duration_seconds or 0.0),
+        n_parts=n_parts,
+        per_part=per_part,
     )
+    sentences_by_id = {int(sentence["id"]): sentence for sentence in sentences}
     title_anchor = _title_anchor_candidate(video_title, sentences)
     if title_anchor:
+        title_anchor["part"] = _candidate_part(title_anchor, sentences_by_id, float(duration_seconds or 0.0), n_parts)
+        title_anchor["strength"] = 10
         anchor_start = int(title_anchor["start_sentence"])
         raw_candidates = [
             title_anchor,
@@ -635,7 +833,20 @@ def propose_clips_v10(
                 if _candidate_start_id(candidate) != anchor_start
             ],
         ]
+    normalized_candidates = []
+    for candidate in raw_candidates:
+        if isinstance(candidate, dict):
+            candidate = dict(candidate)
+            candidate["part"] = _candidate_part(candidate, sentences_by_id, float(duration_seconds or 0.0), n_parts)
+            candidate["strength"] = _clamp_strength(candidate.get("strength"))
+        normalized_candidates.append(candidate)
+    raw_candidates = normalized_candidates
     debug_info["stage1_candidates"] = raw_candidates
+    stage1_counts: Dict[int, int] = {part: 0 for part in range(1, n_parts + 1)}
+    for candidate in raw_candidates:
+        if isinstance(candidate, dict):
+            stage1_counts[int(candidate.get("part") or 1)] = stage1_counts.get(int(candidate.get("part") or 1), 0) + 1
+    debug_info["stage1_candidates_per_part"] = stage1_counts
 
     candidate_pairs = []
     dropped: List[Dict[str, Any]] = []
@@ -688,14 +899,17 @@ def propose_clips_v10(
         else:
             refined.append(item)
 
-    kept: List[Dict[str, Any]] = []
-    for item in refined:
-        overlaps = any(max(float(item["start"]), float(clip["start"])) < min(float(item["end"]), float(clip["end"])) for clip in kept)
-        if overlaps:
-            dropped.append({"rank": item.get("rank"), "reason": "overlap", "idea": (item.get("candidate") or {}).get("idea") or ""})
-            continue
-        if len(kept) < target_count:
-            kept.append(item)
+    kept = _select_balanced_clips(
+        refined,
+        target_count=target_count,
+        n_parts=n_parts,
+        existing_ranges=existing_ranges or [],
+        dropped=dropped,
+    )
+    final_counts: Dict[int, int] = {part: 0 for part in range(1, n_parts + 1)}
+    for item in kept:
+        part = int((item.get("candidate") or {}).get("part") or 1)
+        final_counts[part] = final_counts.get(part, 0) + 1
 
     final_plan: List[Dict[str, Any]] = []
     for item in kept:
@@ -715,6 +929,8 @@ def propose_clips_v10(
                 "v10_idea": (item.get("candidate") or {}).get("idea") or "",
                 "v10_start_sentence": item.get("stage2_start"),
                 "v10_end_sentence": item.get("end_sentence"),
+                "v10_part": (item.get("candidate") or {}).get("part"),
+                "v10_strength": (item.get("candidate") or {}).get("strength"),
             }
         )
 
@@ -725,12 +941,16 @@ def propose_clips_v10(
     debug_info["wall_seconds"] = wall_seconds
     debug_info["clips_after_selector_count"] = len(final_plan)
     debug_info["final_plan"] = final_plan
+    debug_info["final_clips_per_part"] = final_counts
     debug_info["dropped_candidates"] = dropped
     logger.info(
-        "clip_planner_v10_generated clips=%s dropped=%s llm_calls=%s wall_seconds=%.2f",
+        "clip_planner_v10_generated clips=%s dropped=%s llm_calls=%s wall_seconds=%.2f n_parts=%s stage1_per_part=%s final_per_part=%s",
         len(final_plan),
         len(dropped),
         debug_info.get("openai_call_count") or 0,
         wall_seconds,
+        n_parts,
+        stage1_counts,
+        final_counts,
     )
     return final_plan, debug_info
