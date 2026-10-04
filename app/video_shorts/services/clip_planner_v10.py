@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 STAGE3_MAX_ELIGIBLE_SECONDS = 63.0
 MAX_WORKERS = 8
+OVERLAP_RATIO_THRESHOLD = 0.3
+OVERLAP_RATIO_EPSILON = 1e-9
 WORD_RE = re.compile(r"[\wÇĞİÖŞÜçğıöşü'’]+", re.UNICODE)
 TR_LOWER = str.maketrans({"İ": "i", "I": "ı"})
 TITLE_STOPWORDS = {
@@ -811,7 +813,7 @@ def _overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 
 def _overlaps_existing(item: Dict[str, Any], ranges: List[Tuple[float, float]]) -> bool:
     return any(
-        _overlap_ratio(item, {"start": start, "end": end}) >= 0.3
+        _overlap_ratio(item, {"start": start, "end": end}) >= OVERLAP_RATIO_THRESHOLD - OVERLAP_RATIO_EPSILON
         for start, end in ranges
     )
 
@@ -842,7 +844,10 @@ def _select_balanced_clips(
                 }
             )
             continue
-        overlaps = any(_overlap_ratio(item, clip) >= 0.3 for clip in survivors)
+        overlaps = any(
+            _overlap_ratio(item, clip) >= OVERLAP_RATIO_THRESHOLD - OVERLAP_RATIO_EPSILON
+            for clip in survivors
+        )
         if overlaps:
             dropped.append(
                 {
