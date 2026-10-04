@@ -119,6 +119,16 @@ Return only JSON:
    "why_end_here": "<short reason>"}}
 ]}}"""
 
+V10_STAGE1_PER_PART_PROMPT_TEMPLATE = V10_STAGE1_PROMPT_TEMPLATE.replace(
+    "- Go through EVERY part. From each part, propose up to {per_part} clips\n"
+    "  (fewer if a part has no worthwhile moment). Do not favor the beginning\n"
+    "  of the video; late moments are just as valuable.\n"
+    "- Give each clip a \"strength\" score from 1 to 10 (10 = most compelling,\n"
+    "  quotable, and self-contained).",
+    "- Propose up to {per_part} clips from this part (fewer if nothing is worthwhile). "
+    "Give each a strength score from 1 to 10.",
+)
+
 START_PROMPT = """You choose where a short video clip should START. The clip will be watched on
 its own as a YouTube Short. The clip's idea is given. You see numbered
 sentences around the current start.
@@ -279,6 +289,27 @@ def _build_sentence_parts(
         part_number = _part_for_time(float(sentence.get("start") or 0.0), duration, n_parts)
         parts[part_number - 1]["sentences"].append(sentence)
     return parts
+
+
+def _existing_ranges_for_part(
+    ranges: List[Tuple[float, float]],
+    part: Dict[str, Any],
+) -> List[Tuple[float, float]]:
+    part_start = float(part.get("start") or 0.0)
+    part_end = float(part.get("end") or 0.0)
+    return [
+        (float(start), float(end))
+        for start, end in ranges or []
+        if max(float(start), part_start) < min(float(end), part_end)
+    ]
+
+
+def _existing_ranges_block(ranges: List[Tuple[float, float]]) -> str:
+    if not ranges:
+        return ""
+    lines = ["Existing clips to avoid:"]
+    lines.extend(f"- {_fmt_time(start)}-{_fmt_time(end)}" for start, end in ranges)
+    return "\n".join(lines) + "\n\n"
 
 
 def _candidate_part(
@@ -508,6 +539,105 @@ def _run_stage1(
         temperature=0.2,
     )
     return list((result["data"] or {}).get("clips") or [])
+
+
+def _run_stage1_for_part(
+    client: Any,
+    stats: _CallStats,
+    *,
+    video_title: str,
+    language: str,
+    part: Dict[str, Any],
+    next_part: Optional[Dict[str, Any]],
+    per_part: int,
+    existing_ranges: List[Tuple[float, float]],
+) -> List[Dict[str, Any]]:
+    prompt = V10_STAGE1_PER_PART_PROMPT_TEMPLATE.format(
+        min_s=int(MIN_CLIP_SECONDS),
+        max_s=int(MAX_CLIP_SECONDS),
+        target_count=per_part,
+        per_part=per_part,
+    )
+    part_number = int(part.get("part") or 1)
+    lines = [
+        f"=== PART {part_number} ({_fmt_time(part.get('start') or 0.0)}-{_fmt_time(part.get('end') or 0.0)}) ==="
+    ]
+    part_sentences = list(part.get("sentences") or [])
+    lines.extend(f"[{sentence['id']}] ({_fmt_time(sentence['start'])}) {sentence['text']}" for sentence in part_sentences)
+
+    context_ids = set()
+    if next_part:
+        context_limit = float(next_part.get("start") or 0.0) + 60.0
+        context_sentences = [
+            sentence
+            for sentence in next_part.get("sentences") or []
+            if float(sentence.get("start") or 0.0) < context_limit
+        ]
+        if context_sentences:
+            lines.append("=== CONTEXT ONLY: start of next part (do not start clips here) ===")
+            for sentence in context_sentences:
+                context_ids.add(int(sentence["id"]))
+                lines.append(f"[{sentence['id']}] ({_fmt_time(sentence['start'])}) {sentence['text']}")
+
+    title_line = f"Video title: {video_title}\n" if str(video_title or "").strip() else ""
+    user_message = (
+        f"{title_line}"
+        f"Transcript language: {_language_name(language)}\n\n"
+        f"{_existing_ranges_block(_existing_ranges_for_part(existing_ranges, part))}"
+        + "\n".join(lines)
+    )
+    result = _chat_json(
+        client,
+        stats,
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
+        temperature=0.2,
+    )
+    candidates = []
+    for candidate in list((result["data"] or {}).get("clips") or []):
+        if not isinstance(candidate, dict):
+            candidates.append(candidate)
+            continue
+        if _candidate_start_id(candidate) in context_ids:
+            continue
+        candidate = dict(candidate)
+        candidate["part"] = part_number
+        candidates.append(candidate)
+    return candidates
+
+
+def _run_stage1_per_part(
+    client: Any,
+    stats: _CallStats,
+    *,
+    video_title: str,
+    language: str,
+    parts: List[Dict[str, Any]],
+    per_part: int,
+    existing_ranges: List[Tuple[float, float]],
+) -> List[Dict[str, Any]]:
+    if not parts:
+        return []
+
+    def call(index_part: Tuple[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        index, part = index_part
+        next_part = parts[index + 1] if index + 1 < len(parts) else None
+        return _run_stage1_for_part(
+            client,
+            stats,
+            video_title=video_title,
+            language=language,
+            part=part,
+            next_part=next_part,
+            per_part=per_part,
+            existing_ranges=existing_ranges,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(MAX_WORKERS, max(1, len(parts)))) as executor:
+        per_part_results = list(executor.map(call, list(enumerate(parts))))
+    candidates: List[Dict[str, Any]] = []
+    for result in per_part_results:
+        candidates.extend(result)
+    return candidates
 
 
 def _refine_start(
@@ -794,6 +924,7 @@ def propose_clips_v10(
     sentences = build_v10_sentences(segments)
     n_parts = max(2, min(6, int(math.ceil(float(duration_seconds or 0.0) / 900.0))))
     per_part = int(math.ceil((target_count + 3) / n_parts)) + 1
+    stage1_mode = "per_part" if float(duration_seconds or 0.0) > 1800.0 else "single"
     debug_info: Dict[str, Any] = {
         "planner": "v10",
         "model": CLIP_PLANNER_V10_MODEL,
@@ -801,6 +932,7 @@ def propose_clips_v10(
         "sentence_count": len(sentences),
         "n_parts": n_parts,
         "per_part": per_part,
+        "stage1_mode": stage1_mode,
         "dropped_candidates": [],
     }
     if not client:
@@ -808,17 +940,29 @@ def propose_clips_v10(
     if not sentences:
         return [], {**debug_info, **stats.snapshot(), "wall_seconds": round(time.monotonic() - started_at, 2)}
 
-    raw_candidates = _run_stage1(
-        client,
-        stats,
-        video_title=video_title,
-        language=resolved_language,
-        sentences=sentences,
-        target_count=target_count,
-        duration_seconds=float(duration_seconds or 0.0),
-        n_parts=n_parts,
-        per_part=per_part,
-    )
+    sentence_parts = _build_sentence_parts(sentences, float(duration_seconds or 0.0), n_parts)
+    if stage1_mode == "per_part":
+        raw_candidates = _run_stage1_per_part(
+            client,
+            stats,
+            video_title=video_title,
+            language=resolved_language,
+            parts=sentence_parts,
+            per_part=per_part,
+            existing_ranges=existing_ranges or [],
+        )
+    else:
+        raw_candidates = _run_stage1(
+            client,
+            stats,
+            video_title=video_title,
+            language=resolved_language,
+            sentences=sentences,
+            target_count=target_count,
+            duration_seconds=float(duration_seconds or 0.0),
+            n_parts=n_parts,
+            per_part=per_part,
+        )
     sentences_by_id = {int(sentence["id"]): sentence for sentence in sentences}
     title_anchor = _title_anchor_candidate(video_title, sentences)
     if title_anchor:
@@ -944,11 +1088,12 @@ def propose_clips_v10(
     debug_info["final_clips_per_part"] = final_counts
     debug_info["dropped_candidates"] = dropped
     logger.info(
-        "clip_planner_v10_generated clips=%s dropped=%s llm_calls=%s wall_seconds=%.2f n_parts=%s stage1_per_part=%s final_per_part=%s",
+        "clip_planner_v10_generated clips=%s dropped=%s llm_calls=%s wall_seconds=%.2f mode=%s n_parts=%s stage1_per_part=%s final_per_part=%s",
         len(final_plan),
         len(dropped),
         debug_info.get("openai_call_count") or 0,
         wall_seconds,
+        stage1_mode,
         n_parts,
         stage1_counts,
         final_counts,
