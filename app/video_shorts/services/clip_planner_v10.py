@@ -1084,6 +1084,13 @@ def propose_clips_v10(
 
     final_plan: List[Dict[str, Any]] = []
     for item in kept:
+        candidate = item.get("candidate") or {}
+        v10_strength = candidate.get("strength")
+        try:
+            strength_score = int(float(v10_strength))
+        except (TypeError, ValueError):
+            strength_score = 0
+        score = strength_score * 10 if 1 <= strength_score <= 10 else None
         text = item.get("text") or ""
         title = generate_clip_title(text, language_hint=resolved_language)
         stats.add(None)
@@ -1095,13 +1102,13 @@ def propose_clips_v10(
                 "duration": round(float(item["duration"]), 2),
                 "excerpt": text,
                 "transcript_full": text,
-                "score": None,
+                "score": score,
                 "score_breakdown": None,
-                "v10_idea": (item.get("candidate") or {}).get("idea") or "",
+                "v10_idea": candidate.get("idea") or "",
                 "v10_start_sentence": item.get("stage2_start"),
                 "v10_end_sentence": item.get("end_sentence"),
-                "v10_part": (item.get("candidate") or {}).get("part"),
-                "v10_strength": (item.get("candidate") or {}).get("strength"),
+                "v10_part": candidate.get("part"),
+                "v10_strength": v10_strength,
             }
         )
 
