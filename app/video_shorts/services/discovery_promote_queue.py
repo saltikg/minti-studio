@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,8 @@ ACTIVE_STATUSES = {"queued", "processing"}
 TERMINAL_STATUSES = {"done", "failed"}
 SYNTHETIC_SEED_PREFIX = "[Synthetic discovery seed - no transcript]"
 LEAD_DISCOVERY_SEED_RECENT_TITLES = 5
+NO_GREETING_NAME_MARKER = " "
+_FIRST_NAME_RE = re.compile(r"[A-Za-z][A-Za-z'’]{1,39}")
 
 
 def ensure_discovery_promote_queue_schema(conn) -> None:
@@ -108,6 +111,74 @@ def _summarize_auto_discovery_seed(lead: Dict[str, Any], recent_titles: List[str
     )
     summary = " ".join((response.choices[0].message.content or "").strip().split())[:2800]
     return f"{SYNTHETIC_SEED_PREFIX} {summary}".strip()
+
+
+def _normalize_llm_first_name(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"null", "none", "n/a", "unknown"}:
+        return ""
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            text = str(payload.get("first_name") or payload.get("name") or "").strip()
+        elif payload is None:
+            return ""
+        else:
+            text = str(payload or "").strip()
+    except Exception:
+        text = text.strip().strip('"').strip("'")
+    match = _FIRST_NAME_RE.fullmatch(text)
+    return match.group(0) if match else ""
+
+
+def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
+    """Return a first name, or a blank marker when the LLM is not confident."""
+    if not _openai_client:
+        return ""
+    channel_title = str(lead.get("channel_title") or "").strip()
+    creator_name = str(lead.get("creator_name") or "").strip()
+    channel_description = str(lead.get("channel_description") or "").strip()[:1800]
+    creator_email = str(lead.get("creator_email") or "").strip()
+    prompt = (
+        "Extract a greeting first name for a cold outreach email.\n"
+        "Return JSON only: {\"first_name\":\"Name\"} or {\"first_name\":null}.\n\n"
+        "Rules:\n"
+        "- Decide whether the channel/name clearly refers to a real person.\n"
+        "- If yes, return ONLY the person's first name, without titles, degrees, channel words, brand words, or punctuation.\n"
+        "- If it is a brand, company, podcast/show title, generic topic, or you are unsure, return null.\n"
+        "- Use the description and email only as supporting evidence; do not infer a name from a generic email alone.\n\n"
+        "Examples:\n"
+        "Etsy Consultant -> null\n"
+        "Dan Haylett -> Dan\n"
+        "The Retirement Cafe with Justin King -> Justin\n"
+        "Dr Alex Howard -> Alex\n"
+        "Midlife Anti-Crisis -> null\n"
+        "Kevin Pond - Meditation -> Kevin\n\n"
+        f"Channel title: {channel_title}\n"
+        f"Creator name: {creator_name}\n"
+        f"Channel description: {channel_description}\n"
+        f"Creator email: {creator_email}"
+    )
+    try:
+        response = _openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract safe first names for cold email greetings. Be conservative: "
+                        "return null rather than a channel, topic, brand, company, podcast, or role word."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+        )
+    except Exception:
+        current_app.logger.exception("Could not infer outreach first name for discovery lead id=%s", lead.get("id"))
+        return ""
+    first_name = _normalize_llm_first_name(response.choices[0].message.content if response.choices else "")
+    return first_name or NO_GREETING_NAME_MARKER
 
 
 def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, Any]:
@@ -540,6 +611,7 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
         meta = fetch_video_metadata(str(source["video_id"]))
         if lead.get("channel_description"):
             meta["channel_description"] = lead["channel_description"]
+        inferred_recipient_name = infer_outreach_first_name_for_lead(lead)
         autopilot = create_autopilot_lead_from_video(
             conn,
             meta=meta,
@@ -547,6 +619,7 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
             canonical_url=str(source["canonical_url"]),
             creator_name=lead["creator_name"] or lead["channel_title"],
             creator_email=lead["creator_email"],
+            recipient_name=inferred_recipient_name,
             subscriber_count=lead["subscriber_count"],
             discovery_owner_user_id=DISCOVERY_PROMOTION_OWNER_USER_ID,
             discovery_brand_id=DISCOVERY_PROMOTION_BRAND_ID,

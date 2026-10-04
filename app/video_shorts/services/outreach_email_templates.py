@@ -253,7 +253,7 @@ _NAME_SUFFIX_TOKENS = {
 def outreach_greeting_name(recipient_name: object, *, language: object = "EN") -> str:
     """Return a safe first name for outreach greetings, or a generic fallback."""
     normalized_language = normalize_outreach_template_language(language)
-    fallback = "there"
+    fallback = "" if normalized_language == "EN" else "there"
     raw_name = str(recipient_name or "").strip()
     if not raw_name:
         return fallback
@@ -281,6 +281,18 @@ def outreach_greeting_name(recipient_name: object, *, language: object = "EN") -
     if normalized_language == "TR" and first_key == "merhaba":
         return fallback
     return first
+
+
+def _replace_greeting_name(text: str, safe_name: str, *, language: OutreachLanguage) -> str:
+    if safe_name:
+        return text.replace("[Name]", safe_name)
+    if language == "EN":
+        return (
+            text.replace("Hi [Name],", "Hi")
+            .replace("Hi [Name]", "Hi")
+            .replace("[Name]", "")
+        )
+    return text.replace("[Name]", safe_name)
 
 
 def normalize_outreach_template_language(value: object) -> OutreachLanguage:
@@ -390,7 +402,7 @@ def render_outreach_email(
         shorts_last_15d=shorts_last_15d,
     )
     text = _normalize_template_spacing(
-        template.text.replace("[Name]", safe_name)
+        _replace_greeting_name(template.text, safe_name, language=normalized_language)
         .replace("[link]", str(share_url or "").strip())
         .replace("[trial]", trial_phrase)
         .replace("[signal]", signal_text)
@@ -449,7 +461,7 @@ def render_bucket_followup_outreach_email(
         shorts_last_15d=shorts_last_15d,
     )
     text = _normalize_template_spacing(
-        template.text.replace("[Name]", safe_name)
+        _replace_greeting_name(template.text, safe_name, language=normalized_language)
         .replace("[link]", str(share_url or "").strip())
         .replace("[trial]", trial_phrase)
         .replace("[signal]", signal_text)

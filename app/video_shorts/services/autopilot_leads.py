@@ -763,6 +763,7 @@ def create_autopilot_lead_from_video(
     subscriber_count: int | None,
     discovery_owner_user_id: str,
     discovery_brand_id: str,
+    recipient_name: str | None = None,
 ) -> Dict[str, Any]:
     """Create/update one lead and stamp its first source video to the correct tenant."""
     _require_autopilot_leads_table(conn)
@@ -775,6 +776,8 @@ def create_autopilot_lead_from_video(
     channel_name = str(meta.get("channel_title") or creator_name or "YouTube Channel").strip() or "YouTube Channel"
     email = _normalize_email(creator_email)
     creator_name = str(creator_name or channel_name).strip() or channel_name
+    raw_recipient_name = str(recipient_name or "")
+    recipient_name = raw_recipient_name if raw_recipient_name and not raw_recipient_name.strip() else raw_recipient_name.strip() or None
     try:
         subscriber_count = int(subscriber_count) if subscriber_count is not None else None
     except (TypeError, ValueError):
@@ -922,25 +925,49 @@ def create_autopilot_lead_from_video(
             UPDATE {AUTOPILOT_LEADS_TABLE}
             SET creator_email = COALESCE(NULLIF(creator_email, ''), ?),
                 creator_name = COALESCE(NULLIF(creator_name, ''), ?),
+                recipient_name = COALESCE(NULLIF(recipient_name, ''), ?),
                 subscriber_count = COALESCE(?, subscriber_count),
                 channel_id = ?, first_video_id = COALESCE(first_video_id, ?),
                 user_id = CASE WHEN ? THEN user_id ELSE ? END,
                 brand_id = CASE WHEN ? THEN brand_id ELSE ? END
             WHERE id = ?
             """,
-            [email or None, creator_name, subscriber_count, channel_id, video_pk, is_discovery, owner_user_id, is_discovery, brand_id, lead_id],
+            [
+                email or None,
+                creator_name,
+                recipient_name,
+                subscriber_count,
+                channel_id,
+                video_pk,
+                is_discovery,
+                owner_user_id,
+                is_discovery,
+                brand_id,
+                lead_id,
+            ],
         )
     else:
         lead_id = str(uuid4())
         conn.execute(
             f"""
             INSERT INTO {AUTOPILOT_LEADS_TABLE} (
-                id, creator_email, creator_name, subscriber_count, youtube_channel_id, channel_id,
+                id, creator_email, creator_name, recipient_name, subscriber_count, youtube_channel_id, channel_id,
                 first_video_id, user_id, brand_id, created_at, converted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), NULL)
             """,
-            [lead_id, email or None, creator_name, subscriber_count, youtube_channel_id, channel_id, video_pk, None if is_discovery else owner_user_id, None if is_discovery else brand_id],
+            [
+                lead_id,
+                email or None,
+                creator_name,
+                recipient_name,
+                subscriber_count,
+                youtube_channel_id,
+                channel_id,
+                video_pk,
+                None if is_discovery else owner_user_id,
+                None if is_discovery else brand_id,
+            ],
         )
 
     return {

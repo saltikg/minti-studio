@@ -90,3 +90,33 @@ def test_tr_templates_do_not_include_signal():
 
     assert LONGFORM_NO_SHORTS_SIGNAL_EN not in rendered["text"]
     assert "[signal]" not in rendered["text"]
+
+
+def test_first_en_without_safe_name_uses_plain_hi():
+    rendered = render_outreach_email(
+        stage="first",
+        language="EN",
+        recipient_name=",",
+        share_url="https://mintistudio.com/w/test",
+        trial_days=30,
+        video_title="A useful webinar",
+    )
+
+    assert rendered["text"].splitlines()[0] == "Hi"
+    assert "Hi there" not in rendered["text"]
+    assert "Hi ," not in rendered["text"]
+
+
+def test_bucket_followup_without_safe_name_uses_plain_hi():
+    rendered = render_bucket_followup_outreach_email(
+        bucket="sent_no_visit",
+        sequence_number=2,
+        language="EN",
+        recipient_name="THE RIPPED GRANDPA",
+        share_url="https://mintistudio.com/w/test",
+        trial_days=30,
+        video_title="A useful webinar",
+    )
+
+    assert rendered["text"].startswith("Hi")
+    assert not rendered["text"].startswith("Hi there")
