@@ -43,6 +43,7 @@ build/
 # Video shorts artifacts
 app/video_shorts/static/shorts/
 app/video_shorts/videos/
+app/video_shorts/source_cache/
 app/video_shorts/templates/cookies.txt
 app/video_shorts/generation.py
 app/video_shorts/quick_short.py
