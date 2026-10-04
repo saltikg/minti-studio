@@ -142,12 +142,24 @@ def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
     prompt = (
         "Extract a greeting first name for a cold outreach email.\n"
         "Return JSON only: {\"first_name\":\"Name\"} or {\"first_name\":null}.\n\n"
+        "Use this confidence order:\n"
+        "1. Return a name when the channel description explicitly self-identifies a person, "
+        "for example \"I'm X\", \"I am X\", \"My name is X\", or \"My name's X\".\n"
+        "2. Otherwise return a name when the channel title or creator name is clearly a real person's name.\n"
+        "3. Use the email local-part only as a last resort. It must be a single obvious first name, "
+        "not a generic/role mailbox such as info, contact, hello, team, admin, support, hi, mail, office, "
+        "press, podcast, media, business, or enquiries. Do not trust dotted, initialed, or joined full-name "
+        "local-parts such as john.smith, jsmith, johnsmith, drsmith, or a company/domain word.\n\n"
         "Rules:\n"
-        "- Decide whether the channel/name clearly refers to a real person.\n"
-        "- If yes, return ONLY the person's first name, without titles, degrees, channel words, brand words, or punctuation.\n"
+        "- Return ONLY the person's first name, without titles, degrees, channel words, brand words, or punctuation.\n"
         "- If it is a brand, company, podcast/show title, generic topic, or you are unsure, return null.\n"
-        "- Use the description and email only as supporting evidence; do not infer a name from a generic email alone.\n\n"
+        "- Never guess or invent. If no source clearly supports a person first name, return null.\n\n"
         "Examples:\n"
+        "I'm Jennifer, a nurse and educator -> Jennifer\n"
+        "My name's Adam and I'm here to help you garden better -> Adam\n"
+        "michael@ocestateplanlawyer.com with no name in description -> Michael (email-only, lower confidence but allowed)\n"
+        "info@example.com -> null\n"
+        "john.smith@example.com -> null\n"
         "Etsy Consultant -> null\n"
         "Dan Haylett -> Dan\n"
         "The Retirement Cafe with Justin King -> Justin\n"
@@ -167,7 +179,8 @@ def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
                     "role": "system",
                     "content": (
                         "You extract safe first names for cold email greetings. Be conservative: "
-                        "return null rather than a channel, topic, brand, company, podcast, or role word."
+                        "return null rather than a channel, topic, brand, company, podcast, role word, "
+                        "or uncertain email-derived guess."
                     ),
                 },
                 {"role": "user", "content": prompt},
