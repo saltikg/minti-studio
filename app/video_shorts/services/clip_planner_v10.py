@@ -307,8 +307,8 @@ def _existing_ranges_for_part(
 def _existing_ranges_block(ranges: List[Tuple[float, float]]) -> str:
     if not ranges:
         return ""
-    lines = ["Existing clips to avoid:"]
-    lines.extend(f"- {_fmt_time(start)}-{_fmt_time(end)}" for start, end in ranges)
+    lines = ["Already clipped (do not pick overlapping moments):"]
+    lines.extend(f"[{_fmt_time(start)}-{_fmt_time(end)}]" for start, end in ranges)
     return "\n".join(lines) + "\n\n"
 
 
@@ -514,6 +514,7 @@ def _run_stage1(
     duration_seconds: float,
     n_parts: int,
     per_part: int,
+    existing_ranges: List[Tuple[float, float]],
 ) -> List[Dict[str, Any]]:
     prompt = V10_STAGE1_PROMPT_TEMPLATE.format(
         min_s=int(MIN_CLIP_SECONDS),
@@ -531,7 +532,12 @@ def _run_stage1(
             for sentence in part["sentences"]
         )
     title_line = f"Video title: {video_title}\n" if str(video_title or "").strip() else ""
-    user_message = f"{title_line}Transcript language: {_language_name(language)}\n\n" + "\n".join(lines)
+    user_message = (
+        f"{title_line}"
+        f"Transcript language: {_language_name(language)}\n\n"
+        f"{_existing_ranges_block(existing_ranges)}"
+        + "\n".join(lines)
+    )
     result = _chat_json(
         client,
         stats,
@@ -789,7 +795,10 @@ def _append_drop(dropped: List[Dict[str, Any]], item: Dict[str, Any]) -> None:
 def _overlaps_existing(item: Dict[str, Any], ranges: List[Tuple[float, float]]) -> bool:
     item_start = float(item["start"])
     item_end = float(item["end"])
-    return any(max(item_start, float(start)) < min(item_end, float(end)) for start, end in ranges)
+    return any(
+        max(0.0, min(item_end, float(end)) - max(item_start, float(start))) >= 0.3
+        for start, end in ranges
+    )
 
 
 def _item_sort_key(item: Dict[str, Any]) -> Tuple[int, float]:
@@ -813,7 +822,7 @@ def _select_balanced_clips(
                     "rank": item.get("rank"),
                     "part": (item.get("candidate") or {}).get("part"),
                     "strength": (item.get("candidate") or {}).get("strength"),
-                    "reason": "overlap existing range",
+                    "reason": "overlap_existing",
                     "idea": (item.get("candidate") or {}).get("idea") or "",
                 }
             )
@@ -924,7 +933,7 @@ def propose_clips_v10(
     sentences = build_v10_sentences(segments)
     n_parts = max(2, min(6, int(math.ceil(float(duration_seconds or 0.0) / 900.0))))
     per_part = int(math.ceil((target_count + 3) / n_parts)) + 1
-    stage1_mode = "per_part" if float(duration_seconds or 0.0) > 1800.0 else "single"
+    stage1_mode = "per_part" if float(duration_seconds or 0.0) > 900.0 else "single"
     debug_info: Dict[str, Any] = {
         "planner": "v10",
         "model": CLIP_PLANNER_V10_MODEL,
@@ -962,6 +971,7 @@ def propose_clips_v10(
             duration_seconds=float(duration_seconds or 0.0),
             n_parts=n_parts,
             per_part=per_part,
+            existing_ranges=existing_ranges or [],
         )
     sentences_by_id = {int(sentence["id"]): sentence for sentence in sentences}
     title_anchor = _title_anchor_candidate(video_title, sentences)

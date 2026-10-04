@@ -502,10 +502,10 @@ def _clip_plan_cooldown_message() -> str:
     return "Suggestions were just generated — give it a moment before regenerating."
 
 
-def _clip_plan_block_info(state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _clip_plan_block_info(state: Optional[Dict[str, Any]], *, is_admin: bool = False) -> Optional[Dict[str, Any]]:
     normalized = dict(state or {})
     run_count = int(normalized.get("run_count") or 0)
-    if run_count >= CLIP_PLAN_MAX_RUNS_PER_VIDEO:
+    if not is_admin and run_count >= CLIP_PLAN_MAX_RUNS_PER_VIDEO:
         return {
             "reason": "cap",
             "message": _clip_plan_cap_message(),
@@ -4262,6 +4262,23 @@ def _plan_entry_has_stable_identity(entry: Dict[str, Any]) -> bool:
 def _is_removable_ai_suggestion(entry: Dict[str, Any]) -> bool:
     origin = str(entry.get("origin") or "").strip().lower()
     return origin == "ai" and not _plan_entry_has_stable_identity(entry)
+
+
+def _clip_plan_existing_ranges_for_ai_suggestions(plan_entries: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+    ranges: List[Tuple[float, float]] = []
+    for entry in plan_entries or []:
+        title_source = str(entry.get("title_source") or "").strip().lower()
+        user_edited_at = str(entry.get("title_user_edited_at") or "").strip()
+        if _is_removable_ai_suggestion(entry) and title_source != "user" and not user_edited_at:
+            continue
+        try:
+            start = float(entry.get("start"))
+            end = float(entry.get("end"))
+        except Exception:
+            continue
+        if end > start:
+            ranges.append((start, end))
+    return ranges
 
 
 def _choose_plan_index(preferred: Optional[int], used: set[int], next_candidate: int) -> Tuple[int, int]:
@@ -8430,7 +8447,8 @@ def generate_short(video_pk):
     plan_clip_count = len(plan_by_index)
     ai_suggested_clip_count = sum(1 for entry in plan_entries if _is_removable_ai_suggestion(entry))
     plan_job_state = _current_plan_job_state(video_pk)
-    plan_job_block = _clip_plan_block_info(plan_job_state)
+    request_is_admin = str((current_user or {}).get("role") or "").strip().lower() == "admin"
+    plan_job_block = _clip_plan_block_info(plan_job_state, is_admin=request_is_admin)
     plan_generation_block_reason = (plan_job_block or {}).get("reason") or ""
     plan_generation_block_message = (plan_job_block or {}).get("message") or ""
     plan_generation_run_count = int(plan_job_state.get("run_count") or 0)
@@ -22152,6 +22170,7 @@ def _generate_clip_plan_for_video(
                 focus_categories=focus_categories,
                 language=plan_language,
                 video_title=_video_title,
+                existing_ranges=_clip_plan_existing_ranges_for_ai_suggestions(existing_plan_entries),
             )
             if not clip_plan:
                 raise RuntimeError("planner v10 returned no clips")
@@ -22370,12 +22389,20 @@ def _run_plan_job(video_pk: int, form_data: Dict[str, Any], app_obj) -> None:
             latest_state = _current_plan_job_state(video_pk)
             next_run_count = int(latest_state.get("run_count") or 0) + 1
             completed_at = datetime.utcnow().isoformat()
+            message = result.get("message") or "Clip plan created."
+            request_user_role = str(form_data.get("_request_user_role") or "").strip().lower()
+            if request_user_role != "admin" and next_run_count >= CLIP_PLAN_MAX_RUNS_PER_VIDEO:
+                message = (
+                    f"Added {result.get('clip_count') or 0} AI clips. "
+                    "This was your last AI suggestion run for this video — "
+                    "you can still edit, remove, or add clips manually."
+                )
             _set_plan_job_state(
                 video_pk,
                 status="completed",
                 running=False,
                 stage="completed",
-                message=result.get("message") or "Clip plan created.",
+                message=message,
                 clip_count=result.get("clip_count"),
                 elapsed_seconds=elapsed,
                 run_count=next_run_count,
@@ -22433,7 +22460,8 @@ def create_clip_plan_start(video_pk):
         form_data["_brand_id"] = editor_context["brand_id"]
         with _PLAN_JOB_LOCK:
             existing = dict(_PLAN_JOB_STATE.get(video_pk) or _load_plan_job_state(video_pk) or {})
-            blocked = _clip_plan_block_info(existing)
+            request_is_admin = str(current_user.get("role") or "").strip().lower() == "admin"
+            blocked = _clip_plan_block_info(existing, is_admin=request_is_admin)
             if blocked:
                 return jsonify(
                     {
