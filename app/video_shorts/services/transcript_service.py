@@ -337,6 +337,39 @@ def _trim_text_to_segment_overlap(
     return " ".join(trimmed).strip()
 
 
+def _word_timed_text_for_overlap(
+    seg: Dict[str, Any],
+    *,
+    clip_start: float,
+    clip_end: float,
+) -> Optional[Tuple[str, float, float]]:
+    words_raw = seg.get("words") or []
+    if not isinstance(words_raw, list) or not words_raw:
+        return None
+    kept: List[Tuple[str, float, float]] = []
+    saw_timed_word = False
+    for word in words_raw:
+        if not isinstance(word, dict):
+            continue
+        word_text = str(word.get("word") or "").strip()
+        if not word_text:
+            continue
+        try:
+            word_start = float(word.get("start"))
+            word_end = float(word.get("end"))
+        except Exception:
+            continue
+        saw_timed_word = True
+        if word_end <= clip_start or word_start >= clip_end:
+            continue
+        kept.append((word_text, max(word_start, clip_start), min(word_end, clip_end)))
+    if not saw_timed_word:
+        return None
+    if not kept:
+        return "", clip_start, clip_start
+    return " ".join(word for word, _start, _end in kept).strip(), kept[0][1], kept[-1][2]
+
+
 def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_end: float) -> Path | None:
     """
     Build a temp SRT file for segments within [clip_start, clip_end].
@@ -378,22 +411,29 @@ def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_
         overlap_start = max(s, clip_start)
         overlap_end = min(e, clip_end)
         overlap_duration = max(overlap_end - overlap_start, 0.0)
-        rel_start = max(0.0, overlap_start - clip_start)
-        rel_end = max(rel_start + 0.1, overlap_end - clip_start)
         text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
         if not text:
             continue
         is_boundary_segment = s < clip_start or e > clip_end
+        word_slice = None
         if is_boundary_segment:
-            text = _trim_text_to_segment_overlap(
-                text,
-                segment_start=s,
-                segment_end=e,
-                overlap_start=overlap_start,
-                overlap_end=overlap_end,
-            )
+            word_slice = _word_timed_text_for_overlap(seg, clip_start=clip_start, clip_end=clip_end)
+            if word_slice is not None:
+                text, overlap_start, overlap_end = word_slice
+                overlap_duration = max(overlap_end - overlap_start, 0.0)
+        if is_boundary_segment:
+            if word_slice is None:
+                text = _trim_text_to_segment_overlap(
+                    text,
+                    segment_start=s,
+                    segment_end=e,
+                    overlap_start=overlap_start,
+                    overlap_end=overlap_end,
+                )
             if not text or overlap_duration < _MIN_BOUNDARY_CUE_SECONDS:
                 continue
+        rel_start = max(0.0, overlap_start - clip_start)
+        rel_end = max(rel_start + 0.1, overlap_end - clip_start)
         entries = _chunk_text_entries(text, rel_start, rel_end, max_words=10)
         for start, end, chunk_text in entries:
             if is_boundary_segment and (end - start) < _MIN_BOUNDARY_CUE_SECONDS:
@@ -2111,6 +2151,14 @@ def build_transcript_for_range(segments: List[Dict[str, Any]], start: float, end
             seg_end = seg_start + max(seg_dur or 0.0, 0.0)
         if seg_end <= start or seg_start >= end:
             continue
+        is_boundary_segment = seg_start < start or seg_end > end
+        if is_boundary_segment:
+            word_slice = _word_timed_text_for_overlap(seg, clip_start=start, clip_end=end)
+            if word_slice is not None:
+                txt = word_slice[0].strip()
+                if txt:
+                    texts.append(txt)
+                continue
         if prefer_tr:
             txt = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
         else:

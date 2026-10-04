@@ -24316,30 +24316,11 @@ def autoclip_video(video_pk):
                 if subtitle_srt:
                     temp_subs.append(subtitle_srt)
         else:
-            sub_segments = []
-            for s in (segments or []):
-                if s.get("start") is None:
-                    continue
-                st = float(s.get("start"))
-                dur_val = s.get("duration")
-                end_val = s.get("end")
-                try:
-                    dur = float(dur_val) if dur_val is not None else None
-                except Exception:
-                    dur = None
-                try:
-                    en = float(end_val) if end_val is not None else None
-                except Exception:
-                    en = None
-                if en is None:
-                    en = st + max(dur or 0.0, 0.0)
-                if dur is None:
-                    dur = max(en - st, 0.0)
-                if en <= adj_start or st >= adj_end:
-                    continue
-                sub_segments.append(s.get("tr_text") or s.get("text") or s.get("ar_text") or "")
             clip_text = build_transcript_for_range(segments, start, end, prefer_tr=True)
-            subtitle_text = _sanitize_text_for_overlay(" ".join(sub_segments), 400)
+            subtitle_text = _sanitize_text_for_overlay(
+                build_transcript_for_range(segments, adj_start, adj_end, prefer_tr=True),
+                400,
+            )
             if video_subtitle_style == "karaoke":
                 active_subtitle_preset = str(video_subtitle_preset or "").strip()
                 active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
