@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from app.video_shorts.services.apify_enrich import apify_trakk_enrich
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.discovery_promote_queue import infer_outreach_first_name_for_lead
 
 
 DEFAULT_BATCH_SIZE = 5
@@ -224,6 +225,52 @@ def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
             lead_id,
         ],
     )
+    _store_outreach_first_name_if_needed(conn, lead_id, result)
+
+
+def _store_outreach_first_name_if_needed(conn, lead_id: Any, result: Dict[str, Any] | None = None) -> str:
+    columns = table_columns(conn, "discovery_leads")
+    if "outreach_first_name" not in columns:
+        return ""
+    edited_sql = "COALESCE(outreach_first_name_edited_by_admin, false)" if "outreach_first_name_edited_by_admin" in columns else "false"
+    row = conn.execute(
+        f"""
+        SELECT id, youtube_channel_id, channel_title, channel_description,
+               subscriber_count, creator_name, creator_email, icp_fit,
+               outreach_first_name, {edited_sql} AS outreach_first_name_edited_by_admin
+        FROM discovery_leads
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [lead_id],
+    ).fetchone()
+    if not row:
+        return ""
+    if row[8] is not None or bool(row[9]):
+        return str(row[8] or "")
+    result = result or {}
+    creator_email = str(row[6] or result.get("email") or "").strip()
+    lead = {
+        "id": int(row[0]),
+        "youtube_channel_id": str(row[1] or "").strip(),
+        "channel_title": str(row[2] or "").strip(),
+        "channel_description": str(row[3] or "").strip(),
+        "subscriber_count": row[4],
+        "creator_name": str(row[5] or "").strip(),
+        "creator_email": creator_email,
+        "icp_fit": bool(row[7]) if row[7] is not None else None,
+    }
+    first_name = infer_outreach_first_name_for_lead(lead)
+    conn.execute(
+        """
+        UPDATE discovery_leads
+        SET outreach_first_name = ?
+        WHERE id = ?
+          AND outreach_first_name IS NULL
+        """,
+        [first_name, lead_id],
+    )
+    return first_name
 
 
 def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:

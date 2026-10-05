@@ -138,7 +138,7 @@ from app.video_shorts.services.trial_copy import (
     normalize_trial_days,
     trial_duration_text,
 )
-from app.video_shorts.services.outreach_email_templates import normalize_outreach_template_language, normalize_outreach_template_stage
+from app.video_shorts.services.outreach_email_templates import normalize_outreach_template_language, normalize_outreach_template_stage, outreach_greeting_name
 from app.video_shorts.services.outreach_email_send import (
     OUTREACH_ZOHO_FROM_EMAIL,
     cancel_scheduled_outreach_email,
@@ -306,6 +306,7 @@ from app.video_shorts.services.lead_pipeline import (
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
 from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
 from app.video_shorts.services.discovery_promote_queue import (
+    NO_GREETING_NAME_MARKER,
     load_promote_statuses,
     promote_queue_count,
 )
@@ -16832,6 +16833,12 @@ def admin_discovery_lead_pipeline():
             best_source_video_id_sql = "best_source_video_id" if "best_source_video_id" in discovery_columns else "NULL"
             promoted_source_video_id_sql = "promoted_source_video_id" if "promoted_source_video_id" in discovery_columns else "NULL"
             raw_json_sql = "raw_json" if "raw_json" in discovery_columns else "NULL"
+            outreach_first_name_sql = "outreach_first_name" if "outreach_first_name" in discovery_columns else "NULL"
+            outreach_first_name_edited_sql = (
+                "COALESCE(outreach_first_name_edited_by_admin, false)"
+                if "outreach_first_name_edited_by_admin" in discovery_columns
+                else "false"
+            )
             promoted_source_video_title_sql = (
                 "(SELECT yv.title FROM youtube_videos yv WHERE yv.id = discovery_leads.promoted_source_video_id LIMIT 1)"
                 if "promoted_source_video_id" in discovery_columns
@@ -16988,7 +16995,9 @@ def admin_discovery_lead_pipeline():
                     {promoted_source_video_id_sql} AS promoted_source_video_id,
                     {promoted_source_video_title_sql} AS promoted_source_video_title,
                     {promoted_source_youtube_video_id_sql} AS promoted_source_youtube_video_id,
-                    {raw_json_sql} AS raw_json
+                    {raw_json_sql} AS raw_json,
+                    {outreach_first_name_sql} AS outreach_first_name,
+                    {outreach_first_name_edited_sql} AS outreach_first_name_edited_by_admin
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
@@ -17013,6 +17022,9 @@ def admin_discovery_lead_pipeline():
                 source_video_id = str(row[32] or row[29] or "").strip()
                 source_video_minutes = row[24]
                 source_video_score = row[23]
+                stored_outreach_first_name = row[34]
+                outreach_greeting_value = outreach_greeting_name("" if stored_outreach_first_name is None else str(stored_outreach_first_name), language="EN")
+                outreach_greeting_text = f"Hi {outreach_greeting_value}," if outreach_greeting_value else "Hi"
                 leads.append(
                     {
                     "id": row[0],
@@ -17050,6 +17062,12 @@ def admin_discovery_lead_pipeline():
                     "source_video_title": source_video_title,
                     "source_video_minutes": source_video_minutes,
                     "source_video_score": source_video_score,
+                    "outreach_first_name": "" if stored_outreach_first_name is None else str(stored_outreach_first_name),
+                    "outreach_first_name_stored": stored_outreach_first_name is not None,
+                    "outreach_first_name_edited_by_admin": bool(row[35]),
+                    "outreach_greeting_name": outreach_greeting_value,
+                    "outreach_greeting_text": outreach_greeting_text,
+                    "outreach_greeting_is_generic": not bool(outreach_greeting_value),
                 }
                 )
 
@@ -17386,6 +17404,65 @@ def admin_provision_discovery_lead_email(lead_id: str):
     finally:
         conn.close()
     return redirect(url_for("video_shorts_bp.admin_leads"))
+
+
+@video_shorts_bp.route("/admin/discovery-leads/<lead_id>/outreach-first-name", methods=["POST"])
+@require_admin
+def admin_update_discovery_lead_outreach_first_name(lead_id: str):
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    payload = payload or {}
+    raw_name = str(payload.get("outreach_first_name") or "").strip()
+    stored_value = raw_name or NO_GREETING_NAME_MARKER
+    normalized_lead_id = str(lead_id or "").strip()
+    if not normalized_lead_id:
+        return jsonify({"success": False, "errors": [{"message": "Lead is required."}]}), 400
+
+    conn = get_db()
+    try:
+        columns = table_columns(conn, "discovery_leads")
+        required = {"outreach_first_name", "outreach_first_name_edited_by_admin"}
+        if not required.issubset(columns):
+            return jsonify({"success": False, "errors": [{"message": "Greeting storage is not available."}]}), 503
+        row = conn.execute(
+            """
+            SELECT id
+            FROM discovery_leads
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [normalized_lead_id],
+        ).fetchone()
+        if not row:
+            return jsonify({"success": False, "errors": [{"message": "Lead not found."}]}), 404
+        conn.execute(
+            """
+            UPDATE discovery_leads
+               SET outreach_first_name = ?,
+                   outreach_first_name_edited_by_admin = true
+             WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [stored_value, normalized_lead_id],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to update discovery outreach first name lead_id=%s", normalized_lead_id)
+        return jsonify({"success": False, "errors": [{"message": "Greeting name could not be saved."}]}), 500
+    finally:
+        conn.close()
+
+    greeting_name = outreach_greeting_name(stored_value, language="EN")
+    return jsonify(
+        {
+            "success": True,
+            "lead_id": normalized_lead_id,
+            "outreach_first_name": stored_value,
+            "outreach_greeting_name": greeting_name,
+            "outreach_greeting_text": f"Hi {greeting_name}," if greeting_name else "Hi",
+            "outreach_greeting_is_generic": not bool(greeting_name),
+            "outreach_first_name_edited_by_admin": True,
+        }
+    )
 
 
 @video_shorts_bp.route("/admin/leads/<lead_id>/retry-plan", methods=["POST"])

@@ -595,11 +595,13 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
 
     conn = get_db()
     try:
+        lead_columns = table_columns(conn, "discovery_leads")
+        outreach_first_name_sql = "outreach_first_name" if "outreach_first_name" in lead_columns else "NULL"
         row = conn.execute(
-            """
+            f"""
             SELECT id, youtube_channel_id, channel_title, channel_description,
                    subscriber_count, creator_name, creator_email, icp_fit,
-                   autopilot_lead_id
+                   autopilot_lead_id, {outreach_first_name_sql} AS outreach_first_name
             FROM discovery_leads
             WHERE id = ?
             LIMIT 1
@@ -618,6 +620,7 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
             "creator_email": str(row[6] or "").strip(),
             "icp_fit": bool(row[7]) if row[7] is not None else None,
             "autopilot_lead_id": str(row[8] or "").strip(),
+            "outreach_first_name": row[9],
         }
         if not lead["creator_email"]:
             raise RuntimeError("missing_email")
@@ -676,7 +679,20 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
         meta = fetch_video_metadata(str(source["video_id"]))
         if lead.get("channel_description"):
             meta["channel_description"] = lead["channel_description"]
-        inferred_recipient_name = infer_outreach_first_name_for_lead(lead)
+        if lead.get("outreach_first_name") is None:
+            inferred_recipient_name = infer_outreach_first_name_for_lead(lead)
+            if "outreach_first_name" in lead_columns:
+                conn.execute(
+                    """
+                    UPDATE discovery_leads
+                    SET outreach_first_name = ?
+                    WHERE id = ?
+                      AND outreach_first_name IS NULL
+                    """,
+                    [inferred_recipient_name, lead_id],
+                )
+        else:
+            inferred_recipient_name = str(lead.get("outreach_first_name") or "")
         autopilot = create_autopilot_lead_from_video(
             conn,
             meta=meta,

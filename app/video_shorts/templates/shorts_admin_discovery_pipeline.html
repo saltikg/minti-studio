@@ -107,6 +107,37 @@
       text-decoration: none;
       font-weight: 800;
     }
+    .discovery-greeting-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-top: 6px;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 0.82rem;
+    }
+    .discovery-greeting-preview.is-generic {
+      color: #fbbf24;
+    }
+    .discovery-greeting-edit-button {
+      border: 0;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.62);
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .discovery-greeting-edit {
+      display: none;
+      gap: 6px;
+      align-items: center;
+      margin-top: 6px;
+    }
+    .discovery-greeting-edit.is-open {
+      display: flex;
+    }
+    .discovery-greeting-edit input {
+      max-width: 150px;
+    }
     .discovery-daily-keywords {
       color: rgba(255, 255, 255, 0.9);
       font-size: 0.86rem;
@@ -836,6 +867,38 @@
                 {% if lead.matched_keyword %}
                   <div class="discovery-muted">{{ lead.matched_keyword }}</div>
                 {% endif %}
+                {% if lead.creator_email %}
+                  <div class="discovery-greeting-preview {{ 'is-generic' if lead.outreach_greeting_is_generic else '' }}" data-greeting-preview="{{ lead.id }}">
+                    <span data-greeting-label="{{ lead.id }}">Greeting: {{ lead.outreach_greeting_text }}</span>
+                    <span class="discovery-muted">{{ lead.creator_email }}</span>
+                    {% if lead.outreach_first_name_edited_by_admin %}
+                      <span class="discovery-muted">edited</span>
+                    {% endif %}
+                    <button
+                      type="button"
+                      class="discovery-greeting-edit-button"
+                      data-greeting-edit-toggle="{{ lead.id }}"
+                      aria-label="Edit greeting"
+                    >✎</button>
+                  </div>
+                  <form
+                    class="discovery-greeting-edit"
+                    data-greeting-edit-form="{{ lead.id }}"
+                    data-update-url="{{ url_for('video_shorts_bp.admin_update_discovery_lead_outreach_first_name', lead_id=lead.id) }}"
+                  >
+                    <input
+                      type="text"
+                      class="form-control form-control-sm"
+                      name="outreach_first_name"
+                      value="{{ lead.outreach_greeting_name }}"
+                      placeholder="First name"
+                      aria-label="Greeting first name"
+                    >
+                    <button type="submit" class="btn btn-sm btn-outline-info">Save</button>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-greeting-edit-cancel="{{ lead.id }}">Cancel</button>
+                    <span class="discovery-muted" data-greeting-edit-status="{{ lead.id }}"></span>
+                  </form>
+                {% endif %}
               </td>
               <td>{{ lead.subscriber_count or '' }}</td>
               <td>{{ lead.longform_last_60d or 0 }}</td>
@@ -1075,6 +1138,54 @@
         }
         return data;
       }
+
+      document.querySelectorAll('[data-greeting-edit-toggle]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const leadId = button.getAttribute('data-greeting-edit-toggle');
+          const form = document.querySelector(`[data-greeting-edit-form="${leadId}"]`);
+          if (!form) return;
+          form.classList.add('is-open');
+          form.querySelector('input[name="outreach_first_name"]')?.focus();
+        });
+      });
+
+      document.querySelectorAll('[data-greeting-edit-cancel]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const leadId = button.getAttribute('data-greeting-edit-cancel');
+          const form = document.querySelector(`[data-greeting-edit-form="${leadId}"]`);
+          const status = document.querySelector(`[data-greeting-edit-status="${leadId}"]`);
+          if (form) form.classList.remove('is-open');
+          if (status) status.textContent = '';
+        });
+      });
+
+      document.querySelectorAll('[data-greeting-edit-form]').forEach((form) => {
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const leadId = form.getAttribute('data-greeting-edit-form');
+          const status = document.querySelector(`[data-greeting-edit-status="${leadId}"]`);
+          const input = form.querySelector('input[name="outreach_first_name"]');
+          const submit = form.querySelector('button[type="submit"]');
+          const url = form.getAttribute('data-update-url') || '';
+          if (!url || !input) return;
+          if (status) status.textContent = 'Saving...';
+          if (submit) submit.disabled = true;
+          try {
+            const data = await postJson(url, { outreach_first_name: input.value || '' });
+            const preview = document.querySelector(`[data-greeting-preview="${leadId}"]`);
+            const label = document.querySelector(`[data-greeting-label="${leadId}"]`);
+            if (label) label.textContent = `Greeting: ${data.outreach_greeting_text || 'Hi'}`;
+            if (preview) preview.classList.toggle('is-generic', Boolean(data.outreach_greeting_is_generic));
+            input.value = data.outreach_greeting_name || '';
+            if (status) status.textContent = 'Saved.';
+            form.classList.remove('is-open');
+          } catch (error) {
+            if (status) status.textContent = error.message || 'Save failed.';
+          } finally {
+            if (submit) submit.disabled = false;
+          }
+        });
+      });
 
       const automationStatus = document.getElementById('automationStatus');
       const automationToggleButton = document.getElementById('automationToggleButton');
