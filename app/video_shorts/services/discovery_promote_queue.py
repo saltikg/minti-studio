@@ -265,6 +265,57 @@ def enqueue_discovery_promote_request(
     requested_by: str = "",
 ) -> Dict[str, Any]:
     ensure_discovery_promote_queue_schema(conn)
+    lead_id = int(discovery_lead_id)
+    selected_video_id = str(selected_source_video_id or "").strip()
+    requester = str(requested_by or "").strip()
+
+    row = conn.execute(
+        f"""
+        UPDATE {QUEUE_TABLE}
+        SET status = 'queued',
+            selected_source_video_id = ?,
+            requested_by = ?,
+            requested_at = CURRENT_TIMESTAMP,
+            started_at = NULL,
+            finished_at = NULL,
+            error = NULL,
+            result_json = NULL
+        WHERE discovery_lead_id = ?
+          AND status = 'failed'
+        RETURNING id, status
+        """,
+        [selected_video_id or None, requester, lead_id],
+    ).fetchone()
+    if row:
+        return {
+            "id": row[0],
+            "discovery_lead_id": lead_id,
+            "status": str((row[1] if row else "queued") or "queued"),
+            "kind": "requeued",
+        }
+
+    if selected_video_id:
+        row = conn.execute(
+            f"""
+            UPDATE {QUEUE_TABLE}
+            SET selected_source_video_id = ?,
+                requested_by = ?,
+                requested_at = CURRENT_TIMESTAMP
+            WHERE discovery_lead_id = ?
+              AND status = 'queued'
+              AND started_at IS NULL
+            RETURNING id, status
+            """,
+            [selected_video_id, requester, lead_id],
+        ).fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "discovery_lead_id": lead_id,
+                "status": str((row[1] if row else "queued") or "queued"),
+                "kind": "updated",
+            }
+
     existing = conn.execute(
         f"""
         SELECT id, status, error
@@ -272,13 +323,13 @@ def enqueue_discovery_promote_request(
         WHERE discovery_lead_id = ?
         LIMIT 1
         """,
-        [int(discovery_lead_id)],
+        [lead_id],
     ).fetchone()
     if existing:
         status = str(existing[1] or "").strip().lower()
         return {
             "id": existing[0],
-            "discovery_lead_id": int(discovery_lead_id),
+            "discovery_lead_id": lead_id,
             "status": status,
             "error": str(existing[2] or ""),
             "kind": "existing",
@@ -296,11 +347,11 @@ def enqueue_discovery_promote_request(
         VALUES (?, 'queued', ?, ?, CURRENT_TIMESTAMP)
         RETURNING id, status
         """,
-        [int(discovery_lead_id), str(selected_source_video_id or "").strip(), str(requested_by or "").strip()],
+        [lead_id, selected_video_id or None, requester],
     ).fetchone()
     return {
         "id": row[0] if row else None,
-        "discovery_lead_id": int(discovery_lead_id),
+        "discovery_lead_id": lead_id,
         "status": str((row[1] if row else "queued") or "queued"),
         "kind": "queued",
     }
