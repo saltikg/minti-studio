@@ -59,6 +59,10 @@ CLIENT_ERROR_RATE_LIMITS = [
 LONGFORM_WINDOW_DAYS = 60
 SHORTS_WINDOW_DAYS = 15
 UPLOAD_SAMPLE_SIZE = 50
+SOURCE_VIDEO_LOOKBACK_LIMIT = 30
+SOURCE_VIDEO_RANKING_LIMIT = 5
+SOURCE_VIDEO_PICKER_LIMIT = 15
+SOURCE_VIDEO_MIN_SECONDS = 5 * 60
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"(iletisim|iletişim|contact|business)", re.IGNORECASE)
 LEAD_DISCOVERY_DEFAULT_MIN_SUBSCRIBERS = 1_000
@@ -490,6 +494,13 @@ def _fetch_video_details(
                 "duration_seconds": duration_seconds or None,
                 "description": snippet.get("description") or "",
                 "title": snippet.get("title") or "",
+                "channel_id": str(snippet.get("channelId") or "").strip(),
+                "published_at": str(snippet.get("publishedAt") or "").strip(),
+                "thumbnail_url": (
+                    ((snippet.get("thumbnails") or {}).get("medium") or {}).get("url")
+                    or ((snippet.get("thumbnails") or {}).get("default") or {}).get("url")
+                    or ""
+                ),
                 "view_count": _to_int(statistics.get("viewCount")),
                 "like_count": _to_int(statistics.get("likeCount")),
                 "comment_count": _to_int(statistics.get("commentCount")),
@@ -731,9 +742,27 @@ def _sweetspot_score_for_minutes(minutes: float) -> Optional[int]:
     return 5
 
 
+def _longform_uploads_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    longform: List[Dict[str, Any]] = []
+    for item in recent_uploads or []:
+        video_id = str(item.get("video_id") or "").strip()
+        if not video_id:
+            continue
+        details = stats_map.get(video_id) or {}
+        try:
+            duration_seconds = float(details.get("duration_seconds") or 0)
+        except (TypeError, ValueError):
+            duration_seconds = 0
+        if duration_seconds < SOURCE_VIDEO_MIN_SECONDS:
+            continue
+        longform.append(item)
+    return longform
+
+
 def _select_sweetspot_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     best: Optional[Dict[str, Any]] = None
-    for candidate in _sweetspot_candidates_from_uploads(recent_uploads, stats_map):
+    ranked_uploads = _longform_uploads_from_uploads(recent_uploads, stats_map)[:SOURCE_VIDEO_RANKING_LIMIT]
+    for candidate in _sweetspot_candidates_from_uploads(ranked_uploads, stats_map, limit=SOURCE_VIDEO_RANKING_LIMIT):
         score = candidate.get("score")
         if score is None:
             continue
@@ -759,12 +788,20 @@ def _select_sweetspot_from_uploads(recent_uploads: List[Dict[str, Any]], stats_m
         "canonical_url": best["canonical_url"],
         "minutes": best["minutes"],
         "score": best["score"],
+        "duration_seconds": best.get("duration_seconds"),
+        "thumbnail_url": best.get("thumbnail_url") or "",
+        "published_at_raw": best.get("published_at_raw") or "",
     }
 
 
-def _sweetspot_candidates_from_uploads(recent_uploads: List[Dict[str, Any]], stats_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sweetspot_candidates_from_uploads(
+    recent_uploads: List[Dict[str, Any]],
+    stats_map: Dict[str, Dict[str, Any]],
+    *,
+    limit: int = SOURCE_VIDEO_RANKING_LIMIT,
+) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
-    for index, item in enumerate((recent_uploads or [])[:5]):
+    for index, item in enumerate((recent_uploads or [])[: max(0, int(limit or 0))]):
         video_id = str(item.get("video_id") or "").strip()
         if not video_id:
             continue
@@ -776,6 +813,10 @@ def _sweetspot_candidates_from_uploads(recent_uploads: List[Dict[str, Any]], sta
         minutes = duration_seconds / 60.0 if duration_seconds > 0 else 0
         score = _sweetspot_score_for_minutes(minutes)
         published_at = _parse_yt_timestamp(item.get("published_at"))
+        thumbnail_url = (
+            str(details.get("thumbnail_url") or "").strip()
+            or str(item.get("thumbnail_url") or "").strip()
+        )
         candidates.append(
             {
                 "video_id": video_id,
@@ -784,6 +825,7 @@ def _sweetspot_candidates_from_uploads(recent_uploads: List[Dict[str, Any]], sta
                 "minutes": round(minutes, 2),
                 "duration_seconds": int(duration_seconds or 0),
                 "score": int(score) if score is not None else None,
+                "thumbnail_url": thumbnail_url,
                 "published_at": published_at,
                 "published_at_raw": str(item.get("published_at") or "").strip(),
                 "recent_index": index,
@@ -800,7 +842,7 @@ def select_source_video_for_channel(youtube_channel_id: str) -> Optional[Dict[st
     uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
     if not uploads_playlist_id:
         return None
-    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=5)
+    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=SOURCE_VIDEO_LOOKBACK_LIMIT)
     video_ids = [str(item.get("video_id") or "").strip() for item in recent_uploads if str(item.get("video_id") or "").strip()]
     stats_map = _fetch_video_details(video_ids)
     return _select_sweetspot_from_uploads(recent_uploads, stats_map)
@@ -814,15 +856,17 @@ def select_source_video_candidates_for_channel(youtube_channel_id: str) -> Dict[
     uploads_playlist_id = str(channel_meta.get("uploads_playlist_id") or "").strip()
     if not uploads_playlist_id:
         return {"auto_pick": None, "candidates": []}
-    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=5)
+    recent_uploads = _collect_recent_uploads(uploads_playlist_id, limit=SOURCE_VIDEO_LOOKBACK_LIMIT)
     video_ids = [str(item.get("video_id") or "").strip() for item in recent_uploads if str(item.get("video_id") or "").strip()]
     stats_map = _fetch_video_details(video_ids)
-    candidates = _sweetspot_candidates_from_uploads(recent_uploads, stats_map)
+    longform_uploads = _longform_uploads_from_uploads(recent_uploads, stats_map)
+    candidates = _sweetspot_candidates_from_uploads(longform_uploads, stats_map, limit=SOURCE_VIDEO_PICKER_LIMIT)
     auto_pick = _select_sweetspot_from_uploads(recent_uploads, stats_map)
     auto_video_id = str((auto_pick or {}).get("video_id") or "")
     for candidate in candidates:
         candidate["is_auto_pick"] = bool(auto_video_id and candidate.get("video_id") == auto_video_id)
         candidate["is_eligible"] = candidate.get("score") is not None
+        candidate["is_ranked_for_auto"] = int(candidate.get("recent_index") or 0) < SOURCE_VIDEO_RANKING_LIMIT
         candidate.pop("published_at", None)
     return {"auto_pick": auto_pick, "candidates": candidates}
 

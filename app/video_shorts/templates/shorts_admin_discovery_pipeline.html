@@ -355,13 +355,21 @@
     }
     .source-picker-option {
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr);
-      gap: 8px;
-      padding: 8px 0;
+      grid-template-columns: 88px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 0;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
     .source-picker-option:last-child {
       border-bottom: 0;
+    }
+    .source-picker-thumb {
+      width: 88px;
+      aspect-ratio: 16 / 9;
+      border-radius: 6px;
+      object-fit: cover;
+      background: rgba(255, 255, 255, 0.08);
     }
     .source-picker-title {
       color: rgba(255, 255, 255, 0.92);
@@ -744,7 +752,7 @@
                     <input class="promote-lead-checkbox" type="checkbox" value="{{ lead.id }}" {% if promote_status in ['queued', 'processing', 'done'] %}disabled{% endif %}>
                     Select
                   </label>
-                  <button type="button" class="btn btn-sm btn-outline-light choose-source-video-button" data-lead-id="{{ lead.id }}">Choose video</button>
+                  <button type="button" class="btn btn-sm btn-outline-light choose-source-video-button" data-lead-id="{{ lead.id }}">Choose video manually</button>
                   <button type="button" class="btn btn-sm btn-outline-info promote-real-lead-button" data-lead-id="{{ lead.id }}" {% if promote_status in ['queued', 'processing', 'done'] %}disabled{% endif %}>Promote</button>
                 {% else %}
                   <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Promote</button>
@@ -1159,63 +1167,119 @@
         }
       }
 
-      async function enqueuePromote(leadIds, sourceVideoIdByLead = {}) {
-        const payload = { lead_ids: leadIds };
-        const sourceMap = {};
-        Object.keys(sourceVideoIdByLead).forEach((leadId) => {
-          if (sourceVideoIdByLead[leadId]) sourceMap[leadId] = sourceVideoIdByLead[leadId];
+	      async function enqueuePromote(leadIds, sourceVideoIdByLead = {}) {
+	        const payload = { lead_ids: leadIds };
+	        const sourceMap = {};
+	        Object.keys(sourceVideoIdByLead).forEach((leadId) => {
+	          if (sourceVideoIdByLead[leadId]) sourceMap[leadId] = sourceVideoIdByLead[leadId];
         });
         if (Object.keys(sourceMap).length) payload.source_video_ids = sourceMap;
-        return postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', payload);
-      }
+	        return postJson('{{ url_for("video_shorts_bp.admin_discovery_promote_to_lead") }}', payload);
+	      }
 
-      function sourceCandidateLabel(candidate) {
-        const minutes = Number(candidate.minutes || 0);
-        const score = candidate.score === null || candidate.score === undefined ? 'ignored' : `score ${candidate.score}`;
-        return `${minutes ? `${minutes.toFixed(1)} min` : 'duration unknown'} · ${score}${candidate.is_auto_pick ? ' · auto-pick' : ''}`;
-      }
+	      function escapeHtml(value) {
+	        return String(value || '')
+	          .replace(/&/g, '&amp;')
+	          .replace(/</g, '&lt;')
+	          .replace(/>/g, '&gt;')
+	          .replace(/"/g, '&quot;');
+	      }
 
-      function renderSourcePicker(panel, leadId, data) {
-        const candidates = data.candidates || [];
-        if (!candidates.length) {
-          panel.innerHTML = '<div class="discovery-muted">No recent candidate videos found.</div>';
-          return;
-        }
-        const autoPick = data.auto_pick || {};
-        const selected = selectedSourceVideos.get(String(leadId)) || autoPick.video_id || candidates[0].video_id || '';
-        selectedSourceVideos.set(String(leadId), selected);
-        const html = [
-          '<div class="discovery-muted mb-2">Pick the source video before promoting. Demo generation starts only after Promote.</div>',
-          ...candidates.map((candidate) => {
-            const videoId = String(candidate.video_id || '');
-            const checked = videoId === selected ? 'checked' : '';
-            const disabled = videoId ? '' : 'disabled';
-            const title = String(candidate.title || videoId || 'Untitled video')
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;');
-            return `
-              <label class="source-picker-option">
-                <input type="radio" name="source-video-${leadId}" value="${videoId}" ${checked} ${disabled}>
-                <span>
-                  <span class="source-picker-title">${title}</span>
-                  <span class="source-picker-meta">${videoId} · ${sourceCandidateLabel(candidate)}</span>
-                </span>
-              </label>
-            `;
-          })
-        ].join('');
+	      function sourceCandidateLabel(candidate) {
+	        const minutes = Number(candidate.minutes || 0);
+	        const score = candidate.score === null || candidate.score === undefined ? 'ignored' : `score ${candidate.score}`;
+	        const published = String(candidate.published_at_raw || '').slice(0, 10);
+	        return [
+	          minutes ? `${minutes.toFixed(1)} min` : 'duration unknown',
+	          published,
+	          score,
+	          candidate.is_auto_pick ? 'auto-pick' : ''
+	        ].filter(Boolean).join(' · ');
+	      }
+
+	      async function promoteSingleLead(leadId, sourceVideoId = '') {
+	        const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
+	        const button = document.querySelector(`.promote-real-lead-button[data-lead-id="${leadId}"]`);
+	        if (button) button.disabled = true;
+	        if (rowStatus) rowStatus.textContent = 'Kuyruğa alınıyor...';
+	        try {
+	          const sourceMap = {};
+	          if (sourceVideoId) sourceMap[leadId] = sourceVideoId;
+	          const data = await enqueuePromote([leadId], sourceMap);
+	          const queued = data.queued || [];
+	          const skipped = data.skipped || [];
+	          if (queued.length) {
+	            const item = queued[0];
+	            const status = item.status || 'queued';
+	            applyPromoteStatus(leadId, { status, label: status === 'done' ? 'Hazır' : 'Sırada' });
+	            if (rowStatus) rowStatus.textContent = item.reason === 'already_a_lead_linked' ? `Linked existing lead ${item.autopilot_lead_id}.` : 'Sırada';
+	            refreshPromoteStatuses();
+	          } else if (skipped.length) {
+	            if (rowStatus) rowStatus.textContent = `Skipped: ${skipped[0].reason}`;
+	            if (button) button.disabled = false;
+	          } else {
+	            if (rowStatus) rowStatus.textContent = 'No lead was queued.';
+	            if (button) button.disabled = false;
+	          }
+	        } catch (error) {
+	          if (rowStatus) rowStatus.textContent = error.message || 'Promotion failed.';
+	          if (button) button.disabled = false;
+	        }
+	      }
+
+	      function renderSourcePicker(panel, leadId, data) {
+	        const candidates = data.candidates || [];
+	        if (!candidates.length) {
+	          panel.innerHTML = '<div class="discovery-muted">No recent long-form videos found.</div>';
+	          return;
+	        }
+	        const autoPick = data.auto_pick || {};
+	        const selected = selectedSourceVideos.get(String(leadId)) || autoPick.video_id || candidates[0].video_id || '';
+	        selectedSourceVideos.set(String(leadId), selected);
+	        const html = [
+	          '<div class="discovery-muted mb-2">Recent long-form videos (5+ min). Pick a source before promoting.</div>',
+	          ...candidates.map((candidate) => {
+	            const videoId = String(candidate.video_id || '');
+	            const checked = videoId === selected ? 'checked' : '';
+	            const disabled = videoId ? '' : 'disabled';
+	            const title = escapeHtml(candidate.title || videoId || 'Untitled video');
+	            const thumbUrl = escapeHtml(candidate.thumbnail_url || '');
+	            const thumb = thumbUrl ? `<img class="source-picker-thumb" src="${thumbUrl}" alt="">` : '<div class="source-picker-thumb"></div>';
+	            return `
+	              <label class="source-picker-option">
+	                ${thumb}
+	                <span>
+	                  <input type="radio" name="source-video-${leadId}" value="${escapeHtml(videoId)}" ${checked} ${disabled}>
+	                  <span class="source-picker-title">${title}</span>
+	                  <span class="source-picker-meta">${escapeHtml(videoId)} · ${escapeHtml(sourceCandidateLabel(candidate))}</span>
+	                </span>
+	                <button type="button" class="btn btn-sm btn-outline-info promote-with-source-button" data-video-id="${escapeHtml(videoId)}" ${disabled}>Promote with this video</button>
+	              </label>
+	            `;
+	          })
+	        ].join('');
         panel.innerHTML = html;
         panel.querySelectorAll('input[type="radio"]').forEach((input) => {
           input.addEventListener('change', () => {
             selectedSourceVideos.set(String(leadId), input.value);
             const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-            const candidate = candidates.find((item) => String(item.video_id || '') === input.value) || {};
-            if (rowStatus) rowStatus.textContent = `Selected source: ${candidate.title || input.value}`;
-          });
-        });
-      }
+	            const candidate = candidates.find((item) => String(item.video_id || '') === input.value) || {};
+	            if (rowStatus) rowStatus.textContent = `Selected source: ${candidate.title || input.value}`;
+	          });
+	        });
+	        panel.querySelectorAll('.promote-with-source-button').forEach((sourceButton) => {
+	          sourceButton.addEventListener('click', async (event) => {
+	            event.preventDefault();
+	            const videoId = sourceButton.getAttribute('data-video-id') || '';
+	            const candidate = candidates.find((item) => String(item.video_id || '') === videoId) || {};
+	            const confirmed = window.confirm(`Creates a real lead and starts demo generation using:\n\n${candidate.title || videoId}\n\nContinue?`);
+	            if (!confirmed) return;
+	            sourceButton.disabled = true;
+	            selectedSourceVideos.set(String(leadId), videoId);
+	            await promoteSingleLead(leadId, videoId);
+	          });
+	        });
+	      }
 
       document.querySelectorAll('.choose-source-video-button').forEach((button) => {
         button.addEventListener('click', async function () {
@@ -1246,37 +1310,13 @@
         button.addEventListener('click', async function () {
           const leadId = button.getAttribute('data-lead-id');
           const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-          const selectedSourceVideoId = selectedSourceVideos.get(String(leadId)) || '';
-          const sourceNote = selectedSourceVideoId ? `\n\nSelected source video: ${selectedSourceVideoId}` : '\n\nNo manual source selected; auto-pick will be used.';
-          const confirmed = window.confirm(`Creates a real lead and starts demo generation. This costs compute.${sourceNote}\n\nContinue?`);
-          if (!confirmed) return;
-          button.disabled = true;
-          if (rowStatus) rowStatus.textContent = 'Kuyruğa alınıyor...';
-          try {
-            const sourceMap = {};
-            if (selectedSourceVideoId) sourceMap[leadId] = selectedSourceVideoId;
-            const data = await enqueuePromote([leadId], sourceMap);
-            const queued = data.queued || [];
-            const skipped = data.skipped || [];
-            if (queued.length) {
-              const item = queued[0];
-              const status = item.status || 'queued';
-              applyPromoteStatus(leadId, { status, label: status === 'done' ? 'Hazır' : 'Sırada' });
-              if (rowStatus) rowStatus.textContent = item.reason === 'already_a_lead_linked' ? `Linked existing lead ${item.autopilot_lead_id}.` : 'Sırada';
-              refreshPromoteStatuses();
-            } else if (skipped.length) {
-              if (rowStatus) rowStatus.textContent = `Skipped: ${skipped[0].reason}`;
-              button.disabled = false;
-            } else {
-              if (rowStatus) rowStatus.textContent = 'No lead was queued.';
-              button.disabled = false;
-            }
-          } catch (error) {
-            if (rowStatus) rowStatus.textContent = error.message || 'Promotion failed.';
-            button.disabled = false;
-          }
-        });
-      });
+	          const selectedSourceVideoId = selectedSourceVideos.get(String(leadId)) || '';
+	          const sourceNote = selectedSourceVideoId ? `\n\nSelected source video: ${selectedSourceVideoId}` : '\n\nNo manual source selected; auto-pick will be used.';
+	          const confirmed = window.confirm(`Creates a real lead and starts demo generation. This costs compute.${sourceNote}\n\nContinue?`);
+	          if (!confirmed) return;
+	          await promoteSingleLead(leadId, selectedSourceVideoId);
+	        });
+	      });
 
       const bulkPromoteButton = document.getElementById('bulkPromoteButton');
       const bulkPromoteStatus = document.getElementById('bulkPromoteStatus');
