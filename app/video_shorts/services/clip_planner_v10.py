@@ -7,12 +7,13 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.video_shorts.config import CLIP_PLANNER_V10_MODEL
+from app.video_shorts.config import CLIP_PLANNER_V10_MODEL, OPENAI_MODEL
 from app.video_shorts.services.clip_plan_focus_prompts import normalize_planning_language
 from app.video_shorts.services.clip_planner_agents import (
     MAX_CLIP_SECONDS,
     MIN_CLIP_SECONDS,
     OPENAI_PLANNER_TIMEOUT_SECONDS,
+    _parse_selector_score,
     _target_clip_count_for_duration,
 )
 from app.video_shorts.services.clip_title import generate_clip_title
@@ -72,6 +73,25 @@ STRONG_WORDS = {
     "also",
 }
 QUESTION_HOOKS = {"neden", "niye", "why"}
+
+V10_RUBRIC_SCORER_PROMPT = """You are scoring final Shorts clips using the legacy selector rubric.
+
+Score EVERY candidate exactly once. Do not select, rank, omit, merge, or deduplicate candidates.
+The output selected array MUST contain one row for every input candidate_id, including weak clips.
+If there are 4 candidates, return 4 scored rows. If there are 8 candidates, return 8 scored rows.
+
+Return valid JSON only:
+{
+  "selected": [
+    {"candidate_id": number, "reason": str, "score": number, "breakdown": {"hook": number, "standalone": number, "quotability": number, "length": number}}
+  ]
+}
+
+Rubric: hook = first 2s grab; standalone = understandable without the source video;
+quotability = emotional/shareable/quotable payoff; length = fits a Short cleanly with no mid-thought cut.
+hook, standalone, quotability, and length must each be 0-25; score must be their sum as a 0-100 number.
+Keep reason short; explain the score in one sentence.
+"""
 
 V10_STAGE1_PROMPT_TEMPLATE = """You pick the best short clips (YouTube Shorts) from a full talk, lecture, or
 Q&A transcript. The transcript is given as numbered sentences with
@@ -462,6 +482,93 @@ def _usage(response: Any) -> Tuple[int, int]:
     if not usage:
         return 0, 0
     return int(getattr(usage, "prompt_tokens", 0) or 0), int(getattr(usage, "completion_tokens", 0) or 0)
+
+
+def _score_from_v10_strength(value: Any) -> Optional[int]:
+    try:
+        strength_score = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if 1 <= strength_score <= 10:
+        return strength_score * 10
+    return None
+
+
+def _apply_v10_strength_score(entry: Dict[str, Any]) -> None:
+    entry["score"] = _score_from_v10_strength(entry.get("v10_strength"))
+    entry["score_breakdown"] = None
+    entry["score_source"] = "v10_strength"
+
+
+def _duration_for_rubric(entry: Dict[str, Any]) -> float:
+    if entry.get("duration") is not None:
+        try:
+            return round(float(entry.get("duration")), 2)
+        except Exception:
+            pass
+    try:
+        return round(float(entry.get("end") or 0.0) - float(entry.get("start") or 0.0), 2)
+    except Exception:
+        return 0.0
+
+
+def _score_final_v10_clips_with_rubric(client: Any, stats: "_CallStats", *, video_id: str, final_plan: List[Dict[str, Any]]) -> str:
+    if not client or not final_plan:
+        raise RuntimeError("rubric_scorer_unavailable")
+    payload_candidates: List[Dict[str, Any]] = []
+    for idx, entry in enumerate(final_plan, 1):
+        payload_candidates.append(
+            {
+                "candidate_id": idx,
+                "title": entry.get("title") or "",
+                "start": entry.get("start"),
+                "end": entry.get("end"),
+                "duration": _duration_for_rubric(entry),
+                "excerpt": entry.get("excerpt") or entry.get("transcript_full") or "",
+            }
+        )
+    payload = {
+        "video_id": video_id,
+        "candidate_count": len(final_plan),
+        "candidates": payload_candidates,
+    }
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": V10_RUBRIC_SCORER_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        timeout=OPENAI_PLANNER_TIMEOUT_SECONDS,
+    )
+    stats.add(resp)
+    raw = resp.choices[0].message.content if resp.choices else ""
+    data = json.loads(raw)
+    rows = data.get("selected") or []
+    scored_by_id: Dict[int, Tuple[int, Dict[str, int]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            candidate_id = int(row.get("candidate_id"))
+        except Exception:
+            continue
+        if candidate_id < 1 or candidate_id > len(final_plan):
+            continue
+        score, breakdown = _parse_selector_score(row)
+        if score is None or len(breakdown) < 4:
+            continue
+        scored_by_id[candidate_id] = (score, breakdown)
+    missing = [idx for idx in range(1, len(final_plan) + 1) if idx not in scored_by_id]
+    if missing:
+        raise RuntimeError(f"rubric_scorer_missing_candidates:{missing}")
+    for idx, entry in enumerate(final_plan, 1):
+        score, breakdown = scored_by_id[idx]
+        entry["score"] = int(score)
+        entry["score_breakdown"] = breakdown
+        entry["score_source"] = "rubric"
+    return raw
 
 
 class _CallStats:
@@ -1086,31 +1193,42 @@ def propose_clips_v10(
     for item in kept:
         candidate = item.get("candidate") or {}
         v10_strength = candidate.get("strength")
-        try:
-            strength_score = int(float(v10_strength))
-        except (TypeError, ValueError):
-            strength_score = 0
-        score = strength_score * 10 if 1 <= strength_score <= 10 else None
         text = item.get("text") or ""
         title = generate_clip_title(text, language_hint=resolved_language)
         stats.add(None)
-        final_plan.append(
-            {
-                "title": title,
-                "start": round(float(item["start"]), 2),
-                "end": round(float(item["end"]), 2),
-                "duration": round(float(item["duration"]), 2),
-                "excerpt": text,
-                "transcript_full": text,
-                "score": score,
-                "score_breakdown": None,
-                "v10_idea": candidate.get("idea") or "",
-                "v10_start_sentence": item.get("stage2_start"),
-                "v10_end_sentence": item.get("end_sentence"),
-                "v10_part": candidate.get("part"),
-                "v10_strength": v10_strength,
-            }
-        )
+        plan_entry = {
+            "title": title,
+            "start": round(float(item["start"]), 2),
+            "end": round(float(item["end"]), 2),
+            "duration": round(float(item["duration"]), 2),
+            "excerpt": text,
+            "transcript_full": text,
+            "v10_idea": candidate.get("idea") or "",
+            "v10_start_sentence": item.get("stage2_start"),
+            "v10_end_sentence": item.get("end_sentence"),
+            "v10_part": candidate.get("part"),
+            "v10_strength": v10_strength,
+        }
+        _apply_v10_strength_score(plan_entry)
+        final_plan.append(plan_entry)
+
+    rubric_started_at = time.monotonic()
+    scorer = "fallback"
+    scorer_error = ""
+    scorer_raw_response = ""
+    for attempt in range(2):
+        try:
+            scorer_raw_response = _score_final_v10_clips_with_rubric(client, stats, video_id=str(video_title or ""), final_plan=final_plan)
+            scorer = "rubric"
+            scorer_error = ""
+            break
+        except Exception as exc:
+            scorer_error = str(exc)
+            if attempt == 0:
+                continue
+            for entry in final_plan:
+                _apply_v10_strength_score(entry)
+    scorer_seconds = round(time.monotonic() - rubric_started_at, 2)
 
     wall_seconds = round(time.monotonic() - started_at, 2)
     debug_info.update(stats.snapshot())
@@ -1121,6 +1239,11 @@ def propose_clips_v10(
     debug_info["final_plan"] = final_plan
     debug_info["final_clips_per_part"] = final_counts
     debug_info["dropped_candidates"] = dropped
+    debug_info["rubric_scorer"] = scorer
+    debug_info["rubric_scorer_seconds"] = scorer_seconds
+    debug_info["rubric_scorer_error"] = scorer_error
+    debug_info["rubric_scorer_raw_response"] = scorer_raw_response
+    logger.info("planner=v10 scorer=%s clips=%s secs=%.2f", scorer, len(final_plan), scorer_seconds)
     logger.info(
         "clip_planner_v10_generated clips=%s dropped=%s llm_calls=%s wall_seconds=%.2f mode=%s n_parts=%s stage1_per_part=%s final_per_part=%s",
         len(final_plan),

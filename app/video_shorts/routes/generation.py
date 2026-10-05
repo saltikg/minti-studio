@@ -4523,6 +4523,10 @@ def _evaluate_lead_generation_approval_gate(
 AUTOPILOT_GENERATE_PROCESSING_TIMEOUT_SECONDS = 30 * 60
 AUTOPILOT_GENERATE_QUEUE_BACKLOG_LIMIT = 12
 AUTOPILOT_PLAN_TIMEOUT_SECONDS = 30 * 60
+try:
+    DISCOVERY_LEAD_GENERATION_MIN_SCORE = float(os.getenv("DISCOVERY_LEAD_GENERATION_MIN_SCORE", "80") or 80)
+except (TypeError, ValueError):
+    DISCOVERY_LEAD_GENERATION_MIN_SCORE = 80.0
 AUTOPILOT_OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
 AUTOPILOT_OUTREACH_SLOT_HOUR = 9
 AUTOPILOT_OUTREACH_STAGE = "first"
@@ -4694,7 +4698,7 @@ def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
 def _plan_entries_with_selection(video_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     entries = _load_plan_entries(video_id) or []
     if entries:
-        selected = _select_lead_generation_entries(entries, min_score=85.0, limit=5)
+        selected = _select_lead_generation_entries(entries, min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE, limit=5)
         _write_plan_entries(video_id, entries)
         return entries, selected
     return entries, []
@@ -5209,7 +5213,7 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                     "combined_clip_count": len(entries),
                     "selected_count": len(selected),
                     "selected": _summarize_selected_plan_entries(selected),
-                    "selection_rule": {"min_score": 85, "limit": 5},
+                    "selection_rule": {"min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE, "limit": 5},
                 }
                 if selected:
                     record_lead_pipeline_event(
@@ -5225,7 +5229,7 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                         lead_id=lead_id,
                         event_type="clip_selection_failed",
                         to_state="failed",
-                        detail={**detail, "reason": "no clips >= 85"},
+                        detail={**detail, "reason": f"no clips >= {DISCOVERY_LEAD_GENERATION_MIN_SCORE:g}"},
                     )
                 conn_existing.commit()
                 processed_any = True
@@ -22266,6 +22270,8 @@ def _generate_clip_plan_for_video(
             _mark_plan_entry_ai_title(plan_entry)
         plan_entry["score"] = clip.get("score")
         plan_entry["score_breakdown"] = clip.get("score_breakdown")
+        if clip.get("score_source"):
+            plan_entry["score_source"] = clip.get("score_source")
         plan_entry["focus_categories"] = list(focus_categories)
         plan_entry["status"] = "pending"
         plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
@@ -22280,7 +22286,11 @@ def _generate_clip_plan_for_video(
 
     selected_for_generation: List[Dict[str, Any]] = []
     if owner_user_id and brand_id:
-        selected_for_generation = _select_lead_generation_entries(combined_plan, min_score=85.0, limit=5)
+        selected_for_generation = _select_lead_generation_entries(
+            combined_plan,
+            min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE,
+            limit=5,
+        )
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
@@ -22298,7 +22308,7 @@ def _generate_clip_plan_for_video(
                 "combined_clip_count": len(combined_plan),
                 "selected_count": len(selected_for_generation),
                 "selected": _summarize_selected_plan_entries(selected_for_generation),
-                "selection_rule": {"min_score": 85, "limit": 5},
+                "selection_rule": {"min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE, "limit": 5},
                 "plan_focus": plan_focus,
                 "focus_categories": list(focus_categories),
             }
@@ -22318,7 +22328,7 @@ def _generate_clip_plan_for_video(
                     video_pk=video_pk,
                     event_type="clip_selection_failed",
                     to_state="failed",
-                    detail={**detail, "reason": "no clips >= 85"},
+                    detail={**detail, "reason": f"no clips >= {DISCOVERY_LEAD_GENERATION_MIN_SCORE:g}"},
                 )
         except Exception as exc:
             current_app.logger.warning("Failed to record lead plan event video_pk=%s: %s", video_pk, exc)
