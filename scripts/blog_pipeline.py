@@ -142,6 +142,18 @@ def _word_count(markdown_text: str) -> int:
     return len(re.findall(r"\b[\w'-]+\b", text))
 
 
+def _coerce_reading_time_minutes(value: Any, content_md: str) -> int:
+    if isinstance(value, int) and value > 0:
+        return value
+    if value is not None:
+        match = re.match(r"\s*(\d+)", str(value))
+        if match:
+            parsed = int(match.group(1))
+            if parsed > 0:
+                return parsed
+    return max(1, (_word_count(content_md) + 199) // 200)
+
+
 def _trim_at_word_boundary(value: Any, limit: int) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if len(text) <= limit:
@@ -744,8 +756,7 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         article["meta_description"] = article.get("summary") or ""
     article["meta_title"] = _trim_at_word_boundary(article.get("meta_title"), 60)
     article["meta_description"] = _trim_at_word_boundary(article.get("meta_description"), 155)
-    if not article.get("reading_time"):
-        article["reading_time"] = max(1, round(_word_count(str(article.get("content_md") or "")) / 220))
+    article["reading_time"] = _coerce_reading_time_minutes(article.get("reading_time"), str(article.get("content_md") or ""))
     return article
 
 
@@ -1757,6 +1768,7 @@ def _run_image_stage(
 def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_plan: dict[str, Any], run_status: str) -> int:
     _ensure_cover_metadata_columns(conn)
     _rename_archived_pipeline_slug_conflict(conn, str(article["slug"]))
+    article["reading_time"] = _coerce_reading_time_minutes(article.get("reading_time"), str(article.get("content_md") or ""))
     row = conn.execute(
         """
         INSERT INTO blog_articles (
@@ -1935,6 +1947,7 @@ def _writer_prompt() -> str:
     return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
+reading_time must be an integer number of minutes only, such as 8. Never return "8 min read" or any other phrase; the renderer adds the label.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
 cover.archetypes must be the top 3 archetype letters from stable_context.cover_archetypes that fit the topic. Code chooses the final archetype for variety; do not force one in the prose.
 visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Valid visual types are screenshot, flow, compare, generate.

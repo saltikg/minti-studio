@@ -1,5 +1,5 @@
 import scripts.blog_pipeline as blog_pipeline
-from scripts.blog_pipeline import CTA_URL, _normalize_article_payload, _revision_rejection_reason
+from scripts.blog_pipeline import CTA_URL, _coerce_reading_time_minutes, _normalize_article_payload, _revision_rejection_reason
 
 
 def _base_article(content_md: str, visuals=None):
@@ -10,6 +10,20 @@ def _base_article(content_md: str, visuals=None):
         "content_md": content_md,
         "visuals": visuals if visuals is not None else [],
     }
+
+
+def test_reading_time_is_coerced_to_integer_minutes():
+    article = _normalize_article_payload(
+        {
+            **_base_article(" ".join(["word"] * 401)),
+            "reading_time": "8 min read",
+        }
+    )
+
+    assert article["reading_time"] == 8
+    assert isinstance(article["reading_time"], int)
+    assert _coerce_reading_time_minutes("9", "short body") == 9
+    assert _coerce_reading_time_minutes("read soon", " ".join(["word"] * 401)) == 3
 
 
 def test_normalizes_bare_and_wrong_placeholder_syntax(monkeypatch):
