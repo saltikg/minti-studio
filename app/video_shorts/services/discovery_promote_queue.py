@@ -401,6 +401,7 @@ def load_promote_statuses(conn, lead_ids: List[int]) -> Dict[int, Dict[str, Any]
         FROM {QUEUE_TABLE} r
         LEFT JOIN queued q ON q.id = r.id
         WHERE r.discovery_lead_id IN ({placeholders})
+          AND NOT (r.status = 'failed' AND COALESCE(r.error, '') = '')
         """,
         clean_ids,
     ).fetchall()
