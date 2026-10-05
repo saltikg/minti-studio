@@ -340,32 +340,66 @@
       margin-top: 16px;
       color: rgba(255, 255, 255, 0.62);
     }
-    .source-picker-panel {
+    .source-picker-modal-backdrop {
       display: none;
-      min-width: 320px;
-      margin-top: 8px;
-      padding: 10px;
+      position: fixed;
+      inset: 0;
+      z-index: 1080;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(2, 6, 23, 0.72);
+    }
+    .source-picker-modal-backdrop.is-open {
+      display: flex;
+    }
+    .source-picker-modal {
+      width: min(920px, 100%);
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      padding: 18px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
-      background: rgba(15, 23, 42, 0.96);
+      background: #0f172a;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.44);
       white-space: normal;
     }
-    .source-picker-panel.is-open {
-      display: block;
+    .source-picker-modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .source-picker-modal-title {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.94);
+      font-size: 1rem;
+      font-weight: 900;
+    }
+    .source-picker-close {
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 1.25rem;
+      line-height: 1;
     }
     .source-picker-option {
       display: grid;
-      grid-template-columns: 88px minmax(0, 1fr) auto;
-      gap: 10px;
+      grid-template-columns: 120px minmax(0, 1fr) auto;
+      gap: 12px;
       align-items: center;
-      padding: 10px 0;
+      padding: 12px 0;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
     .source-picker-option:last-child {
       border-bottom: 0;
     }
     .source-picker-thumb {
-      width: 88px;
+      width: 120px;
       aspect-ratio: 16 / 9;
       border-radius: 6px;
       object-fit: cover;
@@ -375,11 +409,21 @@
       color: rgba(255, 255, 255, 0.92);
       font-weight: 800;
       line-height: 1.25;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     .source-picker-meta {
       color: rgba(255, 255, 255, 0.58);
       font-size: 0.78rem;
       margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .source-picker-action {
+      white-space: nowrap;
     }
     @media (max-width: 991.98px) {
       .discovery-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -390,6 +434,10 @@
       .discovery-summary-grid { grid-template-columns: 1fr; }
       .discovery-automation-grid { grid-template-columns: 1fr; }
       .discovery-pager { align-items: flex-start; flex-direction: column; }
+      .source-picker-modal-backdrop { padding: 12px; }
+      .source-picker-option { grid-template-columns: 96px minmax(0, 1fr); }
+      .source-picker-thumb { width: 96px; }
+      .source-picker-action { grid-column: 1 / -1; justify-self: end; }
     }
   </style>
 {% endblock %}
@@ -771,9 +819,6 @@
                 {% endif %}
                 <div class="discovery-muted promote-real-lead-status" data-lead-id="{{ lead.id }}"></div>
                 <div class="discovery-muted discovery-dismiss-status" data-lead-id="{{ lead.id }}"></div>
-                <div class="source-picker-panel" data-source-picker-panel="{{ lead.id }}">
-                  <div class="discovery-muted">Loading recent videos...</div>
-                </div>
               </td>
               <td>{{ lead.first_seen_at or '' }}</td>
               <td>
@@ -825,8 +870,6 @@
                 {% if lead.autopilot_lead_id %}
                   <div>{{ lead.autopilot_lead_id }}</div>
                   <div class="discovery-muted">{{ lead.promoted_to_autopilot_at }}</div>
-                {% elif lead.promotion_error %}
-                  <div class="discovery-muted">{{ lead.promotion_error }}</div>
                 {% endif %}
               </td>
               <td>{{ lead.email_enriched_at or '' }}</td>
@@ -857,6 +900,21 @@
     </div>
     </div>
   </section>
+
+  <div id="sourcePickerModal" class="source-picker-modal-backdrop" aria-hidden="true">
+    <div class="source-picker-modal" role="dialog" aria-modal="true" aria-labelledby="sourcePickerTitle">
+      <div class="source-picker-modal-header">
+        <div>
+          <h3 id="sourcePickerTitle" class="source-picker-modal-title">Choose source video</h3>
+          <div id="sourcePickerSubtitle" class="discovery-muted">Recent long-form videos</div>
+        </div>
+        <button type="button" id="sourcePickerClose" class="source-picker-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="sourcePickerContent">
+        <div class="discovery-muted">Loading recent videos...</div>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -1117,11 +1175,14 @@
         });
       }
 
-      const selectedSourceVideos = new Map();
       const promoteStatusUrl = '{{ url_for("video_shorts_bp.admin_discovery_promote_status") }}';
       const promoteLeadIds = Array.from(document.querySelectorAll('.promote-real-lead-status[data-lead-id]'))
         .map((node) => node.getAttribute('data-lead-id'))
         .filter(Boolean);
+      const sourcePickerModal = document.getElementById('sourcePickerModal');
+      const sourcePickerContent = document.getElementById('sourcePickerContent');
+      const sourcePickerSubtitle = document.getElementById('sourcePickerSubtitle');
+      const sourcePickerClose = document.getElementById('sourcePickerClose');
 
       function promoteStatusLabel(status) {
         if (!status) return '';
@@ -1143,7 +1204,7 @@
         if (chipWrap) {
           chipWrap.innerHTML = label ? `<span class="discovery-status ${normalized}">${label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>` : '';
         }
-        if (rowStatus && label) rowStatus.textContent = label;
+        if (rowStatus && label) rowStatus.textContent = '';
         const locked = ['queued', 'processing', 'done'].includes(normalized);
         if (button) button.disabled = locked;
         if (checkbox) checkbox.disabled = locked;
@@ -1192,8 +1253,7 @@
 	        return [
 	          minutes ? `${minutes.toFixed(1)} min` : 'duration unknown',
 	          published,
-	          score,
-	          candidate.is_auto_pick ? 'auto-pick' : ''
+	          score
 	        ].filter(Boolean).join(' · ');
 	      }
 
@@ -1227,46 +1287,48 @@
 	        }
 	      }
 
+	      function openSourcePickerModal(leadId) {
+	        if (!sourcePickerModal || !sourcePickerContent) return;
+	        sourcePickerModal.classList.add('is-open');
+	        sourcePickerModal.setAttribute('aria-hidden', 'false');
+	        sourcePickerModal.setAttribute('data-lead-id', String(leadId || ''));
+	        if (sourcePickerSubtitle) sourcePickerSubtitle.textContent = `Lead ${leadId} · recent long-form videos`;
+	        sourcePickerContent.innerHTML = '<div class="discovery-muted">Loading recent videos...</div>';
+	      }
+
+	      function closeSourcePickerModal() {
+	        if (!sourcePickerModal) return;
+	        sourcePickerModal.classList.remove('is-open');
+	        sourcePickerModal.setAttribute('aria-hidden', 'true');
+	        sourcePickerModal.removeAttribute('data-lead-id');
+	      }
+
 	      function renderSourcePicker(panel, leadId, data) {
 	        const candidates = data.candidates || [];
 	        if (!candidates.length) {
 	          panel.innerHTML = '<div class="discovery-muted">No recent long-form videos found.</div>';
 	          return;
 	        }
-	        const autoPick = data.auto_pick || {};
-	        const selected = selectedSourceVideos.get(String(leadId)) || autoPick.video_id || candidates[0].video_id || '';
-	        selectedSourceVideos.set(String(leadId), selected);
 	        const html = [
-	          '<div class="discovery-muted mb-2">Recent long-form videos (5+ min). Pick a source before promoting.</div>',
 	          ...candidates.map((candidate) => {
 	            const videoId = String(candidate.video_id || '');
-	            const checked = videoId === selected ? 'checked' : '';
 	            const disabled = videoId ? '' : 'disabled';
 	            const title = escapeHtml(candidate.title || videoId || 'Untitled video');
 	            const thumbUrl = escapeHtml(candidate.thumbnail_url || '');
 	            const thumb = thumbUrl ? `<img class="source-picker-thumb" src="${thumbUrl}" alt="">` : '<div class="source-picker-thumb"></div>';
 	            return `
-	              <label class="source-picker-option">
+	              <div class="source-picker-option">
 	                ${thumb}
-	                <span>
-	                  <input type="radio" name="source-video-${leadId}" value="${escapeHtml(videoId)}" ${checked} ${disabled}>
-	                  <span class="source-picker-title">${title}</span>
-	                  <span class="source-picker-meta">${escapeHtml(videoId)} · ${escapeHtml(sourceCandidateLabel(candidate))}</span>
-	                </span>
-	                <button type="button" class="btn btn-sm btn-outline-info promote-with-source-button" data-video-id="${escapeHtml(videoId)}" ${disabled}>Promote with this video</button>
-	              </label>
+	                <div>
+	                  <div class="source-picker-title">${title}</div>
+	                  <div class="source-picker-meta">${escapeHtml(sourceCandidateLabel(candidate))}</div>
+	                </div>
+	                <button type="button" class="btn btn-sm btn-outline-info source-picker-action promote-with-source-button" data-video-id="${escapeHtml(videoId)}" ${disabled}>Promote with this video</button>
+	              </div>
 	            `;
 	          })
 	        ].join('');
         panel.innerHTML = html;
-        panel.querySelectorAll('input[type="radio"]').forEach((input) => {
-          input.addEventListener('change', () => {
-            selectedSourceVideos.set(String(leadId), input.value);
-            const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-	            const candidate = candidates.find((item) => String(item.video_id || '') === input.value) || {};
-	            if (rowStatus) rowStatus.textContent = `Selected source: ${candidate.title || input.value}`;
-	          });
-	        });
 	        panel.querySelectorAll('.promote-with-source-button').forEach((sourceButton) => {
 	          sourceButton.addEventListener('click', async (event) => {
 	            event.preventDefault();
@@ -1275,30 +1337,31 @@
 	            const confirmed = window.confirm(`Creates a real lead and starts demo generation using:\n\n${candidate.title || videoId}\n\nContinue?`);
 	            if (!confirmed) return;
 	            sourceButton.disabled = true;
-	            selectedSourceVideos.set(String(leadId), videoId);
 	            await promoteSingleLead(leadId, videoId);
+	            closeSourcePickerModal();
 	          });
+	        });
+	      }
+
+	      if (sourcePickerClose) sourcePickerClose.addEventListener('click', closeSourcePickerModal);
+	      if (sourcePickerModal) {
+	        sourcePickerModal.addEventListener('click', (event) => {
+	          if (event.target === sourcePickerModal) closeSourcePickerModal();
 	        });
 	      }
 
       document.querySelectorAll('.choose-source-video-button').forEach((button) => {
         button.addEventListener('click', async function () {
           const leadId = button.getAttribute('data-lead-id');
-          const panel = document.querySelector(`.source-picker-panel[data-source-picker-panel="${leadId}"]`);
           const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-          if (!panel) return;
-          if (panel.classList.contains('is-open')) {
-            panel.classList.remove('is-open');
-            return;
-          }
-          panel.classList.add('is-open');
-          panel.innerHTML = '<div class="discovery-muted">Loading recent videos...</div>';
+          if (!sourcePickerContent) return;
+          openSourcePickerModal(leadId);
           button.disabled = true;
           try {
             const data = await postJson('{{ url_for("video_shorts_bp.admin_discovery_source_video_candidates") }}', { lead_id: leadId });
-            renderSourcePicker(panel, leadId, data);
+            renderSourcePicker(sourcePickerContent, leadId, data);
           } catch (error) {
-            panel.innerHTML = `<div class="discovery-muted">${error.message || 'Could not load recent videos.'}</div>`;
+            sourcePickerContent.innerHTML = `<div class="discovery-muted">${error.message || 'Could not load recent videos.'}</div>`;
             if (rowStatus) rowStatus.textContent = error.message || 'Could not load recent videos.';
           } finally {
             button.disabled = false;
@@ -1310,11 +1373,9 @@
         button.addEventListener('click', async function () {
           const leadId = button.getAttribute('data-lead-id');
           const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
-	          const selectedSourceVideoId = selectedSourceVideos.get(String(leadId)) || '';
-	          const sourceNote = selectedSourceVideoId ? `\n\nSelected source video: ${selectedSourceVideoId}` : '\n\nNo manual source selected; auto-pick will be used.';
-	          const confirmed = window.confirm(`Creates a real lead and starts demo generation. This costs compute.${sourceNote}\n\nContinue?`);
+	          const confirmed = window.confirm('Creates a real lead and starts demo generation. This costs compute.\n\nNo manual source selected; auto-pick will be used.\n\nContinue?');
 	          if (!confirmed) return;
-	          await promoteSingleLead(leadId, selectedSourceVideoId);
+	          await promoteSingleLead(leadId);
 	        });
 	      });
 
@@ -1327,17 +1388,12 @@
             bulkPromoteStatus.textContent = 'Select at least one lead.';
             return;
           }
-          const confirmed = window.confirm(`Queue ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'} for promote? Manual source selections are used when present; the rest use auto-pick.`);
+          const confirmed = window.confirm(`Queue ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'} for promote? Auto-pick will be used for each lead.`);
           if (!confirmed) return;
-          const sourceMap = {};
-          leadIds.forEach((leadId) => {
-            const selected = selectedSourceVideos.get(String(leadId)) || '';
-            if (selected) sourceMap[leadId] = selected;
-          });
           bulkPromoteButton.disabled = true;
           bulkPromoteStatus.textContent = 'Kuyruğa alınıyor...';
           try {
-            const data = await enqueuePromote(leadIds, sourceMap);
+            const data = await enqueuePromote(leadIds);
             const queued = data.queued || [];
             const skipped = data.skipped || [];
             queued.forEach((item) => applyPromoteStatus(String(item.id), { status: item.status || 'queued', label: item.status === 'done' ? 'Hazır' : 'Sırada' }));
