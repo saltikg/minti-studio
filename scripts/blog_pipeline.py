@@ -1423,6 +1423,21 @@ def _strip_designer_wrappers(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _strip_injected_markdown_images(source: str, candidate: str) -> tuple[str, list[str]]:
+    source_images = set(MARKDOWN_IMAGE_RE.findall(source or ""))
+    removed: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        image_md = match.group(0)
+        if image_md in source_images:
+            return image_md
+        removed.append(image_md)
+        return ""
+
+    cleaned = MARKDOWN_IMAGE_RE.sub(replace, candidate or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), removed
+
+
 def _guard_designer(before: str, after: str) -> tuple[bool, str]:
     before_links = _article_links(before)
     after_links = _article_links(after)
@@ -1956,7 +1971,7 @@ Use flow for a process/workflow and compare for metric or option comparisons. Us
 For screenshot or generate visuals, content_md must include that marker as a standalone HTML comment such as <!-- IMAGE_1 -->. Bare IMAGE_1 text is forbidden.
 For flow or compare visuals, put the full :::flow or :::compare block directly in content_md where that visual belongs; do not also include an IMAGE comment for that slot.
 Flow syntax is 2-5 lines of: icon | title max 4 words | subtitle max 8 words. Allowed icons: video, clips, scissors, calendar, clock, eye, users, chart, mic, upload, check, sparkles.
-Compare syntax is exactly two metric lines of: icon | value | label | direction. Direction must be up, down, or flat. Any number in the value must already appear in the article text. Add an optional note: line.
+Compare syntax is exactly two qualitative contrast lines of: icon | value | label | direction. Direction must be up, down, or flat. Prefer non-numeric values such as "One clear focus" vs "Competing elements". Do not put digits, counts, percentages, or number+noun metrics such as "1 clear idea" or "3 crowded elements" in a compare value unless that exact number is already stated in the surrounding article prose. Add an optional note: line.
 Each visual must include a short caption, maximum 12 words, suitable for the markdown image title or component caption.
 Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; every visual alt must describe the actual visual.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
@@ -1981,11 +1996,15 @@ Non-blocking fix: a MintiStudio section that reads as a feature list without tyi
 
 
 def _revision_prompt() -> str:
-    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Return the full article, not a patch or excerpt. Never shorten, summarize, delete, or rewrite sections that are not mentioned in the fixes. Preserve valid metadata, links, cover, visuals, and exact [[BLOCK_N]] protected tokens unless a fix explicitly requires moving the surrounding paragraph. Keep every [[BLOCK_N]] token exactly once and in the same relative position. Never drop the visuals array."""
+    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Return the full article, not a patch or excerpt. Never shorten, summarize, delete, or rewrite sections that are not mentioned in the fixes. Preserve valid metadata, links, cover, visuals, and exact [[BLOCK_N]] protected tokens unless a fix explicitly requires moving the surrounding paragraph. Keep every [[BLOCK_N]] token exactly once and in the same relative position. Never drop the visuals array.
+
+If a reviewer flags compare metrics because numbers in a :::compare block are not stated in prose, fix the compare block by removing the digits and making the values qualitative. Do not add filler prose just to justify the metric numbers."""
 
 
 def _designer_prompt() -> str:
-    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You are given final, approved prose. Do not change any wording. Only wrap existing passages in ::: component blocks and insert image markers. Return the same text with components/markers added. Never reword, rewrite, re-summarize, regenerate, add, or delete sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
+    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You are given final, approved prose. Do not change any wording. Only wrap existing passages in ::: component blocks. Return the same text with components added. Never reword, rewrite, re-summarize, regenerate, add, or delete sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
+
+Do not add, invent, or write markdown image syntax under any circumstances. Never create ![alt](path) image links. Never change image paths. Never add new IMAGE markers. Only keep existing <!-- IMAGE_n --> markers exactly where they already are.
 
 Use :::steps for any sequential workflow, at least one :::key, and :::tip or :::warning where useful. If the writer already included :::flow or :::compare, preserve it exactly. Keep the preservation guard passing by preserving approved prose exactly."""
 
@@ -2131,7 +2150,10 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         designer_output, cost = _call_stage(state, "designer", BLOG_MODEL_DESIGNER, _designer_prompt(), designer_payload)
         after_design, token_repairs = _restore_masked_blocks(masked_design_content, str(designer_output.get("content_md") or ""), design_blocks)
         after_design = _normalize_image_placeholder_syntax(after_design)
+        after_design, removed_images = _strip_injected_markdown_images(before_design, after_design)
         guard_ok, guard_note = _guard_designer(before_design, after_design)
+        if removed_images:
+            guard_note = _join_notes(guard_note, f"removed designer-injected markdown images: {len(removed_images)}") or guard_note
         if token_repairs:
             guard_note = _join_notes(guard_note, token_repairs) or guard_note
         if guard_ok:

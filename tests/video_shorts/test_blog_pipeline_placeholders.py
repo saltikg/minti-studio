@@ -1,5 +1,11 @@
 import scripts.blog_pipeline as blog_pipeline
-from scripts.blog_pipeline import CTA_URL, _coerce_reading_time_minutes, _normalize_article_payload, _revision_rejection_reason
+from scripts.blog_pipeline import (
+    CTA_URL,
+    _coerce_reading_time_minutes,
+    _normalize_article_payload,
+    _revision_rejection_reason,
+    _strip_injected_markdown_images,
+)
 
 
 def _base_article(content_md: str, visuals=None):
@@ -722,6 +728,39 @@ def test_designer_guard_allows_component_wrapping_and_markers():
 
     assert ok
     assert reason == "prose preserved"
+
+
+def test_strip_injected_designer_markdown_images_before_guard():
+    before = "\n\n".join(
+        [
+            "## Plan",
+            f"Send readers to {CTA_URL}. A Short can give them one clear idea quickly.",
+            "<!-- IMAGE_1 -->",
+        ]
+    )
+    after = before.replace(
+        "<!-- IMAGE_1 -->",
+        "![Invented crop](/video_shorts/static/img/blog/wrong-slug/phone-friendly-crop.png)\n\n<!-- IMAGE_1 -->",
+    )
+
+    cleaned, removed = _strip_injected_markdown_images(before, after)
+    ok, reason = blog_pipeline._guard_designer(before, cleaned)
+
+    assert removed == ["![Invented crop](/video_shorts/static/img/blog/wrong-slug/phone-friendly-crop.png)"]
+    assert "wrong-slug" not in cleaned
+    assert ok
+    assert reason == "prose preserved"
+
+
+def test_strip_injected_designer_markdown_images_preserves_source_images():
+    image = "![Existing screenshot](/video_shorts/static/img/blog/example/screen.png)"
+    before = f"## Plan\n\n{image}\n\nKeep this prose."
+    after = f"{before}\n\n![New image](/video_shorts/static/img/blog/wrong/new.png)"
+
+    cleaned, removed = _strip_injected_markdown_images(before, after)
+
+    assert image in cleaned
+    assert removed == ["![New image](/video_shorts/static/img/blog/wrong/new.png)"]
 
 
 def test_revision_guard_ignores_protected_block_text():
