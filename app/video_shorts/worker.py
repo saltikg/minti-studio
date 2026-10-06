@@ -818,7 +818,56 @@ def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[P
         raise
 
 
-def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], owner_user_id: Optional[str], duration_seconds: Any) -> None:
+def _is_unconverted_discovery_demo_transcription(
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    job_origin: str = "",
+) -> bool:
+    if str(job_origin or "").strip() == "discovery_demo":
+        return True
+    clean_owner = str(owner_user_id or "").strip()
+    clean_brand = str(brand_id or "").strip()
+    if not clean_owner or not clean_brand or not video_pk:
+        return False
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM autopilot_leads
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND first_video_id = ?
+              AND converted_at IS NULL
+            LIMIT 1
+            """,
+            [clean_owner, clean_brand, int(video_pk)],
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        logger.debug(
+            "Could not resolve discovery-demo transcription scope user=%s brand=%s video_pk=%s",
+            clean_owner,
+            clean_brand,
+            video_pk,
+            exc_info=True,
+        )
+        return False
+    finally:
+        conn.close()
+
+
+def _save_transcript(
+    video_id: str,
+    *,
+    full_text: str,
+    segments: list[dict],
+    owner_user_id: Optional[str],
+    duration_seconds: Any,
+    bill_usage: bool = True,
+) -> None:
     segments_json = generation.json.dumps(segments, ensure_ascii=False)
     conn = get_db()
     try:
@@ -860,7 +909,7 @@ def _save_transcript(video_id: str, *, full_text: str, segments: list[dict], own
             video_id=event_video_id or video_id,
             status="completed",
         )
-    if owner_user_id:
+    if owner_user_id and bill_usage:
         minutes = _duration_minutes(duration_seconds)
         if minutes > 0:
             video_title = None
@@ -893,6 +942,7 @@ def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, A
     video_url = str(payload.get("video_url") or "").strip()
     owner_user_id = str(job.get("user_id") or "").strip()
     brand_id = str(payload.get("brand_id") or "").strip()
+    job_origin = str(payload.get("job_origin") or "").strip()
     previous_status = str(payload.get("previous_download_status") or "pending").strip().lower() or "pending"
     if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
         raise PermanentRenderJobError("Proxy transcript job is missing its scoped source.")
@@ -914,12 +964,19 @@ def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, A
         result["audio_size_mb"] = round(audio_path.stat().st_size / (1024 * 1024), 2)
         _set_job_progress(job["id"], stage="transcribing", message="Transcribing source audio.", status="processing", extra=result)
         transcript_text, segments = _transcribe_with_whisper(audio_path)
+        bill_usage = not _is_unconverted_discovery_demo_transcription(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            job_origin=job_origin,
+        )
         _save_transcript(
             video_id,
             full_text=transcript_text,
             segments=segments,
             owner_user_id=owner_user_id,
             duration_seconds=payload.get("duration_seconds"),
+            bill_usage=bill_usage,
         )
         conn = get_db()
         try:
@@ -992,6 +1049,13 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     owner_user_id = str(job["user_id"])
     brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
+    job_origin = str(payload.get("job_origin") or "").strip()
+    bill_usage = not _is_unconverted_discovery_demo_transcription(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+        job_origin=job_origin,
+    )
     if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
         raise PermanentRenderJobError("YouTube ingest job is missing its scoped source.")
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
@@ -1045,7 +1109,14 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         )
         _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
         transcript_text, segments = _transcribe_with_whisper(local_path)
-        _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
+        _save_transcript(
+            video_id,
+            full_text=transcript_text,
+            segments=segments,
+            owner_user_id=owner_user_id,
+            duration_seconds=duration_seconds,
+            bill_usage=bill_usage,
+        )
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
         enqueue_preview_frame_job(
             owner_user_id=owner_user_id,
@@ -1095,8 +1166,15 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     owner_user_id = str(job["user_id"])
     brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
+    job_origin = str(payload.get("job_origin") or "").strip()
+    bill_usage = not _is_unconverted_discovery_demo_transcription(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+        job_origin=job_origin,
+    )
     needed_minutes = _duration_minutes(duration_seconds)
-    if needed_minutes > 0:
+    if bill_usage and needed_minutes > 0:
         quota = check_transcription_quota(owner_user_id, needed_minutes)
         if not quota.get("allowed", False):
             raise PermanentRenderJobError(
@@ -1115,7 +1193,14 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     try:
         _set_job_progress(job["id"], stage="transcribing", message="Preparing your transcript.", status="processing")
         transcript_text, segments = _transcribe_with_whisper(source_path)
-        _save_transcript(video_id, full_text=transcript_text, segments=segments, owner_user_id=owner_user_id, duration_seconds=duration_seconds)
+        _save_transcript(
+            video_id,
+            full_text=transcript_text,
+            segments=segments,
+            owner_user_id=owner_user_id,
+            duration_seconds=duration_seconds,
+            bill_usage=bill_usage,
+        )
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
         conn = get_db()
         try:

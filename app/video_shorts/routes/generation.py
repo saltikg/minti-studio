@@ -4902,7 +4902,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
             continue
 
         enqueue_kind = str(enqueue_row.get("enqueue_kind") or "").strip()
-        target_state = "downloaded" if enqueue_kind == "already_downloaded" else "downloading"
+        target_state = "downloaded" if enqueue_kind in {"already_downloaded", "already_transcribed"} else "downloading"
         conn_event = get_db()
         try:
             record_lead_pipeline_event(
@@ -5071,6 +5071,14 @@ def _enqueue_admin_operation_transcribe_source_job(scope: Dict[str, str], row: A
     video_pk = int(row[0])
     video_id = str(row[1] or "").strip()
     duration_seconds = row[3]
+    conn_guard = get_db_readonly()
+    try:
+        guard_result = _transcribe_source_enqueue_guard(conn_guard, scope, row)
+    finally:
+        conn_guard.close()
+    if guard_result:
+        guard_result.setdefault("job_type", JOB_TYPE_TRANSCRIBE_UPLOAD)
+        return guard_result
     is_discovery_demo = _is_discovery_demo_scope(scope["owner_user_id"], scope["brand_id"], video_pk)
     payload = {
         "quick_session_id": "",
@@ -5471,6 +5479,60 @@ def _is_discovery_demo_scope(owner_user_id: str, brand_id: str, video_pk: Option
         return False
     finally:
         conn.close()
+
+
+def _active_transcription_or_ingest_job_for_video(
+    conn,
+    *,
+    owner_user_id: str,
+    video_pk: int,
+) -> Optional[Dict[str, Any]]:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner or not video_pk:
+        return None
+    row = conn.execute(
+        """
+        SELECT id, type, status
+        FROM shorts_render_jobs
+        WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND type IN (?, ?)
+          AND status IN ('queued', 'processing')
+          AND payload_json->>'video_pk' = ?
+        ORDER BY
+          CASE status WHEN 'processing' THEN 0 ELSE 1 END,
+          created_at ASC
+        LIMIT 1
+        """,
+        [clean_owner, JOB_TYPE_INGEST_YOUTUBE, JOB_TYPE_TRANSCRIBE_UPLOAD, str(int(video_pk))],
+    ).fetchone()
+    if not row:
+        return None
+    return {"id": str(row[0] or ""), "type": str(row[1] or ""), "status": str(row[2] or "")}
+
+
+def _transcribe_source_enqueue_guard(conn, scope: Dict[str, str], row: Any) -> Optional[Dict[str, Any]]:
+    video_pk = int(row[0])
+    video_id = str(row[1] or "").strip()
+    download_status = str(row[4] or "").strip().lower()
+    transcript_status = str(row[5] or "").strip().lower()
+    if transcript_status == "done":
+        return {"video_id": video_id, "job_id": None, "enqueue_kind": "already_transcribed"}
+    if transcript_status == "processing" or download_status in {"audio_transcribing", "transcribing"}:
+        return {"video_id": video_id, "job_id": None, "enqueue_kind": "transcript_processing"}
+    active_job = _active_transcription_or_ingest_job_for_video(
+        conn,
+        owner_user_id=str(scope.get("owner_user_id") or ""),
+        video_pk=video_pk,
+    )
+    if active_job:
+        return {
+            "video_id": video_id,
+            "job_id": active_job["id"],
+            "enqueue_kind": "existing",
+            "job_type": active_job["type"],
+            "job_status": active_job["status"],
+        }
+    return None
 
 
 def process_planned_lead_autogenerate(
