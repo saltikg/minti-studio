@@ -9994,6 +9994,65 @@ def _render_public_short_watch_page(token: str):
     )
 
 
+SHARE_WATCH_BOT_UA_PATTERNS = (
+    "bot",
+    "spider",
+    "crawler",
+    "preview",
+    "facebookexternalhit",
+    "twitterbot",
+    "slackbot",
+    "discordbot",
+    "linkedinbot",
+    "whatsapp",
+    "skypeuripreview",
+    "headless",
+    "playwright",
+    "phantom",
+    "curl",
+    "wget",
+    "python-requests",
+    "go-http-client",
+    "proofpoint",
+    "mimecast",
+    "barracuda",
+    "googleimageproxy",
+)
+
+
+def _is_share_watch_bot_user_agent(user_agent: str) -> bool:
+    normalized = str(user_agent or "").strip().lower()
+    if not normalized:
+        return False
+    return any(pattern in normalized for pattern in SHARE_WATCH_BOT_UA_PATTERNS)
+
+
+def _is_share_watch_internal_request() -> bool:
+    current_user = getattr(g, "vs_current_user", None)
+    if isinstance(current_user, dict) and str(current_user.get("role") or "").strip().lower() == "admin":
+        return True
+    user_id = str(session.get("vs_user_id") or "").strip()
+    if not user_id:
+        return False
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT role
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [user_id],
+        ).fetchone()
+    except Exception:
+        current_app.logger.exception("Failed to resolve share watch session role for user_id=%s", user_id)
+        return False
+    finally:
+        conn.close()
+    return bool(row and str(row[0] or "").strip().lower() == "admin")
+
+
 @video_shorts_bp.route("/w/<token>")
 def public_short_watch_page(token: str):
     return _render_public_short_watch_page(token)
@@ -10017,7 +10076,7 @@ def _handle_public_short_watch_event(token: str):
         return ("", 204)
 
     event_type = str(payload.get("type") or "").strip().lower()
-    if event_type not in {"view", "play", "cta_click", "watch_progress", "yes_intent"}:
+    if event_type not in {"view", "play", "cta_click", "watch_progress", "yes_intent", "video_loaded", "video_error"}:
         return ("", 204)
 
     conn = get_db_readonly()
@@ -10055,6 +10114,8 @@ def _handle_public_short_watch_event(token: str):
         "generated_video_id": row["generated_video_id"],
         "share_link_id": row["share_link_id"],
         "token_source": row["token_source"],
+        "is_internal": _is_share_watch_internal_request(),
+        "is_bot": _is_share_watch_bot_user_agent(request.headers.get("User-Agent", "")),
     }
     device_type = _normalize_share_watch_device_type(payload.get("device_type"))
     if device_type:
@@ -10085,6 +10146,12 @@ def _handle_public_short_watch_event(token: str):
             metadata["seconds_watched"] = seconds_watched
         if percent_watched is not None:
             metadata["percent_watched"] = percent_watched
+    elif event_type == "video_loaded":
+        metadata["ready_state"] = _normalize_share_watch_int(payload.get("ready_state"), minimum=0, maximum=4)
+        metadata["network_state"] = _normalize_share_watch_int(payload.get("network_state"), minimum=0, maximum=3)
+    elif event_type == "video_error":
+        metadata["error_code"] = _normalize_share_watch_int(payload.get("error_code"), minimum=0, maximum=4)
+        metadata["network_state"] = _normalize_share_watch_int(payload.get("network_state"), minimum=0, maximum=3)
 
     track_event(
         row["owner_user_id"],
@@ -12504,7 +12571,10 @@ def _load_admin_error_events(
 
 
 def _share_link_event_join_sql(conn) -> str:
-    event_names_sql = "('share_view', 'share_play', 'share_cta_click', 'share_watch_progress', 'share_yes_intent')"
+    event_names_sql = (
+        "('share_view', 'share_play', 'share_cta_click', 'share_watch_progress', "
+        "'share_yes_intent', 'share_video_loaded', 'share_video_error')"
+    )
     if getattr(conn, "backend_name", "") == "postgres":
         return """
         ue.event_name IN {event_names_sql}
@@ -12545,6 +12615,23 @@ def _user_event_metadata_numeric_sql(conn, field_name: str) -> str:
     return f"CAST({text_expr} AS DOUBLE)"
 
 
+def _user_event_metadata_bool_sql(conn, field_name: str) -> str:
+    text_expr = _user_event_metadata_text_sql(conn, field_name)
+    return f"LOWER(COALESCE({text_expr}, '')) IN ('true', '1', 'yes', 'on')"
+
+
+def _share_watch_clean_event_sql(conn) -> str:
+    is_internal_expr = _user_event_metadata_bool_sql(conn, "is_internal")
+    is_bot_expr = _user_event_metadata_bool_sql(conn, "is_bot")
+    return f"NOT ({is_internal_expr}) AND NOT ({is_bot_expr})"
+
+
+def _share_watch_view_bucket_sql(conn) -> str:
+    if getattr(conn, "backend_name", "") == "postgres":
+        return "FLOOR(EXTRACT(EPOCH FROM ue.created_at) / 1800)"
+    return "FLOOR(epoch(ue.created_at) / 1800)"
+
+
 def _normalize_share_watch_device_type(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in {"mobile", "desktop", "tablet"}:
@@ -12577,6 +12664,14 @@ def _normalize_share_watch_percent(value: Any) -> float | None:
     if not math.isfinite(numeric):
         return None
     return round(min(100.0, max(0.0, numeric)), 2)
+
+
+def _normalize_share_watch_int(value: Any, *, minimum: int, maximum: int) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return minimum
+    return min(maximum, max(minimum, numeric))
 
 
 def _load_admin_share_links(
@@ -12653,6 +12748,8 @@ def _load_admin_share_links(
     percent_watched_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
     cta_expr = _user_event_metadata_text_sql(conn, "cta")
     device_expr = _user_event_metadata_text_sql(conn, "device_type")
+    clean_share_event_sql = _share_watch_clean_event_sql(conn)
+    view_bucket_expr = _share_watch_view_bucket_sql(conn)
     feed_share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
     feed_lead_expr = _user_event_metadata_text_sql(conn, "autopilot_lead_id")
     feed_item_type_expr = _user_event_metadata_text_sql(conn, "item_type")
@@ -12715,7 +12812,7 @@ def _load_admin_share_links(
                   ORDER BY ue.created_at DESC, ue.id DESC
                 ) AS rn
               FROM short_share_links sl
-              JOIN user_events ue
+              JOIN clean_share_events ue
                 ON {_share_link_event_join_sql(conn)}
               WHERE ue.event_name = 'share_cta_click'
                 AND {cta_expr} IS NOT NULL
@@ -12735,9 +12832,16 @@ def _load_admin_share_links(
                   ORDER BY ue.created_at DESC, ue.id DESC
                 ) AS rn
               FROM short_share_links sl
-              JOIN user_events ue
+              JOIN clean_share_events ue
                 ON {_share_link_event_join_sql(conn)}
-              WHERE ue.event_name IN ('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')
+              WHERE ue.event_name IN (
+                  'share_view',
+                  'share_play',
+                  'share_cta_click',
+                  'share_watch_progress',
+                  'share_video_loaded',
+                  'share_video_error'
+                )
                 AND {device_expr} IS NOT NULL
             ) ranked_share_device
             WHERE rn = 1
@@ -12776,7 +12880,7 @@ def _load_admin_share_links(
                   ORDER BY ue.created_at DESC, ue.id DESC
                 ) AS rn
               FROM short_share_links sl
-              JOIN user_events ue
+              JOIN clean_share_events ue
                 ON {_share_link_event_join_sql(conn)}
               WHERE ue.event_name = 'share_cta_click'
                 AND {cta_expr} IS NOT NULL
@@ -12796,9 +12900,16 @@ def _load_admin_share_links(
                   ORDER BY ue.created_at DESC, ue.id DESC
                 ) AS rn
               FROM short_share_links sl
-              JOIN user_events ue
+              JOIN clean_share_events ue
                 ON {_share_link_event_join_sql(conn)}
-              WHERE ue.event_name IN ('share_view', 'share_play', 'share_cta_click', 'share_watch_progress')
+              WHERE ue.event_name IN (
+                  'share_view',
+                  'share_play',
+                  'share_cta_click',
+                  'share_watch_progress',
+                  'share_video_loaded',
+                  'share_video_error'
+                )
                 AND {device_expr} IS NOT NULL
             ) ranked_share_device
             WHERE rn = 1
@@ -12850,7 +12961,7 @@ def _load_admin_share_links(
               sl.id AS share_link_id,
               MAX(ue.created_at) AS yes_intent_at
             FROM short_share_links sl
-            JOIN user_events ue
+            JOIN clean_share_events ue
               ON {_share_link_event_join_sql(conn)}
             WHERE ue.event_name = 'share_yes_intent'
             GROUP BY sl.id
@@ -12858,7 +12969,21 @@ def _load_admin_share_links(
     """
 
     base_cte_sql = f"""
-        WITH share_rows AS (
+        WITH clean_share_events AS (
+            SELECT ue.*
+            FROM user_events ue
+            WHERE ue.event_name IN (
+                'share_view',
+                'share_play',
+                'share_cta_click',
+                'share_watch_progress',
+                'share_yes_intent',
+                'share_video_loaded',
+                'share_video_error'
+              )
+              AND {clean_share_event_sql}
+        ),
+        share_rows AS (
             SELECT
               sl.id,
               sl.generated_video_id,
@@ -12876,15 +13001,17 @@ def _load_admin_share_links(
               sl.created_at,
               NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') AS autopilot_lead_id,
               COALESCE(NULLIF(gv.generated_title, ''), NULLIF(gv.clip_filename, ''), 'Untitled short') AS clip_title,
-              SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) AS views_count,
+              COUNT(DISTINCT CASE WHEN ue.event_name = 'share_view' THEN {view_bucket_expr} ELSE NULL END) AS views_count,
               SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) AS plays_count,
+              SUM(CASE WHEN ue.event_name = 'share_video_loaded' THEN 1 ELSE 0 END) AS video_loaded_count,
+              SUM(CASE WHEN ue.event_name = 'share_video_error' THEN 1 ELSE 0 END) AS video_error_count,
               MAX(CASE WHEN ue.event_name = 'share_watch_progress' THEN {percent_watched_expr} END) AS max_percent_watched,
               MIN(CASE WHEN ue.event_name = 'share_view' THEN ue.created_at END) AS first_seen,
               MAX(CASE WHEN ue.event_name IN ('share_view', 'share_play') THEN ue.created_at END) AS last_seen
             FROM short_share_links sl
             LEFT JOIN shorts_generated_videos gv
               ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
-            LEFT JOIN user_events ue
+            LEFT JOIN clean_share_events ue
               ON {_share_link_event_join_sql(conn)}
             WHERE {where_sql}
             GROUP BY
@@ -13116,7 +13243,9 @@ def _load_admin_share_links(
           lso.status AS outreach_schedule_status,
           sr.declined,
           sr.declined_at,
-          lyi.yes_intent_at
+          lyi.yes_intent_at,
+          COALESCE(sr.video_loaded_count, 0) AS video_loaded_count,
+          COALESCE(sr.video_error_count, 0) AS video_error_count
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -13169,6 +13298,8 @@ def _load_admin_share_links(
         declined = bool(row[38])
         declined_at = row[39]
         yes_intent_at = row[40]
+        video_loaded_count = int(row[41] or 0)
+        video_error_count = int(row[42] or 0)
         feed_cards_seen = []
         if bool(row[27]):
             feed_cards_seen.append("A")
@@ -13206,6 +13337,10 @@ def _load_admin_share_links(
                 "clip_title": row[11],
                 "views_count": views_count,
                 "plays_count": plays_count,
+                "video_loaded_count": video_loaded_count,
+                "video_error_count": video_error_count,
+                "video_loaded": video_loaded_count > 0,
+                "video_error": video_error_count > 0,
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
                 "first_seen": row[14],

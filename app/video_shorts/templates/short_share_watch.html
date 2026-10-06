@@ -417,6 +417,8 @@
           return "desktop";
         };
         const deviceType = classifyDeviceType();
+        let loadedTracked = false;
+        let errorTracked = false;
         const fireEvent = (type, extra = {}) => {
           const body = JSON.stringify({ type, device_type: deviceType, ...extra });
           if (navigator.sendBeacon) {
@@ -492,6 +494,27 @@
           }
           playTracked = true;
           fireEvent("play");
+        }, { passive: true });
+        video.addEventListener("loadeddata", () => {
+          if (loadedTracked) {
+            return;
+          }
+          loadedTracked = true;
+          fireEvent("video_loaded", {
+            ready_state: video.readyState || 0,
+            network_state: video.networkState || 0,
+          });
+        }, { passive: true });
+        video.addEventListener("error", () => {
+          if (errorTracked) {
+            return;
+          }
+          errorTracked = true;
+          const mediaError = video.error || {};
+          fireEvent("video_error", {
+            error_code: mediaError.code || 0,
+            network_state: video.networkState || 0,
+          });
         }, { passive: true });
         video.addEventListener("timeupdate", () => {
           emitProgress(false);

@@ -444,6 +444,7 @@
             <th>Trial</th>
             <th>Views</th>
             <th>Plays</th>
+            <th>Video</th>
             <th>Viewed?</th>
             <th>Played?</th>
             <th>
@@ -622,6 +623,15 @@
               </td>
               <td>{{ link.views_count }}</td>
               <td>{{ link.plays_count }}</td>
+              <td>
+                {% if link.video_error %}
+                  <span class="admin-share-links-pill is-no">Error</span>
+                {% elif link.video_loaded %}
+                  <span class="admin-share-links-pill is-yes">Loaded</span>
+                {% else %}
+                  <span class="admin-share-links-meta">—</span>
+                {% endif %}
+              </td>
               <td><span class="admin-share-links-pill {% if link.viewed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.viewed else 'No' }}</span></td>
               <td><span class="admin-share-links-pill {% if link.played %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.played else 'No' }}</span></td>
               <td>
@@ -691,7 +701,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="26" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="27" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>
