@@ -21,6 +21,19 @@ NO_GREETING_NAME_MARKER = " "
 _FIRST_NAME_RE = re.compile(r"[A-Za-z][A-Za-z'’]{1,39}")
 
 
+def _first_name_is_grounded_in_lead(first_name: str, lead: Dict[str, Any]) -> bool:
+    clean_name = str(first_name or "").strip().lower()
+    if not clean_name:
+        return False
+    haystacks = [
+        str(lead.get("channel_title") or ""),
+        str(lead.get("creator_name") or ""),
+        str(lead.get("channel_description") or ""),
+        str(lead.get("creator_email") or "").split("@", 1)[0],
+    ]
+    return any(clean_name in value.lower() for value in haystacks if value)
+
+
 def ensure_discovery_promote_queue_schema(conn) -> None:
     backend_name = getattr(conn, "backend_name", "")
     json_type = "JSONB" if getattr(conn, "backend_name", "") == "postgres" else "TEXT"
@@ -131,10 +144,10 @@ def _normalize_llm_first_name(value: Any) -> str:
     return match.group(0) if match else ""
 
 
-def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
-    """Return a first name, or a blank marker when the LLM is not confident."""
+def infer_outreach_first_name_for_lead_result(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Return inference details for a first name, without changing the prompt."""
     if not _openai_client:
-        return ""
+        return {"first_name": "", "raw_first_name": "", "guard_rejected": False, "error": "openai_unavailable"}
     channel_title = str(lead.get("channel_title") or "").strip()
     creator_name = str(lead.get("creator_name") or "").strip()
     channel_description = str(lead.get("channel_description") or "").strip()[:1800]
@@ -189,9 +202,64 @@ def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
         )
     except Exception:
         current_app.logger.exception("Could not infer outreach first name for discovery lead id=%s", lead.get("id"))
-        return ""
+        return {"first_name": "", "raw_first_name": "", "guard_rejected": False, "error": "inference_failed"}
     first_name = _normalize_llm_first_name(response.choices[0].message.content if response.choices else "")
-    return first_name or NO_GREETING_NAME_MARKER
+    if first_name and not _first_name_is_grounded_in_lead(first_name, lead):
+        return {"first_name": "", "raw_first_name": first_name, "guard_rejected": True, "error": ""}
+    return {"first_name": first_name, "raw_first_name": first_name, "guard_rejected": False, "error": ""}
+
+
+def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
+    """Return a grounded first name, or a blank marker when the LLM is not confident."""
+    result = infer_outreach_first_name_for_lead_result(lead)
+    return str(result.get("first_name") or "") or NO_GREETING_NAME_MARKER
+
+
+def store_outreach_first_name_if_needed(conn, lead_id: Any, result: Dict[str, Any] | None = None) -> str:
+    columns = table_columns(conn, "discovery_leads")
+    if "outreach_first_name" not in columns:
+        return ""
+    edited_sql = "COALESCE(outreach_first_name_edited_by_admin, false)" if "outreach_first_name_edited_by_admin" in columns else "false"
+    row = conn.execute(
+        f"""
+        SELECT id, youtube_channel_id, channel_title, channel_description,
+               subscriber_count, creator_name, creator_email, icp_fit,
+               outreach_first_name, {edited_sql} AS outreach_first_name_edited_by_admin
+        FROM discovery_leads
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [lead_id],
+    ).fetchone()
+    if not row:
+        return ""
+    if row[8] is not None or bool(row[9]):
+        return str(row[8] or "")
+    result = result or {}
+    creator_email = str(row[6] or result.get("email") or "").strip()
+    if not creator_email:
+        return ""
+    lead = {
+        "id": int(row[0]),
+        "youtube_channel_id": str(row[1] or "").strip(),
+        "channel_title": str(row[2] or "").strip(),
+        "channel_description": str(row[3] or "").strip(),
+        "subscriber_count": row[4],
+        "creator_name": str(row[5] or "").strip(),
+        "creator_email": creator_email,
+        "icp_fit": bool(row[7]) if row[7] is not None else None,
+    }
+    first_name = infer_outreach_first_name_for_lead(lead)
+    conn.execute(
+        """
+        UPDATE discovery_leads
+        SET outreach_first_name = ?
+        WHERE id = ?
+          AND outreach_first_name IS NULL
+        """,
+        [first_name, lead_id],
+    )
+    return first_name
 
 
 def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, Any]:

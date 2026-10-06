@@ -28,6 +28,7 @@ from app.video_shorts.services.discovery_promote_queue import (
     ensure_discovery_promote_queue_schema,
     load_promote_status_payload,
     promote_queue_count,
+    store_outreach_first_name_if_needed,
 )
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
@@ -2161,6 +2162,18 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
                 """,
                 optional_params + [youtube_channel_id],
             )
+        if status == "icp_qualified" and str(row.get("creator_email") or "").strip():
+            lead_row = conn.execute(
+                """
+                SELECT id
+                FROM discovery_leads
+                WHERE youtube_channel_id = ?
+                LIMIT 1
+                """,
+                [youtube_channel_id],
+            ).fetchone()
+            if lead_row:
+                store_outreach_first_name_if_needed(conn, lead_row[0], {"email": row.get("creator_email")})
         conn.commit()
         return "inserted" if inserted_row and bool(inserted_row[0]) else "updated"
     except Exception:

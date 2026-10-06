@@ -276,7 +276,7 @@ def outreach_greeting_name(recipient_name: object, *, language: object = "EN") -
         return fallback
     if not re.fullmatch(r"[A-Za-z][A-Za-z'’]*", first):
         return fallback
-    if first.isupper() and len(first) > 1:
+    if first.isupper() and len(first) > 3:
         return fallback
     if normalized_language == "TR" and first_key == "merhaba":
         return fallback
