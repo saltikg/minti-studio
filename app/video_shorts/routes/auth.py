@@ -355,6 +355,149 @@ def _clear_pending_service_choice() -> None:
     session.pop("vs_pending_plan_id", None)
 
 
+def apply_service_mode(
+    target_user_id: str,
+    service_mode: str,
+    *,
+    onboarding_autopilot_lead_id: str = "",
+    activation_source: str = "first_login_modal",
+    initiated_by_admin: bool = False,
+    send_customer_emails: bool = True,
+    current_user_context: Optional[dict] = None,
+) -> dict[str, object]:
+    normalized_mode = _normalize_service_intent(service_mode)
+    if normalized_mode not in SERVICE_MODE_VALUES:
+        raise ValueError("invalid_service_mode")
+
+    clean_user_id = str(target_user_id or "").strip()
+    if not clean_user_id:
+        raise ValueError("target_user_id_required")
+
+    service_tier = 15 if normalized_mode == "autopilot" else None
+    clean_onboarding_lead_id = str(onboarding_autopilot_lead_id or "").strip()
+    clean_activation_source = str(activation_source or "").strip().lower()
+    conn = get_db()
+    chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    confirmation_language = "EN"
+    confirmation_set_password_url = ""
+    try:
+        ensure_storage_user_schema(conn)
+        ensure_auth_user_schema(conn)
+        ensure_brand_schema(conn)
+        ensure_onboarding_magic_links_schema(conn)
+        account_row = conn.execute(
+            """
+            SELECT
+              password_hash,
+              COALESCE(oml.language, 'EN') AS onboarding_language,
+              COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS user_email,
+              COALESCE(NULLIF(u.name, ''), NULLIF(u.username, ''), '') AS user_name
+            FROM shorts_users u
+            LEFT JOIN LATERAL (
+                SELECT language
+                FROM onboarding_magic_links
+                WHERE CAST(user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                ORDER BY used_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) oml ON TRUE
+            WHERE CAST(u.id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+        if not account_row:
+            raise ValueError("target_user_not_found")
+        is_passwordless_user = not bool(account_row[0])
+        confirmation_language = normalize_outreach_language(account_row[1], default="EN")
+        user_email = str(account_row[2] or "").strip()
+        user_name = str(account_row[3] or "").strip()
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET service_mode = ?,
+                service_tier = ?,
+                service_mode_chosen_at = now(),
+                pending_service_intent = NULL,
+                pending_service_tier = NULL,
+                updated_at = now()
+            WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [normalized_mode, service_tier, clean_user_id],
+        )
+        if normalized_mode == "autopilot" and autopilot_leads_table_ready(conn):
+            if clean_onboarding_lead_id:
+                conn.execute(
+                    """
+                    UPDATE autopilot_leads
+                    SET converted_at = COALESCE(converted_at, now())
+                    WHERE CAST(id AS VARCHAR) = ?
+                      AND CAST(user_id AS VARCHAR) = ?
+                    """,
+                    [clean_onboarding_lead_id, clean_user_id],
+                )
+            else:
+                # Direct/admin autopilot activations predate lead-bound share links.
+                conn.execute(
+                    """
+                    UPDATE autopilot_leads
+                    SET converted_at = COALESCE(converted_at, now())
+                    WHERE CAST(user_id AS VARCHAR) = ?
+                    """,
+                    [clean_user_id],
+                )
+                ensure_converted_autopilot_lead_for_activation(
+                    conn,
+                    user_id=clean_user_id,
+                    user_email=user_email,
+                    user_name=user_name,
+                    source=clean_activation_source or ("admin_service_mode" if initiated_by_admin else "first_login_modal"),
+                )
+            if is_passwordless_user:
+                reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=clean_user_id)
+                confirmation_set_password_url = build_password_reset_url(reset_token)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+    if isinstance(current_user_context, dict) and str(current_user_context.get("id") or "") == clean_user_id:
+        current_user_context["service_mode"] = normalized_mode
+        current_user_context["service_tier"] = service_tier
+        current_user_context["pending_service_intent"] = ""
+        current_user_context["pending_service_tier"] = None
+
+    if normalized_mode == "autopilot":
+        try:
+            send_autopilot_customer_admin_email(
+                user_email=user_email or "(missing)",
+                monthly_shorts=service_tier or 15,
+                chosen_at=chosen_at_label,
+            )
+        except Exception:
+            logger.exception("Autopilot customer admin notification failed for user_id=%s", clean_user_id)
+        if send_customer_emails and user_email:
+            try:
+                send_autopilot_customer_confirmation_email(
+                    to_email=user_email,
+                    recipient_name=user_name,
+                    language=confirmation_language,
+                    set_password_url=confirmation_set_password_url,
+                )
+            except Exception:
+                logger.exception("Autopilot customer confirmation email failed for user_id=%s", clean_user_id)
+
+    return {
+        "ok": True,
+        "service_mode": normalized_mode,
+        "service_tier": service_tier,
+    }
+
+
 def _build_service_mode_context() -> dict[str, object]:
     user = _current_user()
     if not user:
@@ -2255,7 +2398,6 @@ def save_service_mode_choice():
     service_mode = _normalize_service_intent((payload or {}).get("service_mode"))
     if service_mode not in SERVICE_MODE_VALUES:
         return {"ok": False, "error": "invalid_service_mode"}, 400
-    service_tier = 15 if service_mode == "autopilot" else None
     onboarding_autopilot_lead_id = str(session.get("vs_onboarding_autopilot_lead_id") or "").strip()
     was_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
     activation_source = str((payload or {}).get("activation_source") or "").strip().lower()
@@ -2268,121 +2410,18 @@ def save_service_mode_choice():
             or str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
         )
     )
-    conn = get_db()
-    chosen_at_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    confirmation_language = "EN"
-    confirmation_set_password_url = ""
-    try:
-        ensure_storage_user_schema(conn)
-        ensure_auth_user_schema(conn)
-        ensure_onboarding_magic_links_schema(conn)
-        account_row = conn.execute(
-            """
-            SELECT
-              password_hash,
-              COALESCE(oml.language, 'EN') AS onboarding_language
-            FROM shorts_users u
-            LEFT JOIN LATERAL (
-                SELECT language
-                FROM onboarding_magic_links
-                WHERE CAST(user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
-                ORDER BY used_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
-                LIMIT 1
-            ) oml ON TRUE
-            WHERE CAST(u.id AS VARCHAR) = ?
-            LIMIT 1
-            """,
-            [current_user["id"]],
-        ).fetchone()
-        is_passwordless_user = not bool(account_row[0] if account_row else None)
-        confirmation_language = normalize_outreach_language(account_row[1] if account_row else "EN", default="EN")
-        conn.execute(
-            """
-            UPDATE shorts_users
-            SET service_mode = ?,
-                service_tier = ?,
-                service_mode_chosen_at = now(),
-                pending_service_intent = NULL,
-                pending_service_tier = NULL,
-                updated_at = now()
-            WHERE CAST(id AS VARCHAR) = ?
-            """,
-            [service_mode, service_tier, current_user["id"]],
-        )
-        if service_mode == "autopilot" and autopilot_leads_table_ready(conn):
-            if onboarding_autopilot_lead_id:
-                conn.execute(
-                    """
-                    UPDATE autopilot_leads
-                    SET converted_at = COALESCE(converted_at, now())
-                    WHERE CAST(id AS VARCHAR) = ?
-                      AND CAST(user_id AS VARCHAR) = ?
-                    """,
-                    [onboarding_autopilot_lead_id, current_user["id"]],
-                )
-            else:
-                # Direct autopilot arrivals predate lead-bound share links.
-                conn.execute(
-                    """
-                    UPDATE autopilot_leads
-                    SET converted_at = COALESCE(converted_at, now())
-                    WHERE CAST(user_id AS VARCHAR) = ?
-                    """,
-                    [current_user["id"]],
-                )
-                ensure_converted_autopilot_lead_for_activation(
-                    conn,
-                    user_id=current_user["id"],
-                    user_email=str(current_user.get("email") or current_user.get("username") or ""),
-                    user_name=str(current_user.get("name") or current_user.get("username") or ""),
-                    source=activation_source or "first_login_modal",
-                )
-            if is_passwordless_user:
-                reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=current_user["id"])
-                confirmation_set_password_url = build_password_reset_url(reset_token)
-        conn.commit()
-    finally:
-        conn.close()
-    current_user["service_mode"] = service_mode
-    current_user["service_tier"] = service_tier
-    current_user["pending_service_intent"] = ""
-    current_user["pending_service_tier"] = None
+    result = apply_service_mode(
+        current_user["id"],
+        service_mode,
+        onboarding_autopilot_lead_id=onboarding_autopilot_lead_id,
+        activation_source=activation_source or "first_login_modal",
+        current_user_context=current_user,
+    )
     _clear_pending_service_choice()
     session.pop("vs_onboarding_autopilot_lead_id", None)
     if lead_activation:
         session["vs_show_autopilot_confirmation"] = True
-    if service_mode == "autopilot":
-        user_email = str(current_user.get("email") or current_user.get("username") or "").strip()
-        user_name = str(current_user.get("name") or current_user.get("username") or "").strip()
-        try:
-            send_autopilot_customer_admin_email(
-                user_email=user_email or "(missing)",
-                monthly_shorts=service_tier or 15,
-                chosen_at=chosen_at_label,
-            )
-        except Exception:
-            logger.exception(
-                "Autopilot customer admin notification failed for user_id=%s",
-                current_user["id"],
-            )
-        if user_email:
-            try:
-                send_autopilot_customer_confirmation_email(
-                    to_email=user_email,
-                    recipient_name=user_name,
-                    language=confirmation_language,
-                    set_password_url=confirmation_set_password_url,
-                )
-            except Exception:
-                logger.exception(
-                    "Autopilot customer confirmation email failed for user_id=%s",
-                    current_user["id"],
-                )
-    return {
-        "ok": True,
-        "service_mode": service_mode,
-        "service_tier": service_tier,
-    }
+    return result
 
 
 @video_shorts_bp.route("/brands")

@@ -109,6 +109,18 @@
       color: #fca5a5;
       border: 1px solid rgba(248, 113, 113, 0.22);
     }
+    .admin-service-mode-form {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .admin-service-mode-select {
+      min-width: 150px;
+      background: rgba(2, 6, 23, 0.84);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: rgba(255, 255, 255, 0.92);
+    }
     .admin-detail-timeline {
       display: grid;
       gap: 12px;
@@ -335,6 +347,26 @@
 
             <dt>Plan</dt>
             <dd>{{ user_detail.plan_id }}</dd>
+
+            <dt>Service mode</dt>
+            <dd>
+              <form
+                method="post"
+                action="{{ url_for('video_shorts_bp.admin_update_user_service_mode', user_id=user_detail.id) }}"
+                class="admin-service-mode-form"
+                data-current-mode="{{ user_detail.service_mode }}"
+                data-user-label="{{ user_detail.email or user_detail.username or user_detail.id }}"
+                onsubmit="return confirmServiceModeChange(this);">
+                <select name="service_mode" class="form-select form-select-sm admin-service-mode-select" aria-label="Service mode">
+                  <option value="self" {% if user_detail.service_mode == 'self' %}selected{% endif %}>Self-serve</option>
+                  <option value="autopilot" {% if user_detail.service_mode == 'autopilot' %}selected{% endif %}>Autopilot</option>
+                </select>
+                <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                {% if user_detail.service_mode == 'autopilot' and user_detail.service_tier %}
+                  <span class="vs-admin-muted">{{ user_detail.service_tier }} Shorts/mo</span>
+                {% endif %}
+              </form>
+            </dd>
           </dl>
         </div>
         <div class="admin-detail-account-column">
@@ -452,4 +484,15 @@
       {% endif %}
     </section>
   </div>
+  <script>
+    function confirmServiceModeChange(form) {
+      const select = form.querySelector("select[name='service_mode']");
+      const nextMode = select ? select.value : "";
+      const currentMode = form.dataset.currentMode || "";
+      if (!nextMode || nextMode === currentMode) return true;
+      const userLabel = form.dataset.userLabel || "this user";
+      const nextLabel = nextMode === "autopilot" ? "Autopilot" : "Self-serve";
+      return window.confirm(`Set ${userLabel} to ${nextLabel}?`);
+    }
+  </script>
 {% endblock %}

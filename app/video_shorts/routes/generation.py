@@ -15147,7 +15147,9 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
           subscription_current_period_end,
           created_at,
           updated_at,
-          google_sub
+          google_sub,
+          COALESCE(service_mode, ''),
+          service_tier
         FROM shorts_users
         WHERE CAST(id AS VARCHAR) = ?
         LIMIT 1
@@ -15449,6 +15451,9 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "created_at": row[8],
         "updated_at": row[9],
         "google_sub_present": bool((row[10] or "").strip()),
+        "service_mode": "autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "self",
+        "service_mode_label": "Autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "Self-serve",
+        "service_tier": int(row[12]) if row[12] is not None else None,
         "trial_days": latest_trial_days,
         "trial_days_label": latest_trial_days_label,
         "trial_used_at": latest_trial_anchor_at,
@@ -16071,6 +16076,56 @@ def admin_user_detail(user_id: str):
         admin_title=detail["name"],
         user_detail=detail,
     )
+
+
+@video_shorts_bp.route("/admin/users/<user_id>/service-mode", methods=["POST"])
+@require_admin
+def admin_update_user_service_mode(user_id: str):
+    target_user_id = str(user_id or "").strip()
+    if not target_user_id:
+        abort(404)
+    service_mode = str(request.form.get("service_mode") or "").strip().lower()
+    if service_mode not in {"self", "autopilot"}:
+        flash("Choose a valid service mode.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
+
+    conn = get_db_readonly()
+    try:
+        target_row = conn.execute(
+            """
+            SELECT CAST(id AS VARCHAR), COALESCE(NULLIF(email, ''), NULLIF(username, ''), '')
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [target_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not target_row:
+        abort(404)
+
+    from app.video_shorts.routes.auth import apply_service_mode
+
+    try:
+        result = apply_service_mode(
+            target_user_id,
+            service_mode,
+            initiated_by_admin=True,
+            activation_source="admin_service_mode",
+            send_customer_emails=False,
+        )
+    except ValueError as exc:
+        current_app.logger.warning("Admin service-mode update rejected for user=%s: %s", target_user_id, exc)
+        flash("Could not update service mode.", "danger")
+    except Exception as exc:
+        current_app.logger.exception("Admin service-mode update failed for user=%s: %s", target_user_id, exc)
+        flash("Could not update service mode.", "danger")
+    else:
+        label = "Autopilot" if result["service_mode"] == "autopilot" else "Self-serve"
+        target_label = str(target_row[1] or target_user_id)
+        flash(f"Service mode for {target_label} set to {label}.", "success")
+    return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
 
 
 @video_shorts_bp.route("/admin/errors", methods=["GET"])
