@@ -720,12 +720,12 @@
                 <div class="modal-body vs-modal-body">
                   <div class="vs-service-mode-grid" id="vsServiceModeGrid">
                     <div
-                      class="vs-service-mode-card is-featured{% if vs_service_mode.preselected_mode in ['', 'autopilot'] %} is-selected{% endif %}"
+                      class="vs-service-mode-card is-featured{% if vs_service_mode.preselected_mode == 'autopilot' %} is-selected{% endif %}"
                       data-service-mode-option="autopilot"
                       data-service-mode-label="Do it for me"
                       tabindex="0"
                       role="button"
-                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode in ['', 'autopilot'] else 'false' }}"
+                      aria-pressed="{{ 'true' if vs_service_mode.preselected_mode == 'autopilot' else 'false' }}"
                     >
                       <span class="vs-service-mode-check" aria-hidden="true">✓</span>
                       <div class="vs-service-mode-card-head">
@@ -801,7 +801,8 @@
                   <div class="alert alert-danger d-none mt-3 mb-0" id="vsServiceModeError" role="alert"></div>
                 </div>
                 <div class="modal-footer vs-modal-footer">
-                  <button type="button" class="btn vs-btn vs-btn-primary vs-service-mode-submit" id="vsServiceModeSubmit">Start my autopilot</button>
+                  <div class="small text-muted me-auto" id="vsServiceModeCue">Pick one to continue</div>
+                  <button type="button" class="btn vs-btn vs-btn-primary vs-service-mode-submit" id="vsServiceModeSubmit" disabled>Start creating</button>
                 </div>
               </div>
               {% endif %}
@@ -1227,7 +1228,8 @@
           const errorEl = document.getElementById("vsServiceModeError");
           const isAutopilotWelcome = {{ "true" if vs_service_mode and vs_service_mode.variant == "autopilot_welcome" else "false" }};
           const autopilotWelcomeCompleteUrl = "{{ url_for('video_shorts_bp.my_videos_page') }}";
-          let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or 'autopilot')|tojson }};
+          let selectedMode = {{ ((vs_service_mode.preselected_mode if vs_service_mode else '') or '')|tojson }};
+          const choiceCue = document.getElementById("vsServiceModeCue");
           const emitServiceModeModalState = (open, mode) => {
             window.__vsServiceModeModalOpen = Boolean(open);
             window.dispatchEvent(new CustomEvent("vs:service-mode-modal", {
@@ -1244,7 +1246,11 @@
               button.setAttribute("aria-pressed", button.getAttribute("data-service-mode-option") === selectedMode ? "true" : "false");
             });
             if (submitButton) {
-              submitButton.textContent = isAutopilotWelcome ? "Let's start" : (selectedMode === "self" ? "Start creating" : "Start my autopilot");
+              submitButton.textContent = isAutopilotWelcome ? "Let's start" : (selectedMode === "autopilot" ? "Start my autopilot" : "Start creating");
+              submitButton.disabled = !isAutopilotWelcome && selectedMode !== "autopilot" && selectedMode !== "self";
+            }
+            if (choiceCue) {
+              choiceCue.classList.toggle("d-none", selectedMode === "autopilot" || selectedMode === "self");
             }
             if (errorEl) {
               errorEl.classList.add("d-none");
@@ -1316,7 +1322,7 @@
                 errorEl.classList.remove("d-none");
               }
             } finally {
-              submitButton.disabled = false;
+              submitButton.disabled = !isAutopilotWelcome && selectedMode !== "autopilot" && selectedMode !== "self";
             }
           });
           serviceModeEl.addEventListener("shown.bs.modal", () => {

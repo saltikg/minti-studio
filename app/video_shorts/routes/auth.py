@@ -374,7 +374,7 @@ def _build_service_mode_context() -> dict[str, object]:
     return {
         "show_modal": True,
         "auto_open": True,
-        "preselected_mode": pending_intent,
+        "preselected_mode": pending_intent if pending_intent in SERVICE_MODE_VALUES else "",
         "preselected_tier": selected_tier,
         "show_autopilot_confirmation": pending_intent == "autopilot",
         "variant": "autopilot_welcome" if pending_intent == "autopilot" else "choice",
