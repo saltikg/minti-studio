@@ -63,68 +63,6 @@
         font-weight: 800;
         box-shadow: 0 10px 24px rgba(110, 231, 216, 0.18);
       }
-      .watch-steps {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        margin: 16px auto 0;
-        flex-wrap: nowrap;
-        width: min(100%, 420px);
-      }
-      .watch-step-card,
-      .watch-step-arrow {
-        opacity: 0;
-        animation: watch-step-pop 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-      }
-      .watch-step-card {
-        min-width: 0;
-        flex: 1 1 0;
-        max-width: 132px;
-        padding: 10px 8px;
-        border-radius: 12px;
-        background: rgba(16, 29, 46, 0.72);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        text-align: center;
-      }
-      .watch-step-card:nth-child(1) { animation-delay: 0.15s; }
-      .watch-step-card:nth-child(3) { animation-delay: 0.75s; }
-      .watch-step-card:nth-child(5) { animation-delay: 1.35s; }
-      .watch-step-icon {
-        display: block;
-        margin-bottom: 7px;
-        font-size: 1rem;
-        line-height: 1;
-      }
-      .watch-step-label {
-        display: block;
-        color: var(--text);
-        font-weight: 600;
-        font-size: 0.72rem;
-        line-height: 1.35;
-      }
-      .watch-step-arrow {
-        color: #3fe0c5;
-        font-size: 1rem;
-        animation-delay: 0.55s;
-      }
-      .watch-step-arrow:nth-child(4) {
-        animation-delay: 1.15s;
-      }
-      @keyframes watch-step-pop {
-        0% {
-          opacity: 0;
-          transform: translateY(10px) scale(0.96);
-        }
-        60% {
-          opacity: 1;
-          transform: translateY(-2px) scale(1.02);
-        }
-        100% {
-          opacity: 1;
-          transform: translateY(0) scale(1);
-        }
-      }
       @keyframes watch-section-reveal {
         0% {
           opacity: 0;
@@ -136,6 +74,7 @@
         }
       }
       .watch-video-wrap {
+        position: relative;
         width: min(100%, calc(65svh * 9 / 16), 360px);
         margin: 0 auto;
         opacity: 0;
@@ -153,18 +92,80 @@
         background: #000;
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
       }
+      .watch-play-button {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        min-height: 58px;
+        padding: 0 24px;
+        border: 0;
+        border-radius: 999px;
+        background: #3fe0c5;
+        color: #07121b;
+        font: inherit;
+        font-weight: 800;
+        font-size: 0.98rem;
+        cursor: pointer;
+        z-index: 3;
+        box-shadow:
+          0 18px 40px rgba(0, 0, 0, 0.34),
+          0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+        transition: opacity 180ms ease, transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+        -webkit-appearance: none;
+        appearance: none;
+        touch-action: manipulation;
+      }
+      .watch-play-button:hover,
+      .watch-play-button:focus-visible {
+        background: #67ead3;
+        box-shadow:
+          0 22px 44px rgba(63, 224, 197, 0.28),
+          0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+      }
+      .watch-play-button.is-hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -50%) scale(0.96);
+      }
+      .watch-value-block {
+        width: min(100%, 420px);
+        margin: 16px auto 0;
+        text-align: center;
+        opacity: 0;
+        transform: translateY(14px);
+        animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        animation-delay: 0.42s;
+      }
+      .watch-value-title {
+        margin: 0;
+        color: var(--text);
+        font-size: 1.25rem;
+        line-height: 1.18;
+        font-weight: 860;
+      }
+      .watch-value-copy {
+        margin: 8px auto 0;
+        color: rgba(238, 247, 246, 0.78);
+        font-size: 0.95rem;
+        line-height: 1.42;
+      }
       .watch-prompt-banner {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        margin: 12px auto 0;
+        margin: 16px auto 0;
         width: min(100%, 380px);
         text-align: center;
         opacity: 0;
         transform: translateY(14px);
         animation: watch-section-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        animation-delay: 0.5s;
+        animation-delay: 0.56s;
       }
       .watch-cta-stack {
         display: flex;
@@ -212,42 +213,6 @@
           0 22px 44px rgba(140, 242, 227, 0.34),
           0 0 28px rgba(110, 231, 216, 0.26);
       }
-      .watch-cta-primary.is-pending {
-        opacity: 0.78;
-        pointer-events: none;
-      }
-      .watch-cta-primary.is-confirmed {
-        min-height: auto;
-        border-radius: 18px;
-        padding: 16px 18px;
-        background: rgba(110, 231, 216, 0.12);
-        color: var(--text) !important;
-        font-size: 0.95rem;
-        line-height: 1.35;
-        box-shadow: inset 0 0 0 1px rgba(110, 231, 216, 0.3);
-        pointer-events: none;
-      }
-      .watch-cta-secondary {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        min-height: 46px;
-        padding: 0 22px;
-        border-radius: 999px;
-        border: 1px solid rgba(110, 231, 216, 0.28);
-        color: rgba(238, 247, 246, 0.82);
-        background: rgba(255, 255, 255, 0.04);
-        font-weight: 750;
-        font-size: 0.92rem;
-        text-decoration: none;
-      }
-      .watch-cta-secondary:hover,
-      .watch-cta-secondary:focus-visible {
-        color: var(--text);
-        border-color: rgba(110, 231, 216, 0.5);
-        background: rgba(110, 231, 216, 0.08);
-      }
       .watch-cta-note {
         margin: 2px auto 0;
         color: rgba(238, 247, 246, 0.66);
@@ -282,39 +247,31 @@
           padding: 16px;
           border-radius: 20px;
         }
-        .watch-steps {
-          flex-direction: column;
-          align-items: stretch;
-          gap: 6px;
-          margin: 14px auto 0;
-          width: min(100%, 280px);
-        }
-        .watch-step-card {
-          max-width: none;
-        }
-        .watch-step-arrow {
-          align-self: center;
-          font-size: 0.78rem;
-        }
         .watch-video-wrap {
-          width: min(100%, calc(64svh * 9 / 16));
+          width: min(100%, calc(58svh * 9 / 16));
         }
         video {
-          height: min(64svh, 620px);
+          height: min(58svh, 620px);
+        }
+        .watch-value-block,
+        .watch-prompt-banner {
+          width: min(100%, 340px);
+        }
+        .watch-value-title {
+          font-size: 1.12rem;
+        }
+        .watch-value-copy {
+          font-size: 0.88rem;
         }
         .watch-cta-primary {
           min-height: 62px;
           font-size: 1.04rem;
           padding: 0 22px;
         }
-        .watch-cta-secondary {
-          min-height: 44px;
-        }
       }
       @media (prefers-reduced-motion: reduce) {
-        .watch-step-card,
-        .watch-step-arrow,
         .watch-video-wrap,
+        .watch-value-block,
         .watch-more-context,
         .watch-prompt-banner,
         .watch-footer {
@@ -336,64 +293,47 @@
         {% set shorts_onboarding_url = onboarding_url ~ separator ~ 'intent=autopilot' %}
         {% set total_shorts_count = (additional_shorts_count or 0) + 1 %}
       {% endif %}
-      <div class="watch-video-wrap">
-        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
-          <source src="{{ playback_url }}" type="video/mp4">
-        </video>
-      </div>
       {% if onboarding_url and total_shorts_count > 1 %}
         <div class="watch-more-context">
           This is your first Short — {{ total_shorts_count - 1 }} more inside.
         </div>
       {% endif %}
+      <div class="watch-video-wrap">
+        <video id="shared-short-video" controls playsinline preload="metadata"{% if poster_url %} poster="{{ poster_url }}"{% endif %}>
+          <source src="{{ playback_url }}" type="video/mp4">
+        </video>
+        <button type="button" class="watch-play-button" id="watch-play-button">
+          <span aria-hidden="true">▶</span>
+          <span>Watch your Short</span>
+        </button>
+      </div>
       {% if onboarding_url %}
+        <section class="watch-value-block" aria-label="Why Shorts matter">
+          <h1 class="watch-value-title">This is how new viewers find you</h1>
+          <p class="watch-value-copy">
+            Shorts reach people who'd never see your long videos — it's the fastest way to grow on YouTube.
+            We make them from your videos and post them to your channel. You don't lift a finger.
+          </p>
+        </section>
         <div class="watch-prompt-banner" id="watch-prompt-banner" aria-hidden="false">
           <div class="watch-cta-stack">
             <a
-              href="#"
-              id="watch-yes-intent"
-              class="watch-cta-primary">
-              Yes — send me my Shorts
-            </a>
-            <div class="watch-cta-note">
-              First month free
-            </div>
-            <a
               href="{{ shorts_onboarding_url }}"
               data-share-cta="lead_feed"
-              class="watch-cta-secondary"
+              class="watch-cta-primary"
               rel="noreferrer">
               {% if total_shorts_count > 1 %}
-                Watch all {{ total_shorts_count }} Shorts
+                See all {{ total_shorts_count }} Shorts →
               {% else %}
-                Watch your Short
+                See all your Shorts →
               {% endif %}
             </a>
+            <div class="watch-cta-note">
+              Done for you — first month free
+            </div>
           </div>
         </div>
       {% endif %}
-      <div class="watch-steps" aria-label="How it works">
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">✉️</span>
-          <span class="watch-step-label">
-            Reply "yes"
-          </span>
-        </div>
-        <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">✨</span>
-          <span class="watch-step-label">
-            We make your Shorts
-          </span>
-        </div>
-        <span class="watch-step-arrow" aria-hidden="true">→</span>
-        <div class="watch-step-card">
-          <span class="watch-step-icon" aria-hidden="true">📩</span>
-          <span class="watch-step-label">
-            We email them, you post
-          </span>
-        </div>
-      </div>
       {% if not onboarding_url %}
         <div class="watch-footer">
           <a href="https://mintistudio.com" target="_blank" rel="noreferrer">Turn your long videos into Shorts with MintiStudio</a>
@@ -404,7 +344,8 @@
       (() => {
         const eventUrl = {{ event_url|tojson }};
         const video = document.getElementById("shared-short-video");
-        if (!eventUrl || !video) {
+        const playButton = document.getElementById("watch-play-button");
+        if (!video) {
           return;
         }
         const classifyDeviceType = () => {
@@ -420,6 +361,9 @@
         let loadedTracked = false;
         let errorTracked = false;
         const fireEvent = (type, extra = {}) => {
+          if (!eventUrl) {
+            return;
+          }
           const body = JSON.stringify({ type, device_type: deviceType, ...extra });
           if (navigator.sendBeacon) {
             const blob = new Blob([body], { type: "application/json" });
@@ -434,19 +378,6 @@
             credentials: "omit",
           }).catch(() => {});
         };
-        const postJsonEvent = async (type, extra = {}) => {
-          const response = await fetch(eventUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type, device_type: deviceType, ...extra }),
-            credentials: "omit",
-          });
-          const payload = await response.json();
-          if (!response.ok || !payload || payload.ok !== true) {
-            throw new Error("event_failed");
-          }
-          return payload;
-        };
         fireEvent("view");
         let playTracked = false;
         let maxPercentWatched = 0;
@@ -454,6 +385,24 @@
         let lastProgressSentPercent = 0;
         let unloadProgressSent = false;
         const progressMilestones = [25, 50, 75, 100];
+        const hidePlayButton = () => {
+          playButton?.classList.add("is-hidden");
+        };
+        const showPlayButton = () => {
+          if (!video.ended && video.paused) {
+            playButton?.classList.remove("is-hidden");
+          }
+        };
+        const startPlayback = async () => {
+          hidePlayButton();
+          try {
+            video.playsInline = true;
+            video.setAttribute("playsinline", "");
+            await video.play();
+          } catch (_error) {
+            showPlayButton();
+          }
+        };
         const emitProgress = (force = false) => {
           if (!Number.isFinite(video.duration) || video.duration <= 0) {
             return;
@@ -489,11 +438,15 @@
           });
         };
         video.addEventListener("play", () => {
+          hidePlayButton();
           if (playTracked) {
             return;
           }
           playTracked = true;
           fireEvent("play");
+        }, { passive: true });
+        video.addEventListener("pause", () => {
+          showPlayButton();
         }, { passive: true });
         video.addEventListener("loadeddata", () => {
           if (loadedTracked) {
@@ -520,6 +473,7 @@
           emitProgress(false);
         }, { passive: true });
         video.addEventListener("ended", () => {
+          showPlayButton();
           maxSecondsWatched = Math.max(maxSecondsWatched, video.duration || 0);
           maxPercentWatched = 100;
           emitProgress(true);
@@ -536,28 +490,22 @@
             fireEvent("cta_click", { cta: ctaType });
           }, { passive: true });
         });
-        const yesIntentButton = document.getElementById("watch-yes-intent");
-        if (yesIntentButton) {
-          const originalText = yesIntentButton.textContent;
-          yesIntentButton.addEventListener("click", async (event) => {
-            event.preventDefault();
-            if (yesIntentButton.classList.contains("is-pending") || yesIntentButton.classList.contains("is-confirmed")) {
-              return;
-            }
-            yesIntentButton.classList.add("is-pending");
-            yesIntentButton.textContent = "Saving...";
-            try {
-              await postJsonEvent("yes_intent");
-              yesIntentButton.classList.remove("is-pending");
-              yesIntentButton.classList.add("is-confirmed");
-              yesIntentButton.removeAttribute("href");
-              yesIntentButton.textContent = "Got it — we'll email your Shorts over shortly. Keep an eye on your inbox.";
-            } catch (_error) {
-              yesIntentButton.classList.remove("is-pending");
-              yesIntentButton.textContent = originalText;
-            }
-          });
-        }
+        playButton?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          startPlayback();
+        });
+        playButton?.addEventListener("touchend", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          startPlayback();
+        }, { passive: false });
+        playButton?.addEventListener("pointerup", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          startPlayback();
+        });
+        showPlayButton();
       })();
     </script>
   </body>
