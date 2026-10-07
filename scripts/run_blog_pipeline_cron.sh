@@ -29,6 +29,7 @@ export PYTHONPATH="$ROOT"
 
 {
   echo "== blog pipeline $(date -Is) =="
+  "$ROOT/scripts/blog_competitor_facts.py"
   "$ROOT/scripts/blog_scout.py"
   "$ROOT/scripts/blog_judge.py"
 } >>"$LOG_FILE" 2>&1

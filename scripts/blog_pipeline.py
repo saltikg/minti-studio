@@ -1115,6 +1115,7 @@ def _competitor_facts_exists() -> bool:
 def _stable_prefix() -> dict[str, Any]:
     return {
         "facts": _read_text(CONTEXT_ROOT / "minti_facts.md"),
+        "competitor_facts": _read_text(CONTEXT_ROOT / "competitor_facts.md") if (CONTEXT_ROOT / "competitor_facts.md").is_file() else "",
         "style_guide": _read_text(CONTEXT_ROOT / "style_guide.md"),
         "cover_archetypes": _read_text(COVER_ARCHETYPES_PATH) if COVER_ARCHETYPES_PATH.is_file() else "",
         "example_articles": _published_articles(1, include_content=True),
@@ -2104,6 +2105,7 @@ Each visual must include a short caption, maximum 12 words, suitable for the mar
 Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; every visual alt must describe the actual visual.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
+Any third-party (competitor) pricing, features, limits, or comparison claims may ONLY use competitor_facts.md. If a competitor detail is not in competitor_facts.md, omit it; never invent or guess competitor pricing or features. You may name and compare competitors when their data is present in competitor_facts.md.
 Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
 Use the primary keyword naturally, with correct hyphenation such as "done-for-you"; never place it as a standalone bolded SEO phrase.
 Do not force the exact-match keyword phrase awkwardly into a sentence or repeat it for SEO. One natural use is enough. If the exact phrase reads stiffly, rephrase it for a human, such as "short-form video can be such a useful channel for consultants" instead of "youtube shorts for consultants can be such a useful channel."
@@ -2119,7 +2121,7 @@ Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
 Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
 Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
-Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Do not allow invented metrics, features, platform logos, or third-party brand claims.
+Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand pricing, features, limits, or comparison claims are allowed only when they match competitor_facts.md. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
 
 
