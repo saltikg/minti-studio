@@ -23,6 +23,8 @@ output/
 models/
 docs/blogs/
 docs/indexes/
+app/video_shorts/blog_pipeline/competitor_facts.md
+app/video_shorts/blog_pipeline/comparison_facts.md
 instagram_out/
 *.duckdb
 *.db
