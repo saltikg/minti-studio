@@ -2,9 +2,11 @@ import scripts.blog_pipeline as blog_pipeline
 from scripts.blog_pipeline import (
     CTA_URL,
     _coerce_reading_time_minutes,
+    _move_visual_blocks_after_intro_lists,
     _normalize_article_payload,
     _revision_rejection_reason,
     _strip_injected_markdown_images,
+    _sync_component_blocks_to_visual_plan,
 )
 
 
@@ -414,7 +416,7 @@ def test_extra_component_blocks_are_removed(monkeypatch):
 
     assert article["content_md"].count(":::flow") == 1
     assert "Extra" not in article["content_md"]
-    assert "removed extra :::flow block beyond visual plan" in article["visual_repairs"]
+    assert "removed unplanned :::flow block" in article["visual_repairs"]
 
 
 def test_extra_generate_slot_repairs_to_relevant_screenshot(monkeypatch):
@@ -761,6 +763,56 @@ def test_strip_injected_designer_markdown_images_preserves_source_images():
 
     assert image in cleaned
     assert removed == ["![New image](/video_shorts/static/img/blog/wrong/new.png)"]
+
+
+def test_sync_component_blocks_keeps_planned_compare_by_caption():
+    content = "\n\n".join(
+        [
+            "## Review",
+            "Before you publish, review the path.",
+            ":::compare Offer path clarity",
+            "eye | Clear CTA | Easy next step | up",
+            "users | Vague pitch | Harder to act | down",
+            ":::",
+            "More prose.",
+            ":::compare Format review",
+            "eye | Readable frame | Easier to follow | up",
+            "users | Crowded frame | Harder to learn | down",
+            ":::",
+        ]
+    )
+    visuals = [
+        {"marker": "IMAGE_1", "type": "generate"},
+        {"marker": "IMAGE_2", "type": "compare", "caption": "Format review"},
+        {"marker": "IMAGE_3", "type": "screenshot"},
+    ]
+
+    cleaned, notes = _sync_component_blocks_to_visual_plan(content, visuals, "compare")
+
+    assert "Offer path clarity" not in cleaned
+    assert "Format review" in cleaned
+    assert notes == ["removed unplanned :::compare block"]
+
+
+def test_move_visual_blocks_after_intro_list():
+    content = "\n\n".join(
+        [
+            "Before you publish, you are checking three things:",
+            ":::key",
+            "Keep this idea visible.",
+            ":::",
+            "- the viewer can read the text",
+            "- the next step is obvious",
+            "- the offer path is clear",
+            "Next paragraph.",
+        ]
+    )
+
+    moved, notes = _move_visual_blocks_after_intro_lists(content)
+
+    assert "three things:\n\n- the viewer can read the text" in moved
+    assert moved.index("- the offer path is clear") < moved.index(":::key")
+    assert notes == ["moved visual/component block after introduced list"]
 
 
 def test_revision_guard_ignores_protected_block_text():

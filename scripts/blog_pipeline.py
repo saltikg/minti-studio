@@ -79,6 +79,7 @@ SELF_DISCLAIMER_RE = re.compile(
     re.I,
 )
 IMAGE_MARKERS = ("IMAGE_1", "IMAGE_2", "IMAGE_3")
+BLOG_MAX_VISUAL_ITEMS = 4
 VISUAL_TYPES = {"screenshot", "flow", "compare", "generate"}
 IMAGE_VISUAL_TYPES = {"screenshot", "generate"}
 FLOW_BLOCK_RE = re.compile(r"(?ms)^:::flow(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
@@ -467,6 +468,132 @@ def _limit_component_blocks(content: str, component_type: str, keep_count: int) 
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), notes
 
 
+def _component_heading(block: str, component_type: str) -> str:
+    match = re.match(rf":::{re.escape(component_type)}\s*([^\n]*)", block or "")
+    return str(match.group(1) if match else "").strip()
+
+
+def _visual_label_tokens(visual: dict[str, Any]) -> set[str]:
+    return _token_set(" ".join(str(visual.get(key) or "") for key in ("caption", "alt", "title", "prompt")))
+
+
+def _block_label_tokens(block: str, component_type: str) -> set[str]:
+    heading = _component_heading(block, component_type)
+    first_values: list[str] = []
+    pattern = FLOW_BLOCK_RE if component_type == "flow" else COMPARE_BLOCK_RE
+    match = pattern.match(block or "")
+    if match:
+        for line in match.group("body").splitlines():
+            if line.strip().lower().startswith("note:"):
+                continue
+            parts = [part.strip() for part in line.split("|")]
+            first_values.extend(parts[1:3])
+    return _token_set(" ".join([heading, *first_values]))
+
+
+def _sync_component_blocks_to_visual_plan(content: str, visuals: list[dict[str, Any]], component_type: str) -> tuple[str, list[str]]:
+    pattern = FLOW_BLOCK_RE if component_type == "flow" else COMPARE_BLOCK_RE
+    blocks = list(pattern.finditer(content or ""))
+    planned = [visual for visual in visuals if visual.get("type") == component_type]
+    if not blocks:
+        return content or "", []
+    if not planned:
+        notes = [f"removed unplanned :::{component_type} block"]
+        return re.sub(r"\n{3,}", "\n\n", pattern.sub("", content or "")).strip(), notes
+
+    keep: set[int] = set()
+    unused = set(range(len(blocks)))
+    for visual in planned:
+        visual_tokens = _visual_label_tokens(visual)
+        best_index: int | None = None
+        best_score = 0
+        if visual_tokens:
+            for index in list(unused):
+                score = len(visual_tokens & _block_label_tokens(blocks[index].group(0), component_type))
+                if score > best_score:
+                    best_score = score
+                    best_index = index
+        if best_index is None and unused:
+            best_index = min(unused)
+        if best_index is not None:
+            keep.add(best_index)
+            unused.remove(best_index)
+
+    notes: list[str] = []
+
+    keep_spans = {(blocks[index].start(), blocks[index].end()) for index in keep}
+
+    def replace(match: re.Match[str]) -> str:
+        if (match.start(), match.end()) in keep_spans:
+            return match.group(0)
+        notes.append(f"removed unplanned :::{component_type} block")
+        return ""
+
+    cleaned = pattern.sub(replace, content or "")
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip(), notes
+
+
+def _is_bullet_line(line: str) -> bool:
+    return bool(re.match(r"\s*(?:[-*+]|\d+[.)])\s+\S", line or ""))
+
+
+def _move_visual_blocks_after_intro_lists(content: str) -> tuple[str, list[str]]:
+    lines = (content or "").splitlines()
+    notes: list[str] = []
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        output.append(lines[index])
+        if not lines[index].rstrip().endswith(":"):
+            index += 1
+            continue
+        lookahead = index + 1
+        blanks_after_intro: list[str] = []
+        while lookahead < len(lines) and not lines[lookahead].strip():
+            blanks_after_intro.append(lines[lookahead])
+            lookahead += 1
+        moved_blocks: list[list[str]] = []
+        scan = lookahead
+        while scan < len(lines):
+            line = lines[scan]
+            block: list[str] | None = None
+            if IMAGE_COMMENT_RE.search(line):
+                block = [line]
+                scan += 1
+            elif re.match(r"\s*:::[A-Za-z]", line):
+                block = [line]
+                scan += 1
+                while scan < len(lines):
+                    block.append(lines[scan])
+                    if re.match(r"\s*:::\s*$", lines[scan]):
+                        scan += 1
+                        break
+                    scan += 1
+            if block is None:
+                break
+            while scan < len(lines) and not lines[scan].strip():
+                block.append(lines[scan])
+                scan += 1
+            moved_blocks.append(block)
+        if not moved_blocks or scan >= len(lines) or not _is_bullet_line(lines[scan]):
+            index += 1
+            continue
+        output.extend(blanks_after_intro)
+        while scan < len(lines):
+            if _is_bullet_line(lines[scan]) or (not lines[scan].strip()) or re.match(r"\s{2,}\S", lines[scan]):
+                output.append(lines[scan])
+                scan += 1
+                continue
+            break
+        for block in moved_blocks:
+            if output and output[-1].strip():
+                output.append("")
+            output.extend(block)
+        notes.append("moved visual/component block after introduced list")
+        index = scan
+    return "\n".join(output).strip(), notes
+
+
 def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshots: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
     repaired: list[dict[str, Any]] = []
@@ -710,13 +837,12 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
                 existing_repairs.append(note)
         article["visual_repairs"] = existing_repairs
     article["visuals"] = normalized_visuals
-    flow_keep = sum(1 for visual in normalized_visuals if visual.get("type") == "flow")
-    compare_keep = sum(1 for visual in normalized_visuals if visual.get("type") == "compare")
-    content, flow_notes = _limit_component_blocks(content, "flow", flow_keep)
-    content, compare_notes = _limit_component_blocks(content, "compare", compare_keep)
-    if flow_notes or compare_notes:
+    content, flow_notes = _sync_component_blocks_to_visual_plan(content, normalized_visuals, "flow")
+    content, compare_notes = _sync_component_blocks_to_visual_plan(content, normalized_visuals, "compare")
+    content, placement_notes = _move_visual_blocks_after_intro_lists(content)
+    if flow_notes or compare_notes or placement_notes:
         existing_repairs = list(article.get("visual_repairs") or [])
-        for note in flow_notes + compare_notes:
+        for note in flow_notes + compare_notes + placement_notes:
             if note not in existing_repairs:
                 existing_repairs.append(note)
         article["visual_repairs"] = existing_repairs
@@ -997,7 +1123,7 @@ def _stable_prefix() -> dict[str, Any]:
             "callouts": [":::key\\nOne key sentence.\\n:::", ":::info\\nBody\\n:::", ":::tip\\nBody\\n:::", ":::warning\\nBody\\n:::", ":::action\\nCTA sentence.\\n:::"],
             "steps": ":::steps\\n### Step title\\nOne or two sentences.\\n\\n### Next step title\\nOne or two sentences.\\n:::",
             "flow": ":::flow Optional short caption\\nvideo | Long video | Your full recording\\nclips | 5 Shorts | Best moments, captioned\\ncalendar | Weekly calendar | Mon, Wed, Fri\\n:::",
-            "compare": ":::compare Optional short caption\\neye | 100K | Views on Shorts | up\\nusers | +120 | New subscribers | flat\\nnote: Views are great. Growth comes from turning viewers into subscribers.\\n:::",
+            "compare": ":::compare Optional short caption\\neye | Clear focus | Easy to follow | up\\nusers | Mixed signals | Harder to act | down\\nnote: Qualitative contrasts work best unless the exact metric is stated in prose.\\n:::",
             "specimens": [":::short\\nShort example text.\\n:::", ":::long\\nLong-form example text.\\n:::"],
             "tables": "Markdown pipe tables are allowed and encouraged whenever options are compared.",
             "youtube": "[youtube: https://www.youtube.com/watch?v=VIDEO_ID]",
@@ -1339,8 +1465,8 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
                 blocking_issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
         blocking_issues.append("MintiStudio self-disclaimer is not allowed")
-    if len(visuals) > 3:
-        fixed["visuals"] = "trimmed visuals to at most 3 items"
+    if len(visuals) > BLOG_MAX_VISUAL_ITEMS:
+        fixed["visuals"] = f"trimmed visuals to at most {BLOG_MAX_VISUAL_ITEMS} items"
     generate_count = sum(1 for visual in visuals if visual.get("type") == "generate")
     if generate_count > 1:
         fixed["visuals"] = f"repaired generate visual cap ({generate_count})"
@@ -1959,17 +2085,19 @@ def run_images_for_existing_draft(*, run_id: int, article_id: int, low_medium_te
 
 
 def _writer_prompt() -> str:
-    return """You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
+    return f"""You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
 reading_time must be an integer number of minutes only, such as 8. Never return "8 min read" or any other phrase; the renderer adds the label.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
 cover.archetypes must be the top 3 archetype letters from stable_context.cover_archetypes that fit the topic. Code chooses the final archetype for variety; do not force one in the prose.
-visuals must contain exactly 3 items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Valid visual types are screenshot, flow, compare, generate.
+visuals must contain exactly the planned items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Never return more than {BLOG_MAX_VISUAL_ITEMS} visual items. Valid visual types are screenshot, flow, compare, generate.
 For type=screenshot, screenshot_id is required and must exactly match one of requirements.available_screenshots ids. Never leave screenshot_id empty. If none of the listed screenshots fits the section, choose flow, compare, or generate instead.
 Use flow for a process/workflow and compare for metric or option comparisons. Use screenshots for product features. Use generate at most once per article, only when flow, compare, and screenshot do not fit.
 For screenshot or generate visuals, content_md must include that marker as a standalone HTML comment such as <!-- IMAGE_1 -->. Bare IMAGE_1 text is forbidden.
 For flow or compare visuals, put the full :::flow or :::compare block directly in content_md where that visual belongs; do not also include an IMAGE comment for that slot.
+Produce exactly the visual-bearing body blocks required by the planned visuals, and no more. Do not write standalone or unplanned :::compare or :::flow blocks. One compare visual in the plan means one :::compare block in the article.
+Never insert a visual element between a sentence and the list, bullets, or examples that belong to it. If a sentence introduces a list, such as "Before you publish, you are checking three things:", the list must immediately follow that sentence. Place IMAGE markers and ::: blocks only between complete paragraphs or sections.
 Flow syntax is 2-5 lines of: icon | title max 4 words | subtitle max 8 words. Allowed icons: video, clips, scissors, calendar, clock, eye, users, chart, mic, upload, check, sparkles.
 Compare syntax is exactly two qualitative contrast lines of: icon | value | label | direction. Direction must be up, down, or flat. Prefer non-numeric values such as "One clear focus" vs "Competing elements". Do not put digits, counts, percentages, or number+noun metrics such as "1 clear idea" or "3 crowded elements" in a compare value unless that exact number is already stated in the surrounding article prose. Add an optional note: line.
 Each visual must include a short caption, maximum 12 words, suitable for the markdown image title or component caption.
@@ -1985,11 +2113,11 @@ Screenshot placement: if the article covers Autopilot, prefer placing a relevant
 
 
 def _reviewer_prompt() -> str:
-    return """You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
+    return f"""You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than 3 visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
+Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
 Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
 Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Do not allow invented metrics, features, platform logos, or third-party brand claims.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
