@@ -59,7 +59,7 @@ BLOG_RUN_MAX_USD = Decimal(os.getenv("BLOG_RUN_MAX_USD", "1.50") or "1.50")
 BLOG_AUTO_PUBLISH = str(os.getenv("BLOG_AUTO_PUBLISH", "true")).strip().lower() not in {"0", "false", "no", "off"}
 BLOG_AUTO_CATEGORIES = tuple(
     item.strip().lower()
-    for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow").split(",")
+    for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow,comparison,monetization,news").split(",")
     if item.strip()
 )
 STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
@@ -1198,7 +1198,7 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
             [int(topic_id)],
         ).fetchone()
     else:
-        auto_categories = BLOG_AUTO_CATEGORIES or ("persona", "craft", "workflow")
+        auto_categories = BLOG_AUTO_CATEGORIES or ("persona", "craft", "workflow", "comparison", "monetization", "news")
         placeholders = ", ".join(["?"] * len(auto_categories))
         row = conn.execute(
             f"""
