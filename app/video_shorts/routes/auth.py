@@ -1790,6 +1790,9 @@ def redeem_onboarding_magic_link(token: str):
     conn = get_db()
     needs_password_setup = False
     onboarding_autopilot_lead_id = ""
+    onboarding_share_link_id = None
+    onboarding_share_link_token = ""
+    lead_share_link_unresolved = False
     try:
         ensure_storage_user_schema(conn)
         ensure_auth_user_schema(conn)
@@ -1805,7 +1808,8 @@ def redeem_onboarding_magic_link(token: str):
                 trial_days,
                 expires_at,
                 used_at,
-                share_link_id
+                share_link_id,
+                share_link_token
             FROM onboarding_magic_links
             WHERE token_hash = ?
             LIMIT 1
@@ -1847,6 +1851,8 @@ def redeem_onboarding_magic_link(token: str):
                 tier=15,
             )
             share_link_id = row[7]
+            onboarding_share_link_id = share_link_id
+            onboarding_share_link_token = str(row[8] or "").strip()
             if (
                 share_link_id
                 and autopilot_leads_table_ready(conn)
@@ -1868,6 +1874,21 @@ def redeem_onboarding_magic_link(token: str):
                 if lead_row:
                     onboarding_autopilot_lead_id = str(lead_row[0] or "").strip()
                     brand_id = str(lead_row[1] or "").strip() or brand_id
+            lead_share_link_unresolved = bool(
+                (onboarding_share_link_id or onboarding_share_link_token) and not onboarding_autopilot_lead_id
+            )
+            if lead_share_link_unresolved:
+                conn.execute(
+                    """
+                    UPDATE shorts_users
+                    SET pending_service_intent = NULL,
+                        pending_service_tier = NULL,
+                        updated_at = now()
+                    WHERE CAST(id AS VARCHAR) = ?
+                      AND COALESCE(service_mode, '') = ''
+                    """,
+                    [str(user_id)],
+                )
         if needs_password_setup:
             _create_password_reset_token_for_user(conn, user_id=user_id)
         updated = conn.execute(
@@ -1899,13 +1920,19 @@ def redeem_onboarding_magic_link(token: str):
 
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
     if autopilot_requested:
-        _stash_auth_choice(intent="autopilot", tier=15)
+        if lead_share_link_unresolved:
+            _clear_pending_service_choice()
+            session.pop("vs_onboarding_autopilot_lead_id", None)
+        else:
+            _stash_auth_choice(intent="autopilot", tier=15)
         if onboarding_autopilot_lead_id:
             session["vs_onboarding_autopilot_lead_id"] = onboarding_autopilot_lead_id
-        else:
+        elif not lead_share_link_unresolved:
             session.pop("vs_onboarding_autopilot_lead_id", None)
     if autopilot_requested and onboarding_autopilot_lead_id:
         return redirect(url_for("video_shorts_bp.lead_feed_page"))
+    if autopilot_requested and lead_share_link_unresolved:
+        return render_template("vs_lead_magic_link_unavailable.html"), 410
     if autopilot_requested and requested_landing != "my_videos":
         return redirect(url_for("video_shorts_bp.social_connect"))
     return redirect(url_for("video_shorts_bp.my_videos_page"))

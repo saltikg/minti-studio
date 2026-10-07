@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Shorts Link Unavailable | MintiStudio</title>
+    <link rel="shortcut icon" href="{{ url_for('video_shorts_bp.static', filename='img/favicon-admin.ico') }}">
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #05070c;
+        --panel: #0c111d;
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(248, 250, 252, 0.96);
+        --muted: rgba(226, 232, 240, 0.74);
+        --mint: #4ee7c4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .link-state {
+        width: min(100%, 480px);
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 22px;
+        color: var(--mint);
+        font-weight: 700;
+      }
+
+      .brand-mark {
+        display: inline-grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border-radius: 9px;
+        background: rgba(78, 231, 196, 0.14);
+        border: 1px solid rgba(78, 231, 196, 0.24);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 1.5rem;
+        line-height: 1.16;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.55;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="link-state" aria-labelledby="link-state-title">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <span>MintiStudio</span>
+      </div>
+      <h1 id="link-state-title">Your Shorts link is not available here anymore</h1>
+      <p>This link has expired or your Shorts are no longer available from this page. Get in touch and we'll send you a fresh link.</p>
+    </main>
+  </body>
+</html>
