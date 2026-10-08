@@ -28,6 +28,9 @@ COMPETITORS: tuple[dict[str, str], ...] = (
     {"name": "OpusClip", "source_url": "https://www.opus.pro/pricing"},
     {"name": "Klap", "source_url": "https://klap.app/pricing"},
     {"name": "Vizard", "source_url": "https://vizard.ai/pricing"},
+    {"name": "Quso", "source_url": "https://quso.ai/pricing"},
+    {"name": "2Short", "source_url": "https://2short.ai/pricing"},
+    {"name": "Submagic", "source_url": "https://www.submagic.co/pricing"},
 )
 
 EXTRACTION_SYSTEM_PROMPT = """You extract competitor feature and workflow facts for a blog reference file.
