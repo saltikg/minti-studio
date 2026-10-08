@@ -278,6 +278,18 @@ def _positive_numbers(text: str) -> set[Decimal]:
     return values
 
 
+def _strip_zero_price_items(values: Any) -> list[Any]:
+    cleaned = []
+    for value in _as_list(values):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        if re.search(r"\$0(?:\b|/)", text):
+            continue
+        cleaned.append(value)
+    return cleaned
+
+
 def validate_tier_prices(facts: dict[str, Any], price_candidates: list[dict[str, str]]) -> dict[str, Any]:
     tiers = _as_list(facts.get("pricing_tiers"))
     normalized: list[dict[str, Any]] = []
@@ -307,6 +319,9 @@ def validate_tier_prices(facts: dict[str, Any], price_candidates: list[dict[str,
         else:
             current["monthly_price"] = None
             current["price_unverified"] = True
+            current["included"] = _strip_zero_price_items(current.get("included"))
+            current["limits"] = _strip_zero_price_items(current.get("limits"))
+            current["notes"] = _strip_zero_price_items(current.get("notes"))
         normalized.append(current)
     facts["pricing_tiers"] = normalized
     return facts
