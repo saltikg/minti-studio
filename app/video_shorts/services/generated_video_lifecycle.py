@@ -122,6 +122,7 @@ def ensure_generated_videos_schema(conn) -> None:
                 planned_publish_at TIMESTAMP,
                 published_at TIMESTAMP,
                 plan_run_id VARCHAR,
+                render_settings_hash TEXT,
                 raw_plan_entry_json {json_type},
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -146,6 +147,7 @@ def ensure_generated_videos_schema(conn) -> None:
         ("tiktok_published_at", "TIMESTAMP"),
         ("primary_publish_platform", "VARCHAR"),
         ("share_token", "VARCHAR"),
+        ("render_settings_hash", "TEXT"),
     ):
         if col_name in cols:
             continue
@@ -425,6 +427,7 @@ def upsert_generated_video_record(
     facebook_published_at: Optional[str] = None,
     tiktok_published_at: Optional[str] = None,
     primary_publish_platform: Optional[str] = None,
+    render_settings_hash: Optional[str] = None,
 ) -> None:
     if not source_video_id or not clip_filename:
         return
@@ -524,6 +527,7 @@ def upsert_generated_video_record(
                 planned_publish_at,
                 published_at,
                 plan_run_id,
+                render_settings_hash,
                 generated_title,
                 generated_description,
                 generated_excerpt,
@@ -537,7 +541,7 @@ def upsert_generated_video_record(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (source_video_id, source_channel_type, clip_filename)
             DO UPDATE SET
                 user_id = COALESCE(EXCLUDED.user_id, {TABLE_NAME}.user_id),
@@ -553,6 +557,7 @@ def upsert_generated_video_record(
                 planned_publish_at = COALESCE(EXCLUDED.planned_publish_at, {TABLE_NAME}.planned_publish_at),
                 published_at = COALESCE(EXCLUDED.published_at, {TABLE_NAME}.published_at),
                 plan_run_id = COALESCE(EXCLUDED.plan_run_id, {TABLE_NAME}.plan_run_id),
+                render_settings_hash = COALESCE(EXCLUDED.render_settings_hash, {TABLE_NAME}.render_settings_hash),
                 generated_title = COALESCE(EXCLUDED.generated_title, {TABLE_NAME}.generated_title),
                 generated_description = COALESCE(EXCLUDED.generated_description, {TABLE_NAME}.generated_description),
                 generated_excerpt = COALESCE(EXCLUDED.generated_excerpt, {TABLE_NAME}.generated_excerpt),
@@ -582,6 +587,7 @@ def upsert_generated_video_record(
                 planned_publish_at,
                 published_at,
                 plan_run_id,
+                render_settings_hash,
                 _first_non_empty(generated_title, content_fields.get("generated_title")),
                 _first_non_empty(generated_description, content_fields.get("generated_description")),
                 _first_non_empty(generated_excerpt, content_fields.get("generated_excerpt")),

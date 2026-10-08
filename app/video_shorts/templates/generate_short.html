@@ -1819,6 +1819,52 @@
     color: #ccfbf1;
     text-decoration: underline;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 0.68rem;
+    font-weight: 800;
+    color: #fef3c7;
+    background: rgba(245, 158, 11, 0.16);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+    margin-top: 10px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn {
+    min-height: 36px;
+    justify-content: center;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats {
+    width: 100%;
+    margin-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 10px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats > summary {
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.8rem;
+    font-weight: 750;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats-body {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-regenerate-all {
+    min-height: 34px;
+    padding: 0 11px;
+    font-size: 0.78rem;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge {
     justify-self: end;
     display: inline-flex;
@@ -4028,11 +4074,6 @@
             <div class="gs-card generate-v2-right-card">
               <div id="generate-v2-selected-clip-mount" class="generate-v2-selected-mount"></div>
               <div id="generate-v2-empty-preview" class="generate-v2-empty-preview d-none">Select a Short to preview it here.</div>
-              <button type="button"
-                      class="generate-v2-change-design"
-                      data-open-editor-target="choose-crop-btn">
-                Change design
-              </button>
             </div>
           </div>
           <div class="generate-v2-right-panel" data-generate-v2-right="transcript"></div>
@@ -4134,6 +4175,7 @@
               </div>
               <div class="clip-score-batch-controls{% if not clip_rows %} d-none{% endif %}" id="clip-score-batch-controls">
                 {% set schedule_all_ns = namespace(count=0) %}
+                {% set regenerate_all_ns = namespace(count=0) %}
                 {% for candidate in clip_rows %}
                   {% set candidate_publish_status = (candidate.publish_status or '')|lower %}
                   {% set candidate_db_publish_status = (candidate.db_publish_status or '')|lower %}
@@ -4145,6 +4187,9 @@
                     and candidate_publish_status not in ['scheduled', 'uploaded', 'published']
                     and candidate_db_publish_status not in ['scheduled', 'uploaded', 'published'] %}
                     {% set schedule_all_ns.count = schedule_all_ns.count + 1 %}
+                  {% endif %}
+                  {% if generate_v2 and candidate.render_settings_outdated and not candidate.regenerate_locked %}
+                    {% set regenerate_all_ns.count = regenerate_all_ns.count + 1 %}
                   {% endif %}
                 {% endfor %}
                 <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
@@ -4177,6 +4222,16 @@
                   <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
                   Schedule all
                 </button>
+                {% if generate_v2 %}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-warning d-inline-flex align-items-center gap-1 generate-v2-regenerate-all{% if regenerate_all_ns.count == 0 %} d-none{% endif %}"
+                  id="generate-v2-regenerate-all-btn"
+                  data-count="{{ regenerate_all_ns.count }}">
+                  <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                  <span>Regenerate all{% if regenerate_all_ns.count > 0 %} ({{ regenerate_all_ns.count }}){% endif %}</span>
+                </button>
+                {% endif %}
                 <div class="clip-score-batch-feedback text-white-50 d-none" id="clip-score-batch-feedback" aria-live="polite"></div>
               </div>
               <div class="clip-rail-list" id="clip-rail-list">
@@ -4197,7 +4252,7 @@
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-filename="{{ row.video_filename or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
                         <video muted playsinline preload="metadata">
@@ -4217,6 +4272,17 @@
                         <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                         <span class="clip-rail-status-text"></span>
                       </span>
+                      {% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
+                        <span class="clip-rail-state-chip">
+                          <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                          Regenerating...
+                        </span>
+                      {% elif generate_v2 and row.render_settings_outdated %}
+                        <span class="clip-rail-state-chip">
+                          <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+                          Outdated
+                        </span>
+                      {% endif %}
                       <span class="clip-rail-platforms">
                         {% if row.db_publish_display %}
                           {% if row.db_publish_status == "published" %}
@@ -4404,7 +4470,12 @@
                  data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}"
                  data-status="{{ row.status }}"
                  data-render-job-id="{{ row.render_job_id or '' }}"
+                 data-render-job-status="{{ row.render_job_status or '' }}"
                  data-render-error="{{ row.render_error or '' }}"
+                 data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
+                 data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
+                 data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
+                 data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                  data-publish="{{ row.publish_status }}"
                  data-start="{{ row.start or 0 }}"
                  data-duration="{{ row.duration or 0 }}"
@@ -4505,6 +4576,17 @@
                       <source src="{{ row.video_url }}" type="video/mp4">
                     </video>
                     <div class="clip-card-media-actions d-flex gap-2 mt-2">
+                      {% if generate_v2 %}
+                      <a
+                        class="btn btn-outline-light btn-sm d-flex align-items-center justify-content-center gap-1 generate-v2-download-btn"
+                        href="{{ row.video_url }}"
+                        target="_blank"
+                        rel="noreferrer"
+                        download>
+                        <i class="bi bi-download" aria-hidden="true"></i>
+                        <span>Download</span>
+                      </a>
+                      {% endif %}
                       <a
                         class="btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center"
                         href="{{ row.video_url }}"
@@ -4514,6 +4596,18 @@
                         <span class="visually-hidden">Open video</span>
                         <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
                       </a>
+                      {% if generate_v2 %}
+                      <button
+                        type="button"
+                        class="btn btn-outline-warning btn-sm d-flex align-items-center justify-content-center gap-1 generate-v2-regenerate-btn"
+                        data-plan-index="{{ row.plan_index }}"
+                        data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
+                        {% if not row.render_settings_outdated or row.regenerate_locked %}disabled{% endif %}
+                        title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Change design first' if not row.render_settings_outdated else 'Regenerate with current design') }}">
+                        <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                        <span>Regenerate</span>
+                      </button>
+                      {% endif %}
                       {% if not generate_v2 %}
 	                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
 	                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
@@ -4539,6 +4633,13 @@
                         </button>
                       </form>
                       <div class="clip-card-generate-feedback small mt-1 d-none" aria-live="polite" aria-atomic="true"></div>
+                      {% if generate_v2 %}
+                      <button type="button"
+                              class="generate-v2-change-design"
+                              data-open-editor-target="choose-crop-btn">
+                        Change design
+                      </button>
+                      {% endif %}
                     </div>
                   {% endif %}
                   </div>
@@ -4595,6 +4696,13 @@
                     <input type="hidden" name="video_filename" value="{{ row.video_filename or '' }}">
                     <textarea name="subtitle" class="form-control" rows="5">{{ row.transcript_full or "" }}</textarea>
                   </form>
+                  {% if generate_v2 and row.status == "created" and row.video_filename %}
+                    <button type="button"
+                            class="generate-v2-change-design"
+                            data-open-editor-target="choose-crop-btn">
+                      Change design
+                    </button>
+                  {% endif %}
                   <div class="clip-card-action-bar mt-3">
                       {% if row.publish_status == "published" %}
                         {% set stats = row.published_stats or {} %}
@@ -7893,6 +8001,48 @@ const restoreGenerateV2MountedClip = () => {
   });
 };
 
+const arrangeGenerateV2PreviewCard = (card) => {
+  if (!card || card.dataset.generateV2Arranged === "1") {
+    return;
+  }
+  card.dataset.generateV2Arranged = "1";
+  const mediaActions = card.querySelector(".clip-card-media-actions");
+  const scheduleBlock = card.querySelector(".clip-card-action-primary");
+  const regenerateBtn = card.querySelector(".generate-v2-regenerate-btn");
+  if (mediaActions) {
+    mediaActions.classList.add("generate-v2-primary-actions");
+    if (scheduleBlock) {
+      const scheduleBtn = scheduleBlock.querySelector(".send-to-youtube-btn");
+      if (scheduleBtn && regenerateBtn && scheduleBtn.parentElement !== mediaActions) {
+        mediaActions.insertBefore(scheduleBtn, regenerateBtn);
+      }
+      scheduleBtn?.classList.remove("clip-card-mini-btn");
+    }
+  }
+  const actionBar = card.querySelector(".clip-card-action-bar");
+  if (!actionBar || actionBar.querySelector(".generate-v2-share-stats")) {
+    return;
+  }
+  const details = document.createElement("details");
+  details.className = "generate-v2-share-stats";
+  const summary = document.createElement("summary");
+  summary.textContent = "Share & stats";
+  const body = document.createElement("div");
+  body.className = "generate-v2-share-stats-body";
+  details.append(summary, body);
+  const stats = card.querySelector(".clip-card-published-stats");
+  const sharePanel = card.querySelector(".admin-share-link-panel")?.parentElement;
+  if (stats) {
+    body.appendChild(stats);
+  }
+  if (sharePanel) {
+    body.appendChild(sharePanel);
+  }
+  if (body.children.length) {
+    actionBar.appendChild(details);
+  }
+};
+
 const getGenerateV2FallbackPlanIndex = () => {
   const railItems = Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"));
   const rendered = railItems.find((item) => {
@@ -7940,6 +8090,7 @@ const selectGenerateV2Clip = (planIndex = "") => {
     card.classList.toggle("is-active", card === activeCard);
   });
   if (activeCard) {
+    arrangeGenerateV2PreviewCard(activeCard);
     mount.appendChild(activeCard);
   }
   mount.classList.toggle("d-none", !activeCard);
@@ -8030,6 +8181,7 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
     persist: false,
     selectedPlanIndex: preferredPlanIndex || "",
   });
+  initGenerateV2RegenerateControls();
   return true;
 };
 
@@ -8210,6 +8362,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       initGenerateClipForms();
       initScoreThresholdBatchControls();
       initScheduleAllClipsControls();
+      initGenerateV2RegenerateControls();
       initClipDeleteButtons();
       initDeleteClipAjax();
       initRemovePlanEntryAjax();
@@ -8948,6 +9101,82 @@ const pollClipJobUntilDone = async (
     return;
   }
   handleClipJobFailurePayload(planIndex);
+};
+
+const setRegenerateFeedback = (planIndex, message, busy = false) => {
+  setRailFeedbackState(String(planIndex || ""), {
+    message,
+    tone: busy ? "text-warning" : "text-white-50",
+    busy,
+  });
+  const card = getClipCardByPlanIndex(planIndex);
+  const button = card?.querySelector(".generate-v2-regenerate-btn");
+  if (button) {
+    button.disabled = !!busy || button.disabled;
+    const label = button.querySelector("span");
+    if (label) {
+      label.textContent = busy ? "Regenerating..." : "Regenerate";
+    }
+  }
+};
+
+const enqueueRegenerateClip = async (card) => {
+  if (!card || card.dataset.regenerateLocked === "1" || card.dataset.outdated !== "1") {
+    return false;
+  }
+  const planIndex = String(card.dataset.planIndex || "").trim();
+  const regenerateUrl = String(card.dataset.regenerateUrl || "").trim();
+  if (!planIndex || !regenerateUrl) {
+    return false;
+  }
+  setRegenerateFeedback(planIndex, "Regenerating...", true);
+  const response = await fetch(regenerateUrl, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.success || !payload.job_id) {
+    handleClipJobFailurePayload(planIndex, payload);
+    return false;
+  }
+  renderClipJobProgressState(card, payload.status || "queued", payload.queue_position);
+  void pollClipJobUntilDone(planIndex, payload.job_id, {
+    initialStatus: payload.status || "queued",
+    initialQueuePosition: payload.queue_position,
+    startedAt: Date.now(),
+  });
+  return true;
+};
+
+const initGenerateV2RegenerateControls = () => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return;
+  }
+  document.querySelectorAll(".generate-v2-regenerate-btn").forEach((button) => {
+    if (button.dataset.regenerateBound === "1") {
+      return;
+    }
+    button.dataset.regenerateBound = "1";
+    button.addEventListener("click", () => {
+      void enqueueRegenerateClip(button.closest(".clip-card"));
+    });
+  });
+  const allButton = document.getElementById("generate-v2-regenerate-all-btn");
+  if (allButton && allButton.dataset.regenerateAllBound !== "1") {
+    allButton.dataset.regenerateAllBound = "1";
+    allButton.addEventListener("click", async () => {
+      const cards = Array.from(document.querySelectorAll(".clip-card[data-outdated='1'][data-regenerate-locked='0']"));
+      allButton.disabled = true;
+      for (const card of cards) {
+        await enqueueRegenerateClip(card);
+      }
+      allButton.disabled = false;
+    });
+  }
 };
 
 const usageResetCopy = (resetAt) => {
@@ -9928,12 +10157,13 @@ const resumeQueuedClipJobs = () => {
     if (!planIndex) {
       return;
     }
-    if (card.dataset.status === "created") {
+    const liveRenderStatus = String(card.dataset.renderJobStatus || "").trim().toLowerCase();
+    if (card.dataset.status === "created" && !["queued", "processing", "running"].includes(liveRenderStatus)) {
       stopClipJobPolling(planIndex, { clearStored: true });
       return;
     }
     const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJobs[String(planIndex)]?.jobId || "").trim();
-    const status = String(card.dataset.status || "").trim().toLowerCase();
+    const status = liveRenderStatus || String(card.dataset.status || "").trim().toLowerCase();
     if (!jobId || !["queued", "processing"].includes(status)) {
       return;
     }
@@ -13168,6 +13398,10 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
       }
       window.updateShortDesignStrip?.(currentShortDesignDetails());
+      if (getGenerateV2Root() && typeof refreshClipList === "function") {
+        const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
+        refreshClipList(activePlanIndex, "list");
+      }
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");

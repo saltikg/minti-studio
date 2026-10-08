@@ -6208,6 +6208,128 @@ def _build_render_job_options(
     }
 
 
+def _render_settings_hash_from_options(options: Dict[str, Any]) -> str:
+    payload = dict(options or {})
+    payload.pop("plan_index", None)
+    payload.pop("brand_id", None)
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _video_crop_ratios_from_mapping(video: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: video.get(key)
+        for key in (
+            "split_enabled",
+            "crop_x_ratio",
+            "crop_y_ratio",
+            "crop_w_ratio",
+            "crop_h_ratio",
+            "crop2_x_ratio",
+            "crop2_y_ratio",
+            "crop2_w_ratio",
+            "crop2_h_ratio",
+            "crop_locked",
+        )
+        if key in video and video.get(key) is not None
+    }
+
+
+def _parse_podcast_overlay_short_ids(raw_value: Any) -> List[str]:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [
+        str(item).strip()
+        for item in parsed
+        if str(item or "").strip().startswith("short:")
+    ][:2]
+
+
+def _compute_render_settings_hash_for_plan_entry(
+    *,
+    video_pk: int,
+    video: Dict[str, Any],
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    brand_id: Optional[str],
+    fallback_title: str,
+) -> str:
+    start = _to_float(plan_entry.get("start")) or 0.0
+    end = _to_float(plan_entry.get("end")) or start
+    owner_user_id = str(video.get("owner_user_id") or "").strip() or None
+    subtitle_text = (
+        str(plan_entry.get("transcript_full_custom") or "").strip()
+        or build_transcript_for_range(segments, start, end, prefer_tr=True)
+        or ""
+    )
+    subscribe_key = _normalize_subscribe_overlay_key(
+        _load_subscribe_overlay_key(owner_user_id, brand_id, video_pk),
+        expected_owner_user_id=owner_user_id,
+        expected_brand_id=brand_id,
+    )
+    if not subscribe_key:
+        auto_subscribe_path = choose_deterministic_system_subscribe(str(video.get("video_id") or ""))
+        if auto_subscribe_path:
+            subscribe_key = make_system_subscribe_key(auto_subscribe_path.name)
+    background_key = load_background_preference(owner_user_id, brand_id) if owner_user_id else None
+    background_key = background_key or video.get("background_visual_key")
+    subtitle_style = str(video.get("subtitle_style") or "plain").strip().lower()
+    if subtitle_style not in {"plain", "karaoke"}:
+        subtitle_style = "plain"
+    subtitle_preset = str(video.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
+    if subtitle_preset not in SUBTITLE_PRESETS:
+        subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    options = _build_render_job_options(
+        plan_index=int(plan_entry.get("plan_index") or 0),
+        title=plan_entry.get("title") or fallback_title,
+        brand_id=brand_id,
+        crop_ratios=_video_crop_ratios_from_mapping(video),
+        crop_aspect=str(video.get("crop_aspect") or "landscape").strip() or "landscape",
+        title_font_key=video.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY,
+        title_font_size=video.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE,
+        subtitle_font_key=video.get("subtitle_font_key"),
+        subtitle_font_size=video.get("subtitle_font_size"),
+        subtitle_margin=video.get("subtitle_margin"),
+        subtitle_style=subtitle_style,
+        subtitle_preset=subtitle_preset,
+        title_margin=video.get("title_margin"),
+        title_line_spacing=video.get("title_line_spacing"),
+        title_bg_color=_normalize_hex_color(video.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR),
+        title_bg_alpha=_normalize_alpha_percent(video.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA),
+        title_text_color=_normalize_hex_color(video.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR),
+        subtitle_text_color=_normalize_hex_color(video.get("subtitle_text_color"), DEFAULT_SUBTITLE_TEXT_COLOR),
+        subtitle_bg_color=_normalize_hex_color(video.get("subtitle_bg_color"), DEFAULT_SUBTITLE_BG_COLOR),
+        subtitle_bg_alpha=_normalize_alpha_percent(video.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA),
+        subtitle_text_alpha=_normalize_alpha_percent(video.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA),
+        date_text=video.get("video_date_text"),
+        date_top=video.get("video_date_top"),
+        show_title=_normalize_optional_bool(video.get("show_title"), default=True),
+        show_subtitle=_normalize_optional_bool(video.get("show_subtitle"), default=True),
+        subscribe_overlay=_normalize_optional_bool(video.get("subscribe_overlay_enabled"), default=True),
+        subscribe_overlay_image=_subscribe_storage_reference_for_asset(
+            subscribe_key,
+            expected_owner_user_id=owner_user_id,
+            expected_brand_id=brand_id,
+        ),
+        is_music_only=bool(video.get("is_music_only")) if video.get("is_music_only") is not None else False,
+        static_visual_key=video.get("static_visual_key"),
+        background_visual_key=background_key,
+        visual_mode=str(video.get("visual_mode") or "video").strip().lower() or "video",
+        podcast_audio_filename=str(video.get("podcast_audio_filename") or "").strip(),
+        podcast_overlay_short_ids=_parse_podcast_overlay_short_ids(video.get("podcast_overlay_short_ids")),
+        video_overlay_offset=video.get("video_overlay_offset"),
+        subtitle_text=subtitle_text,
+    )
+    return _render_settings_hash_from_options(options)
+
+
 def _find_plan_entry(entries: List[Dict[str, Any]], plan_index: Optional[str]) -> Optional[Dict[str, Any]]:
     if not entries:
         return None
@@ -7234,6 +7356,7 @@ def _sync_generated_video_from_plan_entry(
     plan_entry: Optional[Dict[str, Any]],
     generation_status: Optional[str] = None,
     publish_status: Optional[str] = None,
+    render_settings_hash: Optional[str] = None,
 ) -> None:
     if not source_video_id or not clip_filename:
         return
@@ -7272,6 +7395,7 @@ def _sync_generated_video_from_plan_entry(
         generated_transcript_full=entry.get("transcript_full"),
         youtube_published_at=youtube_published_at,
         primary_publish_platform="youtube" if youtube_published_at else None,
+        render_settings_hash=render_settings_hash,
         raw_plan_entry=entry or None,
     )
 
@@ -8617,6 +8741,12 @@ def generate_short(video_pk):
                 ]
                 if "share_token" in generated_columns:
                     select_fields.append("share_token")
+                else:
+                    select_fields.append("NULL AS share_token")
+                if "render_settings_hash" in generated_columns:
+                    select_fields.append("render_settings_hash")
+                else:
+                    select_fields.append("NULL AS render_settings_hash")
                 generated_rows = conn_generated.execute(
                     f"""
                     SELECT {", ".join(select_fields)}
@@ -8676,12 +8806,27 @@ def generate_short(video_pk):
                         "publish_status": str(generated_row[4] or "").strip().lower() or None,
                         "planned_publish_at": generated_row[5] if len(generated_row) > 5 else None,
                         "share_token": generated_row[6] if len(generated_row) > 6 else None,
+                        "render_settings_hash": generated_row[7] if len(generated_row) > 7 else None,
                         "recipient_name": str(recipient_info.get("recipient_name") or "").strip(),
                         "recipient_email": str(recipient_info.get("recipient_email") or "").strip(),
                         "trial_days": normalize_trial_days(recipient_info.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS),
                     }
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
+    render_jobs_by_id: Dict[str, Dict[str, Any]] = {}
+    render_job_ids = [
+        str(entry.get("render_job_id") or "").strip()
+        for entry in plan_entries
+        if isinstance(entry, dict) and str(entry.get("render_job_id") or "").strip()
+    ]
+    if render_job_ids:
+        conn_jobs = get_db_readonly()
+        try:
+            render_jobs_by_id = _load_render_jobs_by_id(conn_jobs, render_job_ids)
+        except Exception:
+            render_jobs_by_id = {}
+        finally:
+            conn_jobs.close()
     v2_rules = load_non_speech_rules()
     v3_rules = load_non_speech_rules()
     v4_rules = load_planner_rules_v4()
@@ -8907,6 +9052,36 @@ def generate_short(video_pk):
         tt_published = tt_status == "published"
         fb_published = fb_status == "published"
         any_platform_published = yt_published or ig_published or tt_published or fb_published
+        any_platform_scheduled = (
+            str(entry.get("publish_status") or "").strip().lower() in {"scheduled", "uploaded", "published"}
+            or db_publish_status in {"scheduled", "uploaded", "published"}
+            or ig_status in {"pending", "retry", "uploading", "published"}
+            or tt_status in {"pending", "retry", "uploading", "published"}
+            or fb_status in {"pending", "retry", "uploading", "published"}
+        )
+        stored_render_settings_hash = str(generated_record.get("render_settings_hash") or "").strip()
+        render_job_id = str(entry.get("render_job_id") or "").strip()
+        render_job_status = str((render_jobs_by_id.get(render_job_id) or {}).get("status") or "").strip().lower()
+        current_render_settings_hash = ""
+        render_settings_outdated = False
+        if status == "created" and video_filename and stored_render_settings_hash:
+            try:
+                current_render_settings_hash = _compute_render_settings_hash_for_plan_entry(
+                    video_pk=int(video.get("id") or video_pk),
+                    video=video,
+                    plan_entry=entry,
+                    segments=segments,
+                    brand_id=brand_id,
+                    fallback_title=video.get("title") or "",
+                )
+                render_settings_outdated = current_render_settings_hash != stored_render_settings_hash
+            except Exception as exc:
+                current_app.logger.warning(
+                    "Failed to compute render settings hash video_pk=%s plan_index=%s: %s",
+                    video_pk,
+                    pi,
+                    exc,
+                )
 
         clip_rows.append({
             "plan_index": pi,
@@ -8930,8 +9105,14 @@ def generate_short(video_pk):
             "video_url": video_url,
             "subtitle": subtitle_source,
             "status": status,
-            "render_job_id": entry.get("render_job_id") or "",
+            "render_job_id": render_job_id,
+            "render_job_status": render_job_status,
             "render_error": entry.get("render_error") or "",
+            "render_settings_hash": stored_render_settings_hash,
+            "current_render_settings_hash": current_render_settings_hash,
+            "render_settings_outdated": render_settings_outdated,
+            "regenerate_locked": any_platform_scheduled,
+            "regenerate_lock_reason": "Already published" if any_platform_published else ("Unschedule first" if any_platform_scheduled else ""),
             "publish_status": entry.get("publish_status") or ("ready" if yt_description else "not_ready"),
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),
@@ -23605,6 +23786,8 @@ def autoclip_video(video_pk):
     plan_index_raw = (request.form.get("plan_index") or "").strip()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
+    regenerate_job = (request.form.get("_regenerate_job") or "").strip() in {"1", "true", "yes"}
+    queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -24236,7 +24419,7 @@ def autoclip_video(video_pk):
     if not plan_entry:
         return _respond("Selected clip was not found in the plan.", status=404, category="warning")
 
-    if queued_job and plan_entry.get("status") == "created":
+    if queued_job and not regenerate_job and plan_entry.get("status") == "created":
         return _respond(
             "Clip already generated for this plan index; delete the existing clip before regenerating.",
             status=409,
@@ -24351,13 +24534,14 @@ def autoclip_video(video_pk):
                 ),
                 is_music_only=video_is_music_only,
                 static_visual_key=video_static_visual_key,
-                background_visual_key=video_background_visual_key,
+                background_visual_key=(load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None) or video_background_visual_key,
                 visual_mode=video_visual_mode,
                 podcast_audio_filename=video_podcast_audio_filename,
                 podcast_overlay_short_ids=video_podcast_overlay_short_ids,
                 video_overlay_offset=video_overlay_offset,
                 subtitle_text=effective_subtitle_text,
             )
+            render_settings_hash = _render_settings_hash_from_options(job_options)
             input_hash = build_input_hash(
                 source_id=vid,
                 start=start,
@@ -24373,6 +24557,7 @@ def autoclip_video(video_pk):
                 "start": start,
                 "end": end,
                 "options": job_options,
+                "render_settings_hash": render_settings_hash,
             }
             is_discovery_demo = _is_discovery_demo_scope(target_owner_user_id, brand_id, int(video_pk))
             if is_discovery_demo:
@@ -25192,6 +25377,7 @@ def autoclip_video(video_pk):
                     clip_filename=clip_filename,
                     plan_entry=plan_entry,
                     generation_status="created",
+                    render_settings_hash=queued_render_settings_hash,
                 )
             except Exception as exc:
                 current_app.logger.warning(
@@ -25439,6 +25625,177 @@ def autoclip_video(video_pk):
     if error_message:
         return _respond(error_message, success=False, status=500, category="warning")
     return _respond("No clip was generated.", success=False, category="warning")
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/regenerate", methods=["POST"])
+def regenerate_clip_video(video_pk: int, plan_index: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Authentication required."), 401
+    editor_context = _active_editor_context()
+    target_owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
+    video_info = _fetch_video_with_transcript(video_pk)
+    if not video_info:
+        return jsonify(success=False, message="Video not found."), 404
+    source_video_id, video_title, _, _, segments = video_info
+    conn = get_db_readonly()
+    try:
+        video_columns = table_columns(conn, "youtube_videos")
+        video_sql = """
+            id, video_id, title, split_enabled, crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio,
+            crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio, crop_aspect,
+            title_font_key, title_font_size, subtitle_font_key, subtitle_font_size, subtitle_margin,
+            subtitle_style, title_margin, title_line_spacing, title_bg_color, title_bg_alpha,
+            title_text_color, subtitle_text_color, subtitle_bg_color, subtitle_bg_alpha,
+            subtitle_text_alpha, video_date_text, video_date_top, show_title, show_subtitle,
+            subscribe_overlay_enabled, is_music_only, static_visual_key, background_visual_key,
+            video_overlay_offset, podcast_audio_filename, visual_mode, podcast_overlay_short_ids,
+            owner_user_id
+        """
+        if "subtitle_preset" in video_columns:
+            video_sql += ", subtitle_preset"
+        if "crop_locked" in video_columns:
+            video_sql += ", crop_locked"
+        video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
+    finally:
+        conn.close()
+    if not video_row:
+        return jsonify(success=False, message="Video not found."), 404
+    video_cols = [
+        "id", "video_id", "title", "split_enabled", "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio",
+        "crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio", "crop_aspect",
+        "title_font_key", "title_font_size", "subtitle_font_key", "subtitle_font_size", "subtitle_margin",
+        "subtitle_style", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha",
+        "title_text_color", "subtitle_text_color", "subtitle_bg_color", "subtitle_bg_alpha",
+        "subtitle_text_alpha", "video_date_text", "video_date_top", "show_title", "show_subtitle",
+        "subscribe_overlay_enabled", "is_music_only", "static_visual_key", "background_visual_key",
+        "video_overlay_offset", "podcast_audio_filename", "visual_mode", "podcast_overlay_short_ids",
+        "owner_user_id",
+    ]
+    if "subtitle_preset" in video_columns:
+        video_cols.append("subtitle_preset")
+    if "crop_locked" in video_columns:
+        video_cols.append("crop_locked")
+    video = dict(zip(video_cols, video_row))
+    plan_entries = _load_plan_entries(source_video_id)
+    plan_entry = None
+    for entry in plan_entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            entry_index = int(entry.get("plan_index"))
+        except Exception:
+            continue
+        if entry_index == int(plan_index):
+            plan_entry = entry
+            break
+    if not plan_entry:
+        return jsonify(success=False, message="Selected clip was not found."), 404
+    clip_filename = str(plan_entry.get("clip_filename") or plan_entry.get("output_filename") or "").strip()
+    if not clip_filename or not _short_exists(clip_filename):
+        return jsonify(success=False, message="Render this Short before regenerating it."), 409
+    conn = get_db_readonly()
+    try:
+        generated_columns = table_columns(conn, "shorts_generated_videos")
+        if "render_settings_hash" not in generated_columns:
+            return jsonify(success=False, message="Render settings tracking has not been migrated yet."), 409
+        generated_row = conn.execute(
+            """
+            SELECT render_settings_hash, publish_status, youtube_video_id, instagram_media_id, facebook_video_id, tiktok_video_id
+            FROM shorts_generated_videos
+            WHERE CAST(source_video_id AS VARCHAR) = ?
+              AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+              AND clip_filename = ?
+              AND (brand_id = ? OR ? IS NULL)
+            LIMIT 1
+            """,
+            [source_video_id, clip_filename, brand_id, brand_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    stored_hash = str((generated_row[0] if generated_row else "") or "").strip()
+    if not stored_hash:
+        return jsonify(success=False, message="This Short needs one fresh render before it can be regenerated."), 409
+    publish_statuses = {
+        str(plan_entry.get("publish_status") or "").strip().lower(),
+        str((generated_row[1] if generated_row else "") or "").strip().lower(),
+    }
+    platform_ids = generated_row[2:6] if generated_row else []
+    if "published" in publish_statuses:
+        return jsonify(success=False, message="Already published."), 409
+    if publish_statuses.intersection({"scheduled", "uploaded", "queued"}):
+        return jsonify(success=False, message="Unschedule first."), 409
+    if any(str(value or "").strip() for value in platform_ids):
+        return jsonify(success=False, message="Already published."), 409
+    social_queue_entries = []
+    try:
+        social_queue_entries.extend(load_instagram_queue_map([source_video_id]).get((source_video_id, str(plan_index))) or [])
+        social_queue_entries.extend(load_tiktok_queue_map([source_video_id]).get((source_video_id, str(plan_index))) or [])
+        social_queue_entries.extend(load_facebook_queue_map([source_video_id]).get((source_video_id, str(plan_index))) or [])
+    except Exception:
+        social_queue_entries = []
+    social_statuses = {
+        str(item.get("status") or "").strip().lower()
+        for item in social_queue_entries
+        if str(item.get("status") or "").strip().lower() not in {"", "canceled", "cancelled", "failed"}
+    }
+    if "published" in social_statuses:
+        return jsonify(success=False, message="Already published."), 409
+    if social_statuses.intersection({"pending", "retry", "uploading", "queued", "scheduled"}):
+        return jsonify(success=False, message="Unschedule first."), 409
+    current_hash = _compute_render_settings_hash_for_plan_entry(
+        video_pk=video_pk,
+        video=video,
+        plan_entry=plan_entry,
+        segments=segments,
+        brand_id=brand_id,
+        fallback_title=video_title,
+    )
+    if current_hash == stored_hash:
+        return jsonify(success=False, message="This Short is already up to date."), 409
+    start = _to_float(plan_entry.get("start"))
+    end = _to_float(plan_entry.get("end"))
+    if start is None or end is None:
+        return jsonify(success=False, message="Clip timing is incomplete."), 400
+    job_options = {
+        "regenerate": True,
+        "render_settings_hash": current_hash,
+        "plan_index": int(plan_index),
+    }
+    input_hash = build_input_hash(source_id=source_video_id, start=start, end=end, options=job_options)
+    payload = {
+        "video_pk": int(video_pk),
+        "source_video_id": source_video_id,
+        "brand_id": brand_id,
+        "plan_index": int(plan_index),
+        "title": plan_entry.get("title") or video_title,
+        "start": start,
+        "end": end,
+        "regenerate": True,
+        "render_settings_hash": current_hash,
+    }
+    enqueue_result = enqueue_render_job(
+        user_id=str(target_owner_user_id),
+        payload=payload,
+        input_hash=input_hash,
+    )
+    kind = enqueue_result.get("kind")
+    job = enqueue_result.get("job") or {}
+    if kind == "concurrency_limit":
+        return jsonify(success=False, code="concurrency_limit", message="You already have too many render jobs in progress."), 429
+    if job.get("id"):
+        plan_entry["render_job_id"] = job.get("id")
+        plan_entry["regenerate_started_at"] = datetime.utcnow().replace(microsecond=0).isoformat()
+        plan_entry.pop("render_error", None)
+        _write_plan_entries(source_video_id, plan_entries)
+    return jsonify(
+        success=True,
+        message="Regenerate job queued.",
+        job_id=job.get("id"),
+        status=job.get("status") or ("done" if kind == "cached" else "queued"),
+        queue_position=job.get("queue_position"),
+    ), 202
 
 
 def _description_generation_gate_error(

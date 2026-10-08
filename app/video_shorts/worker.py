@@ -623,7 +623,7 @@ def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
     mark_job_failed(
         job["id"],
         message,
-        release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT,
+        release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT and not (job.get("payload") or {}).get("regenerate"),
     )
     quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
     if quick_session_id:
@@ -1595,6 +1595,8 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 "plan_index": str(plan_index),
                 "title": title,
                 "_queued_job": "1",
+                "_regenerate_job": "1" if payload.get("regenerate") else "",
+                "_render_settings_hash": str(payload.get("render_settings_hash") or ""),
             },
             headers={"X-Requested-With": "XMLHttpRequest"},
         ):
