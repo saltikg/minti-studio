@@ -11,13 +11,14 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib import parse
 
 ROOT = Path(os.getenv("MINTI_ROOT") or Path(__file__).resolve().parents[1])
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.video_shorts.services.blog_llm import BLOG_MODEL_REVIEWER, call_json, log_usage  # noqa: E402
-from app.video_shorts.services.blog_pipeline import fetch_url, json_dumps_compact, robots_allows  # noqa: E402
+from app.video_shorts.services.blog_pipeline import BLOG_SCOUT_USER_AGENT, fetch_url, json_dumps_compact  # noqa: E402
 
 
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
@@ -111,6 +112,65 @@ def html_to_text(data: bytes) -> str:
 
 def _section_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _robots_path_match(rule_path: str, target_path: str) -> bool:
+    if not rule_path:
+        return False
+    end_only = rule_path.endswith("$")
+    normalized_rule = rule_path[:-1] if end_only else rule_path
+    if end_only:
+        return target_path == normalized_rule
+    return target_path.startswith(normalized_rule)
+
+
+def _robots_group_applies(agents: list[str]) -> bool:
+    ua = BLOG_SCOUT_USER_AGENT.lower()
+    for agent in agents:
+        token = agent.lower()
+        if token == "*" or token in ua:
+            return True
+    return False
+
+
+def robots_allows_pricing_url(url: str) -> bool:
+    parsed = parse.urlparse(url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    status, _, _, data = fetch_url(robots_url, accept="text/plain,*/*", max_bytes=200_000)
+    if status == 404:
+        return True
+    if not status or status >= 400:
+        raise RuntimeError(f"robots.txt fetch failed with status {status or 'error'}")
+    target_path = parsed.path or "/"
+    groups: list[tuple[list[str], list[tuple[str, str]]]] = []
+    agents: list[str] = []
+    rules: list[tuple[str, str]] = []
+    for raw_line in data.decode("utf-8", "ignore").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        field, value = [part.strip() for part in line.split(":", 1)]
+        field = field.lower()
+        if field == "user-agent":
+            if agents and rules:
+                groups.append((agents, rules))
+                agents, rules = [], []
+            agents.append(value)
+        elif field in {"allow", "disallow"} and agents:
+            rules.append((field, value or ""))
+    if agents:
+        groups.append((agents, rules))
+    applicable_rules: list[tuple[str, str]] = []
+    for group_agents, group_rules in groups:
+        if _robots_group_applies(group_agents):
+            applicable_rules.extend(group_rules)
+    if not applicable_rules:
+        return True
+    matches = [(directive, path) for directive, path in applicable_rules if _robots_path_match(path, target_path)]
+    if not matches:
+        return True
+    directive, _ = max(matches, key=lambda item: (len(item[1].rstrip("$")), 1 if item[0] == "allow" else 0))
+    return directive == "allow"
 
 
 def _existing_sections() -> dict[str, str]:
@@ -235,7 +295,7 @@ def render_file(sections: dict[str, str]) -> str:
 
 def extract_competitor(competitor: dict[str, str]) -> tuple[dict[str, Any], Any]:
     source_url = competitor["source_url"]
-    if not robots_allows(source_url):
+    if not robots_allows_pricing_url(source_url):
         raise RuntimeError("robots.txt disallows source URL")
     status, final_url, content_type, data = fetch_url(source_url, accept="text/html,application/xhtml+xml")
     if not status or status >= 400:
