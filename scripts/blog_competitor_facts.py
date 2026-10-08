@@ -30,15 +30,15 @@ COMPETITORS: tuple[dict[str, str], ...] = (
     {"name": "Vizard", "source_url": "https://vizard.ai/pricing"},
 )
 
-EXTRACTION_SYSTEM_PROMPT = """You extract competitor pricing and feature facts for a blog reference file.
+EXTRACTION_SYSTEM_PROMPT = """You extract competitor feature and workflow facts for a blog reference file.
 
 Return strict JSON only:
 {
   "name": "Competitor name",
   "source_url": "https://...",
   "last_fetched": "YYYY-MM-DD",
-  "pricing_tiers": [
-    {"name": "Tier name", "monthly_price": "$... or null", "price_unverified": false, "included": ["clearly stated item"], "limits": ["clearly stated limit"]}
+  "tiers": [
+    {"name": "Tier name", "included": ["clearly stated feature or capability"], "limits": ["clearly stated non-price limit"]}
   ],
   "key_features": ["clearly stated feature"],
   "notes": ["important clearly stated caveat"]
@@ -46,9 +46,9 @@ Return strict JSON only:
 
 Rules:
 - Extract ONLY what is clearly stated in the supplied page text.
-- Use verified_price_candidates for tier prices. If no verified candidate fits a tier, monthly_price must be null and price_unverified must be true.
+- Do not extract, copy, infer, or mention competitor prices, dollar amounts, discounts, billing periods, annual totals, or per-seat costs.
+- Keep plan/tier names, feature differences, workflow capabilities, platform destinations, watermark/storage/export limits, credits/clips/minutes quotas, team/seats/API availability, and other stable non-price facts.
 - If a field is not clearly present, use null or an empty list. Never guess, infer, calculate, or normalize a number.
-- Preserve currency, billing words, and limits exactly enough to be fact-checkable.
 - Do not include marketing claims unless the page clearly states them as product capabilities.
 - Do not compare products. Extract this competitor only.
 """
@@ -142,187 +142,35 @@ def _bullet_lines(values: list[Any], *, fallback: str = "Not clearly stated") ->
     return lines or [f"- {fallback}"]
 
 
-def _price_number(value: str | None) -> Decimal | None:
-    match = re.search(r"\$?\s*(\d+(?:\.\d+)?)", str(value or ""))
-    if not match:
-        return None
-    try:
-        return Decimal(match.group(1))
-    except Exception:
-        return None
-
-
-def _candidate(tier: str, display: str, *, billing: str = "monthly", source: str = "raw-html", context: str = "") -> dict[str, str]:
-    return {
-        "tier": tier,
-        "display": display,
-        "billing": billing,
-        "source": source,
-        "context": re.sub(r"\s+", " ", context).strip()[:240],
-    }
-
-
-def _script_bodies(raw_html: str) -> list[str]:
-    return re.findall(r"<script[^>]*>(.*?)</script>", raw_html or "", flags=re.I | re.S)
-
-
-def _object_numbers(script_text: str, const_name: str) -> dict[str, str]:
-    match = re.search(rf"\b{re.escape(const_name)}\s*=\s*\{{(?P<body>.*?)\}}", script_text, flags=re.S)
-    if not match:
-        return {}
-    body = match.group("body")
-    pairs = re.findall(r"\b([A-Za-z0-9_]+)\s*:\s*(\d+(?:\.\d+)?)", body)
-    return {key: value for key, value in pairs}
-
-
-def _raw_price_context(raw_html: str, pattern: str) -> str:
-    match = re.search(pattern, raw_html, flags=re.I | re.S)
-    if not match:
-        return ""
-    start = max(0, match.start() - 120)
-    end = min(len(raw_html), match.end() + 120)
-    return html.unescape(re.sub(r"<[^>]+>", " ", raw_html[start:end]))
-
-
-def _extract_opusclip_prices(raw_html: str) -> list[dict[str, str]]:
-    candidates: list[dict[str, str]] = []
-    if re.search(r"\$0\s*USD", raw_html, flags=re.I):
-        candidates.append(_candidate("Free", "$0/mo", source="raw-html", context=_raw_price_context(raw_html, r"\$0\s*USD")))
-    if re.search(r"\$15\s+billed\s+monthly|\$15/mo", raw_html, flags=re.I):
-        candidates.append(_candidate("Starter", "$15/mo", source="raw-html", context=_raw_price_context(raw_html, r"\$15\s+billed\s+monthly|\$15/mo")))
-    for body in _script_bodies(raw_html):
-        pro_base = _object_numbers(body, "PRO_BASE_PRICE")
-        pro_yearly = _object_numbers(body, "PRO_YEARLY_PRICE")
-        if pro_base.get("TIER1"):
-            display = f"${pro_base['TIER1']}/mo"
-            if pro_yearly.get("TIER1"):
-                yearly = Decimal(pro_yearly["TIER1"]) * Decimal("12")
-                yearly_text = str(yearly.normalize()) if yearly == yearly.to_integral() else str(yearly)
-                display = f"{display}; ${pro_yearly['TIER1']}/mo billed yearly (${yearly_text}/year)"
-            candidates.append(_candidate("Pro", display, source="inline-script", context="PRO_BASE_PRICE and PRO_YEARLY_PRICE"))
-        for tier_key, value in pro_base.items():
-            if tier_key == "TIER1":
-                continue
-            candidates.append(_candidate(f"Pro {tier_key}", f"${value}/mo", source="inline-script", context="PRO_BASE_PRICE"))
-    if re.search(r"\bCustom\b", raw_html, flags=re.I):
-        candidates.append(_candidate("Business", "Custom", billing="custom", source="raw-html", context="Custom"))
-    return candidates
-
-
-def _extract_klap_prices(raw_html: str) -> list[dict[str, str]]:
-    text = html.unescape(raw_html)
-    tier_names = ["Basic", "Pro", "Pro+"]
-    prices = re.findall(r"<span>\$(14|39|94)</span>\s*<span[^>]*>\s*/mo\s*</span>", text, flags=re.I)
-    candidates: list[dict[str, str]] = []
-    for tier, price in zip(tier_names, prices):
-        candidates.append(_candidate(tier, f"${price}/mo", source="raw-html", context=_raw_price_context(raw_html, rf"\${price}</span>\s*<span[^>]*>\s*/mo")))
-    if not candidates:
-        for tier, price in zip(tier_names, re.findall(r"\$(14|39|94)\b", text)):
-            candidates.append(_candidate(tier, f"${price}/mo", source="raw-html"))
-    return candidates
-
-
-def _extract_vizard_prices(raw_html: str) -> list[dict[str, str]]:
-    candidates: list[dict[str, str]] = []
-    if re.search(r"\$0\b", raw_html):
-        candidates.append(_candidate("Free", "$0", source="raw-html", context=_raw_price_context(raw_html, r"\$0\b")))
-    return candidates
-
-
-def extract_price_candidates(name: str, raw_html: str) -> list[dict[str, str]]:
-    lower = name.lower()
-    if lower == "opusclip":
-        candidates = _extract_opusclip_prices(raw_html)
-    elif lower == "klap":
-        candidates = _extract_klap_prices(raw_html)
-    elif lower == "vizard":
-        candidates = _extract_vizard_prices(raw_html)
-    else:
-        candidates = []
-    seen: set[tuple[str, str]] = set()
-    unique: list[dict[str, str]] = []
-    for item in candidates:
-        key = (item["tier"].lower(), item["display"].lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(item)
-    return unique
-
-
-def _tier_matches(candidate_tier: str, tier_name: str) -> bool:
-    cand = re.sub(r"[^a-z0-9+]+", " ", candidate_tier.lower()).strip()
-    tier = re.sub(r"[^a-z0-9+]+", " ", tier_name.lower()).strip()
-    if not cand or not tier:
-        return False
-    if cand == tier or cand in tier or tier in cand:
-        return True
-    return cand.startswith(tier.split()[0]) if tier.split() else False
-
-
-def _tier_match_rank(candidate_tier: str, tier_name: str) -> tuple[int, int]:
-    cand = re.sub(r"[^a-z0-9+]+", " ", candidate_tier.lower()).strip()
-    tier = re.sub(r"[^a-z0-9+]+", " ", tier_name.lower()).strip()
-    return (1 if cand == tier else 0, len(cand))
-
-
-def _positive_numbers(text: str) -> set[Decimal]:
-    values: set[Decimal] = set()
-    for match in re.findall(r"\$?\s*(\d+(?:\.\d+)?)", text or ""):
-        try:
-            value = Decimal(match)
-        except Exception:
-            continue
-        if value > 0:
-            values.add(value)
-    return values
-
-
-def _strip_zero_price_items(values: Any) -> list[Any]:
+def _strip_price_items(values: Any) -> list[Any]:
     cleaned = []
     for value in _as_list(values):
         text = str(value or "").strip()
         if not text:
             continue
-        if re.search(r"\$0(?:\b|/)", text):
+        if re.search(r"\$\s*\d|(?:billed|billing|discount|save\s+\d+%|off\b|price|pricing|cost)", text, flags=re.I):
             continue
         cleaned.append(value)
     return cleaned
 
 
-def validate_tier_prices(facts: dict[str, Any], price_candidates: list[dict[str, str]]) -> dict[str, Any]:
-    tiers = _as_list(facts.get("pricing_tiers"))
+def remove_competitor_prices(facts: dict[str, Any]) -> dict[str, Any]:
+    tiers = _as_list(facts.get("tiers") or facts.get("pricing_tiers"))
     normalized: list[dict[str, Any]] = []
     for tier in tiers:
         if not isinstance(tier, dict):
             continue
         current = dict(tier)
-        tier_name = str(current.get("name") or "").strip()
-        matches = sorted(
-            [item for item in price_candidates if _tier_matches(item.get("tier", ""), tier_name)],
-            key=lambda item: _tier_match_rank(item.get("tier", ""), tier_name),
-            reverse=True,
-        )
-        verified_positive = [item for item in matches if _positive_numbers(item.get("display", ""))]
-        is_free = "free" in tier_name.lower()
-        price_text = str(current.get("monthly_price") or "").strip()
-        price_numbers = _positive_numbers(price_text)
-        if is_free and any((item.get("display") or "").strip().startswith("$0") for item in matches):
-            current["monthly_price"] = "$0"
-            current["price_unverified"] = False
-        elif verified_positive:
-            candidate = verified_positive[0]
-            current["monthly_price"] = candidate["display"]
-            current["price_unverified"] = False
-        else:
-            current["monthly_price"] = None
-            current["price_unverified"] = True
-            current["included"] = _strip_zero_price_items(current.get("included"))
-            current["limits"] = _strip_zero_price_items(current.get("limits"))
-            current["notes"] = _strip_zero_price_items(current.get("notes"))
+        for key in ("monthly_price", "price", "price_unverified", "billing", "annual_price", "yearly_price"):
+            current.pop(key, None)
+        current["included"] = _strip_price_items(current.get("included"))
+        current["limits"] = _strip_price_items(current.get("limits"))
+        current["notes"] = _strip_price_items(current.get("notes"))
         normalized.append(current)
-    facts["pricing_tiers"] = normalized
-    facts["notes"] = _strip_zero_price_items(facts.get("notes"))
+    facts["tiers"] = normalized
+    facts.pop("pricing_tiers", None)
+    facts["key_features"] = _strip_price_items(facts.get("key_features"))
+    facts["notes"] = _strip_price_items(facts.get("notes"))
     return facts
 
 
@@ -338,9 +186,9 @@ def render_competitor_section(facts: dict[str, Any]) -> str:
         f"- Source: {source_url}",
         f"- Last fetched: {last_fetched}",
         "",
-        "### Pricing tiers",
+        "### Plan / tier structure",
     ]
-    tiers = _as_list(facts.get("pricing_tiers"))
+    tiers = _as_list(facts.get("tiers"))
     if tiers:
         for tier in tiers:
             if not isinstance(tier, dict):
@@ -349,8 +197,6 @@ def render_competitor_section(facts: dict[str, Any]) -> str:
                 [
                     "",
                     f"#### {_string_or_null(tier.get('name'))}",
-                    f"- Price: {_string_or_null(tier.get('monthly_price')) if tier.get('monthly_price') else 'not available from the pricing page (verify on site)'}",
-                    f"- Price unverified: {'yes' if tier.get('price_unverified') else 'no'}",
                     "- Included:",
                     *_bullet_lines(_as_list(tier.get("included"))),
                     "- Limits:",
@@ -373,7 +219,7 @@ def render_file(sections: dict[str, str]) -> str:
         "# Competitor Facts",
         "",
         f"Auto-generated on {today}. This file may be stale; treat it as a reference and verify before publishing.",
-        "Writers may use competitor pricing, features, limits, and comparison claims only when they are present here.",
+        "Competitor prices are intentionally omitted. Use this file for feature, workflow, and limit comparisons only.",
         "",
     ]
     for competitor in COMPETITORS:
@@ -392,8 +238,6 @@ def extract_competitor(competitor: dict[str, str]) -> tuple[dict[str, Any], Any]
     if not status or status >= 400:
         raise RuntimeError(f"fetch failed with status {status or 'error'}")
     page_text = html_to_text(data)
-    raw_html = data.decode("utf-8", "ignore")
-    price_candidates = extract_price_candidates(competitor["name"], raw_html)
     if len(page_text) < 200:
         raise RuntimeError(f"page text too short ({len(page_text)} chars, content_type={content_type})")
     last_fetched = datetime.now(timezone.utc).date().isoformat()
@@ -406,7 +250,6 @@ def extract_competitor(competitor: dict[str, str]) -> tuple[dict[str, Any], Any]
                 "name": competitor["name"],
                 "source_url": final_url or source_url,
                 "last_fetched": last_fetched,
-                "verified_price_candidates": price_candidates,
                 "page_text": page_text,
             }
         ),
@@ -418,7 +261,7 @@ def extract_competitor(competitor: dict[str, str]) -> tuple[dict[str, Any], Any]
     facts["name"] = competitor["name"]
     facts["source_url"] = final_url or source_url
     facts["last_fetched"] = last_fetched
-    facts = validate_tier_prices(facts, price_candidates)
+    facts = remove_competitor_prices(facts)
     return facts, result
 
 
