@@ -244,6 +244,8 @@
     justify-content: space-between;
     gap: 14px 18px;
     padding: 14px 16px;
+    min-height: 0;
+    height: auto;
     border: 1px solid rgba(45, 212, 191, 0.18);
     background: linear-gradient(135deg, rgba(45, 212, 191, 0.1), rgba(255, 255, 255, 0.025));
   }
@@ -282,6 +284,35 @@
     border-color: rgba(143, 227, 215, 0.75);
     background: #8fe3d7;
     color: #062d2a;
+  }
+  .short-design-strip[data-short-design-strip] {
+    min-height: 0;
+    padding: 12px 16px;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-main {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 2px;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-label {
+    grid-row: 1 / span 2;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-summary {
+    font-size: 0.9rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-helper {
+    font-size: 0.78rem;
+    line-height: 1.15;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-action {
+    min-height: 34px;
+    padding: 0.35rem 0.8rem;
+    align-self: center;
   }
   .editor-topbar-editor-btn {
     min-height: 40px;
@@ -498,6 +529,18 @@
     .short-design-strip {
       align-items: stretch;
       flex-direction: column;
+    }
+    .short-design-strip[data-short-design-strip] {
+      max-height: none;
+    }
+    .short-design-strip[data-short-design-strip] .short-design-strip-main {
+      grid-template-columns: 1fr;
+    }
+    .short-design-strip[data-short-design-strip] .short-design-strip-label {
+      grid-row: auto;
+    }
+    .short-design-strip[data-short-design-strip] .short-design-strip-summary {
+      white-space: normal;
     }
     .short-design-strip-action {
       width: 100%;
@@ -1662,6 +1705,9 @@
   .generate-v2-workbench {
     align-items: start;
   }
+  #clip-workbench-shell[data-generate-v2="1"] {
+    --generate-v2-workbench-height: auto;
+  }
   .generate-v2-left-card,
   .generate-v2-right-card {
     min-height: 100%;
@@ -1754,6 +1800,257 @@
   }
   .generate-v2-source-layout.is-arranged {
     display: none;
+  }
+  .generate-v2-change-design {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-top: 10px;
+    border: 0;
+    background: transparent;
+    color: #8fe3d7;
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .generate-v2-change-design:hover,
+  .generate-v2-change-design:focus-visible {
+    color: #ccfbf1;
+    text-decoration: underline;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 70px;
+    min-height: 28px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.12);
+    color: #ccfbf1;
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge .bi {
+    font-size: 0.78rem;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-manual {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.055);
+    color: rgba(255, 255, 255, 0.78);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu {
+    position: relative;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.72);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-delete-menu {
+    min-width: 180px;
+    padding: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #111827;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-delete-menu .dropdown-item {
+    border-radius: 8px;
+    color: #fecaca;
+    font-size: 0.84rem;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-delete-menu .dropdown-item:disabled {
+    color: rgba(255, 255, 255, 0.42);
+    white-space: normal;
+  }
+  @media (min-width: 1024px) {
+    .gs-header.generate-v2-header {
+      padding-top: 12px;
+      padding-bottom: 12px;
+    }
+    .short-design-strip[data-short-design-strip] {
+      min-height: 64px;
+      max-height: 72px;
+      margin-bottom: 10px !important;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench {
+      height: var(--generate-v2-workbench-height);
+      min-height: 520px;
+      overflow: hidden;
+      margin-bottom: 0 !important;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-card,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabbar {
+      flex: 0 0 auto;
+      margin-bottom: 10px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel.is-active {
+      min-height: 0;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-management-panel,
+    #clip-workbench-shell[data-generate-v2="1"] #clip-pane-list {
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header {
+      flex: 0 0 auto;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: nowrap;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:first-child {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header .clip-pane-title {
+      font-size: 0.98rem;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
+      flex: 0 0 auto;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-bottom: 0;
+      padding: 6px 8px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:last-child {
+      flex: 1 1 auto;
+      min-width: 0;
+      align-items: center !important;
+      justify-content: flex-end !important;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:last-child > .d-flex.flex-column {
+      align-items: flex-end !important;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-label {
+      font-size: 0.76rem;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-input {
+      width: 150px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] #ai-generate-btn,
+    #clip-workbench-shell[data-generate-v2="1"] #clip-score-batch-create-btn,
+    #clip-workbench-shell[data-generate-v2="1"] #clip-schedule-all-btn {
+      min-height: 34px;
+      padding: 0.28rem 0.55rem;
+      font-size: 0.78rem;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      gap: 6px;
+      padding-right: 4px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
+      min-height: 72px;
+      grid-template-columns: 56px minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 7px;
+      border-radius: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb {
+      width: 56px;
+      height: 56px;
+      border-radius: 10px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-title {
+      font-size: 0.94rem;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-meta {
+      font-size: 0.8rem;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-panel="transcript"] > .gs-card {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-shell,
+    #clip-workbench-shell[data-generate-v2="1"] .trs-panel {
+      min-height: 0;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-document {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
+      overflow: auto;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-panel.is-active {
+      height: 100%;
+      min-height: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
+      position: sticky;
+      top: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount {
+      min-height: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-body {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-media {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-width: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-media video {
+      width: auto;
+      max-width: 100%;
+      height: min(100%, calc(var(--generate-v2-workbench-height) - 220px));
+      max-height: calc(var(--generate-v2-workbench-height) - 220px);
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-main {
+      flex: 0 0 auto;
+      margin-top: 10px;
+    }
   }
   .clip-detail-modal .modal-dialog {
     max-width: min(1080px, calc(100vw - 32px));
@@ -3458,7 +3755,7 @@
 </style>
 
 
-<div class="gs-header mb-2">
+<div class="gs-header mb-2{% if generate_v2 %} generate-v2-header{% endif %}">
   <div class="editor-header">
     <div class="editor-header-title">
       <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-2"
@@ -3709,6 +4006,11 @@
             <div class="gs-card generate-v2-right-card">
               <div id="generate-v2-selected-clip-mount" class="generate-v2-selected-mount"></div>
               <div id="generate-v2-empty-preview" class="generate-v2-empty-preview d-none">Select a Short to preview it here.</div>
+              <button type="button"
+                      class="generate-v2-change-design"
+                      data-open-editor-target="choose-crop-btn">
+                Change design
+              </button>
             </div>
           </div>
           <div class="generate-v2-right-panel" data-generate-v2-right="transcript"></div>
@@ -3860,6 +4162,14 @@
                   {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
+                  {% if generate_v2 %}
+                    {% set v2_start_seconds = (row.start or 0)|int %}
+                    {% set v2_end_seconds = (row.end or 0)|int %}
+                    {% set v2_duration_seconds = (row.duration if row.duration is not none else (v2_end_seconds - v2_start_seconds))|int %}
+                    {% set clip_start_label = (v2_start_seconds // 60) ~ ':' ~ '%02d'|format(v2_start_seconds % 60) %}
+                    {% set clip_end_label = (v2_end_seconds // 60) ~ ':' ~ '%02d'|format(v2_end_seconds % 60) %}
+                    {% set rail_duration_label = (v2_duration_seconds // 60) ~ ':' ~ '%02d'|format(v2_duration_seconds % 60) %}
+                  {% endif %}
                   {% set rail_score = row.get('score') %}
                   {% set rail_publish_status = (row.publish_status or '')|lower %}
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
@@ -3934,10 +4244,45 @@
                         {% endif %}
                       </span>
                     </span>
-                    {% if rail_score is not none %}
+                    {% if generate_v2 %}
+                      {% if row.is_ai_suggestion %}
+                        <span class="clip-rail-kind-badge is-ai" data-bs-toggle="tooltip" data-bs-placement="top" title="AI suggested clip{% if rail_score is not none %} · Score {{ rail_score }}{% endif %}">
+                          <i class="bi bi-stars" aria-hidden="true"></i>
+                          <span>AI{% if rail_score is not none %} {{ rail_score }}{% endif %}</span>
+                        </span>
+                      {% else %}
+                        <span class="clip-rail-kind-badge is-manual" data-bs-toggle="tooltip" data-bs-placement="top" title="Manual clip">
+                          <i class="bi bi-scissors" aria-hidden="true"></i>
+                          <span>Manual</span>
+                        </span>
+                      {% endif %}
+                    {% elif rail_score is not none %}
                       <span class="clip-rail-score-badge" data-bs-toggle="tooltip" data-bs-placement="top" title="Quality Score — how strong this clip is as a Short (0-100)">{{ rail_score }}</span>
                     {% endif %}
                   </button>
+                  {% if generate_v2 %}
+                  <div class="dropdown clip-rail-menu">
+                    <button
+                      type="button"
+                      class="clip-rail-menu-btn"
+                      data-bs-toggle="dropdown"
+                      aria-expanded="false"
+                      aria-label="Clip actions">
+                      ⋯
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-end clip-rail-delete-menu">
+                      <button
+                        type="button"
+                        class="dropdown-item"
+                        data-delete-clip-btn
+                        data-plan-index="{{ row.plan_index }}"
+                        data-delete-url="{{ editor_url('delete_clip_plan_entry', video_pk=video.id, plan_index=row.plan_index) }}"
+                        {% if rail_delete_locked %}disabled title="Scheduled or published clips cannot be deleted here."{% endif %}>
+                        {% if rail_delete_locked %}Delete disabled — scheduled/published{% else %}Delete{% endif %}
+                      </button>
+                    </div>
+                  </div>
+                  {% else %}
                   <button
                     type="button"
                     class="clip-rail-delete-btn"
@@ -3949,6 +4294,7 @@
                     {% if rail_delete_locked %}disabled{% endif %}>
                     <i class="bi bi-trash3" aria-hidden="true"></i>
                   </button>
+                  {% endif %}
                   </div>
                 {% endfor %}
               </div>
@@ -6084,6 +6430,16 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${String(minutes).padStart(2, "0")}:${secondLabel}`;
   };
 
+  const formatSecondsCompact = (value) => {
+    const total = Math.max(0, Math.floor(Number(value || 0)));
+    if (!Number.isFinite(total)) {
+      return "-";
+    }
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
   const parseTimeToSeconds = (value) => {
     const raw = String(value || "").trim();
     if (!raw) {
@@ -7027,7 +7383,11 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.className = "trs-row-time";
         timeEl.type = "button";
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
-        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(segment.startLabel)} – ${escapeHtml(segment.endLabel)}&nbsp;</span>`;
+        const useCompactTime = !!document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
+        const timeCopy = useCompactTime
+          ? formatSecondsCompact(segment.start)
+          : `${segment.startLabel} – ${segment.endLabel}`;
+        timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(timeCopy)}&nbsp;</span>`;
 
         const mainEl = document.createElement("div");
         mainEl.className = "trs-row-main";
@@ -7315,6 +7675,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const step2JumpBtn = document.getElementById("step2-jump-btn");
   const stepEditBtn = document.getElementById("step-edit-btn");
   const designShortsBtn = document.getElementById("design-shorts-btn");
+  const changeDesignBtns = Array.from(document.querySelectorAll(".generate-v2-change-design"));
   const publishJumpBtn = document.getElementById("publish-jump-btn");
   const clipList = document.getElementById("clip-management-panel");
   const editModal = document.getElementById("crop-area-modal");
@@ -7397,6 +7758,12 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById(targetId)?.click();
     });
   }
+  changeDesignBtns.forEach((button) => {
+    button.addEventListener("click", () => {
+      const targetId = button.dataset.openEditorTarget || "choose-crop-btn";
+      document.getElementById(targetId)?.click();
+    });
+  });
   if (editModal && stepEditBtn) {
     editModal.addEventListener("shown.bs.modal", () => {
       const videoId = String(stepEditBtn.dataset.videoId || "").trim();
@@ -7487,6 +7854,22 @@ const getGenerateV2FallbackPlanIndex = () => {
   return rendered?.dataset.planIndex || railItems[0]?.dataset.planIndex || "";
 };
 
+const syncGenerateV2WorkbenchHeight = () => {
+  const root = getGenerateV2Root();
+  const layout = root?.querySelector("[data-generate-v2-layout]");
+  if (!root || !layout) {
+    return;
+  }
+  if (!window.matchMedia || !window.matchMedia("(min-width: 1024px)").matches) {
+    root.style.removeProperty("--generate-v2-workbench-height");
+    return;
+  }
+  const top = layout.getBoundingClientRect().top;
+  const bottomGap = 14;
+  const height = Math.max(520, Math.floor(window.innerHeight - top - bottomGap));
+  root.style.setProperty("--generate-v2-workbench-height", `${height}px`);
+};
+
 const selectGenerateV2Clip = (planIndex = "") => {
   const root = getGenerateV2Root();
   const panel = document.getElementById("clip-management-panel");
@@ -7565,7 +7948,13 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   if (clipPanel && preferredPlanIndex) {
     clipPanel.dataset.activePlanIndex = String(preferredPlanIndex || "").trim();
   }
+  const clipHeaderActions = clipPanel?.querySelector(".clip-pane-header > div:last-child");
+  const scoreControls = clipPanel?.querySelector("#clip-score-batch-controls");
+  if (clipHeaderActions && scoreControls && scoreControls.parentElement !== clipHeaderActions) {
+    clipHeaderActions.appendChild(scoreControls);
+  }
   sourceLayout?.classList.add("is-arranged");
+  syncGenerateV2WorkbenchHeight();
   root.querySelectorAll("[data-generate-v2-tab]").forEach((button) => {
     if (button.dataset.generateV2Bound === "1") {
       return;
@@ -7595,6 +7984,8 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   });
   return true;
 };
+
+window.addEventListener("resize", syncGenerateV2WorkbenchHeight);
 
 const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null) => {
   const panel = document.getElementById("clip-management-panel");
