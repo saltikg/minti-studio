@@ -126,6 +126,41 @@
     gap: 5px;
     white-space: nowrap;
   }
+  .generate-v2-header .editor-header {
+    justify-content: space-between;
+    align-items: center;
+  }
+  .generate-v2-header .editor-header-copy {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    flex: 1 1 440px;
+  }
+  .generate-v2-header .editor-header-title {
+    flex: 0 1 auto;
+  }
+  .generate-v2-header .editor-header-title h3 {
+    font-size: 0.98rem;
+  }
+  .generate-v2-header .editor-header-separator {
+    color: rgba(255, 255, 255, 0.42);
+    font-weight: 700;
+  }
+  .generate-v2-header .editor-header-meta {
+    width: 100%;
+  }
+  .generate-v2-header .editor-header-youtube-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: rgba(255, 255, 255, 0.68);
+    text-decoration: none;
+  }
+  .generate-v2-header .editor-header-youtube-link:hover,
+  .generate-v2-header .editor-header-youtube-link:focus-visible {
+    color: #ccfbf1;
+    text-decoration: underline;
+  }
   .editor-topbar-card {
     padding: 12px 14px;
     min-height: 0;
@@ -289,6 +324,14 @@
     min-height: 0;
     padding: 12px 16px;
   }
+  .generate-v2-header .short-design-strip[data-short-design-strip] {
+    flex: 0 1 520px;
+    max-width: 100%;
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
   .short-design-strip[data-short-design-strip] .short-design-strip-main {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
@@ -297,6 +340,11 @@
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-label {
     grid-row: 1 / span 2;
+  }
+  .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-label {
+    grid-row: auto;
+    grid-column: 1 / -1;
+    font-size: 0.68rem;
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-summary {
     font-size: 0.9rem;
@@ -308,6 +356,9 @@
   .short-design-strip[data-short-design-strip] .short-design-strip-helper {
     font-size: 0.78rem;
     line-height: 1.15;
+  }
+  .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-helper {
+    display: none;
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-action {
     min-height: 34px;
@@ -526,6 +577,13 @@
     text-align: left;
   }
   @media (max-width: 767.98px) {
+    .generate-v2-header .editor-header {
+      align-items: stretch;
+    }
+    .generate-v2-header .short-design-strip[data-short-design-strip] {
+      width: 100%;
+      margin-left: 0;
+    }
     .short-design-strip {
       align-items: stretch;
       flex-direction: column;
@@ -1462,6 +1520,14 @@
     margin-bottom: 14px;
     flex-wrap: wrap;
   }
+  .clip-pane-heading-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
   .clip-score-batch-controls {
     display: flex;
     align-items: center;
@@ -1928,11 +1994,6 @@
       padding-top: 12px;
       padding-bottom: 12px;
     }
-    .short-design-strip[data-short-design-strip] {
-      min-height: 64px;
-      max-height: 72px;
-      margin-bottom: 10px !important;
-    }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench {
       height: var(--generate-v2-workbench-height);
       min-height: 520px;
@@ -1988,28 +2049,30 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header {
       flex: 0 0 auto;
-      align-items: center;
+      display: grid;
+      gap: 8px;
       margin-bottom: 8px;
-      flex-wrap: nowrap;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:first-child {
       display: flex;
-      align-items: baseline;
-      gap: 6px;
-      white-space: nowrap;
+      align-items: center;
+      gap: 10px;
+      justify-content: space-between;
+      white-space: normal;
+      min-width: 0;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header .clip-pane-title {
       font-size: 0.98rem;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
       flex: 0 0 auto;
-      justify-content: flex-end;
+      justify-content: flex-start;
       gap: 8px;
-      margin-bottom: 0;
+      margin-bottom: 8px;
       padding: 6px 8px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:last-child {
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       min-width: 0;
       align-items: center !important;
       justify-content: flex-end !important;
@@ -2021,7 +2084,9 @@
       font-size: 0.76rem;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-input {
-      width: 150px;
+      flex: 1 1 140px;
+      max-width: 210px;
+      min-width: 120px;
     }
     #clip-workbench-shell[data-generate-v2="1"] #ai-generate-btn,
     #clip-workbench-shell[data-generate-v2="1"] #clip-score-batch-create-btn,
@@ -3823,13 +3888,27 @@
 </style>
 
 
+{% if generate_v2 %}
+  {% set caption_ns = namespace(label=(selected_subtitle_preset or 'default')|replace('_', ' ')|title) %}
+  {% for template in style_templates %}
+    {% if template.subtitle_preset == selected_subtitle_preset %}
+      {% set caption_ns.label = template.label %}
+    {% endif %}
+  {% endfor %}
+  {% set design_layout_label = 'Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill') %}
+{% endif %}
+
 <div class="gs-header mb-2{% if generate_v2 %} generate-v2-header{% endif %}">
   <div class="editor-header">
+    {% if generate_v2 %}
+    <div class="editor-header-copy">
+    {% endif %}
     <div class="editor-header-title">
       <a class="btn btn-outline-primary btn-sm d-inline-flex align-items-center gap-2"
          href="{{ url_for('video_shorts_bp.my_videos_page') }}">
         ← Back
       </a>
+      {% if generate_v2 %}<span class="editor-header-separator" aria-hidden="true">·</span>{% endif %}
       <h3>{{ video.title }}</h3>
     </div>
     <div class="editor-header-meta">
@@ -3850,10 +3929,18 @@
         {% endif %}
       </span>
       {% if video.youtube_watch_url %}
+        {% if generate_v2 %}
+        <a class="editor-header-youtube-link"
+           href="{{ video.youtube_watch_url }}" target="_blank" rel="noopener" aria-label="Watch on YouTube">
+          <i class="bi bi-youtube" aria-hidden="true"></i>
+          Watch on YouTube
+        </a>
+        {% else %}
         <a class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-2"
            href="{{ video.youtube_watch_url }}" target="_blank" rel="noopener" aria-label="YouTube">
           ▶ Watch on YouTube
         </a>
+        {% endif %}
       {% endif %}
       <button
         type="button"
@@ -3879,37 +3966,33 @@
         📐 Crop for Shorts
       </button>
     </div>
+    {% if generate_v2 %}
+    </div>
+    <div class="short-design-strip"
+         data-short-design-strip
+         data-caption-label="{{ caption_ns.label }}"
+         data-layout-label="{{ design_layout_label }}"
+         data-title-enabled="{{ '1' if selected_show_title else '0' }}"
+         data-subscribe-enabled="{{ '1' if selected_subscribe_overlay else '0' }}">
+      <div class="short-design-strip-main">
+        <div class="short-design-strip-label">SHORT DESIGN</div>
+        <div class="short-design-strip-summary" id="short-design-summary">
+          {{ caption_ns.label }} · {{ design_layout_label }} · Title {{ 'on' if selected_show_title else 'off' }} · Subscribe animation {{ 'on' if selected_subscribe_overlay else 'off' }}
+        </div>
+        <div class="short-design-strip-helper">Applies to every Short you create from this video</div>
+      </div>
+      <button type="button"
+              class="btn short-design-strip-action"
+              id="design-shorts-btn"
+              data-open-editor-target="choose-crop-btn">
+        Design Shorts
+      </button>
+    </div>
+    {% endif %}
   </div>
 </div>
 
 {% if generate_v2 %}
-  {% set caption_ns = namespace(label=(selected_subtitle_preset or 'default')|replace('_', ' ')|title) %}
-  {% for template in style_templates %}
-    {% if template.subtitle_preset == selected_subtitle_preset %}
-      {% set caption_ns.label = template.label %}
-    {% endif %}
-  {% endfor %}
-  {% set design_layout_label = 'Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill') %}
-  <div class="gs-card short-design-strip mb-3"
-       data-short-design-strip
-       data-caption-label="{{ caption_ns.label }}"
-       data-layout-label="{{ design_layout_label }}"
-       data-title-enabled="{{ '1' if selected_show_title else '0' }}"
-       data-subscribe-enabled="{{ '1' if selected_subscribe_overlay else '0' }}">
-    <div class="short-design-strip-main">
-      <div class="short-design-strip-label">Short design</div>
-      <div class="short-design-strip-summary" id="short-design-summary">
-        {{ caption_ns.label }} · {{ design_layout_label }} · Title {{ 'on' if selected_show_title else 'off' }} · Subscribe animation {{ 'on' if selected_subscribe_overlay else 'off' }}
-      </div>
-      <div class="short-design-strip-helper">Applies to every Short you create from this video</div>
-    </div>
-    <button type="button"
-            class="btn short-design-strip-action"
-            id="design-shorts-btn"
-            data-open-editor-target="choose-crop-btn">
-      Design Shorts
-    </button>
-  </div>
   {% if editor_ready %}
     <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
   {% endif %}
@@ -4153,6 +4236,24 @@
           <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
             <div class="clip-pane clip-pane-list is-active" id="clip-pane-list">
               <div class="clip-pane-header">
+                {% if generate_v2 %}
+                <div class="clip-pane-heading-row">
+                  <div class="clip-pane-title">Clips · {{ total_clip_count }} · {{ created_clip_count }} created</div>
+                  <div class="d-flex flex-column align-items-end">
+                    <button
+                      type="submit"
+                      form="step2-form"
+                      class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                      id="ai-generate-btn"
+                      {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
+                      <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                      <i class="bi bi-stars" aria-hidden="true"></i>
+                      <span class="btn-label">Suggest clips with AI</span>
+                    </button>
+                    <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
+                  </div>
+                </div>
+                {% else %}
                 <div>
                   <div class="clip-pane-title">Clips · {{ total_clip_count }}</div>
                   <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
@@ -4172,6 +4273,7 @@
                     <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
                   </div>
                 </div>
+                {% endif %}
               </div>
               <div class="clip-score-batch-controls{% if not clip_rows %} d-none{% endif %}" id="clip-score-batch-controls">
                 {% set schedule_all_ns = namespace(count=0) %}
@@ -4193,7 +4295,7 @@
                   {% endif %}
                 {% endfor %}
                 <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
-                  Auto-create clips scoring ≥ <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
+                  {% if generate_v2 %}Auto-create ≥{% else %}Auto-create clips scoring ≥{% endif %} <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
                 </label>
                 <input
                   type="range"
@@ -4205,7 +4307,7 @@
                   value="70">
                 <button type="button" class="btn btn-sm btn-primary d-inline-flex align-items-center gap-2" id="clip-score-batch-create-btn" disabled>
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                  <span class="btn-label">Create 0 clips (score ≥ 70)</span>
+                  <span class="btn-label">{% if generate_v2 %}Create 0 clips{% else %}Create 0 clips (score ≥ 70){% endif %}</span>
                 </button>
                 <button
                   type="button"
@@ -6711,6 +6813,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!frame || !statusCopy) {
       return {
         seekAndPlay: () => false,
+        pause: () => {},
         captureState: () => null,
         restoreState: () => false,
         destroy: () => {},
@@ -6760,6 +6863,7 @@ document.addEventListener("DOMContentLoaded", () => {
       renderFallback("Source player unavailable for this video.", source?.watch_url || "");
       return {
         seekAndPlay: () => false,
+        pause: () => {},
         captureState: () => null,
         restoreState: () => false,
         destroy,
@@ -6799,6 +6903,11 @@ document.addEventListener("DOMContentLoaded", () => {
           } catch (_) {
             return false;
           }
+        },
+        pause: () => {
+          try {
+            video.pause();
+          } catch (_) {}
         },
         captureState: () => ({
           currentTime: Number(video.currentTime || 0),
@@ -6900,6 +7009,11 @@ document.addEventListener("DOMContentLoaded", () => {
             return false;
           }
         },
+        pause() {
+          try {
+            this.player?.pauseVideo?.();
+          } catch (_) {}
+        },
         destroy,
       };
       loadYoutubeIframeApi()
@@ -6960,6 +7074,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderFallback("Source player unavailable for this video.", source?.watch_url || "");
     return {
       seekAndPlay: () => false,
+      pause: () => {},
       captureState: () => null,
       restoreState: () => false,
       destroy,
@@ -7541,7 +7656,7 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
         const useCompactTime = !!document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
         const timeCopy = useCompactTime
-          ? formatSecondsCompact(segment.start)
+          ? `${formatSecondsCompact(segment.start)} – ${formatSecondsCompact(segment.end)}`
           : `${segment.startLabel} – ${segment.endLabel}`;
         timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(timeCopy)}&nbsp;</span>`;
 
@@ -7814,6 +7929,7 @@ document.addEventListener("DOMContentLoaded", () => {
         segment.rowEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
         return segment;
       },
+      pausePlayer: () => player.pause?.(),
       capturePlayerState: () => player.captureState?.() || null,
       restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
       destroy: () => {
@@ -7972,6 +8088,26 @@ const escapeHtml = window.escapeHtml || ((value) => String(value || "")
 
 const getGenerateV2Root = () => document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
 
+const pauseGenerateV2WorkbenchVideos = ({ except = null, pauseSourcePlayer = false } = {}) => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll("video").forEach((video) => {
+    if (except && video === except) {
+      return;
+    }
+    try {
+      video.pause();
+    } catch (_) {}
+  });
+  if (pauseSourcePlayer) {
+    try {
+      window.__trsClipSelectorController?.pausePlayer?.();
+    } catch (_) {}
+  }
+};
+
 const getGenerateV2StorageKey = (root) => `minti:generate-v2-tab:v${root?.dataset.videoId || "unknown"}`;
 
 const readGenerateV2StoredTab = (root) => {
@@ -8079,6 +8215,7 @@ const selectGenerateV2Clip = (planIndex = "") => {
   }
   const fallbackPlanIndex = getGenerateV2FallbackPlanIndex();
   const normalized = String(planIndex || panel.dataset.activePlanIndex || fallbackPlanIndex || "").trim();
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: false });
   restoreGenerateV2MountedClip();
   panel.dataset.activePlanIndex = normalized;
   const railItems = Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"));
@@ -8103,6 +8240,8 @@ window.setGenerateV2ActiveTab = (tab, { persist = true, selectedPlanIndex = "" }
     return;
   }
   const normalized = tab === "transcript" ? "transcript" : "shorts";
+  const previousTab = root.dataset.activeTab || "";
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: previousTab === "transcript" && normalized !== "transcript" });
   root.dataset.activeTab = normalized;
   if (persist) {
     writeGenerateV2StoredTab(root, normalized);
@@ -8146,11 +8285,6 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   }
   if (clipPanel && preferredPlanIndex) {
     clipPanel.dataset.activePlanIndex = String(preferredPlanIndex || "").trim();
-  }
-  const clipHeaderActions = clipPanel?.querySelector(".clip-pane-header > div:last-child");
-  const scoreControls = clipPanel?.querySelector("#clip-score-batch-controls");
-  if (clipHeaderActions && scoreControls && scoreControls.parentElement !== clipHeaderActions) {
-    clipHeaderActions.appendChild(scoreControls);
   }
   sourceLayout?.classList.add("is-arranged");
   syncGenerateV2WorkbenchHeight();
@@ -8325,6 +8459,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   const currentModalEl = document.getElementById("clip-detail-modal");
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
   restoreGenerateV2MountedClip();
   if (currentModalEl?.classList.contains("show")) {
     document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
@@ -9349,7 +9484,9 @@ const updateScoreBatchControls = () => {
   }
   applyScoreThresholdDimming(threshold);
   const count = getQualifyingScoreClipTargets(threshold).length;
-  label.textContent = `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
+  label.textContent = getGenerateV2Root()
+    ? `Create ${count} ${count === 1 ? "clip" : "clips"}`
+    : `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
   button.disabled = !hasClips || scoreBatchState.running || count === 0;
   spinner?.classList.toggle("d-none", !scoreBatchState.running);
 };
