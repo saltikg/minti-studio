@@ -293,10 +293,9 @@ def refresh() -> dict[str, Any]:
                 failures.append(f"{competitor['name']}: {exc}; kept previous section")
                 continue
             failures.append(f"{competitor['name']}: {exc}; no previous section")
-    missing = [_section_key(item["name"]) for item in COMPETITORS if _section_key(item["name"]) not in sections]
-    if missing:
+    if not sections:
         detail = "; ".join(failures) if failures else "no failure details"
-        raise RuntimeError("Refusing to write partial competitor_facts.md; missing sections: " + ", ".join(missing) + f" ({detail})")
+        raise RuntimeError("Refusing to write empty competitor_facts.md; no sections available (" + detail + ")")
     write_atomic(render_file(sections))
     return {"updated": updated, "failures": failures, "path": str(FACTS_PATH), "cost_usd": str(total_cost)}
 
