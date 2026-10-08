@@ -238,6 +238,51 @@
     cursor: default;
     pointer-events: none;
   }
+  .short-design-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px 18px;
+    padding: 14px 16px;
+    border: 1px solid rgba(45, 212, 191, 0.18);
+    background: linear-gradient(135deg, rgba(45, 212, 191, 0.1), rgba(255, 255, 255, 0.025));
+  }
+  .short-design-strip-main {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+  .short-design-strip-label {
+    color: #8fe3d7;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+  .short-design-strip-summary {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 0.94rem;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .short-design-strip-helper {
+    color: rgba(255, 255, 255, 0.56);
+    font-size: 0.82rem;
+  }
+  .short-design-strip-action {
+    flex: 0 0 auto;
+    min-height: 38px;
+    border-color: rgba(45, 212, 191, 0.5);
+    background: #2dd4bf;
+    color: #062d2a;
+    font-weight: 800;
+  }
+  .short-design-strip-action:hover,
+  .short-design-strip-action:focus-visible {
+    border-color: rgba(143, 227, 215, 0.75);
+    background: #8fe3d7;
+    color: #062d2a;
+  }
   .editor-topbar-editor-btn {
     min-height: 40px;
     padding: 0.5rem 0.95rem;
@@ -450,6 +495,13 @@
     text-align: left;
   }
   @media (max-width: 767.98px) {
+    .short-design-strip {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .short-design-strip-action {
+      width: 100%;
+    }
     .editor-empty-shell {
       padding: 24px 18px;
       border-radius: 20px;
@@ -3369,6 +3421,39 @@
   </div>
 </div>
 
+{% if generate_v2 %}
+  {% set caption_ns = namespace(label=(selected_subtitle_preset or 'default')|replace('_', ' ')|title) %}
+  {% for template in style_templates %}
+    {% if template.subtitle_preset == selected_subtitle_preset %}
+      {% set caption_ns.label = template.label %}
+    {% endif %}
+  {% endfor %}
+  {% set design_layout_label = 'Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill') %}
+  <div class="gs-card short-design-strip mb-3"
+       data-short-design-strip
+       data-caption-label="{{ caption_ns.label }}"
+       data-layout-label="{{ design_layout_label }}"
+       data-title-enabled="{{ '1' if selected_show_title else '0' }}"
+       data-subscribe-enabled="{{ '1' if selected_subscribe_overlay else '0' }}">
+    <div class="short-design-strip-main">
+      <div class="short-design-strip-label">Short design</div>
+      <div class="short-design-strip-summary" id="short-design-summary">
+        {{ caption_ns.label }} · {{ design_layout_label }} · Title {{ 'on' if selected_show_title else 'off' }} · Subscribe animation {{ 'on' if selected_subscribe_overlay else 'off' }}
+      </div>
+      <div class="short-design-strip-helper">Applies to every Short you create from this video</div>
+    </div>
+    <button type="button"
+            class="btn short-design-strip-action"
+            id="design-shorts-btn"
+            data-open-editor-target="choose-crop-btn">
+      Design Shorts
+    </button>
+  </div>
+  {% if editor_ready %}
+    <div id="transcribe-live-status" class="alert alert-secondary py-2 px-3 mt-2 d-none small" role="status" aria-live="polite"></div>
+  {% endif %}
+{% endif %}
+
 {% if editor_processing %}
   <div class="alert alert-info">
     Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.
@@ -3380,7 +3465,7 @@
 {% set step2_enabled = has_transcript %}
 {% set step3_enabled = plan_exists %}
 
-{% if editor_ready %}
+{% if editor_ready and not generate_v2 %}
 <div class="gs-card mb-3 editor-topbar-card">
   <div class="editor-topbar-map-wrap">
     {{ flow_step_map(5 if created_clip_count > 0 else 3, None, None, 'publish-jump-btn', created_clip_count > 0, 'editor-flow', 'step-edit-btn', 'choose-crop-btn', video.id) }}
@@ -7090,9 +7175,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const transcriptSelector = document.getElementById("transcript-range-selector");
   const step2JumpBtn = document.getElementById("step2-jump-btn");
   const stepEditBtn = document.getElementById("step-edit-btn");
+  const designShortsBtn = document.getElementById("design-shorts-btn");
   const publishJumpBtn = document.getElementById("publish-jump-btn");
   const clipList = document.getElementById("clip-management-panel");
   const editModal = document.getElementById("crop-area-modal");
+  window.updateShortDesignStrip = (details = {}) => {
+    const strip = document.querySelector("[data-short-design-strip]");
+    const summary = document.getElementById("short-design-summary");
+    if (!strip || !summary) {
+      return;
+    }
+    const captionLabel = String(details.captionLabel || strip.dataset.captionLabel || "Default").trim();
+    const layoutLabel = String(details.layoutLabel || strip.dataset.layoutLabel || "Fit").trim();
+    const titleEnabled = details.titleEnabled === undefined
+      ? strip.dataset.titleEnabled === "1"
+      : !!details.titleEnabled;
+    const subscribeEnabled = details.subscribeEnabled === undefined
+      ? strip.dataset.subscribeEnabled === "1"
+      : !!details.subscribeEnabled;
+    strip.dataset.captionLabel = captionLabel;
+    strip.dataset.layoutLabel = layoutLabel;
+    strip.dataset.titleEnabled = titleEnabled ? "1" : "0";
+    strip.dataset.subscribeEnabled = subscribeEnabled ? "1" : "0";
+    summary.textContent = `${captionLabel} · ${layoutLabel} · Title ${titleEnabled ? "on" : "off"} · Subscribe animation ${subscribeEnabled ? "on" : "off"}`;
+  };
   const getEditVisitedKey = (videoId) => `minti:editor-visited:v${videoId}`;
   const canPulseEditNode = () => {
     if (!stepEditBtn) {
@@ -7143,6 +7249,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!targetId) {
         return;
       }
+      document.getElementById(targetId)?.click();
+    });
+  }
+  if (designShortsBtn) {
+    designShortsBtn.addEventListener("click", () => {
+      const targetId = designShortsBtn.dataset.openEditorTarget || "choose-crop-btn";
       document.getElementById(targetId)?.click();
     });
   }
@@ -12164,6 +12276,22 @@ document.addEventListener("DOMContentLoaded", () => {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
   };
+  const currentShortDesignDetails = () => {
+    const activeStyleCard = modalEl.querySelector("[data-style-template-card].is-active");
+    const activeStyleLabel = activeStyleCard?.querySelector(".style-template-card-title")?.textContent?.trim();
+    const presetLabel = String(subtitlePresetField?.value || "default")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+    const layoutLabel = getEffectiveSplitEnabled()
+      ? "Fill split"
+      : ((activeCropAspect || "landscape") === "landscape" ? "Fit" : "Fill");
+    return {
+      captionLabel: activeStyleLabel || presetLabel || "Default",
+      layoutLabel,
+      titleEnabled: !!showTitleToggle?.checked,
+      subscribeEnabled: !!subscribeToggle?.checked,
+    };
+  };
 
   saveDefaultBtn?.addEventListener("click", async () => {
     setSaveStatus("", "");
@@ -12307,6 +12435,7 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.subscribeVisualKey = activeSubscribeKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
       }
+      window.updateShortDesignStrip?.(currentShortDesignDetails());
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");

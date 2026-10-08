@@ -7758,8 +7758,15 @@ def generate_short(video_pk):
         except Exception:
             pass
     current_user = getattr(g, "vs_current_user", None)
+    current_user_id = str((current_user or {}).get("id") or "").strip()
+    generate_v2_user_ids = {
+        user_id.strip()
+        for user_id in str(os.getenv("GENERATE_V2_USER_IDS") or "").split(",")
+        if user_id.strip()
+    }
+    generate_v2 = bool(current_user_id and current_user_id in generate_v2_user_ids)
     hide_clip_coachmark = load_user_bool_preference(
-        current_user.get("id") if current_user else None,
+        current_user_id if current_user else None,
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
         default=False,
     )
@@ -9278,6 +9285,7 @@ def generate_short(video_pk):
         is_admin=is_admin,
         editor_is_admin_operation=editor_context["is_admin_operation"],
         editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
+        generate_v2=generate_v2,
         latest_scheduled_display=latest_scheduled_display,
         channel_latest_scheduled_display=channel_latest_scheduled_display,
         static_visual_options=static_visual_options,
