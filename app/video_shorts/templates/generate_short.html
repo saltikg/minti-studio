@@ -1659,6 +1659,102 @@
   .clip-card-repository {
     display: none;
   }
+  .generate-v2-workbench {
+    align-items: start;
+  }
+  .generate-v2-left-card,
+  .generate-v2-right-card {
+    min-height: 100%;
+  }
+  .generate-v2-tabbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    margin-bottom: 14px;
+    border: 1px solid rgba(45, 212, 191, 0.18);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.62);
+  }
+  .generate-v2-tab {
+    border: 0;
+    border-radius: 9px;
+    padding: 8px 12px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.88rem;
+    font-weight: 750;
+  }
+  .generate-v2-tab.is-active {
+    background: rgba(45, 212, 191, 0.16);
+    color: #ccfbf1;
+    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.22);
+  }
+  .generate-v2-panel,
+  .generate-v2-right-panel {
+    display: none;
+  }
+  .generate-v2-panel.is-active,
+  .generate-v2-right-panel.is-active {
+    display: block;
+  }
+  .generate-v2-panel > .gs-card,
+  .generate-v2-panel > .clip-management-panel,
+  .generate-v2-right-panel > .gs-card {
+    margin: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+  .generate-v2-right-panel > .clip-source-player-card {
+    padding: 0;
+  }
+  .generate-v2-selected-mount {
+    min-height: 360px;
+  }
+  .generate-v2-selected-mount .clip-card {
+    display: block;
+  }
+  .generate-v2-selected-mount .clip-card-body {
+    display: block;
+  }
+  .generate-v2-selected-mount .clip-card-media {
+    max-width: 360px;
+    margin: 0 auto;
+  }
+  .generate-v2-selected-mount .clip-card-media video {
+    width: 100%;
+    aspect-ratio: 9 / 16;
+    object-fit: contain;
+    background: #050812;
+    border-radius: 18px;
+  }
+  .generate-v2-selected-mount .clip-card-main {
+    margin-top: 16px;
+    padding-right: 0;
+  }
+  .generate-v2-selected-mount .clip-card-title-row,
+  .generate-v2-selected-mount .clip-card-transcript,
+  .generate-v2-selected-mount .clip-title-suggestion-feedback,
+  .generate-v2-selected-mount .clip-card-save-feedback,
+  .generate-v2-selected-mount .clip-card-main > form.mb-0 {
+    display: none;
+  }
+  .generate-v2-empty-preview {
+    min-height: 360px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.58);
+    border: 1px dashed rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .generate-v2-source-layout.is-arranged {
+    display: none;
+  }
   .clip-detail-modal .modal-dialog {
     max-width: min(1080px, calc(100vw - 32px));
   }
@@ -3578,10 +3674,50 @@
 
   <div class="col-12">
     {% if has_transcript %}
-      <div id="clip-workbench-shell">
-      <div class="row g-3 clip-workbench-row">
+      <div id="clip-workbench-shell"
+           {% if generate_v2 %}
+           data-generate-v2="1"
+           data-video-id="{{ video.id }}"
+           data-default-tab="{{ 'shorts' if clip_rows else 'transcript' }}"
+           {% endif %}>
+      {% if generate_v2 %}
+      <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>
+        <div class="col-12 col-xl-7">
+          <div class="gs-card generate-v2-left-card">
+            <div class="generate-v2-tabbar" role="tablist" aria-label="Clip workflow">
+              <button type="button"
+                      class="generate-v2-tab"
+                      data-generate-v2-tab="shorts"
+                      role="tab"
+                      aria-selected="false">
+                Shorts ({{ total_clip_count }})
+              </button>
+              <button type="button"
+                      class="generate-v2-tab"
+                      data-generate-v2-tab="transcript"
+                      role="tab"
+                      aria-selected="false">
+                Pick from transcript
+              </button>
+            </div>
+            <div class="generate-v2-panel" data-generate-v2-panel="shorts"></div>
+            <div class="generate-v2-panel" data-generate-v2-panel="transcript"></div>
+          </div>
+        </div>
+        <div class="col-12 col-xl-5 clip-workbench-side">
+          <div class="generate-v2-right-panel" data-generate-v2-right="shorts">
+            <div class="gs-card generate-v2-right-card">
+              <div id="generate-v2-selected-clip-mount" class="generate-v2-selected-mount"></div>
+              <div id="generate-v2-empty-preview" class="generate-v2-empty-preview d-none">Select a Short to preview it here.</div>
+            </div>
+          </div>
+          <div class="generate-v2-right-panel" data-generate-v2-right="transcript"></div>
+        </div>
+      </div>
+      {% endif %}
+      <div class="row g-3 clip-workbench-row{% if generate_v2 %} generate-v2-source-layout{% endif %}"{% if generate_v2 %} data-generate-v2-source-layout{% endif %}>
         <div class="col-12 col-xl-6">
-          <div class="gs-card h-100">
+          <div class="gs-card h-100"{% if generate_v2 %} data-generate-v2-transcript-card{% endif %}>
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
               <h5 class="mb-0">Transcript{% if transcript_language %} <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle">{{ transcript_language|upper }}</span>{% endif %} <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
             </div>
@@ -3638,7 +3774,7 @@
           </div>
         </div>
         <div class="col-12 col-xl-6 clip-workbench-side">
-          <div class="gs-card clip-source-player-card">
+          <div class="gs-card clip-source-player-card"{% if generate_v2 %} data-generate-v2-source-player-card{% endif %}>
             <div class="trs-player-shell" id="trs-player-shell">
               <div class="trs-player-frame" id="trs-player-frame"></div>
               <div class="trs-player-status">
@@ -5630,6 +5766,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (typeof refreshClipList === "function") {
           const ok = await refreshClipList(payload.plan_index || "", "list");
           if (ok) {
+            window.setGenerateV2ActiveTab?.("shorts", {
+              selectedPlanIndex: payload.plan_index || "",
+            });
             const createdCard = getClipCardByPlanIndex(payload.plan_index || "");
             if (createdCard) {
               const createdPlanIndex = String(payload.plan_index || "").trim();
@@ -7308,6 +7447,155 @@ const escapeHtml = window.escapeHtml || ((value) => String(value || "")
   .replace(/"/g, "&quot;")
   .replace(/'/g, "&#39;"));
 
+const getGenerateV2Root = () => document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
+
+const getGenerateV2StorageKey = (root) => `minti:generate-v2-tab:v${root?.dataset.videoId || "unknown"}`;
+
+const readGenerateV2StoredTab = (root) => {
+  try {
+    return window.localStorage.getItem(getGenerateV2StorageKey(root)) || "";
+  } catch (_) {
+    return "";
+  }
+};
+
+const writeGenerateV2StoredTab = (root, tab) => {
+  try {
+    window.localStorage.setItem(getGenerateV2StorageKey(root), tab);
+  } catch (_) {
+    // Ignore storage failures; tab persistence is optional.
+  }
+};
+
+const restoreGenerateV2MountedClip = () => {
+  const repository = document.getElementById("clip-card-repository");
+  const mount = document.getElementById("generate-v2-selected-clip-mount");
+  if (!repository || !mount) {
+    return;
+  }
+  Array.from(mount.querySelectorAll(".clip-card")).forEach((card) => {
+    repository.appendChild(card);
+  });
+};
+
+const getGenerateV2FallbackPlanIndex = () => {
+  const railItems = Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"));
+  const rendered = railItems.find((item) => {
+    const status = String(item.dataset.status || "").trim().toLowerCase();
+    return status === "created" && String(item.dataset.filename || "").trim();
+  });
+  return rendered?.dataset.planIndex || railItems[0]?.dataset.planIndex || "";
+};
+
+const selectGenerateV2Clip = (planIndex = "") => {
+  const root = getGenerateV2Root();
+  const panel = document.getElementById("clip-management-panel");
+  const mount = document.getElementById("generate-v2-selected-clip-mount");
+  const empty = document.getElementById("generate-v2-empty-preview");
+  const repository = document.getElementById("clip-card-repository");
+  if (!root || !panel || !mount || !repository) {
+    return;
+  }
+  const fallbackPlanIndex = getGenerateV2FallbackPlanIndex();
+  const normalized = String(planIndex || panel.dataset.activePlanIndex || fallbackPlanIndex || "").trim();
+  restoreGenerateV2MountedClip();
+  panel.dataset.activePlanIndex = normalized;
+  const railItems = Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"));
+  railItems.forEach((item) => {
+    item.classList.toggle("is-active", String(item.dataset.planIndex || "").trim() === normalized);
+  });
+  const activeCard = normalized ? getClipCardByPlanIndex(normalized) : null;
+  Array.from(document.querySelectorAll(".clip-card")).forEach((card) => {
+    card.classList.toggle("is-active", card === activeCard);
+  });
+  if (activeCard) {
+    mount.appendChild(activeCard);
+  }
+  mount.classList.toggle("d-none", !activeCard);
+  empty?.classList.toggle("d-none", !!activeCard);
+};
+
+window.setGenerateV2ActiveTab = (tab, { persist = true, selectedPlanIndex = "" } = {}) => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return;
+  }
+  const normalized = tab === "transcript" ? "transcript" : "shorts";
+  root.dataset.activeTab = normalized;
+  if (persist) {
+    writeGenerateV2StoredTab(root, normalized);
+  }
+  root.querySelectorAll("[data-generate-v2-tab]").forEach((button) => {
+    const isActive = button.dataset.generateV2Tab === normalized;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  root.querySelectorAll("[data-generate-v2-panel]").forEach((panel) => {
+    panel.classList.toggle("is-active", panel.dataset.generateV2Panel === normalized);
+  });
+  root.querySelectorAll("[data-generate-v2-right]").forEach((panel) => {
+    panel.classList.toggle("is-active", panel.dataset.generateV2Right === normalized);
+  });
+  if (normalized === "shorts") {
+    selectGenerateV2Clip(selectedPlanIndex || "");
+  }
+};
+
+const initGenerateV2Workbench = (preferredPlanIndex = "") => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return false;
+  }
+  const sourceLayout = root.querySelector("[data-generate-v2-source-layout]");
+  const transcriptCard = root.querySelector("[data-generate-v2-transcript-card]");
+  const sourcePlayerCard = root.querySelector("[data-generate-v2-source-player-card]");
+  const clipPanel = document.getElementById("clip-management-panel");
+  const shortsPanel = root.querySelector("[data-generate-v2-panel='shorts']");
+  const transcriptPanel = root.querySelector("[data-generate-v2-panel='transcript']");
+  const transcriptRight = root.querySelector("[data-generate-v2-right='transcript']");
+  if (shortsPanel && clipPanel && clipPanel.parentElement !== shortsPanel) {
+    shortsPanel.appendChild(clipPanel);
+  }
+  if (transcriptPanel && transcriptCard && transcriptCard.parentElement !== transcriptPanel) {
+    transcriptPanel.appendChild(transcriptCard);
+  }
+  if (transcriptRight && sourcePlayerCard && sourcePlayerCard.parentElement !== transcriptRight) {
+    transcriptRight.appendChild(sourcePlayerCard);
+  }
+  if (clipPanel && preferredPlanIndex) {
+    clipPanel.dataset.activePlanIndex = String(preferredPlanIndex || "").trim();
+  }
+  sourceLayout?.classList.add("is-arranged");
+  root.querySelectorAll("[data-generate-v2-tab]").forEach((button) => {
+    if (button.dataset.generateV2Bound === "1") {
+      return;
+    }
+    button.dataset.generateV2Bound = "1";
+    button.addEventListener("click", () => {
+      window.setGenerateV2ActiveTab(button.dataset.generateV2Tab || "shorts");
+    });
+  });
+  document.querySelectorAll("#clip-rail-list .clip-rail-item").forEach((item) => {
+    if (item.dataset.generateV2SelectBound === "1") {
+      return;
+    }
+    item.dataset.generateV2SelectBound = "1";
+    item.addEventListener("click", () => {
+      window.setGenerateV2ActiveTab("shorts", {
+        selectedPlanIndex: item.dataset.planIndex || "",
+      });
+    });
+  });
+  const storedTab = readGenerateV2StoredTab(root);
+  const defaultTab = root.dataset.defaultTab === "shorts" ? "shorts" : "transcript";
+  const activeTab = storedTab === "shorts" || storedTab === "transcript" ? storedTab : defaultTab;
+  window.setGenerateV2ActiveTab(activeTab, {
+    persist: false,
+    selectedPlanIndex: preferredPlanIndex || "",
+  });
+  return true;
+};
+
 const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null) => {
   const panel = document.getElementById("clip-management-panel");
   const listPane = document.getElementById("clip-pane-list");
@@ -7319,6 +7607,10 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
   const modalMeta = document.getElementById("clip-detail-modal-meta");
   const modalPlatforms = document.getElementById("clip-detail-modal-platforms");
   if (!panel || !listPane || !railList || !repository || !modalEl || !modalMount) {
+    return;
+  }
+  if (getGenerateV2Root()) {
+    initGenerateV2Workbench(preferredPlanIndex || panel.dataset.activePlanIndex || "");
     return;
   }
   const railItems = Array.from(railList.querySelectorAll(".clip-rail-item"));
@@ -7442,6 +7734,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   const currentModalEl = document.getElementById("clip-detail-modal");
+  restoreGenerateV2MountedClip();
   if (currentModalEl?.classList.contains("show")) {
     document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
     if (typeof bootstrap !== "undefined") {
