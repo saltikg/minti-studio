@@ -1893,14 +1893,33 @@
       overflow: hidden;
       margin-bottom: 0 !important;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench > [class*="col-"] {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench > .clip-workbench-side {
+      position: relative;
+      top: auto;
+      overflow: hidden;
+      max-height: none;
+      gap: 0;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-card,
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
       height: 100%;
       min-height: 0;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
       padding: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-card {
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
+      overflow-y: auto;
+      overflow-x: hidden;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabbar {
       flex: 0 0 auto;
@@ -2010,25 +2029,28 @@
       overflow: auto;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-panel.is-active {
+      flex: 1 1 auto;
       height: 100%;
       min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
       position: sticky;
-      top: 12px;
+      top: 0;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount {
       min-height: 0;
-      flex: 1 1 auto;
-      overflow: hidden;
+      flex: 0 0 auto;
+      overflow: visible;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card {
-      height: 100%;
+      height: auto;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-body {
-      height: 100%;
+      height: auto;
       min-height: 0;
       display: flex;
       flex-direction: column;
@@ -2044,8 +2066,8 @@
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-media video {
       width: auto;
       max-width: 100%;
-      height: min(100%, calc(var(--generate-v2-workbench-height) - 220px));
-      max-height: calc(var(--generate-v2-workbench-height) - 220px);
+      height: min(58vh, calc(var(--generate-v2-workbench-height) - 230px));
+      max-height: calc(var(--generate-v2-workbench-height) - 230px);
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount .clip-card-main {
       flex: 0 0 auto;
@@ -4271,6 +4293,18 @@
                       ⋯
                     </button>
                     <div class="dropdown-menu dropdown-menu-end clip-rail-delete-menu">
+                      {% if row.status == "created" and row.video_filename %}
+                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
+                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
+                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                          <button
+                            type="submit"
+                            class="dropdown-item"
+                            data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
+                            Delete video only
+                          </button>
+                        </form>
+                      {% endif %}
                       <button
                         type="button"
                         class="dropdown-item"
@@ -4356,6 +4390,14 @@
                 {% set modal_fb_tooltip_label = "Published date" if "published" in modal_fb_label_lower else "Schedule date" %}
                 {% set modal_fb_tooltip = modal_fb_tooltip_label ~ ": " ~ modal_fb_tooltip %}
               {% endif %}
+              {% if generate_v2 %}
+                {% set v2_card_start_seconds = (row.start or 0)|int %}
+                {% set v2_card_end_seconds = (row.end or 0)|int %}
+                {% set v2_card_duration_seconds = (row.duration if row.duration is not none else (v2_card_end_seconds - v2_card_start_seconds))|int %}
+                {% set clip_start_label = (v2_card_start_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_start_seconds % 60) %}
+                {% set clip_end_label = (v2_card_end_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_end_seconds % 60) %}
+                {% set clip_duration_label = (v2_card_duration_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_duration_seconds % 60) %}
+              {% endif %}
             <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
                  data-origin="{{ row.origin }}"
@@ -4375,7 +4417,11 @@
               <div class="clip-card-strip {{ row.status }}"></div>
               <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
                 <div class="clip-card-meta-time">
-                  {{ clip_start_label }} – {{ clip_end_label }} ({{ clip_duration_label }})
+                  {% if generate_v2 %}
+                    {{ clip_start_label }} – {{ clip_end_label }} · {{ clip_duration_label }}
+                  {% else %}
+                    {{ clip_start_label }} – {{ clip_end_label }} ({{ clip_duration_label }})
+                  {% endif %}
                 </div>
                 <div class="clip-card-meta-status">
                   <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
@@ -4468,17 +4514,19 @@
                         <span class="visually-hidden">Open video</span>
                         <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
                       </a>
-                      <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
-                        <input type="hidden" name="filename" value="{{ row.video_filename }}">
-                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                        <button
-                          type="submit"
-                          class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
-                          data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
-                          <i class="bi bi-trash3" aria-hidden="true"></i>
-                          <span>Delete video (keep clip)</span>
-                        </button>
-                      </form>
+                      {% if not generate_v2 %}
+	                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
+	                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
+	                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+	                          <button
+	                            type="submit"
+	                            class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
+	                            data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
+	                            <i class="bi bi-trash3" aria-hidden="true"></i>
+	                            <span>Delete video (keep clip)</span>
+	                          </button>
+	                        </form>
+                      {% endif %}
                     </div>
                   {% else %}
                     <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
