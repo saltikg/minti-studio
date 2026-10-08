@@ -312,9 +312,7 @@ def validate_tier_prices(facts: dict[str, Any], price_candidates: list[dict[str,
             current["price_unverified"] = False
         elif verified_positive:
             candidate = verified_positive[0]
-            candidate_numbers = _positive_numbers(candidate.get("display", ""))
-            if not price_numbers or not price_numbers.issubset(candidate_numbers):
-                current["monthly_price"] = candidate["display"]
+            current["monthly_price"] = candidate["display"]
             current["price_unverified"] = False
         else:
             current["monthly_price"] = None
