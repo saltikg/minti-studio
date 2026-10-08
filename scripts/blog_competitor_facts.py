@@ -322,6 +322,7 @@ def validate_tier_prices(facts: dict[str, Any], price_candidates: list[dict[str,
             current["notes"] = _strip_zero_price_items(current.get("notes"))
         normalized.append(current)
     facts["pricing_tiers"] = normalized
+    facts["notes"] = _strip_zero_price_items(facts.get("notes"))
     return facts
 
 
