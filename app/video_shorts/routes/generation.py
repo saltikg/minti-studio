@@ -25700,18 +25700,19 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         generated_columns = table_columns(conn, "shorts_generated_videos")
         if "render_settings_hash" not in generated_columns:
             return jsonify(success=False, message="Render settings tracking has not been migrated yet."), 409
-        generated_row = conn.execute(
-            """
+        generated_sql = """
             SELECT render_settings_hash, publish_status, youtube_video_id, instagram_media_id, facebook_video_id, tiktok_video_id
             FROM shorts_generated_videos
             WHERE CAST(source_video_id AS VARCHAR) = ?
               AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
               AND clip_filename = ?
-              AND (brand_id = ? OR ? IS NULL)
-            LIMIT 1
-            """,
-            [source_video_id, clip_filename, brand_id, brand_id],
-        ).fetchone()
+        """
+        generated_params: List[Any] = [source_video_id, clip_filename]
+        if brand_id:
+            generated_sql += " AND brand_id = ?"
+            generated_params.append(brand_id)
+        generated_sql += " LIMIT 1"
+        generated_row = conn.execute(generated_sql, generated_params).fetchone()
     finally:
         conn.close()
     stored_hash = str((generated_row[0] if generated_row else "") or "").strip()
