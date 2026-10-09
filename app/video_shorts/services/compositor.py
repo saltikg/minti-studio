@@ -2441,8 +2441,9 @@ def _compose_trimmed_with_background(
                         f"{fit_bg_labels[idx]}trim=duration={seg_duration:.6f},"
                         f"setpts=PTS-STARTPTS,settb=AVTB{fit_bg}"
                     )
+                    fit_overlay_y = _fmt(face_aware_fit_metrics["frame_top"])
                     filter_parts.append(
-                        f"{fit_bg}{fit_scaled}overlay=(W-w)/2:(H-h)/2:shortest=1,"
+                        f"{fit_bg}{fit_scaled}overlay=(W-w)/2:{fit_overlay_y}:shortest=1,"
                         f"format=yuv420p,settb=AVTB{seg_out}"
                     )
                 else:
@@ -2461,22 +2462,17 @@ def _compose_trimmed_with_background(
                                 time_expr=segment_time_expr,
                             ) or _fmt(crop_x + crop_w / 2.0)
                             seg_crop_x_expr_raw = f"min(max(({seg_cx_expr})-{_fmt(seg_crop_w / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_w))})"
-                            segment_points = [
-                                point for point in face_track_points
-                                if seg_start <= float(point.get("t") or 0.0) <= seg_end and float(point.get("cy") or 0.0) > 0
-                            ]
-                            if segment_points:
-                                cy_values = sorted(float(point.get("cy") or 0.0) for point in segment_points)
-                                mid = len(cy_values) // 2
-                                median_cy = cy_values[mid] if len(cy_values) % 2 else (cy_values[mid - 1] + cy_values[mid]) / 2.0
-                            else:
-                                median_cy = crop_y + crop_h / 2.0
+                            seg_cy_expr = _piecewise_linear_ratio_expr(
+                                face_track_points,
+                                "cy",
+                                time_expr=segment_time_expr,
+                            ) or _fmt(crop_y + crop_h / 2.0)
+                            seg_crop_y_expr_raw = f"min(max(({seg_cy_expr})-{_fmt(seg_crop_h / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_h))})"
                         else:
                             seg_crop_x_expr_raw = f"{_fmt(crop_x + (crop_w - seg_crop_w) / 2.0)}"
-                            median_cy = crop_y + crop_h / 2.0
-                        seg_crop_y = max(0.0, min(1.0 - seg_crop_h, median_cy - (seg_crop_h * 0.33)))
+                            seg_crop_y_expr_raw = f"{_fmt(crop_y + (crop_h - seg_crop_h) / 2.0)}"
                         seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_crop_x_expr_raw)})"
-                        seg_crop_y_expr = f"ih*{_fmt(seg_crop_y)}"
+                        seg_crop_y_expr = f"ih*({_ffmpeg_filter_expr(seg_crop_y_expr_raw)})"
                         seg_crop_w_for_filter = seg_crop_w
                         seg_crop_h_for_filter = seg_crop_h
                     elif dynamic_crop_enabled:

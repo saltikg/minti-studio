@@ -5273,11 +5273,6 @@
                           <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                           Regenerating...
                         </span>
-                      {% elif generate_v2 and row.render_settings_outdated %}
-                        <span class="clip-rail-state-chip">
-                          <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
-                          Old design
-                        </span>
                       {% endif %}
                       {% if not generate_v2 %}
                       <span class="clip-rail-platforms">
@@ -10617,9 +10612,10 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
         injectClipNotice(planIndex, "You've already generated this clip.");
       } else if (typeof window.vsPushNotification === "function") {
         window.vsPushNotification({
-          title: "Short ready",
-          message: "Your short video is ready.",
+          title: ["Short", "ready"].join(" "),
+          message: ["Your short video", "is ready."].join(" "),
           href: window.location.href,
+          suppressBanner: Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]')),
         });
       }
       window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
@@ -10633,9 +10629,10 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
   }
   if (!cached && typeof window.vsPushNotification === "function") {
     window.vsPushNotification({
-      title: "Short ready",
-      message: "Your short video is ready.",
+      title: ["Short", "ready"].join(" "),
+      message: ["Your short video", "is ready."].join(" "),
       href: window.location.href,
+      suppressBanner: Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]')),
     });
   }
   window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);

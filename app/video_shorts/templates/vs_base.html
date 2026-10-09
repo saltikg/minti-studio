@@ -1181,7 +1181,7 @@
         }
       };
 
-      window.vsPushNotification = ({ title, message, href }) => {
+      window.vsPushNotification = ({ title, message, href, suppressBanner = false }) => {
         const items = readNotifications();
         items.push({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1192,7 +1192,9 @@
         });
         writeNotifications(items.slice(-20));
         renderNotificationBadge();
-        renderNotificationBanner();
+        if (!suppressBanner) {
+          renderNotificationBanner();
+        }
         renderNotificationMenu();
       };
 
