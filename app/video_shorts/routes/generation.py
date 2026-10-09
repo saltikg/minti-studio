@@ -6825,6 +6825,11 @@ def _build_render_job_options(
 
 def _render_settings_hash_from_options(options: Dict[str, Any]) -> str:
     payload = canonical_render_settings(options or {})
+    return _raw_render_settings_hash_from_options(payload)
+
+
+def _raw_render_settings_hash_from_options(options: Dict[str, Any]) -> str:
+    payload = dict(options or {})
     payload.pop("plan_index", None)
     payload.pop("brand_id", None)
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
@@ -6903,6 +6908,7 @@ def _compute_render_settings_hash_for_plan_entry(
     segments: List[Dict[str, Any]],
     brand_id: Optional[str],
     fallback_title: str,
+    canonical: bool = True,
 ) -> str:
     start = _to_float(plan_entry.get("start")) or 0.0
     end = _to_float(plan_entry.get("end")) or start
@@ -6970,7 +6976,37 @@ def _compute_render_settings_hash_for_plan_entry(
         video_overlay_offset=video.get("video_overlay_offset"),
         subtitle_text=subtitle_text,
     )
-    return _render_settings_hash_from_options(options)
+    if canonical:
+        return _render_settings_hash_from_options(options)
+    return _raw_render_settings_hash_from_options(options)
+
+
+def _compute_render_settings_hash_aliases_for_plan_entry(
+    *,
+    video_pk: int,
+    video: Dict[str, Any],
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    brand_id: Optional[str],
+    fallback_title: str,
+) -> List[str]:
+    aliases: List[str] = []
+    for canonical in (True, False):
+        try:
+            value = _compute_render_settings_hash_for_plan_entry(
+                video_pk=video_pk,
+                video=video,
+                plan_entry=plan_entry,
+                segments=segments,
+                brand_id=brand_id,
+                fallback_title=fallback_title,
+                canonical=canonical,
+            )
+        except Exception:
+            continue
+        if value and value not in aliases:
+            aliases.append(value)
+    return aliases
 
 
 def _find_plan_entry(entries: List[Dict[str, Any]], plan_index: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -9728,7 +9764,7 @@ def generate_short(video_pk):
         render_settings_outdated = False
         if status == "created" and video_filename and stored_render_settings_hash:
             try:
-                current_render_settings_hash = _compute_render_settings_hash_for_plan_entry(
+                current_render_settings_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
                     video_pk=int(video.get("id") or video_pk),
                     video=video,
                     plan_entry=entry,
@@ -9736,7 +9772,8 @@ def generate_short(video_pk):
                     brand_id=brand_id,
                     fallback_title=video.get("title") or "",
                 )
-                render_settings_outdated = current_render_settings_hash != stored_render_settings_hash
+                current_render_settings_hash = current_render_settings_hashes[0] if current_render_settings_hashes else ""
+                render_settings_outdated = stored_render_settings_hash not in current_render_settings_hashes
             except Exception as exc:
                 current_app.logger.warning(
                     "Failed to compute render settings hash video_pk=%s plan_index=%s: %s",
@@ -26561,7 +26598,15 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         brand_id=brand_id,
         fallback_title=video_title,
     )
-    if current_hash == stored_hash and not force_regenerate:
+    current_hash_aliases = _compute_render_settings_hash_aliases_for_plan_entry(
+        video_pk=video_pk,
+        video=video,
+        plan_entry=plan_entry,
+        segments=segments,
+        brand_id=brand_id,
+        fallback_title=video_title,
+    )
+    if stored_hash in current_hash_aliases and not force_regenerate:
         return jsonify(success=False, message="This Short is already up to date."), 409
     start = _to_float(plan_entry.get("start"))
     end = _to_float(plan_entry.get("end"))
