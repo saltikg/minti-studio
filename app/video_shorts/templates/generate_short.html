@@ -14857,7 +14857,13 @@ document.addEventListener("DOMContentLoaded", () => {
   window.prepareCropEditor = prepareCropEditor;
   window.activateCropEditor = activateCropEditor;
   window.teardownCropEditor = teardownCropEditor;
-  window.cropEditorSave = () => saveBtn?.click();
+  window.cropEditorSave = () => {
+    if (!saveBtn) {
+      return;
+    }
+    saveBtn.disabled = false;
+    saveBtn.click();
+  };
   window.cropEditorSaveDefault = () => saveDefaultBtn?.click();
   window.__cropEditorDebug = () => ({
     activeCroppers: Object.values(cropperInstances).filter(Boolean).length,
