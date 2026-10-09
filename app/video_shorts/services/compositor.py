@@ -2605,13 +2605,41 @@ def _compose_trimmed_with_background(
                 fill_title_input_index = next_video_input_index
                 fit_title_input_index = next_video_input_index + 1
                 next_video_input_index += 2
+                fill_segment_indices = [
+                    idx for idx, segment in enumerate(layout_segments)
+                    if str(segment.get("mode") or "fill") != "fit"
+                ]
+                fit_segment_indices = [
+                    idx for idx, segment in enumerate(layout_segments)
+                    if str(segment.get("mode") or "fill") == "fit"
+                ]
+                fill_source_by_index: Dict[int, str] = {}
+                fit_source_by_index: Dict[int, str] = {}
                 filter_parts.append(f"[{fill_title_input_index}:v]format=rgba[title_fill_src]")
                 filter_parts.append(f"[{fit_title_input_index}:v]format=rgba[title_fit_src]")
+                if len(fill_segment_indices) > 1:
+                    fill_split_labels = "".join(f"[title_fill_src_{idx}]" for idx in fill_segment_indices)
+                    filter_parts.append(f"[title_fill_src]split={len(fill_segment_indices)}{fill_split_labels}")
+                    fill_source_by_index = {idx: f"[title_fill_src_{idx}]" for idx in fill_segment_indices}
+                elif len(fill_segment_indices) == 1:
+                    fill_source_by_index[fill_segment_indices[0]] = "[title_fill_src]"
+                if len(fit_segment_indices) > 1:
+                    fit_split_labels = "".join(f"[title_fit_src_{idx}]" for idx in fit_segment_indices)
+                    filter_parts.append(f"[title_fit_src]split={len(fit_segment_indices)}{fit_split_labels}")
+                    fit_source_by_index = {idx: f"[title_fit_src_{idx}]" for idx in fit_segment_indices}
+                elif len(fit_segment_indices) == 1:
+                    fit_source_by_index[fit_segment_indices[0]] = "[title_fit_src]"
                 current_title_label = final_label
                 for idx, segment in enumerate(layout_segments):
                     seg_start = float(segment.get("start") or 0.0)
                     seg_end = float(segment.get("end") or duration)
-                    source_label = "[title_fit_src]" if str(segment.get("mode") or "fill") == "fit" else "[title_fill_src]"
+                    source_label = (
+                        fit_source_by_index.get(idx)
+                        if str(segment.get("mode") or "fill") == "fit"
+                        else fill_source_by_index.get(idx)
+                    )
+                    if not source_label:
+                        continue
                     next_title_label = f"[ov_title_debug_{idx}]"
                     enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
                     filter_parts.append(
