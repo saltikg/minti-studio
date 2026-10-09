@@ -76,8 +76,26 @@ def _fetch_candidates(video_pk: int | None = None, user_id: str = "") -> list[di
     return candidates
 
 
-def _poster_exists(filename: str) -> bool:
+def _list_existing_keys(prefix: str) -> set[str]:
+    storage = get_media_storage()
+    client = getattr(storage, "client", None)
+    bucket_name = getattr(storage, "bucket_name", "")
+    if client is not None and bucket_name:
+        keys: set[str] = set()
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = str(item.get("Key") or "")
+                if key and not key.endswith("/"):
+                    keys.add(key)
+        return keys
+    return {entry.key for entry in storage.list_prefix(prefix)}
+
+
+def _poster_exists(filename: str, poster_keys: set[str] | None = None) -> bool:
     key = generation._short_poster_storage_key(filename)
+    if poster_keys is not None:
+        return key in poster_keys
     return bool(key and get_media_storage().exists(key))
 
 
@@ -98,13 +116,27 @@ def main() -> int:
 
     with app.app_context():
         candidates = _fetch_candidates(video_pk=args.video_pk or None, user_id=args.user_id.strip())
+        poster_keys: set[str] | None = None
+        short_keys: set[str] | None = None
+        if args.dry_run:
+            poster_keys = _list_existing_keys("shorts/posters/")
+            short_keys = {
+                key
+                for key in _list_existing_keys("shorts/")
+                if key.startswith("shorts/") and not key.startswith("shorts/posters/") and Path(key).suffix.lower() in {".mp4", ".mov", ".mkv"}
+            }
         for candidate in candidates:
             filename = candidate["clip_filename"]
-            if not generation._short_exists(filename):
+            short_key = generation._short_storage_key(filename)
+            if short_keys is not None:
+                short_exists = short_key in short_keys
+            else:
+                short_exists = generation._short_exists(filename)
+            if not short_exists:
                 skipped_missing_short += 1
                 continue
             try:
-                if _poster_exists(filename):
+                if _poster_exists(filename, poster_keys=poster_keys):
                     skipped_existing_poster += 1
                     continue
             except Exception as exc:
