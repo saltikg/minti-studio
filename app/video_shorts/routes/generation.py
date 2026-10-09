@@ -55,6 +55,12 @@ from app.video_shorts.config import (
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
     DEFAULT_USER_PLAN_ID,
+    FACE_AWARE_LAYOUT_ALL,
+    FACE_AWARE_MIN_FILL_SEC,
+    FACE_AWARE_MIN_FIT_SEC,
+    FACE_AWARE_SAMPLE_SEC,
+    FACE_AWARE_SCENE_THRESHOLD,
+    FACE_AWARE_SNAP_WINDOW_SEC,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
@@ -3231,6 +3237,373 @@ def _ensure_preview_face_track(
             pass
         return None
     return track_path if track_path.exists() else None
+
+
+def _face_aware_layout_enabled_for_owner(owner_user_id: Any) -> bool:
+    if FACE_AWARE_LAYOUT_ALL:
+        return True
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return False
+    enabled_ids = {
+        user_id.strip()
+        for user_id in str(os.getenv("FACE_AWARE_LAYOUT_USER_IDS") or "").split(",")
+        if user_id.strip()
+    }
+    return clean_owner in enabled_ids
+
+
+def _face_aware_layout_skip_reason(
+    *,
+    owner_user_id: Any,
+    crop_settings: Dict[str, Any],
+    crop_aspect: Any,
+    visual_mode: Any,
+    static_visual_key: Any = None,
+) -> Optional[str]:
+    if not _face_aware_layout_enabled_for_owner(owner_user_id):
+        return "flag_disabled"
+    if bool((crop_settings or {}).get("crop_locked")):
+        return "crop_locked"
+    if str(crop_aspect or "").strip().lower() != "portrait":
+        return "not_portrait_fill"
+    if bool((crop_settings or {}).get("split_enabled")):
+        return "split_enabled"
+    if str(visual_mode or "video").strip().lower() != "video":
+        return "visual_mode_not_video"
+    if str(static_visual_key or "").strip():
+        return "static_visual_enabled"
+    return None
+
+
+def _merge_face_aware_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    for run in runs:
+        if not merged or merged[-1]["mode"] != run["mode"]:
+            merged.append(dict(run))
+        else:
+            merged[-1]["end"] = run["end"]
+    return [
+        run for run in merged
+        if float(run.get("end") or 0.0) - float(run.get("start") or 0.0) > 1e-6
+    ]
+
+
+def _smooth_face_aware_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    smoothed = [dict(run) for run in runs]
+    for run in smoothed:
+        if run["mode"] == "fit" and (float(run["end"]) - float(run["start"])) < float(FACE_AWARE_MIN_FIT_SEC):
+            run["mode"] = "fill"
+    smoothed = _merge_face_aware_runs(smoothed)
+    for idx in range(1, len(smoothed) - 1):
+        run = smoothed[idx]
+        if (
+            run["mode"] == "fill"
+            and smoothed[idx - 1]["mode"] == "fit"
+            and smoothed[idx + 1]["mode"] == "fit"
+            and (float(run["end"]) - float(run["start"])) < float(FACE_AWARE_MIN_FILL_SEC)
+        ):
+            run["mode"] = "fit"
+    return _merge_face_aware_runs(smoothed)
+
+
+def _build_face_aware_layout_segments_from_samples(
+    samples: List[Dict[str, Any]],
+    *,
+    duration_seconds: float,
+) -> List[Dict[str, Any]]:
+    duration = max(0.0, float(duration_seconds or 0.0))
+    if duration <= 0:
+        return []
+    clean_samples = sorted(
+        [
+            {"t": max(0.0, min(duration, float(sample.get("t") or 0.0))), "face_present": bool(sample.get("face_present"))}
+            for sample in samples or []
+        ],
+        key=lambda item: item["t"],
+    )
+    if not clean_samples:
+        return [{"start": 0.0, "end": duration, "mode": "fill"}]
+
+    runs: List[Dict[str, Any]] = []
+    current_face = clean_samples[0]["face_present"]
+    run_start = 0.0
+    for prev, current in zip(clean_samples, clean_samples[1:]):
+        next_face = current["face_present"]
+        if next_face == current_face:
+            continue
+        boundary = max(run_start, min(duration, (float(prev["t"]) + float(current["t"])) / 2.0))
+        runs.append({"start": run_start, "end": boundary, "mode": "fill" if current_face else "fit"})
+        run_start = boundary
+        current_face = next_face
+    runs.append({"start": run_start, "end": duration, "mode": "fill" if current_face else "fit"})
+    return _smooth_face_aware_runs(runs)
+
+
+def _probe_video_fps(source_path: Path) -> Optional[float]:
+    ffmpeg_bin = Path(_resolve_ffmpeg())
+    ffprobe_bin = ffmpeg_bin.with_name("ffprobe")
+    cmd = [
+        str(ffprobe_bin),
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=avg_frame_rate,r_frame_rate",
+        "-of",
+        "default=noprint_wrappers=1",
+        str(source_path),
+    ]
+    try:
+        result = run_media_subprocess(
+            cmd,
+            operation="probe_video_fps",
+            context=f"path={source_path.name}",
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
+    except Exception:
+        return None
+    for line in (result.stdout or "").splitlines():
+        if "=" not in line:
+            continue
+        raw = line.split("=", 1)[1].strip()
+        if not raw or raw == "0/0":
+            continue
+        try:
+            if "/" in raw:
+                num, den = raw.split("/", 1)
+                fps = float(num) / float(den)
+            else:
+                fps = float(raw)
+        except Exception:
+            continue
+        if fps > 0:
+            return fps
+    return None
+
+
+def _round_to_frame_time(value: float, fps: Optional[float]) -> float:
+    try:
+        clean_fps = float(fps or 0.0)
+    except Exception:
+        clean_fps = 0.0
+    if clean_fps <= 0:
+        return round(float(value or 0.0), 6)
+    return round(round(float(value or 0.0) * clean_fps) / clean_fps, 6)
+
+
+def _snap_face_aware_boundary(
+    source_path: Path,
+    *,
+    absolute_boundary: float,
+    fps: Optional[float],
+) -> Optional[float]:
+    window = float(FACE_AWARE_SNAP_WINDOW_SEC or 0.0)
+    if window <= 0:
+        return _round_to_frame_time(absolute_boundary, fps)
+    start = max(0.0, float(absolute_boundary) - window)
+    duration = max(0.05, (float(absolute_boundary) + window) - start)
+    ffmpeg_bin = _resolve_ffmpeg()
+    filter_expr = (
+        f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',"
+        "metadata=print,showinfo"
+    )
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-ss",
+        f"{start:.6f}",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        str(source_path),
+        "-vf",
+        filter_expr,
+        "-an",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = run_media_subprocess(
+            cmd,
+            operation="face_aware_scene_snap",
+            context=f"source={source_path.name} boundary={absolute_boundary:.3f}",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(5, min(int(FFMPEG_SHORT_TIMEOUT or 30), 60)),
+        )
+    except Exception:
+        return _round_to_frame_time(absolute_boundary, fps)
+    output = "\n".join([result.stdout or "", result.stderr or ""])
+    pts_values = [float(match.group(1)) for match in re.finditer(r"pts_time:([0-9.]+)", output)]
+    scores = [float(match.group(1)) for match in re.finditer(r"lavfi\.scene_score=([0-9.]+)", output)]
+    candidates: List[Tuple[float, float]] = []
+    for idx, pts_time in enumerate(pts_values):
+        score = scores[idx] if idx < len(scores) else 0.0
+        candidates.append((score, start + pts_time))
+    if not candidates:
+        return _round_to_frame_time(absolute_boundary, fps)
+    _, snapped = max(candidates, key=lambda item: (item[0], -abs(item[1] - float(absolute_boundary))))
+    return _round_to_frame_time(snapped, fps)
+
+
+def _snap_face_aware_segments(
+    segments: List[Dict[str, Any]],
+    *,
+    source_path: Path,
+    absolute_start: float,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if len(segments or []) <= 1:
+        return segments, []
+    fps = _probe_video_fps(source_path)
+    snapped_boundaries: List[Dict[str, Any]] = []
+    boundaries = [float(seg["end"]) for seg in segments[:-1]]
+    duration = float(segments[-1]["end"])
+    for idx, boundary in enumerate(boundaries):
+        snapped_abs = _snap_face_aware_boundary(
+            source_path,
+            absolute_boundary=float(absolute_start) + boundary,
+            fps=fps,
+        )
+        snapped_rel = max(0.0, min(duration, float(snapped_abs or (absolute_start + boundary)) - float(absolute_start)))
+        snapped_rel = _round_to_frame_time(snapped_rel, fps)
+        if idx > 0:
+            snapped_rel = max(snapped_rel, float(segments[idx - 1]["start"]) + 1e-3)
+        if idx + 1 < len(segments):
+            snapped_rel = min(snapped_rel, float(segments[idx + 1]["end"]) - 1e-3)
+        segments[idx]["end"] = snapped_rel
+        segments[idx + 1]["start"] = snapped_rel
+        snapped_boundaries.append({"from": round(boundary, 6), "to": round(snapped_rel, 6)})
+    return _merge_face_aware_runs(segments), snapped_boundaries
+
+
+def _sample_face_presence_for_layout(
+    *,
+    video_id: str,
+    source_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+) -> List[Dict[str, Any]]:
+    duration = max(0.0, float(end_seconds) - float(start_seconds))
+    if duration <= 0:
+        return []
+    sample_sec = max(0.1, float(FACE_AWARE_SAMPLE_SEC or 0.5))
+    fps = 1.0 / sample_sec
+    ffmpeg_bin = _resolve_ffmpeg()
+    samples: List[Dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix=f"face_layout_{video_id}_") as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        frame_pattern = temp_dir_path / "frame_%06d.jpg"
+        cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-ss",
+            f"{float(start_seconds):.6f}",
+            "-t",
+            f"{duration:.6f}",
+            "-i",
+            str(source_path),
+            "-vf",
+            f"fps={fps:.6f},scale=720:-1",
+            "-q:v",
+            "2",
+            str(frame_pattern),
+        ]
+        run_media_subprocess(
+            cmd,
+            operation="face_aware_layout_sample",
+            context=f"video_id={video_id} start={start_seconds:.3f} end={end_seconds:.3f}",
+            check=True,
+            timeout=scale_media_timeout(
+                FFMPEG_SHORT_TIMEOUT,
+                duration_seconds=duration,
+                multiplier=0.6,
+                extra_seconds=20,
+            ),
+            capture_output=True,
+            text=True,
+        )
+        import cv2
+
+        for idx, frame_path in enumerate(sorted(temp_dir_path.glob("frame_*.jpg"))):
+            image = cv2.imread(str(frame_path))
+            face_present = False
+            if image is not None:
+                frame_height, frame_width = image.shape[:2]
+                faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
+                filtered_faces = _filter_preview_faces_by_size(faces)
+                face_present = len(filtered_faces) >= 1
+            samples.append(
+                {
+                    "t": min(duration, idx * sample_sec),
+                    "face_present": face_present,
+                }
+            )
+    return samples
+
+
+def _compute_face_aware_layout_segments(
+    *,
+    video_id: str,
+    plan_index: int,
+    source_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    owner_user_id: Any,
+    crop_settings: Dict[str, Any],
+    crop_aspect: Any,
+    visual_mode: Any,
+    static_visual_key: Any = None,
+) -> Dict[str, Any]:
+    reason = _face_aware_layout_skip_reason(
+        owner_user_id=owner_user_id,
+        crop_settings=crop_settings,
+        crop_aspect=crop_aspect,
+        visual_mode=visual_mode,
+        static_visual_key=static_visual_key,
+    )
+    if reason:
+        return {"enabled": False, "reason": reason, "samples": [], "segments": [], "snapped_boundaries": []}
+    started = time.perf_counter()
+    samples = _sample_face_presence_for_layout(
+        video_id=video_id,
+        source_path=source_path,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+    )
+    duration = max(0.0, float(end_seconds) - float(start_seconds))
+    segments = _build_face_aware_layout_segments_from_samples(samples, duration_seconds=duration)
+    snapped_boundaries: List[Dict[str, Any]] = []
+    if len(segments) > 1:
+        segments, snapped_boundaries = _snap_face_aware_segments(
+            segments,
+            source_path=source_path,
+            absolute_start=start_seconds,
+        )
+    elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
+    current_app.logger.info(
+        "face_aware_layout video_id=%s plan_index=%s samples=%s segments=%s snapped_boundaries=%s elapsed_ms=%s",
+        video_id,
+        plan_index,
+        len(samples),
+        [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"]) for seg in segments],
+        snapped_boundaries,
+        elapsed_ms,
+    )
+    return {
+        "enabled": True,
+        "reason": "",
+        "samples": samples,
+        "segments": segments,
+        "snapped_boundaries": snapped_boundaries,
+        "elapsed_ms": elapsed_ms,
+    }
 
 
 def _ensure_preview_frame(video_id: str, source_path: Optional[Path], duration_seconds: Optional[float]) -> Optional[Path]:
@@ -25274,6 +25647,50 @@ def autoclip_video(video_pk):
             if not video_static_visual_key:
                 override_source = None
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
+            face_aware_layout_result: Optional[Dict[str, Any]] = None
+            compose_crop_settings = dict(crop_settings)
+            compose_crop_aspect = video_crop_aspect
+            try:
+                face_aware_layout_result = _compute_face_aware_layout_segments(
+                    video_id=str(vid),
+                    plan_index=int(plan_index),
+                    source_path=src_path,
+                    start_seconds=float(clip_trim_start),
+                    end_seconds=float(clip_trim_end),
+                    owner_user_id=video_owner_user_id or target_owner_user_id,
+                    crop_settings=crop_settings,
+                    crop_aspect=video_crop_aspect,
+                    visual_mode=video_visual_mode,
+                    static_visual_key=video_static_visual_key,
+                )
+                layout_segments = list(face_aware_layout_result.get("segments") or [])
+                if face_aware_layout_result.get("enabled") and layout_segments:
+                    if len(layout_segments) > 1:
+                        compose_crop_settings["layout_segments"] = layout_segments
+                    elif layout_segments[0].get("mode") == "fit":
+                        compose_crop_aspect = "landscape"
+                        compose_crop_settings.update(
+                            {
+                                "crop_x_ratio": 0.0,
+                                "crop_y_ratio": 0.0,
+                                "crop_w_ratio": 1.0,
+                                "crop_h_ratio": 1.0,
+                            }
+                        )
+            except Exception as exc:
+                face_aware_layout_result = {
+                    "enabled": False,
+                    "reason": f"error:{exc}",
+                    "samples": [],
+                    "segments": [],
+                    "snapped_boundaries": [],
+                }
+                current_app.logger.warning(
+                    "Face-aware layout skipped after error video_id=%s plan_index=%s: %s",
+                    vid,
+                    plan_index,
+                    exc,
+                )
             face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
             if not face_track_smooth_path.exists():
                 face_track_smooth_path = None
@@ -25316,16 +25733,27 @@ def autoclip_video(video_pk):
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay_enabled=video_subscribe_overlay,
                 subscribe_overlay_path=subscribe_overlay_path,
-                crop_settings=crop_settings,
+                crop_settings=compose_crop_settings,
                 video_override_source=override_source,
                 audio_override_source=podcast_audio_path,
                 podcast_background_image_source=podcast_bg_image_source,
                 podcast_overlay_video_sources=podcast_overlay_video_sources,
                 video_overlay_offset=overlay_offset,
-                crop_aspect=video_crop_aspect,
+                crop_aspect=compose_crop_aspect,
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
             )
+            if face_aware_layout_result and face_aware_layout_result.get("enabled"):
+                plan_entry["auto_layout_segments"] = [
+                    {
+                        "start": round(float(segment.get("start") or 0.0), 6),
+                        "end": round(float(segment.get("end") or 0.0), 6),
+                        "mode": str(segment.get("mode") or ""),
+                    }
+                    for segment in (face_aware_layout_result.get("segments") or [])
+                ]
+            else:
+                plan_entry.pop("auto_layout_segments", None)
             final_file = bg_out
         else:
             _cut_clip(

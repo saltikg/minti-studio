@@ -58,6 +58,19 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 def _env_bool(name: str, default: bool, *, warn_invalid: bool = False, logger=None) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -555,6 +568,12 @@ FFMPEG_SHORT_TIMEOUT = max(1, _env_int("FFMPEG_SHORT_TIMEOUT", 300))
 FFMPEG_RENDER_TIMEOUT = max(1, _env_int("FFMPEG_RENDER_TIMEOUT", 3600))
 FFMPEG_TIMEOUT = max(1, _env_int("FFMPEG_TIMEOUT", FFMPEG_RENDER_TIMEOUT))
 STALE_JOB_TIMEOUT_SECONDS = max(FFMPEG_RENDER_TIMEOUT + 1, _env_int("STALE_JOB_TIMEOUT_SECONDS", 5400))
+FACE_AWARE_LAYOUT_ALL = _env_bool("FACE_AWARE_LAYOUT_ALL", False)
+FACE_AWARE_SAMPLE_SEC = max(0.1, _env_float("FACE_AWARE_SAMPLE_SEC", 0.5))
+FACE_AWARE_MIN_FIT_SEC = max(0.0, _env_float("FACE_AWARE_MIN_FIT_SEC", 2.0))
+FACE_AWARE_MIN_FILL_SEC = max(0.0, _env_float("FACE_AWARE_MIN_FILL_SEC", 1.5))
+FACE_AWARE_SNAP_WINDOW_SEC = max(0.0, _env_float("FACE_AWARE_SNAP_WINDOW_SEC", 0.75))
+FACE_AWARE_SCENE_THRESHOLD = max(0.0, _env_float("FACE_AWARE_SCENE_THRESHOLD", 0.3))
 MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip duration
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))

@@ -123,11 +123,17 @@ def _load_face_track_points(
     return deduped
 
 
-def _piecewise_linear_ratio_expr(points: list[dict[str, float]], key: str) -> Optional[str]:
+def _piecewise_linear_ratio_expr(
+    points: list[dict[str, float]],
+    key: str,
+    *,
+    time_expr: str = "t",
+) -> Optional[str]:
     if not points:
         return None
     if len(points) == 1:
         return f"{points[0][key]:.6f}"
+    t_var = str(time_expr or "t")
     expr = f"{points[-1][key]:.6f}"
     for index in range(len(points) - 2, -1, -1):
         current = points[index]
@@ -139,11 +145,11 @@ def _piecewise_linear_ratio_expr(points: list[dict[str, float]], key: str) -> Op
         if t1 <= t0:
             segment_expr = f"{v0:.6f}"
         else:
-            segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*(t-{t0:.6f})/{t1 - t0:.6f})"
-        expr = f"if(lt(t,{t1:.6f}),{segment_expr},{expr})"
+            segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*({t_var}-{t0:.6f})/{t1 - t0:.6f})"
+        expr = f"if(lt({t_var},{t1:.6f}),{segment_expr},{expr})"
     first = points[0]
     if float(first["t"]) > 0:
-        expr = f"if(lt(t,{float(first['t']):.6f}),{float(first[key]):.6f},{expr})"
+        expr = f"if(lt({t_var},{float(first['t']):.6f}),{float(first[key]):.6f},{expr})"
     return expr
 
 
@@ -1928,6 +1934,7 @@ def _compose_trimmed_with_background(
         crop_settings.get(key) is not None
         for key in ("crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio")
     )
+    raw_layout_segments = crop_settings.get("layout_segments")
 
     def _fmt(v: float) -> str:
         return f"{v:.6f}"
@@ -1948,6 +1955,28 @@ def _compose_trimmed_with_background(
         and has_crop2
         and not podcast_mode
     )
+    layout_segments: List[Dict[str, Any]] = []
+    if isinstance(raw_layout_segments, list) and not split_stack_enabled and not podcast_mode and not video_override_source:
+        for segment in raw_layout_segments:
+            if not isinstance(segment, dict):
+                continue
+            try:
+                seg_start = max(0.0, float(segment.get("start") or 0.0))
+                seg_end = min(float(duration), max(seg_start, float(segment.get("end") or 0.0)))
+            except Exception:
+                continue
+            mode = str(segment.get("mode") or "").strip().lower()
+            if mode not in {"fill", "fit"} or seg_end - seg_start <= 1e-3:
+                continue
+            layout_segments.append({"start": seg_start, "end": seg_end, "mode": mode})
+        layout_segments.sort(key=lambda item: item["start"])
+        layout_segments = [
+            segment for segment in layout_segments
+            if segment["end"] - segment["start"] > 1e-3
+        ]
+        if len(layout_segments) > 1:
+            layout_segments[0]["start"] = 0.0
+            layout_segments[-1]["end"] = float(duration)
     if is_default_crop:
         scale_stage = (
             f"scale={overlay_width}:{overlay_height}:force_original_aspect_ratio=increase,"
@@ -2048,30 +2077,105 @@ def _compose_trimmed_with_background(
                     is_default_crop,
                     podcast_mode,
                 )
-        crop_filter = (
-            f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
-            f"{scale_stage}"
-            "setsar=1,"
-            "setpts=PTS-STARTPTS[clip_scaled]"
-        )
-        current_app.logger.debug(
-            "clip_scaled target dims=%dx%d default_crop=%s",
-            overlay_width,
-            overlay_height,
-            is_default_crop,
-        )
-        overlay_y_expr = "0" if podcast_mode else _overlay_y_expr(
-            overlay_top_offset,
-            effective_subtitle_path,
-            subtitle_margin,
-            subtitle_font_size,
-        )
-        filter_parts.extend(
-            [
-                crop_filter,
-                f"[bg][clip_scaled]overlay=(W-w)/2:{overlay_y_expr}:shortest=1[ov]",
-            ]
-        )
+        if len(layout_segments) > 1:
+            source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
+            filter_parts.append(f"[1:v]split={len(layout_segments)}{source_labels}")
+            fit_indices = [idx for idx, segment in enumerate(layout_segments) if segment["mode"] == "fit"]
+            fit_bg_labels = {}
+            if fit_indices:
+                if len(fit_indices) == 1:
+                    fit_bg_labels[fit_indices[0]] = "[layout_bg_0]"
+                    filter_parts.append("[bg]trim=duration=999999,setpts=PTS-STARTPTS,settb=AVTB[layout_bg_0]")
+                else:
+                    split_labels = "".join(f"[layout_bg_src_{idx}]" for idx in fit_indices)
+                    filter_parts.append(f"[bg]split={len(fit_indices)}{split_labels}")
+                    for idx in fit_indices:
+                        fit_bg_labels[idx] = f"[layout_bg_{idx}]"
+                        filter_parts.append(
+                            f"[layout_bg_src_{idx}]trim=duration=999999,setpts=PTS-STARTPTS,settb=AVTB{fit_bg_labels[idx]}"
+                        )
+            segment_outputs: List[str] = []
+            for idx, segment in enumerate(layout_segments):
+                seg_start = float(segment["start"])
+                seg_end = float(segment["end"])
+                seg_duration = max(0.001, seg_end - seg_start)
+                seg_trim = f"[layout_trim_{idx}]"
+                seg_out = f"[layout_out_{idx}]"
+                filter_parts.append(
+                    f"[layout_src_{idx}]trim=start={seg_start:.6f}:end={seg_end:.6f},"
+                    f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
+                )
+                if segment["mode"] == "fit":
+                    fit_scaled = f"[layout_fit_{idx}]"
+                    fit_bg = f"[layout_bg_trim_{idx}]"
+                    filter_parts.append(
+                        f"{seg_trim}scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
+                        f"setsar=1,settb=AVTB{fit_scaled}"
+                    )
+                    filter_parts.append(
+                        f"{fit_bg_labels[idx]}trim=duration={seg_duration:.6f},"
+                        f"setpts=PTS-STARTPTS,settb=AVTB{fit_bg}"
+                    )
+                    filter_parts.append(
+                        f"{fit_bg}{fit_scaled}overlay=(W-w)/2:(H-h)/2:shortest=1,"
+                        f"format=yuv420p,settb=AVTB{seg_out}"
+                    )
+                else:
+                    if dynamic_crop_enabled:
+                        segment_time_expr = f"(t+{seg_start:.6f})"
+                        seg_x_expr = _piecewise_linear_ratio_expr(
+                            face_track_points,
+                            "x",
+                            time_expr=segment_time_expr,
+                        ) or _fmt(crop_x)
+                        seg_y_expr = _piecewise_linear_ratio_expr(
+                            face_track_points,
+                            "y",
+                            time_expr=segment_time_expr,
+                        ) or _fmt(crop_y)
+                        seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_x_expr)})"
+                        seg_crop_y_expr = f"ih*({_ffmpeg_filter_expr(seg_y_expr)})"
+                    else:
+                        seg_crop_x_expr = f"iw*{_fmt(crop_x)}"
+                        seg_crop_y_expr = f"ih*{_fmt(crop_y)}"
+                    filter_parts.append(
+                        f"{seg_trim}crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{seg_crop_x_expr}:{seg_crop_y_expr},"
+                        f"{scale_stage}setsar=1,format=yuv420p,settb=AVTB{seg_out}"
+                    )
+                segment_outputs.append(seg_out)
+            filter_parts.append(
+                "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
+            )
+            current_app.logger.info(
+                "Face-aware layout concat enabled segments=%s duration=%.3f",
+                [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"]) for seg in layout_segments],
+                duration,
+            )
+        else:
+            crop_filter = (
+                f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
+                f"{scale_stage}"
+                "setsar=1,"
+                "setpts=PTS-STARTPTS[clip_scaled]"
+            )
+            current_app.logger.debug(
+                "clip_scaled target dims=%dx%d default_crop=%s",
+                overlay_width,
+                overlay_height,
+                is_default_crop,
+            )
+            overlay_y_expr = "0" if podcast_mode else _overlay_y_expr(
+                overlay_top_offset,
+                effective_subtitle_path,
+                subtitle_margin,
+                subtitle_font_size,
+            )
+            filter_parts.extend(
+                [
+                    crop_filter,
+                    f"[bg][clip_scaled]overlay=(W-w)/2:{overlay_y_expr}:shortest=1[ov]",
+                ]
+            )
     final_label = "[ov]"
     overlay_asset_path = subscribe_overlay_path if subscribe_overlay_path and Path(subscribe_overlay_path).exists() else None
     overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
