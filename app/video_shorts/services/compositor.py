@@ -2536,6 +2536,7 @@ def _compose_trimmed_with_background(
     base_filter_len = len(filter_parts)
     base_final_label = final_label
     title_overlay_path: Optional[Path] = None
+    title_overlay_paths: List[Path] = []
     next_video_input_index = 3 if direct_audio_source else 2
     if show_title and title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -2563,6 +2564,7 @@ def _compose_trimmed_with_background(
                 title_outline_width=title_outline_width,
                 video_top_limit=video_top_limit,
             )
+            title_overlay_paths.append(title_overlay_path)
             current_app.logger.info(
                 "Pillow title overlay text_width=%s margin=%s font_size=%s lines=%s draw_y=%s shadow=%s",
                 title_overlay_meta["max_text_width"],
@@ -2572,13 +2574,59 @@ def _compose_trimmed_with_background(
                 title_overlay_meta["draw_y"],
                 title_overlay_meta["shadow"],
             )
-            title_input_index = next_video_input_index
-            filter_parts.append(f"[{title_input_index}:v]format=rgba[title_src]")
-            filter_parts.append(
-                f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title_debug]"
-            )
-            final_label = "[ov_title_debug]"
-            next_video_input_index += 1
+            if face_aware_layout_active:
+                fit_title_overlay_path, fit_title_overlay_meta = _render_title_overlay(
+                    title_txt,
+                    font_path=test_font_file,
+                    font_size=title_font_size,
+                    target_width=target_width,
+                    target_height=target_height,
+                    base_y=int(round(face_aware_fit_metrics["title_bottom"])),
+                    line_spacing=safe_title_line_spacing_main,
+                    title_text_color=title_text_color,
+                    subtitle_preset=subtitle_preset,
+                    uppercase=bool(title_uppercase),
+                    title_language=title_language,
+                    title_outline_color=title_outline_color,
+                    title_outline_width=title_outline_width,
+                    video_top_limit=int(round(face_aware_fit_metrics["title_bottom"])),
+                )
+                title_overlay_paths.append(fit_title_overlay_path)
+                current_app.logger.info(
+                    "Pillow title overlay fit text_width=%s margin=%s font_size=%s lines=%s draw_y=%s title_bottom=%.2f shadow=%s",
+                    fit_title_overlay_meta["max_text_width"],
+                    fit_title_overlay_meta["side_margin"],
+                    fit_title_overlay_meta["font_size"],
+                    fit_title_overlay_meta["line_count"],
+                    fit_title_overlay_meta["draw_y"],
+                    face_aware_fit_metrics["title_bottom"],
+                    fit_title_overlay_meta["shadow"],
+                )
+                fill_title_input_index = next_video_input_index
+                fit_title_input_index = next_video_input_index + 1
+                next_video_input_index += 2
+                filter_parts.append(f"[{fill_title_input_index}:v]format=rgba[title_fill_src]")
+                filter_parts.append(f"[{fit_title_input_index}:v]format=rgba[title_fit_src]")
+                current_title_label = final_label
+                for idx, segment in enumerate(layout_segments):
+                    seg_start = float(segment.get("start") or 0.0)
+                    seg_end = float(segment.get("end") or duration)
+                    source_label = "[title_fit_src]" if str(segment.get("mode") or "fill") == "fit" else "[title_fill_src]"
+                    next_title_label = f"[ov_title_debug_{idx}]"
+                    enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
+                    filter_parts.append(
+                        f"{current_title_label}{source_label}overlay=0:0:shortest=1:enable='{enable_expr}'{next_title_label}"
+                    )
+                    current_title_label = next_title_label
+                final_label = current_title_label
+            else:
+                title_input_index = next_video_input_index
+                filter_parts.append(f"[{title_input_index}:v]format=rgba[title_src]")
+                filter_parts.append(
+                    f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title_debug]"
+                )
+                final_label = "[ov_title_debug]"
+                next_video_input_index += 1
         else:
             title_layout = _fit_title_text(
                 _apply_title_case(title_txt, title_language, bool(title_uppercase)),
@@ -2694,8 +2742,27 @@ def _compose_trimmed_with_background(
         )
     elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
+        caption_overlay_y_expr = "0"
+        if face_aware_layout_active:
+            try:
+                fill_margin = float(subtitle_margin or 0)
+                fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
+                fit_caption_y = max(0.0, fill_margin - fit_margin)
+            except Exception:
+                fit_caption_y = 0.0
+            caption_overlay_y_expr = "0"
+            for segment in reversed(layout_segments):
+                if str(segment.get("mode") or "fill") != "fit":
+                    continue
+                seg_start = float(segment.get("start") or 0.0)
+                seg_end = float(segment.get("end") or duration)
+                caption_overlay_y_expr = (
+                    f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
+                    f"{fit_caption_y:.2f},{caption_overlay_y_expr})"
+                )
+            caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
         filter_parts.append(
-            f"{final_label}[caption_src]overlay=0:0:shortest=1[caption_out]"
+            f"{final_label}[caption_src]overlay=0:{caption_overlay_y_expr}:shortest=1[caption_out]"
         )
         final_label = "[caption_out]"
         next_video_input_index += 1
@@ -2783,8 +2850,8 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = "2:a"
-    if title_overlay_path:
-        cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
+    for overlay_path in title_overlay_paths:
+        cmd.extend(["-loop", "1", "-i", str(overlay_path)])
     if effective_subtitle_overlay_specs:
         for spec in effective_subtitle_overlay_specs:
             cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -2840,8 +2907,8 @@ def _compose_trimmed_with_background(
                 ]
             )
             audio_map_music_only = "2:a"
-        if title_overlay_path:
-            cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
+        for overlay_path in title_overlay_paths:
+            cmd.extend(["-loop", "1", "-i", str(overlay_path)])
         if effective_subtitle_overlay_specs:
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -2900,7 +2967,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, title_overlay_path, face_aware_subtitle_path):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, *title_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

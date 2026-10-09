@@ -7325,7 +7325,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 applyMode: "always",
                 successMessage: "",
               });
-              renderClipJobProgressState(createdCard, "processing", 0);
+              renderClipJobProgressState(createdCard, "processing", 0, { mode: "render" });
               window.__trsClipSelectorController?.showPublishCoachmark?.(createdPlanIndex);
               if (!triggerGenerateForClipCard(createdCard)) {
                 throw new Error("Clip was created, but automatic rendering could not be started.");
@@ -10553,16 +10553,16 @@ const isClipJobLiveStatus = (status) => {
 const formatQueuedBackgroundMessage = (queuePosition) => {
   const count = Number(queuePosition);
   if (Number.isFinite(count) && count > 0) {
-    return `Still rendering — your clip is in the queue (position ${count}) and will finish in the background. You can leave this page; it'll appear here when ready.`;
+    return `Taking longer than usual — we'll keep checking. Queue position ${count}.`;
   }
-  return "Still rendering — your clip is in the queue and will finish in the background. You can leave this page; it'll appear here when ready.";
+  return "Taking longer than usual — we'll keep checking.";
 };
 
 const formatRenderingBackgroundMessage = () => {
-  return "Still rendering — your clip is being processed and will finish in the background. You can leave this page; it'll appear here when ready.";
+  return "Taking longer than usual — we'll keep checking.";
 };
 
-const renderClipJobProgressState = (card, status, queuePosition) => {
+const renderClipJobProgressState = (card, status, queuePosition, { mode = "" } = {}) => {
   const normalizedStatus = String(status || "").trim().toLowerCase();
   const ahead = Number(queuePosition);
   const planIndex = getPlanIndexFromCard(card);
@@ -10579,10 +10579,9 @@ const renderClipJobProgressState = (card, status, queuePosition) => {
     });
     return;
   }
+  const isRegenerate = mode === "regenerate" || Boolean(card?.querySelector("video"));
   setClipFeedbackState(card, {
-    message: normalizedStatus === "processing" || normalizedStatus === "running"
-      ? "Rendering your short…"
-      : "Generating your short…",
+    message: isRegenerate ? "Updating…" : "Rendering…",
     tone: "text-white",
     busy: true,
   });
@@ -10734,7 +10733,6 @@ const handleClipJobFailurePayload = (planIndex, payload = null) => {
 };
 
 const handleClipJobBackgroundContinue = (planIndex, status, queuePosition) => {
-  stopClipJobPolling(planIndex, { clearStored: true });
   const card = getClipCardByPlanIndex(planIndex);
   if (!card) {
     return;
@@ -10746,11 +10744,19 @@ const handleClipJobBackgroundContinue = (planIndex, status, queuePosition) => {
   setClipFeedbackState(card, {
     message,
     tone: "text-warning",
-    busy: false,
-    buttonLabel: "Queued",
-    disableButton: false,
-    showSpinner: false,
+    busy: true,
   });
+};
+
+const normalizeClipJobStatus = (status) => {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  if (["done", "completed", "complete", "success", "succeeded"].includes(normalizedStatus)) {
+    return "done";
+  }
+  if (["failed", "error", "cancelled", "canceled"].includes(normalizedStatus)) {
+    return normalizedStatus === "error" ? "failed" : normalizedStatus;
+  }
+  return normalizedStatus;
 };
 
 const pollClipJobUntilDone = async (
@@ -10760,6 +10766,7 @@ const pollClipJobUntilDone = async (
     initialStatus = "queued",
     initialQueuePosition = null,
     startedAt = Date.now(),
+    mode = "",
   } = {},
 ) => {
   const key = String(planIndex || "");
@@ -10773,16 +10780,23 @@ const pollClipJobUntilDone = async (
   storeClipJob(key, { jobId, startedAt });
 
   let attempt = 0;
-  let status = initialStatus;
+  let status = normalizeClipJobStatus(initialStatus);
   let queuePosition = initialQueuePosition;
-  let lastObservedStatus = initialStatus;
+  let lastObservedStatus = status;
   let lastObservedQueuePosition = initialQueuePosition;
   let pollErrorCount = 0;
+  let timeoutNoticeShown = false;
 
-  while (!state.cancelled && (Date.now() - startedAt) < clipJobPollMaxMs) {
+  while (!state.cancelled) {
+    const timedOut = (Date.now() - startedAt) >= clipJobPollMaxMs;
     const card = getClipCardByPlanIndex(planIndex);
     if (card) {
-      renderClipJobProgressState(card, status, queuePosition);
+      if (timedOut) {
+        handleClipJobBackgroundContinue(planIndex, lastObservedStatus, lastObservedQueuePosition);
+        timeoutNoticeShown = true;
+      } else {
+        renderClipJobProgressState(card, status, queuePosition, { mode });
+      }
     }
 
     if (attempt > 0) {
@@ -10796,7 +10810,7 @@ const pollClipJobUntilDone = async (
           throw new Error(`HTTP ${response.status}`);
         }
         const payload = await response.json();
-        status = payload?.status || status;
+        status = normalizeClipJobStatus(payload?.status || status);
         queuePosition = payload?.queue_position;
         lastObservedStatus = status;
         lastObservedQueuePosition = queuePosition;
@@ -10812,24 +10826,23 @@ const pollClipJobUntilDone = async (
       } catch (error) {
         pollErrorCount += 1;
         if (pollErrorCount >= 5) {
-          handleClipJobFailurePayload(planIndex, {
-            message: "Couldn't check render status. Please refresh and try again.",
-          });
-          return;
+          const card = getClipCardByPlanIndex(planIndex);
+          if (card) {
+            setClipFeedbackState(card, {
+              message: "Connection is flaky — still checking…",
+              tone: "text-warning",
+              busy: true,
+            });
+          }
+          pollErrorCount = 0;
         }
       }
     }
 
-    const delay = Math.min(clipJobBasePollMs + (attempt * 500), clipJobMaxPollMs);
+    const delay = timeoutNoticeShown ? 15000 : Math.min(clipJobBasePollMs + (attempt * 500), clipJobMaxPollMs);
     attempt += 1;
     await sleep(delay);
   }
-
-  if (isClipJobLiveStatus(lastObservedStatus)) {
-    handleClipJobBackgroundContinue(planIndex, lastObservedStatus, lastObservedQueuePosition);
-    return;
-  }
-  handleClipJobFailurePayload(planIndex);
 };
 
 const setRegenerateFeedback = (planIndex, message, busy = false) => {
@@ -10879,11 +10892,12 @@ const enqueueRegenerateClip = async (card, options = {}) => {
     handleClipJobFailurePayload(planIndex, payload);
     return false;
   }
-  renderClipJobProgressState(card, payload.status || "queued", payload.queue_position);
+  renderClipJobProgressState(card, payload.status || "queued", payload.queue_position, { mode: "regenerate" });
   void pollClipJobUntilDone(planIndex, payload.job_id, {
     initialStatus: payload.status || "queued",
     initialQueuePosition: payload.queue_position,
     startedAt: Date.now(),
+    mode: "regenerate",
   });
   return true;
 };
@@ -11212,11 +11226,12 @@ const enqueueScoreClipTarget = async (target) => {
     if (railItem) {
       railItem.dataset.status = status;
     }
-    renderClipJobProgressState(card, status, payload.queue_position);
+    renderClipJobProgressState(card, status, payload.queue_position, { mode: "render" });
     void pollClipJobUntilDone(planIndex, payload.job_id, {
       initialStatus: status,
       initialQueuePosition: payload.queue_position,
       startedAt: Date.now(),
+      mode: "render",
     });
     loadGenerateUsageSummary();
     return { success: true, jobId: payload.job_id };
@@ -11924,6 +11939,7 @@ const initGenerateClipForms = () => {
             initialStatus: payload.status || "queued",
             initialQueuePosition: payload.queue_position,
             startedAt: Date.now(),
+            mode: "render",
           });
           return;
         }
@@ -11973,6 +11989,7 @@ const resumeQueuedClipJobs = () => {
     pollClipJobUntilDone(planIndex, jobId, {
       initialStatus: status,
       startedAt: Number(storedJobs[String(planIndex)]?.startedAt || Date.now()),
+      mode: card.querySelector("video") ? "regenerate" : "render",
     });
   });
 };
