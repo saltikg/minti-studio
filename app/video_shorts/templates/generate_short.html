@@ -3526,6 +3526,21 @@
   .style-template-grid::-webkit-scrollbar {
     display: none;
   }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-carousel,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-carousel-viewport,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-grid {
+    display: grid;
+    overflow: visible;
+    min-width: 0;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-carousel {
+    grid-template-columns: 1fr;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0;
+  }
   .subtitle-preset-card {
     display: grid;
     gap: 4px;
@@ -9120,8 +9135,9 @@ const restoreGenerateV2EditorNodes = () => {
 };
 
 const snapshotGenerateV2EditorFields = () => {
-  const modal = document.getElementById("crop-area-modal");
-  const fields = Array.from(modal?.querySelectorAll("input, select, textarea") || []);
+  const fields = Array.from(document.querySelectorAll(
+    "#generate-v2-editor input, #generate-v2-editor select, #generate-v2-editor textarea, #generate-v2-preview-mount input, #generate-v2-preview-mount select, #generate-v2-preview-mount textarea, #crop-area-modal input, #crop-area-modal select, #crop-area-modal textarea"
+  ));
   return fields.map((field) => ({
     field,
     value: field.value,
@@ -9149,9 +9165,8 @@ const restoreGenerateV2EditorFields = (snapshot) => {
 };
 
 const setGenerateV2EditorTitleLabels = (active) => {
-  const modal = document.getElementById("crop-area-modal");
-  const textInput = modal?.querySelector('[name="video_date_text"]');
-  const topInput = modal?.querySelector('[name="video_date_top"]');
+  const textInput = document.querySelector('[name="video_date_text"]');
+  const topInput = document.querySelector('[name="video_date_top"]');
   const textLabel = textInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-main");
   const topLabel = topInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-main");
   const topDirection = topInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-direction");
@@ -9179,6 +9194,28 @@ const setGenerateV2EditorTitleLabels = (active) => {
     }
   });
   generateV2EditState.labelSnapshot = [];
+};
+
+const clampGenerateV2ColorPopovers = () => {
+  if (!generateV2EditState.active) {
+    return;
+  }
+  document.querySelectorAll("#generate-v2-editor .short-bg-popover:not(.closed)").forEach((popover) => {
+    popover.style.removeProperty("bottom");
+    popover.style.removeProperty("top");
+    popover.style.maxHeight = "min(360px, calc(100vh - 24px))";
+    popover.style.overflowY = "auto";
+    const rect = popover.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 12) {
+      popover.style.top = "auto";
+      popover.style.bottom = "calc(100% + 8px)";
+    }
+    const nextRect = popover.getBoundingClientRect();
+    if (nextRect.top < 12) {
+      popover.style.top = "12px";
+      popover.style.bottom = "auto";
+    }
+  });
 };
 
 const syncGenerateV2InlinePreviewScale = () => {
@@ -9219,6 +9256,7 @@ const setGenerateV2EditorSection = (section = "style") => {
       window.updateStyleTemplateCarouselNav?.();
     }
   });
+  window.setTimeout(clampGenerateV2ColorPopovers, 0);
 };
 
 const mountGenerateV2EditorNodes = () => {
@@ -9328,9 +9366,15 @@ document.addEventListener("DOMContentLoaded", () => {
       window.exitGenerateV2EditMode?.({ saved: false });
     }
   });
+  document.addEventListener("click", () => {
+    if (generateV2EditState.active) {
+      window.setTimeout(clampGenerateV2ColorPopovers, 0);
+    }
+  });
   window.addEventListener("resize", () => {
     if (generateV2EditState.active) {
       syncGenerateV2InlinePreviewScale();
+      clampGenerateV2ColorPopovers();
     }
   });
 });
