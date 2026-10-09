@@ -10499,7 +10499,7 @@ const setClipFeedbackState = (
   }
 };
 
-const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false } = {}) => {
+const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false, success = false } = {}) => {
   const card = getClipCardByPlanIndex(planIndex);
   const column = card?.querySelector(".generate-v2-media-column");
   const overlay = card?.querySelector(".generate-v2-render-overlay");
@@ -10508,15 +10508,16 @@ const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false 
     return;
   }
   column.classList.toggle("is-rendering", !!active);
-  overlay.classList.toggle("d-none", !active && !failed);
+  overlay.classList.toggle("d-none", !active && !failed && !success);
   overlay.classList.toggle("is-failed", !!failed);
+  overlay.classList.toggle("is-success", !!success);
   const spinner = overlay.querySelector(".spinner-border");
   const label = overlay.querySelector(".generate-v2-render-overlay-label");
   const retry = overlay.querySelector(".generate-v2-render-retry");
-  spinner?.classList.toggle("d-none", !!failed);
+  spinner?.classList.toggle("d-none", !!failed || !!success);
   retry?.classList.toggle("d-none", !failed);
   if (label) {
-    label.textContent = failed ? "Update failed" : "Updating clip…";
+    label.textContent = success ? "Video ready" : (failed ? "Update failed" : "Updating clip…");
   }
   if (video) {
     video.controls = !active;
@@ -10528,6 +10529,18 @@ const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false 
       }
     }
   }
+};
+
+const showGenerateV2RenderSuccess = (planIndex) => {
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: true });
+  window.setTimeout(() => {
+    const card = getClipCardByPlanIndex(planIndex);
+    const overlay = card?.querySelector(".generate-v2-render-overlay");
+    if (!overlay || !overlay.classList.contains("is-success")) {
+      return;
+    }
+    setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
+  }, 1800);
 };
 
 const bindGenerateV2RenderRetry = (card) => {
@@ -10620,7 +10633,7 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
       }
       window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
       loadGenerateUsageSummary();
-      setGenerateV2RenderOverlay(planIndex, { active: false, failed: false });
+      showGenerateV2RenderSuccess(planIndex);
       return;
     }
     if (attempt < clipJobRevealAttempts - 1) {
