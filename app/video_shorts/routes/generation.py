@@ -25741,6 +25741,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify(success=False, message="Authentication required."), 401
+    force_regenerate = str(request.form.get("force") or request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "on"}
     editor_context = _active_editor_context()
     target_owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
@@ -25862,7 +25863,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         brand_id=brand_id,
         fallback_title=video_title,
     )
-    if current_hash == stored_hash:
+    if current_hash == stored_hash and not force_regenerate:
         return jsonify(success=False, message="This Short is already up to date."), 409
     start = _to_float(plan_entry.get("start"))
     end = _to_float(plan_entry.get("end"))

@@ -133,13 +133,22 @@
   .generate-v2-header .editor-header-copy {
     min-width: 0;
     display: grid;
-    gap: 6px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px 10px;
     flex: 1 1 440px;
   }
   .generate-v2-header .editor-header-title {
-    flex: 0 1 auto;
+    display: contents;
+  }
+  .generate-v2-header .editor-header-title .btn {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
   }
   .generate-v2-header .editor-header-title h3 {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
     font-size: 0.98rem;
   }
   .generate-v2-header .editor-header-separator {
@@ -147,6 +156,8 @@
     font-weight: 700;
   }
   .generate-v2-header .editor-header-meta {
+    grid-column: 2;
+    grid-row: 2;
     width: 100%;
   }
   .generate-v2-header .editor-header-youtube-link {
@@ -361,9 +372,23 @@
     display: none;
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-action {
-    min-height: 34px;
-    padding: 0.35rem 0.8rem;
+    min-height: 44px;
+    padding: 0.45rem 0.85rem;
+    border: 1px solid #2A3954;
+    border-radius: 12px;
+    background: transparent;
+    color: #E6EBF2;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     align-self: center;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-action:hover,
+  .short-design-strip[data-short-design-strip] .short-design-strip-action:focus-visible {
+    border-color: #2BB3A3;
+    background: #2BB3A3;
+    color: #06201D;
   }
   .editor-topbar-editor-btn {
     min-height: 40px;
@@ -2112,16 +2137,17 @@
     border: 1px solid rgba(245, 158, 11, 0.24);
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(var(--generate-v2-action-count, 4), minmax(0, 1fr));
+    align-items: stretch;
     gap: 8px;
-    width: 100%;
+    width: min(100%, var(--generate-v2-preview-video-width, 320px));
     margin-top: 10px;
+    margin-left: auto;
+    margin-right: auto;
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn {
-    width: 88px;
+    width: 100%;
     min-height: 64px;
     height: 64px;
     padding: 8px 10px;
@@ -2139,6 +2165,22 @@
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .material-symbols-outlined {
     font-size: 1.2rem;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-btn[data-download-busy="1"] {
+    pointer-events: none;
+    opacity: 0.72;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-toast {
+    width: min(100%, var(--generate-v2-preview-video-width, 320px));
+    margin: 8px auto 0;
+    padding: 7px 10px;
+    border: 1px solid rgba(43, 179, 163, 0.28);
+    border-radius: 10px;
+    background: rgba(43, 179, 163, 0.12);
+    color: #ccfbf1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-align: center;
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats {
     width: 100%;
@@ -4371,7 +4413,8 @@
               class="btn short-design-strip-action"
               id="design-shorts-btn"
               data-open-editor-target="choose-crop-btn">
-        Edit Shorts
+        <i class="bi bi-sliders" aria-hidden="true"></i>
+        <span>Edit Shorts</span>
       </button>
     </div>
     {% endif %}
@@ -4582,7 +4625,7 @@
                   class="btn btn-sm generate-v2-tab-action generate-v2-tile"
                   id="generate-v2-design-tile"
                   data-open-editor-target="choose-crop-btn">
-                  <i class="bi bi-palette2" aria-hidden="true"></i>
+                  <i class="bi bi-sliders" aria-hidden="true"></i>
                   <span class="btn-label">Edit Shorts</span>
                 </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
@@ -5232,8 +5275,8 @@
                         class="btn btn-sm generate-v2-tile generate-v2-regenerate-btn"
                         data-plan-index="{{ row.plan_index }}"
                         data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
-                        {% if not row.render_settings_outdated %}hidden{% elif row.regenerate_locked %}disabled{% endif %}
-                        title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Change design first' if not row.render_settings_outdated else 'Regenerate with current design') }}">
+                        {% if row.regenerate_locked %}hidden{% endif %}
+                        title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Regenerate with current design' if row.render_settings_outdated else 'Regenerate this clip') }}">
                         <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
                         <span>Regenerate</span>
                       </button>
@@ -5251,6 +5294,9 @@
 	                        </form>
                       {% endif %}
                     </div>
+                    {% if generate_v2 %}
+                    <div class="generate-v2-download-toast d-none" role="status" aria-live="polite">Preparing your download…</div>
+                    {% endif %}
                   {% else %}
                     {% if generate_v2 %}
                     <div class="generate-v2-media-shell">
@@ -8675,6 +8721,7 @@ const arrangeGenerateV2PreviewCard = (card) => {
   }
   card.dataset.generateV2Arranged = "1";
   const mediaActions = card.querySelector(".clip-card-media-actions");
+  const mediaVideo = card.querySelector(".generate-v2-media-shell > video, .generate-v2-media-shell > .clip-card-placeholder");
   const scheduleBlock = card.querySelector(".clip-card-action-primary");
   const regenerateBtn = card.querySelector(".generate-v2-regenerate-btn");
   if (mediaActions) {
@@ -8687,6 +8734,20 @@ const arrangeGenerateV2PreviewCard = (card) => {
       scheduleBtn?.classList.remove("btn-dark", "btn-outline-secondary", "clip-card-mini-btn");
       scheduleBtn?.classList.add("generate-v2-tile", "generate-v2-schedule-primary");
     }
+    const syncActionWidth = () => {
+      if (mediaVideo) {
+        const width = Math.round(mediaVideo.getBoundingClientRect().width || 0);
+        if (width > 0) {
+          mediaActions.style.setProperty("--generate-v2-preview-video-width", `${width}px`);
+        }
+      }
+      const visibleActions = Array.from(mediaActions.querySelectorAll(".btn")).filter((button) => !button.hidden);
+      mediaActions.style.setProperty("--generate-v2-action-count", String(Math.max(1, visibleActions.length)));
+    };
+    syncActionWidth();
+    setTimeout(syncActionWidth, 0);
+    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
+    bindGenerateV2DownloadTile(card);
   }
   const actionBar = card.querySelector(".clip-card-action-bar");
   if (!actionBar || actionBar.querySelector(".generate-v2-share-stats")) {
@@ -8710,6 +8771,71 @@ const arrangeGenerateV2PreviewCard = (card) => {
   if (body.children.length) {
     actionBar.appendChild(details);
   }
+};
+
+const getGenerateV2DownloadFrame = () => {
+  let frame = document.getElementById("generate-v2-download-frame");
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.id = "generate-v2-download-frame";
+    frame.name = "generate-v2-download-frame";
+    frame.hidden = true;
+    frame.style.display = "none";
+    document.body.appendChild(frame);
+  }
+  return frame;
+};
+
+const setGenerateV2DownloadBusy = (button, busy) => {
+  if (!button) {
+    return;
+  }
+  if (!button.dataset.originalHtml) {
+    button.dataset.originalHtml = button.innerHTML;
+  }
+  const card = button.closest(".clip-card");
+  const toast = card?.querySelector(".generate-v2-download-toast");
+  if (busy) {
+    button.dataset.downloadBusy = "1";
+    button.setAttribute("aria-disabled", "true");
+    button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span><span>Preparing…</span>';
+    toast?.classList.remove("d-none");
+    return;
+  }
+  button.dataset.downloadBusy = "0";
+  button.removeAttribute("aria-disabled");
+  button.innerHTML = button.dataset.originalHtml || button.innerHTML;
+  toast?.classList.add("d-none");
+};
+
+const bindGenerateV2DownloadTile = (card) => {
+  const button = card?.querySelector(".generate-v2-download-btn");
+  if (!button || button.dataset.downloadBound === "1") {
+    return;
+  }
+  button.dataset.downloadBound = "1";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (button.dataset.downloadBusy === "1") {
+      return;
+    }
+    const href = String(button.getAttribute("href") || "").trim();
+    if (!href) {
+      return;
+    }
+    setGenerateV2DownloadBusy(button, true);
+    getGenerateV2DownloadFrame().src = href;
+    let resetTimer = null;
+    const reset = () => {
+      if (resetTimer) {
+        window.clearTimeout(resetTimer);
+      }
+      window.removeEventListener("focus", reset);
+      setGenerateV2DownloadBusy(button, false);
+    };
+    resetTimer = window.setTimeout(reset, 5000);
+    window.addEventListener("focus", reset, { once: true });
+  });
 };
 
 const getGenerateV2FallbackPlanIndex = () => {
@@ -9862,8 +9988,8 @@ const setRegenerateFeedback = (planIndex, message, busy = false) => {
   }
 };
 
-const enqueueRegenerateClip = async (card) => {
-  if (!card || card.dataset.regenerateLocked === "1" || card.dataset.outdated !== "1") {
+const enqueueRegenerateClip = async (card, options = {}) => {
+  if (!card || card.dataset.regenerateLocked === "1") {
     return false;
   }
   const planIndex = String(card.dataset.planIndex || "").trim();
@@ -9876,8 +10002,10 @@ const enqueueRegenerateClip = async (card) => {
     method: "POST",
     credentials: "same-origin",
     headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
       "X-Requested-With": "XMLHttpRequest",
     },
+    body: new URLSearchParams(options.force ? { force: "1" } : {}),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload.success || !payload.job_id) {
@@ -9904,7 +10032,17 @@ const initGenerateV2RegenerateControls = () => {
     }
     button.dataset.regenerateBound = "1";
     button.addEventListener("click", () => {
-      void enqueueRegenerateClip(button.closest(".clip-card"));
+      const card = button.closest(".clip-card");
+      if (!card) {
+        return;
+      }
+      if (card.dataset.outdated !== "1") {
+        const confirmed = window.confirm("This clip already uses the current design. Regenerate anyway?");
+        if (!confirmed) {
+          return;
+        }
+      }
+      void enqueueRegenerateClip(card, { force: card.dataset.outdated !== "1" });
     });
   });
   const dialog = document.getElementById("generate-v2-design-updated-dialog");
