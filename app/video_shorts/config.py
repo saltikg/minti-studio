@@ -1180,7 +1180,7 @@ SUBTITLE_PILL_FONT_MAP = {
 
 TITLE_FONT_SIZES = [8, 20, 24, 28, 30, 34, 40, 44]
 SUB_FONT_SIZES = [8, 9, 10, 12, 14, 16]
-SUB_MARGIN_DEFAULT = 270
+SUB_MARGIN_DEFAULT = 520
 
 STATIC_IMG_DIR = Path(__file__).resolve().parent / "static" / "img"
 STATIC_USER_IMAGES_DIR = Path(__file__).resolve().parent / "static" / "user_images"

@@ -40,6 +40,9 @@ SUBSCRIBE_OVERLAY_PADDING = 40
 SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = 30
 SUBSCRIBE_OVERLAY_PATH = Path(__file__).resolve().parents[1] / "static" / "subscribe.gif"
 SUBTITLE_FONTS_DIR = Path(__file__).resolve().parents[1] / "static" / "fonts"
+FACE_AWARE_FIT_FRAME_TOP = 330.0
+FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN = 520
+FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN}
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = 720
@@ -774,7 +777,10 @@ def _face_aware_fit_position_metrics(
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
 ) -> Dict[str, float]:
     frame_height = float(target_width) * 9.0 / 16.0
-    frame_top = (float(target_height) - frame_height) / 2.0
+    frame_top = min(
+        max(0.0, FACE_AWARE_FIT_FRAME_TOP),
+        max(0.0, float(target_height) - frame_height),
+    )
     frame_bottom = frame_top + frame_height
     caption_block_height = max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
     caption_top = min(float(target_height) - caption_block_height - 30.0, frame_bottom + 24.0)
@@ -788,6 +794,16 @@ def _face_aware_fit_position_metrics(
         "caption_margin_v": caption_margin_v,
         "subscribe_y": subscribe_y,
     }
+
+
+def _face_aware_fill_subtitle_margin(subtitle_margin: Optional[int]) -> int:
+    try:
+        margin = int(round(float(subtitle_margin)))
+    except Exception:
+        return FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN
+    if margin in FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS:
+        return FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN
+    return margin
 
 
 def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
@@ -2724,7 +2740,7 @@ def _compose_trimmed_with_background(
                     target_width=target_width,
                     target_height=target_height,
                     subtitle_font_size=subtitle_font_size,
-                    fill_margin=int(subtitle_margin),
+                    fill_margin=_face_aware_fill_subtitle_margin(subtitle_margin),
                     fit_margin=int(round(face_aware_fit_metrics["caption_margin_v"])),
                     subtitle_font=subtitle_font,
                     subtitle_text_color=subtitle_text_color,
