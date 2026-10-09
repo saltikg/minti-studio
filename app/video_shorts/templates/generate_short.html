@@ -337,17 +337,6 @@
     min-height: 0;
     padding: 12px 16px;
   }
-  .generate-v2-header .short-design-strip[data-short-design-strip] {
-    flex: 0 1 min(520px, 42vw);
-    max-width: calc(100% - 12px);
-    margin-left: auto;
-    padding: 0;
-    border: 0;
-    background: transparent;
-  }
-  .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-main {
-    min-width: 0;
-  }
   .short-design-strip[data-short-design-strip] .short-design-strip-main {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
@@ -356,11 +345,6 @@
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-label {
     grid-row: 1 / span 2;
-  }
-  .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-label {
-    grid-row: auto;
-    grid-column: 1 / -1;
-    font-size: 0.68rem;
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-summary {
     appearance: none;
@@ -389,9 +373,6 @@
   .short-design-strip[data-short-design-strip] .short-design-strip-helper {
     font-size: 0.78rem;
     line-height: 1.15;
-  }
-  .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-helper {
-    display: none;
   }
   .editor-topbar-editor-btn {
     min-height: 40px;
@@ -2422,7 +2403,6 @@
     display: flex;
     align-items: stretch;
     justify-content: center;
-    gap: 10px;
     width: 100%;
   }
   .generate-v2-media-column {
@@ -2445,40 +2425,6 @@
     background: #050812;
     border-radius: 18px;
   }
-  .generate-v2-design-shortcuts {
-    flex: 0 0 64px;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-  }
-  .generate-v2-design-shortcut-btn {
-    min-height: 48px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.045);
-    color: rgba(255, 255, 255, 0.76);
-    font-size: 0.68rem;
-    font-weight: 750;
-    line-height: 1.1;
-  }
-  .generate-v2-design-shortcut-btn .bi {
-    display: block;
-    margin-bottom: 3px;
-    color: #8fe3d7;
-    font-size: 0.98rem;
-  }
-  .generate-v2-design-shortcut-btn:hover,
-  .generate-v2-design-shortcut-btn:focus-visible {
-    border-color: rgba(45, 212, 191, 0.35);
-    color: #ccfbf1;
-  }
-  .generate-v2-design-shortcut-note {
-    color: rgba(255, 255, 255, 0.42);
-    font-size: 0.66rem;
-    line-height: 1.2;
-    text-align: center;
-  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip {
     display: inline-flex;
     align-items: center;
@@ -2492,50 +2438,65 @@
     background: rgba(245, 158, 11, 0.16);
     border: 1px solid rgba(245, 158, 11, 0.24);
   }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row,
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
-    display: grid;
-    grid-template-columns: repeat(var(--generate-v2-action-count, 4), minmax(0, 1fr));
-    align-items: stretch;
-    gap: 8px;
     width: 100%;
-    margin-top: 10px;
     margin-left: 0;
     margin-right: 0;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row {
+    display: grid;
+    margin-top: 10px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row:empty {
+    display: none;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
+    display: grid;
+    grid-template-columns: repeat(var(--generate-v2-action-count, 3), minmax(0, 1fr));
+    align-items: stretch;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row .btn,
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn {
     width: 100%;
-    min-height: 64px;
-    height: 64px;
-    padding: 8px 10px;
-    border-radius: 14px;
-    font-size: 0.79rem;
+    border-radius: 12px;
     font-weight: 800;
     line-height: 1.1;
     display: inline-flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 7px;
     white-space: nowrap;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row .btn {
+    min-height: 46px;
+    height: 46px;
+    padding: 10px 14px;
+    border-color: #2BB3A3;
+    background: #2BB3A3;
+    color: #06201D;
+    font-size: 0.84rem;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn {
+    min-height: 40px;
+    height: 40px;
+    padding: 8px;
+    font-size: 0;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn span:not(.material-symbols-outlined):not(.spinner-border),
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn .btn-label {
-    white-space: nowrap;
-    font-size: 0.75rem;
+    display: none;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row .bi,
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .material-symbols-outlined {
     font-size: 18px;
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .bi {
     font-size: 18px;
     line-height: 1;
-  }
-  @media (max-width: 1180px) {
-    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn span:not(.material-symbols-outlined):not(.spinner-border),
-    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn .btn-label {
-      font-size: 0.6875rem;
-    }
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-btn[data-download-busy="1"] {
     pointer-events: none;
@@ -4827,20 +4788,6 @@
     </div>
     {% if generate_v2 %}
     </div>
-    <div class="short-design-strip"
-         data-short-design-strip
-         data-caption-label="{{ caption_ns.label }}"
-         data-layout-label="{{ design_layout_label }}"
-         data-title-enabled="{{ '1' if selected_show_title else '0' }}"
-         data-subscribe-enabled="{{ '1' if selected_subscribe_overlay else '0' }}">
-      <div class="short-design-strip-main">
-        <div class="short-design-strip-label">SHORT DESIGN</div>
-        <button type="button" class="short-design-strip-summary" id="short-design-summary" data-generate-v2-open-edit-tab>
-          Captions: {{ caption_ns.label }} · Layout: {{ design_layout_label }} · Title: {{ 'On' if selected_show_title else 'Off' }}{% if selected_subscribe_overlay %} · Subscribe animation{% endif %}
-        </button>
-        <div class="short-design-strip-helper">Applies to every Short you create from this video</div>
-      </div>
-    </div>
     {% endif %}
   </div>
 </div>
@@ -5729,19 +5676,23 @@
                       <source src="{{ row.video_url }}" type="video/mp4">
                     </video>
                     {% if generate_v2 %}
+                      <div class="generate-v2-schedule-row"></div>
                       <div class="clip-card-media-actions generate-v2-primary-actions">
                         <a
                           class="btn btn-sm generate-v2-tile generate-v2-open-btn"
                           href="{{ row.video_url }}"
                           target="_blank"
                           rel="noreferrer"
-                          title="Open video">
+                          title="Open"
+                          aria-label="Open">
                           <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
                           <span>Open</span>
                         </a>
                         <a
                           class="btn btn-sm generate-v2-tile generate-v2-download-btn"
-                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}">
+                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}"
+                          title="Download"
+                          aria-label="Download">
                           <i class="bi bi-download" aria-hidden="true"></i>
                           <span>Download</span>
                         </a>
@@ -5751,19 +5702,13 @@
                           data-plan-index="{{ row.plan_index }}"
                           data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                           {% if row.regenerate_locked %}hidden{% endif %}
-                          title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Regenerate with current design' if row.render_settings_outdated else 'Regenerate this clip') }}">
+                          title="Regenerate"
+                          aria-label="Regenerate">
                           <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
                           <span>Regenerate</span>
                         </button>
                       </div>
                       <div class="generate-v2-download-toast d-none" role="status" aria-live="polite">Preparing your download…</div>
-                      </div>
-                      <div class="generate-v2-design-shortcuts" aria-label="Design shortcuts">
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="style"><i class="bi bi-palette2" aria-hidden="true"></i><span>Style</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="layout"><i class="bi bi-aspect-ratio" aria-hidden="true"></i><span>Reframe</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="caption"><i class="bi bi-chat-square-text" aria-hidden="true"></i><span>Captions</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="title"><i class="bi bi-type" aria-hidden="true"></i><span>Title</span></button>
-                        <div class="generate-v2-design-shortcut-note">Applies to all clips</div>
                       </div>
                     </div>
                     {% else %}
@@ -5806,13 +5751,6 @@
                         <div class="clip-card-generate-feedback small mt-1 d-none" aria-live="polite" aria-atomic="true"></div>
                       </div>
                     {% if generate_v2 %}
-                      <div class="generate-v2-design-shortcuts" aria-label="Design shortcuts">
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="style"><i class="bi bi-palette2" aria-hidden="true"></i><span>Style</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="layout"><i class="bi bi-aspect-ratio" aria-hidden="true"></i><span>Reframe</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="caption"><i class="bi bi-chat-square-text" aria-hidden="true"></i><span>Captions</span></button>
-                        <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="title"><i class="bi bi-type" aria-hidden="true"></i><span>Title</span></button>
-                        <div class="generate-v2-design-shortcut-note">Applies to all clips</div>
-                      </div>
                     </div>
                     {% endif %}
                   {% endif %}
@@ -5937,7 +5875,9 @@
                                 data-facebook-mode="{{ row.facebook_mode or '' }}"
                                 data-facebook-publish-at="{{ row.facebook_publish_at or '' }}"
                                 data-button-label="{% if row.publish_status == 'scheduled' %}Update schedule{% elif row.publish_status == 'uploaded' %}Update upload{% else %}Schedule & publish{% endif %}"
-                                {% if not (youtube_connected or instagram_connected or facebook_connected) %}disabled title="No publishing platform connected"{% endif %}>
+                                title="{% if not (youtube_connected or instagram_connected or facebook_connected) %}No publishing platform connected{% else %}Schedule{% endif %}"
+                                aria-label="Schedule"
+                                {% if not (youtube_connected or instagram_connected or facebook_connected) %}disabled{% endif %}>
                                 <i class="bi bi-youtube"></i>
                                 Schedule
                               </button>
@@ -9021,26 +8961,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const publishJumpBtn = document.getElementById("publish-jump-btn");
   const clipList = document.getElementById("clip-management-panel");
   const editModal = document.getElementById("crop-area-modal");
-  window.updateShortDesignStrip = (details = {}) => {
-    const strip = document.querySelector("[data-short-design-strip]");
-    const summary = document.getElementById("short-design-summary");
-    if (!strip || !summary) {
-      return;
-    }
-    const captionLabel = String(details.captionLabel || strip.dataset.captionLabel || "Default").trim();
-    const layoutLabel = String(details.layoutLabel || strip.dataset.layoutLabel || "Fit").trim();
-    const titleEnabled = details.titleEnabled === undefined
-      ? strip.dataset.titleEnabled === "1"
-      : !!details.titleEnabled;
-    const subscribeEnabled = details.subscribeEnabled === undefined
-      ? strip.dataset.subscribeEnabled === "1"
-      : !!details.subscribeEnabled;
-    strip.dataset.captionLabel = captionLabel;
-    strip.dataset.layoutLabel = layoutLabel;
-    strip.dataset.titleEnabled = titleEnabled ? "1" : "0";
-    strip.dataset.subscribeEnabled = subscribeEnabled ? "1" : "0";
-    summary.textContent = `Captions: ${captionLabel} · Layout: ${layoutLabel} · Title: ${titleEnabled ? "On" : "Off"}${subscribeEnabled ? " · Subscribe animation" : ""}`;
-  };
+  window.updateShortDesignStrip = () => {};
   const getEditVisitedKey = (videoId) => `minti:editor-visited:v${videoId}`;
   const canPulseEditNode = () => {
     if (!stepEditBtn) {
@@ -9105,33 +9026,6 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById(targetId)?.click();
     });
   }
-  document.querySelectorAll("[data-generate-v2-open-edit-tab]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      if (!getGenerateV2Root() || typeof window.setGenerateV2ActiveTab !== "function") {
-        return;
-      }
-      event.preventDefault();
-      window.setGenerateV2ActiveTab("edit");
-    });
-  });
-  document.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest(".generate-v2-design-shortcut-btn") : null;
-    if (!button) {
-      return;
-    }
-    if (getGenerateV2Root() && typeof window.setGenerateV2ActiveTab === "function") {
-      event.preventDefault();
-      const section = String(button.dataset.designShortcut || "style").trim() || "style";
-      window.setGenerateV2ActiveTab("edit").then((changed) => {
-        if (changed !== false) {
-          setGenerateV2EditorSection(section);
-        }
-      });
-      return;
-    }
-    window.__generateV2DesignShortcut = String(button.dataset.designShortcut || "").trim();
-    document.getElementById("choose-crop-btn")?.click();
-  });
   if (editModal && stepEditBtn) {
     editModal.addEventListener("shown.bs.modal", () => {
       const videoId = String(stepEditBtn.dataset.videoId || "").trim();
@@ -9675,17 +9569,20 @@ const arrangeGenerateV2PreviewCard = (card) => {
   card.dataset.generateV2Arranged = "1";
   const mediaActions = card.querySelector(".clip-card-media-actions");
   const mediaVideo = card.querySelector(".generate-v2-media-column > video, .generate-v2-media-column > .clip-card-placeholder");
+  const scheduleRow = card.querySelector(".generate-v2-schedule-row");
   const scheduleBlock = card.querySelector(".clip-card-action-primary");
   const regenerateBtn = card.querySelector(".generate-v2-regenerate-btn");
   if (mediaActions) {
     mediaActions.classList.add("generate-v2-primary-actions");
     if (scheduleBlock) {
       const scheduleBtn = scheduleBlock.querySelector(".send-to-youtube-btn");
-      if (scheduleBtn && scheduleBtn.parentElement !== mediaActions) {
-        mediaActions.insertBefore(scheduleBtn, mediaActions.firstElementChild || null);
+      if (scheduleBtn && scheduleRow && scheduleBtn.parentElement !== scheduleRow) {
+        scheduleRow.appendChild(scheduleBtn);
       }
       scheduleBtn?.classList.remove("btn-dark", "btn-outline-secondary", "clip-card-mini-btn");
       scheduleBtn?.classList.add("generate-v2-tile", "generate-v2-schedule-primary");
+      scheduleBtn?.setAttribute("title", "Schedule");
+      scheduleBtn?.setAttribute("aria-label", "Schedule");
     }
     const syncActionWidth = () => {
       if (mediaVideo) {
