@@ -12207,6 +12207,9 @@ def save_crop_area(video_pk):
     if crop_aspect not in {"landscape", "portrait"}:
         crop_aspect = "landscape"
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
+    crop_changed_param_present = "crop_changed" in request.form
+    crop_changed = (request.form.get("crop_changed") or "").strip().lower() in {"1", "true", "yes", "on"}
+    should_update_crop_lock = crop_changed or not crop_changed_param_present
 
     ratios = {
         "crop_x_ratio": _parse_ratio("crop_x_ratio"),
@@ -12285,23 +12288,30 @@ def save_crop_area(video_pk):
                     subscribe_overlay_enabled = bool(audio_row[1]) if audio_row[1] is not None else True
             except Exception:
                 pass
-        update_set_parts = [
-            "split_enabled = ?",
-            "crop_x_ratio = ?",
-            "crop_y_ratio = ?",
-            "crop_w_ratio = ?",
-            "crop_h_ratio = ?",
-            "crop_locked = ?",
-        ]
-        update_params: List[Any] = [
-            split_enabled,
-            x_val,
-            y_val,
-            w_val,
-            h_val,
-            True,
-        ]
-        if has_crop2_values:
+        update_set_parts = []
+        update_params: List[Any] = []
+        if should_update_crop_lock:
+            update_set_parts.extend(
+                [
+                    "split_enabled = ?",
+                    "crop_x_ratio = ?",
+                    "crop_y_ratio = ?",
+                    "crop_w_ratio = ?",
+                    "crop_h_ratio = ?",
+                    "crop_locked = ?",
+                ]
+            )
+            update_params.extend(
+                [
+                    split_enabled,
+                    x_val,
+                    y_val,
+                    w_val,
+                    h_val,
+                    True,
+                ]
+            )
+        if should_update_crop_lock and has_crop2_values:
             update_set_parts.extend(
                 [
                     "crop2_x_ratio = ?",

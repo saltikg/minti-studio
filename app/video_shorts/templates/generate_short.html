@@ -13343,6 +13343,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPresetRatiosBottom = { x: 0, y: 0, w: 1, h: 1 };
   let lastSinglePresetRatios = { x: 0, y: 0, w: 1, h: 1 };
   let activeSplitEnabled = false;
+  let initialCropSnapshot = null;
   let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
   let backgroundPickerImagesHydrated = false;
@@ -13883,6 +13884,36 @@ document.addEventListener("DOMContentLoaded", () => {
       return { x: 0, y: 0, w: 1, h: 1 };
     }
     return normalized;
+  };
+  const CROP_CHANGE_EPSILON = 0.001;
+  const buildCropSnapshot = (topRatios = currentPresetRatios, bottomRatios = currentPresetRatiosBottom) => ({
+    crop_aspect: activeCropAspect || "landscape",
+    split_enabled: getEffectiveSplitEnabled() ? "1" : "0",
+    top: normalizePresetRatios(topRatios),
+    bottom: getEffectiveSplitEnabled() ? normalizePresetRatios(bottomRatios) : null,
+  });
+  const ratiosDiffer = (left, right) => {
+    const a = normalizePresetRatios(left || {});
+    const b = normalizePresetRatios(right || {});
+    return ["x", "y", "w", "h"].some((key) => Math.abs(Number(a[key] || 0) - Number(b[key] || 0)) > CROP_CHANGE_EPSILON);
+  };
+  const cropSnapshotChanged = (snapshot) => {
+    if (!initialCropSnapshot || !snapshot) {
+      return true;
+    }
+    if (String(initialCropSnapshot.crop_aspect || "") !== String(snapshot.crop_aspect || "")) {
+      return true;
+    }
+    if (String(initialCropSnapshot.split_enabled || "0") !== String(snapshot.split_enabled || "0")) {
+      return true;
+    }
+    if (ratiosDiffer(initialCropSnapshot.top, snapshot.top)) {
+      return true;
+    }
+    if (String(snapshot.split_enabled || "0") === "1" && ratiosDiffer(initialCropSnapshot.bottom, snapshot.bottom)) {
+      return true;
+    }
+    return false;
   };
   const destroyCropperInstance = (boxKey) => {
     const instance = cropperInstances[boxKey];
@@ -14917,6 +14948,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSplitUiState();
     syncPreviewTitleText();
     applyPreviewLayout();
+    initialCropSnapshot = buildCropSnapshot();
     loadActivePreviewImage();
     return true;
   };
@@ -15187,6 +15219,10 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
+    params.append("crop_changed", cropSnapshotChanged(buildCropSnapshot(
+      { x: xRatio, y: yRatio, w: wRatio, h: hRatio },
+      crop2Ratios || currentPresetRatiosBottom,
+    )) ? "1" : "0");
     if (subtitleStyleField) {
       params.append("subtitle_style", getPersistedFieldValue(subtitleStyleField));
     }
