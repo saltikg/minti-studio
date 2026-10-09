@@ -1445,7 +1445,23 @@ def _versioned_media_url(url: str, version: Optional[str]) -> str:
     if not clean_url or not clean_version:
         return clean_url
     parsed = urlparse(clean_url)
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    signed_query_keys = {key.lower() for key, _ in query_pairs}
+    if signed_query_keys.intersection(
+        {
+            "signature",
+            "key-pair-id",
+            "expires",
+            "x-amz-signature",
+            "x-amz-credential",
+            "x-amz-security-token",
+            "x-amz-expires",
+            "x-amz-date",
+            "x-amz-algorithm",
+        }
+    ):
+        return clean_url
+    query = dict(query_pairs)
     query["v"] = clean_version
     return parsed._replace(query=urlencode(query)).geturl()
 
