@@ -11419,6 +11419,9 @@ def download_generated_clip(video_pk: int, plan_index: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         abort(401)
+    editor_context = _active_editor_context()
+    if not str(editor_context.get("owner_user_id") or "").strip():
+        abort(401)
     conn = get_db_readonly()
     try:
         row = _fetch_scoped_video_row(conn, video_pk, "video_id, title")
