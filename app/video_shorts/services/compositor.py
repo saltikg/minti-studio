@@ -2503,7 +2503,12 @@ def _compose_trimmed_with_background(
     bg_filter = (
         f"[0:v]scale={target_width}:{target_height},setsar=1[bg]"
     )
-    filter_parts = [bg_filter]
+    face_aware_has_fit_segment = any(
+        str(segment.get("mode") or "").strip().lower() == "fit"
+        for segment in layout_segments
+    )
+    needs_background_stream = split_stack_enabled or (not face_aware_layout_active) or face_aware_has_fit_segment
+    filter_parts = [bg_filter] if needs_background_stream else []
     if split_stack_enabled:
         crop2_x, crop2_y, crop2_w, crop2_h = _normalize_crop_box("crop2_")
         split_tile_width = target_width
