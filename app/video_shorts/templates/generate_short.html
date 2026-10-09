@@ -1782,26 +1782,35 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    margin: 0 0 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 12px;
+    margin: 0 0 14px;
   }
   .generate-v2-tabbar {
     display: flex;
-    align-items: flex-end;
-    gap: 20px;
+    align-items: center;
+    gap: 5px;
     min-width: 0;
+    padding: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    background: rgba(9, 14, 27, 0.72);
   }
   .generate-v2-tab {
-    border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    padding: 0 0 10px;
+    width: 128px;
+    height: 64px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 8px 10px;
     background: transparent;
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 0.9rem;
-    font-weight: 750;
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 0.8125rem;
+    font-weight: 800;
     white-space: nowrap;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
   }
   .generate-v2-tab:focus {
     outline: none;
@@ -1812,12 +1821,18 @@
     outline-offset: 4px;
   }
   .generate-v2-tab.is-active {
-    border-bottom-color: #2dd4bf;
+    border-color: rgba(45, 212, 191, 0.2);
+    background: rgba(45, 212, 191, 0.14);
     color: #ccfbf1;
   }
+  .generate-v2-tab .bi,
+  .generate-v2-tab-action .bi {
+    font-size: 20px;
+    line-height: 1;
+  }
   .generate-v2-tab-count {
-    color: rgba(255, 255, 255, 0.48);
-    font-weight: 700;
+    color: inherit;
+    font-weight: inherit;
   }
   .generate-v2-tab-actions {
     display: inline-flex;
@@ -1825,7 +1840,6 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
-    padding-bottom: 8px;
   }
   #clip-workbench-shell[data-active-tab="transcript"] .generate-v2-tab-actions {
     display: none;
@@ -1834,6 +1848,31 @@
     max-width: 220px;
     margin: 0 !important;
     text-align: right;
+  }
+  .generate-v2-tab-action {
+    width: 104px;
+    height: 64px;
+    border-radius: 14px;
+    padding: 8px 10px;
+    font-size: 0.79rem;
+    font-weight: 800;
+    line-height: 1.1;
+    display: inline-flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] #ai-generate-btn.generate-v2-tab-action {
+    border-color: rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.13);
+    color: #ccfbf1;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] #clip-schedule-all-btn.generate-v2-tab-action {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(255, 255, 255, 0.74);
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
     align-items: center;
@@ -2080,21 +2119,20 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    min-width: 70px;
-    min-height: 28px;
-    padding: 4px 9px;
-    border-radius: 999px;
-    border: 1px solid rgba(45, 212, 191, 0.28);
-    background: rgba(45, 212, 191, 0.12);
+    width: 60px;
+    height: 52px;
+    padding: 0;
+    border-radius: 12px;
+    border: 1px solid rgba(45, 212, 191, 0.18);
+    background: rgba(45, 212, 191, 0.08);
     color: #ccfbf1;
-    font-size: 0.74rem;
+    font-size: 1.38rem;
     font-weight: 800;
     line-height: 1;
     white-space: nowrap;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge .bi {
-    font-size: 0.78rem;
+    font-size: 1.28rem;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-manual {
     border-color: rgba(255, 255, 255, 0.16);
@@ -2151,20 +2189,12 @@
       flex-direction: column;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-col {
-      flex: 0 0 clamp(420px, 39%, 560px);
-      max-width: clamp(420px, 39%, 560px);
+      flex: 0 0 45%;
+      max-width: 45%;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-col {
-      flex: 1 1 0;
-      max-width: none;
-    }
-    #clip-workbench-shell[data-generate-v2="1"][data-active-tab="transcript"] .generate-v2-left-col {
-      flex: 0 0 58%;
-      max-width: 58%;
-    }
-    #clip-workbench-shell[data-generate-v2="1"][data-active-tab="transcript"] .generate-v2-right-col {
-      flex: 1 1 0;
-      max-width: 42%;
+      flex: 0 0 55%;
+      max-width: 55%;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench > .clip-workbench-side {
       position: relative;
@@ -2190,7 +2220,7 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabs-row {
       flex: 0 0 auto;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel.is-active {
       min-height: 0;
@@ -2225,24 +2255,34 @@
     #clip-workbench-shell[data-generate-v2="1"] #ai-generate-btn,
     #clip-workbench-shell[data-generate-v2="1"] #clip-score-batch-create-btn,
     #clip-workbench-shell[data-generate-v2="1"] #clip-schedule-all-btn {
-      min-height: 34px;
-      padding: 0.28rem 0.55rem;
-      font-size: 0.78rem;
+      font-size: 0.79rem;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-list {
       flex: 1 1 auto;
       min-height: 0;
       overflow: auto;
-      gap: 6px;
+      gap: 0;
       padding-right: 4px;
     }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
-      min-height: 64px;
-      grid-template-columns: 48px minmax(0, 1fr) auto;
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-row {
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 8px;
-      padding: 6px;
-      border-radius: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
+      min-height: 104px;
+      grid-template-columns: 28px 128px minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 16px 14px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
       text-align: left;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion {
+      border: 0;
+      background: transparent;
+      box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus {
       outline: none;
@@ -2253,20 +2293,52 @@
       outline-offset: 2px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-active {
+      border: 0;
+      background: rgba(45, 212, 191, 0.11);
       box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion.is-active {
-      box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.14);
+      border: 0;
+      background: rgba(45, 212, 191, 0.11);
+      box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb {
-      width: 48px;
-      height: 48px;
+      width: 128px;
+      height: 72px;
       border-radius: 10px;
+      align-self: center;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item[data-status="pending"] .clip-rail-thumb {
+      border: 1px dashed rgba(125, 211, 252, 0.42);
+      background: rgba(125, 211, 252, 0.06);
+      box-shadow: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-number {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 0.8rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      align-self: center;
+      text-align: right;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-duration {
+      position: absolute;
+      right: 6px;
+      bottom: 5px;
+      min-height: 18px;
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 800;
+      line-height: 1.25;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy {
       display: flex;
       align-items: flex-start;
-      gap: 2px 7px;
+      align-self: center;
+      gap: 5px 7px;
       flex-wrap: wrap;
       min-width: 0;
       text-align: left;
@@ -2275,10 +2347,14 @@
       order: 1;
       flex: 0 0 100%;
       min-width: 0;
-      font-size: 0.94rem;
-      white-space: nowrap;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.25;
+      white-space: normal;
       overflow: hidden;
-      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-meta {
       order: 2;
@@ -2290,6 +2366,7 @@
       font-size: 0.8rem;
       text-align: left;
       white-space: nowrap;
+      color: rgba(255, 255, 255, 0.54);
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms {
       display: inline-flex;
@@ -2303,8 +2380,9 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-status,
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip {
-      order: 4;
+      order: 3;
       flex: 0 0 auto;
+      align-self: center;
     }
     #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-panel="transcript"] > .gs-card {
       height: 100%;
@@ -4392,14 +4470,16 @@
                         data-generate-v2-tab="shorts"
                         role="tab"
                         aria-selected="false">
-                  Clips <span class="generate-v2-tab-count">{{ total_clip_count }}</span>
+                  <i class="bi bi-phone" aria-hidden="true"></i>
+                  <span>Your Clips · <span class="generate-v2-tab-count">{{ total_clip_count }}</span></span>
                 </button>
                 <button type="button"
                         class="generate-v2-tab"
                         data-generate-v2-tab="transcript"
                         role="tab"
                         aria-selected="false">
-                  Pick from transcript
+                  <i class="bi bi-text-left" aria-hidden="true"></i>
+                  <span>Make a Clip</span>
                 </button>
               </div>
               <div class="generate-v2-tab-actions" aria-label="Clip actions">
@@ -4419,7 +4499,7 @@
                 {% endfor %}
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                  class="btn btn-sm btn-outline-light generate-v2-tab-action"
                   id="clip-schedule-all-btn"
                   data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
                   data-instagram-connected="{{ '1' if instagram_connected else '0' }}"
@@ -4429,18 +4509,18 @@
                   {% elif v2_schedule_all_ns.count == 0 %}
                     disabled title="No created clips to schedule yet — use Create clips first."
                   {% endif %}>
-                  <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
+                  <i class="bi bi-calendar2-check" aria-hidden="true"></i>
                   Schedule all
                 </button>
                 <button
                   type="submit"
                   form="step2-form"
-                  class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                  class="btn btn-sm btn-outline-info generate-v2-tab-action"
                   id="ai-generate-btn"
                   {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <i class="bi bi-stars" aria-hidden="true"></i>
-                  <span class="btn-label">Find more clips</span>
+                  <span class="btn-label">Find Moments</span>
                 </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
@@ -4646,6 +4726,9 @@
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
                   <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
+                    {% if generate_v2 %}
+                    <span class="clip-rail-number">{{ loop.index }}</span>
+                    {% endif %}
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
                         <video muted playsinline preload="metadata">
@@ -4656,6 +4739,9 @@
                           <span class="clip-rail-ai-badge">✨ AI</span>
                         {% endif %}
                         <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                      {% endif %}
+                      {% if generate_v2 %}
+                      <span class="clip-rail-duration">{{ rail_duration_label }}</span>
                       {% endif %}
                     </span>
                     <span class="clip-rail-copy">
@@ -4781,14 +4867,12 @@
                     </span>
                     {% if generate_v2 %}
                       {% if row.is_ai_suggestion %}
-                        <span class="clip-rail-kind-badge is-ai" data-bs-toggle="tooltip" data-bs-placement="top" title="AI suggested clip{% if rail_score is not none %} · Score {{ rail_score }}{% endif %}">
-                          <i class="bi bi-stars" aria-hidden="true"></i>
-                          <span>AI{% if rail_score is not none %} {{ rail_score }}{% endif %}</span>
+                        <span class="clip-rail-kind-badge is-ai" data-bs-toggle="tooltip" data-bs-placement="top" title="AI score — how likely this moment works as a Short">
+                          <span>{{ rail_score if rail_score is not none else '—' }}</span>
                         </span>
                       {% else %}
-                        <span class="clip-rail-kind-badge is-manual" data-bs-toggle="tooltip" data-bs-placement="top" title="Manual clip">
+                        <span class="clip-rail-kind-badge is-manual" data-bs-toggle="tooltip" data-bs-placement="top" title="Made by you">
                           <i class="bi bi-scissors" aria-hidden="true"></i>
-                          <span>Manual</span>
                         </span>
                       {% endif %}
                     {% elif rail_score is not none %}
