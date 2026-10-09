@@ -2294,17 +2294,18 @@
     justify-content: center;
     width: 100%;
   }
-  .generate-v2-media-column {
-    flex: 0 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    width: min(
-      calc((var(--generate-v2-preview-video-height, 420px) * 9) / 16),
-      100%
-    );
-  }
+	  .generate-v2-media-column {
+	    flex: 0 1 auto;
+	    min-width: 0;
+	    display: flex;
+	    flex-direction: column;
+	    align-items: stretch;
+	    width: min(
+	      calc((var(--generate-v2-preview-video-height, 420px) * 9) / 16),
+	      100%
+	    );
+	    position: relative;
+	  }
   .generate-v2-media-column > video,
   .generate-v2-media-column > .clip-card-placeholder {
     min-width: 0;
@@ -2391,7 +2392,7 @@
     pointer-events: none;
     opacity: 0.72;
   }
-  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-toast {
+	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-toast {
     width: 100%;
     margin: 8px auto 0;
     padding: 7px 10px;
@@ -2401,8 +2402,31 @@
     color: #ccfbf1;
     font-size: 0.78rem;
     font-weight: 700;
-    text-align: center;
-  }
+	    text-align: center;
+	  }
+	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-render-overlay {
+	    position: absolute;
+	    inset: 0 0 auto 0;
+	    aspect-ratio: 9 / 16;
+	    display: flex;
+	    align-items: center;
+	    justify-content: center;
+	    flex-direction: column;
+	    gap: 8px;
+	    border-radius: 18px;
+	    background: rgba(3, 7, 18, 0.48);
+	    color: #f8fafc;
+	    font-size: 0.86rem;
+	    font-weight: 800;
+	    pointer-events: auto;
+	    z-index: 3;
+	  }
+	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-media-column.is-rendering > video {
+	    pointer-events: none;
+	  }
+	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-render-overlay:not(.is-failed) .generate-v2-render-retry {
+	    display: none !important;
+	  }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats {
     width: 100%;
     margin-top: 10px;
@@ -5156,7 +5180,7 @@
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -5456,6 +5480,7 @@
                  data-render-job-id="{{ row.render_job_id or '' }}"
                  data-render-job-status="{{ row.render_job_status or '' }}"
                  data-render-error="{{ row.render_error or '' }}"
+                 data-media-version="{{ row.media_version or '' }}"
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
@@ -5559,12 +5584,17 @@
                   {% if row.status == "created" and row.video_filename and row.video_url %}
                     {% if generate_v2 %}
                     <div class="generate-v2-media-shell">
-                      <div class="generate-v2-media-column">
+                      <div class="generate-v2-media-column{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls preload="metadata">
                       <source src="{{ row.video_url }}" type="video/mp4">
                     </video>
-                    {% if generate_v2 %}
+	                    {% if generate_v2 %}
+	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
+	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+	                        <span class="generate-v2-render-overlay-label">{% if row.render_job_status in ['queued', 'processing', 'running'] %}Updating clip…{% else %}Update failed{% endif %}</span>
+	                        <button type="button" class="btn btn-sm btn-outline-light generate-v2-render-retry d-none">Retry</button>
+	                      </div>
                       <div class="generate-v2-schedule-row"></div>
                       <div class="clip-card-media-actions generate-v2-primary-actions">
                         <a
@@ -5579,7 +5609,7 @@
                         </a>
                         <a
                           class="btn btn-sm generate-v2-tile generate-v2-download-btn"
-                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}"
+                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}{% if row.media_version %}?v={{ row.media_version }}{% endif %}"
                           title="Download"
                           aria-label="Download">
                           <i class="bi bi-download" aria-hidden="true"></i>
@@ -9485,9 +9515,10 @@ const arrangeGenerateV2PreviewCard = (card) => {
     };
     syncActionWidth();
     setTimeout(syncActionWidth, 0);
-    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
-    bindGenerateV2DownloadTile(card);
-  }
+	    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
+	    bindGenerateV2DownloadTile(card);
+	    bindGenerateV2RenderRetry(card);
+	  }
   const actionBar = card.querySelector(".clip-card-action-bar");
   if (!actionBar || actionBar.querySelector(".generate-v2-share-stats")) {
     return;
@@ -10464,6 +10495,51 @@ const setClipFeedbackState = (
   }
 };
 
+const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false } = {}) => {
+  const card = getClipCardByPlanIndex(planIndex);
+  const column = card?.querySelector(".generate-v2-media-column");
+  const overlay = card?.querySelector(".generate-v2-render-overlay");
+  const video = column?.querySelector("video");
+  if (!column || !overlay) {
+    return;
+  }
+  column.classList.toggle("is-rendering", !!active);
+  overlay.classList.toggle("d-none", !active && !failed);
+  overlay.classList.toggle("is-failed", !!failed);
+  const spinner = overlay.querySelector(".spinner-border");
+  const label = overlay.querySelector(".generate-v2-render-overlay-label");
+  const retry = overlay.querySelector(".generate-v2-render-retry");
+  spinner?.classList.toggle("d-none", !!failed);
+  retry?.classList.toggle("d-none", !failed);
+  if (label) {
+    label.textContent = failed ? "Update failed" : "Updating clip…";
+  }
+  if (video) {
+    video.controls = !active;
+    if (active) {
+      try {
+        video.pause();
+      } catch (error) {
+        // Ignore media pause failures.
+      }
+    }
+  }
+};
+
+const bindGenerateV2RenderRetry = (card) => {
+  const retry = card?.querySelector(".generate-v2-render-retry");
+  if (!retry || retry.dataset.retryBound === "1") {
+    return;
+  }
+  retry.dataset.retryBound = "1";
+  retry.addEventListener("click", () => {
+    const targetCard = retry.closest(".clip-card");
+    if (targetCard) {
+      void enqueueRegenerateClip(targetCard, { force: true });
+    }
+  });
+};
+
 const formatQueuedMessage = (queuePosition) => {
   const count = Math.max(1, Number(queuePosition) || 0);
   return `In queue (position ${count})... We'll start this shortly.`;
@@ -10489,6 +10565,10 @@ const formatRenderingBackgroundMessage = () => {
 const renderClipJobProgressState = (card, status, queuePosition) => {
   const normalizedStatus = String(status || "").trim().toLowerCase();
   const ahead = Number(queuePosition);
+  const planIndex = getPlanIndexFromCard(card);
+  if (planIndex) {
+    setGenerateV2RenderOverlay(planIndex, { active: true, failed: false });
+  }
   if (normalizedStatus === "queued") {
     setClipFeedbackState(card, {
       message: Number.isFinite(ahead) && ahead > 0
@@ -10536,6 +10616,7 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
       }
       window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
       loadGenerateUsageSummary();
+      setGenerateV2RenderOverlay(planIndex, { active: false, failed: false });
       return;
     }
     if (attempt < clipJobRevealAttempts - 1) {
@@ -10564,6 +10645,8 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
 
 const handleClipJobFailure = (planIndex) => {
   stopClipJobPolling(planIndex, { clearStored: true });
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
+  setRegenerateFeedback(planIndex, "", false);
   const card = getClipCardByPlanIndex(planIndex);
   if (!card) {
     return;
@@ -10631,6 +10714,8 @@ const showClipFailureMessage = (card, message, { html = false } = {}) => {
 
 const handleClipJobFailurePayload = (planIndex, payload = null) => {
   stopClipJobPolling(planIndex, { clearStored: true });
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
+  setRegenerateFeedback(planIndex, "", false);
   const card = getClipCardByPlanIndex(planIndex);
   if (!card) {
     return;
@@ -10692,6 +10777,7 @@ const pollClipJobUntilDone = async (
   let queuePosition = initialQueuePosition;
   let lastObservedStatus = initialStatus;
   let lastObservedQueuePosition = initialQueuePosition;
+  let pollErrorCount = 0;
 
   while (!state.cancelled && (Date.now() - startedAt) < clipJobPollMaxMs) {
     const card = getClipCardByPlanIndex(planIndex);
@@ -10714,6 +10800,7 @@ const pollClipJobUntilDone = async (
         queuePosition = payload?.queue_position;
         lastObservedStatus = status;
         lastObservedQueuePosition = queuePosition;
+        pollErrorCount = 0;
         if (status === "done") {
           await finalizeClipJobSuccess(planIndex);
           return;
@@ -10723,7 +10810,13 @@ const pollClipJobUntilDone = async (
           return;
         }
       } catch (error) {
-        // Transient polling failure; continue with backoff.
+        pollErrorCount += 1;
+        if (pollErrorCount >= 5) {
+          handleClipJobFailurePayload(planIndex, {
+            message: "Couldn't check render status. Please refresh and try again.",
+          });
+          return;
+        }
       }
     }
 
@@ -10748,12 +10841,18 @@ const setRegenerateFeedback = (planIndex, message, busy = false) => {
   const card = getClipCardByPlanIndex(planIndex);
   const button = card?.querySelector(".generate-v2-regenerate-btn");
   if (button) {
-    button.disabled = !!busy || button.disabled;
-    const label = button.querySelector("span");
+    button.disabled = !!busy;
+    const icon = button.querySelector("i");
+    if (icon) {
+      icon.className = busy ? "spinner-border spinner-border-sm" : "bi bi-arrow-clockwise";
+      icon.setAttribute("aria-hidden", "true");
+    }
+    const label = button.querySelector("span:not(.spinner-border)");
     if (label) {
-      label.textContent = busy ? "Regenerating..." : "Regenerate";
+      label.textContent = busy ? "Regenerating…" : "Regenerate";
     }
   }
+  setGenerateV2RenderOverlay(planIndex, { active: busy, failed: false });
 };
 
 const enqueueRegenerateClip = async (card, options = {}) => {
@@ -11868,9 +11967,9 @@ const resumeQueuedClipJobs = () => {
     }
     const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJobs[String(planIndex)]?.jobId || "").trim();
     const status = liveRenderStatus || String(card.dataset.status || "").trim().toLowerCase();
-    if (!jobId || !["queued", "processing"].includes(status)) {
-      return;
-    }
+	    if (!jobId || !["queued", "processing", "running"].includes(status)) {
+	      return;
+	    }
     pollClipJobUntilDone(planIndex, jobId, {
       initialStatus: status,
       startedAt: Number(storedJobs[String(planIndex)]?.startedAt || Date.now()),

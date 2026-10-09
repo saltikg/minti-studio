@@ -23,6 +23,7 @@ from app.video_shorts.config import (
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
     FACE_AWARE_MAX_ZOOM,
+    FACE_AWARE_TARGET_FACE_RATIO,
     STATIC_VISUAL_PRESETS,
     SUBTITLE_PRESETS,
     SUB_MARGIN_DEFAULT,
@@ -135,11 +136,13 @@ def _face_aware_fill_zoom_for_segment(
     segment_start: float,
     segment_end: float,
     crop_h: float,
+    target_face_ratio: float = FACE_AWARE_TARGET_FACE_RATIO,
     max_zoom: float = FACE_AWARE_MAX_ZOOM,
 ) -> float:
-    """Return a static fill-segment zoom that makes the median face roughly 30% of output height."""
+    """Return a static fill-segment zoom that makes the median face reach the target output-height ratio."""
     try:
         safe_crop_h = max(0.01, min(1.0, float(crop_h)))
+        safe_target = max(0.01, float(target_face_ratio or FACE_AWARE_TARGET_FACE_RATIO))
         safe_max_zoom = max(1.0, float(max_zoom or FACE_AWARE_MAX_ZOOM))
     except Exception:
         return 1.0
@@ -160,7 +163,7 @@ def _face_aware_fill_zoom_for_segment(
     h_portrait_equiv = median_h / safe_crop_h
     if h_portrait_equiv <= 0:
         return 1.0
-    zoom = 0.30 / h_portrait_equiv
+    zoom = safe_target / h_portrait_equiv
     return round(max(1.0, min(safe_max_zoom, zoom)), 6)
 
 
@@ -2257,7 +2260,15 @@ def _compose_trimmed_with_background(
             mode = str(segment.get("mode") or "").strip().lower()
             if mode not in {"fill", "fit"} or seg_end - seg_start <= 1e-3:
                 continue
-            layout_segments.append({"start": seg_start, "end": seg_end, "mode": mode})
+            normalized_segment = {"start": seg_start, "end": seg_end, "mode": mode}
+            if mode == "fill":
+                try:
+                    normalized_segment["zoom"] = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+                except Exception:
+                    normalized_segment["zoom"] = 1.0
+            else:
+                normalized_segment["zoom"] = 1.0
+            layout_segments.append(normalized_segment)
         layout_segments.sort(key=lambda item: item["start"])
         layout_segments = [
             segment for segment in layout_segments
@@ -2482,8 +2493,16 @@ def _compose_trimmed_with_background(
                 "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
             )
             current_app.logger.info(
-                "Face-aware layout concat enabled segments=%s duration=%.3f",
-                [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"]) for seg in layout_segments],
+                "face_aware_layout compositor_segments=%s duration=%.3f",
+                [
+                    (
+                        round(float(seg["start"]), 3),
+                        round(float(seg["end"]), 3),
+                        seg["mode"],
+                        round(float(seg.get("zoom") or 1.0), 3),
+                    )
+                    for seg in layout_segments
+                ],
                 duration,
             )
         else:

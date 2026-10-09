@@ -5506,6 +5506,14 @@ def render_job_status_api(job_id: str):
     lowered_error = error_text.lower()
     if "export limit reached" in lowered_error or "monthly export limit reached" in lowered_error:
         error_code = "export_limit_reached"
+    media_payload = {}
+    if str(job.get("status") or "").lower() == "done":
+        try:
+            from app.video_shorts.routes import generation as generation_routes
+
+            media_payload = generation_routes.render_job_media_payload(job)
+        except Exception:
+            current_app.logger.debug("Could not include render job media payload job_id=%s", job_id, exc_info=True)
     return jsonify(
         {
             "id": job["id"],
@@ -5515,6 +5523,7 @@ def render_job_status_api(job_id: str):
             "started_at": job["started_at"],
             "finished_at": job["finished_at"],
             "result": job.get("result"),
+            "media": media_payload,
             "error": job.get("error"),
             "error_code": error_code,
             "queue_position": job.get("queue_position"),

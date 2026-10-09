@@ -1439,6 +1439,17 @@ def _short_public_url(filename: str) -> str:
     return ""
 
 
+def _versioned_media_url(url: str, version: Optional[str]) -> str:
+    clean_url = str(url or "").strip()
+    clean_version = str(version or "").strip()
+    if not clean_url or not clean_version:
+        return clean_url
+    parsed = urlparse(clean_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["v"] = clean_version
+    return parsed._replace(query=urlencode(query)).geturl()
+
+
 def _short_poster_storage_key(filename: str) -> str:
     safe_name = Path(filename or "").name
     if not safe_name:
@@ -5083,6 +5094,143 @@ def _load_render_jobs_by_id(conn, job_ids: List[str]) -> Dict[str, Dict[str, Any
     return jobs
 
 
+def _load_active_render_jobs_for_video_by_plan(
+    conn,
+    *,
+    user_id: Optional[str],
+    source_video_id: str,
+    brand_id: Optional[str],
+    video_pk: Optional[int],
+) -> Dict[int, Dict[str, Any]]:
+    """Return live render jobs for a source keyed by plan index, even if the plan file lost the job id."""
+    cleaned_user_id = str(user_id or "").strip()
+    cleaned_source_id = str(source_video_id or "").strip()
+    if not cleaned_user_id or not cleaned_source_id:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT
+            CAST(id AS VARCHAR),
+            status,
+            started_at,
+            finished_at,
+            error,
+            payload_json
+        FROM shorts_render_jobs
+        WHERE type = ?
+          AND user_id = ?
+          AND status IN ('queued', 'processing', 'running')
+        ORDER BY created_at DESC
+        """,
+        [JOB_TYPE_RENDER_SHORT, cleaned_user_id],
+    ).fetchall()
+    active_by_plan: Dict[int, Dict[str, Any]] = {}
+    for row in rows:
+        raw_payload = row[5]
+        if isinstance(raw_payload, dict):
+            payload = raw_payload
+        else:
+            try:
+                payload = json.loads(raw_payload or "{}")
+            except Exception:
+                payload = {}
+        if str(payload.get("source_video_id") or "").strip() != cleaned_source_id:
+            continue
+        if brand_id is not None and str(payload.get("brand_id") or "") != str(brand_id or ""):
+            continue
+        if video_pk is not None and str(payload.get("video_pk") or "") != str(video_pk):
+            continue
+        try:
+            plan_index = int(payload.get("plan_index"))
+        except Exception:
+            continue
+        active_by_plan.setdefault(
+            plan_index,
+            {
+                "id": str(row[0] or "").strip(),
+                "status": str(row[1] or "").strip().lower(),
+                "started_at": _as_utc_datetime(row[2]),
+                "finished_at": _as_utc_datetime(row[3]),
+                "error": row[4],
+            },
+        )
+    return active_by_plan
+
+
+def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, str]:
+    payload = (job or {}).get("payload") or {}
+    source_video_id = str(payload.get("source_video_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    try:
+        plan_index = int(payload.get("plan_index"))
+    except Exception:
+        return {}
+    if not source_video_id:
+        return {}
+    target_entry = None
+    for entry in _load_plan_entries(source_video_id) or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            if int(entry.get("plan_index")) == plan_index:
+                target_entry = entry
+                break
+        except Exception:
+            continue
+    if not target_entry:
+        return {}
+    clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "").strip()
+    if not clip_filename or not _short_exists(clip_filename):
+        return {}
+    media_version = ""
+    conn = get_db_readonly()
+    try:
+        columns = table_columns(conn, "shorts_generated_videos")
+        if columns:
+            select_updated = "updated_at" if "updated_at" in columns else "NULL AS updated_at"
+            select_hash = "render_settings_hash" if "render_settings_hash" in columns else "NULL AS render_settings_hash"
+            sql = f"""
+                SELECT {select_updated}, {select_hash}
+                FROM shorts_generated_videos
+                WHERE CAST(source_video_id AS VARCHAR) = ?
+                  AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+                  AND clip_filename = ?
+            """
+            params: List[Any] = [source_video_id, clip_filename]
+            if brand_id:
+                sql += " AND brand_id = ?"
+                params.append(brand_id)
+            sql += " LIMIT 1"
+            row = conn.execute(sql, params).fetchone()
+            if row:
+                updated_at = _as_utc_datetime(row[0])
+                if updated_at:
+                    media_version = str(int(updated_at.timestamp()))
+                elif row[1]:
+                    media_version = str(row[1])[:12]
+    except Exception:
+        current_app.logger.debug("Could not build render job media payload job_id=%s", (job or {}).get("id"), exc_info=True)
+    finally:
+        conn.close()
+    video_url = _versioned_media_url(_short_public_url(clip_filename), media_version)
+    poster_url = _versioned_media_url(_short_poster_public_url(clip_filename), media_version)
+    download_url = ""
+    try:
+        video_pk = int(payload.get("video_pk"))
+        download_url = url_for("video_shorts_bp.download_generated_clip", video_pk=video_pk, plan_index=plan_index)
+        download_url = _versioned_media_url(download_url, media_version)
+    except Exception:
+        download_url = ""
+    return {
+        "plan_index": str(plan_index),
+        "clip_filename": clip_filename,
+        "media_version": media_version,
+        "video_url": video_url,
+        "poster_url": poster_url,
+        "download_url": download_url,
+    }
+
+
 def _selected_processing_timeout_entries(
     entries: List[Dict[str, Any]],
     *,
@@ -6676,11 +6824,39 @@ def _build_render_job_options(
 
 
 def _render_settings_hash_from_options(options: Dict[str, Any]) -> str:
-    payload = dict(options or {})
+    payload = canonical_render_settings(options or {})
     payload.pop("plan_index", None)
     payload.pop("brand_id", None)
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return sha256(raw.encode("utf-8")).hexdigest()
+
+
+def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize render settings so enqueue-time and current comparisons hash the same values."""
+    payload = dict(options or {})
+    crop_ratios = dict(payload.get("crop_ratios") or {})
+    if crop_ratios:
+        for key in (
+            "split_enabled",
+            "crop_x_ratio",
+            "crop_y_ratio",
+            "crop_w_ratio",
+            "crop_h_ratio",
+            "crop2_x_ratio",
+            "crop2_y_ratio",
+            "crop2_w_ratio",
+            "crop2_h_ratio",
+            "crop_locked",
+        ):
+            crop_ratios.setdefault(key, None)
+        crop_ratios["split_enabled"] = bool(crop_ratios.get("split_enabled"))
+        crop_ratios["crop_locked"] = bool(crop_ratios.get("crop_locked"))
+        payload["crop_ratios"] = crop_ratios
+    try:
+        payload["title_line_spacing"] = int(payload.get("title_line_spacing") if payload.get("title_line_spacing") is not None else -4)
+    except Exception:
+        payload["title_line_spacing"] = -4
+    return payload
 
 
 def _video_crop_ratios_from_mapping(video: Dict[str, Any]) -> Dict[str, Any]:
@@ -9214,6 +9390,7 @@ def generate_short(video_pk):
                     select_fields.append("render_settings_hash")
                 else:
                     select_fields.append("NULL AS render_settings_hash")
+                select_fields.append("updated_at" if "updated_at" in generated_columns else "NULL AS updated_at")
                 generated_rows = conn_generated.execute(
                     f"""
                     SELECT {", ".join(select_fields)}
@@ -9274,6 +9451,7 @@ def generate_short(video_pk):
                         "planned_publish_at": generated_row[5] if len(generated_row) > 5 else None,
                         "share_token": generated_row[6] if len(generated_row) > 6 else None,
                         "render_settings_hash": generated_row[7] if len(generated_row) > 7 else None,
+                        "updated_at": generated_row[8] if len(generated_row) > 8 else None,
                         "recipient_name": str(recipient_info.get("recipient_name") or "").strip(),
                         "recipient_email": str(recipient_info.get("recipient_email") or "").strip(),
                         "trial_days": normalize_trial_days(recipient_info.get("trial_days"), default=DEFAULT_SHARE_TRIAL_DAYS),
@@ -9281,17 +9459,26 @@ def generate_short(video_pk):
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
     render_jobs_by_id: Dict[str, Dict[str, Any]] = {}
+    active_render_jobs_by_plan: Dict[int, Dict[str, Any]] = {}
     render_job_ids = [
         str(entry.get("render_job_id") or "").strip()
         for entry in plan_entries
         if isinstance(entry, dict) and str(entry.get("render_job_id") or "").strip()
     ]
-    if render_job_ids:
+    if render_job_ids or source_video_id:
         conn_jobs = get_db_readonly()
         try:
             render_jobs_by_id = _load_render_jobs_by_id(conn_jobs, render_job_ids)
+            active_render_jobs_by_plan = _load_active_render_jobs_for_video_by_plan(
+                conn_jobs,
+                user_id=editor_owner_user_id,
+                source_video_id=source_video_id,
+                brand_id=brand_id,
+                video_pk=int(video.get("id") or video_pk),
+            )
         except Exception:
             render_jobs_by_id = {}
+            active_render_jobs_by_plan = {}
         finally:
             conn_jobs.close()
     v2_rules = load_non_speech_rules()
@@ -9325,6 +9512,12 @@ def generate_short(video_pk):
         video_filename = clip_filename if clip_exists else None
         yt_id = entry.get("yt_video_id")
         generated_record = generated_video_map.get((source_video_id, str(clip_filename or "").strip())) or {}
+        try:
+            active_render_job = active_render_jobs_by_plan.get(int(pi)) or {}
+        except Exception:
+            active_render_job = {}
+        if active_render_job and not str(entry.get("render_job_id") or "").strip():
+            entry["render_job_id"] = active_render_job.get("id")
         clip_stats = published_stats_map.get(yt_id) if yt_id else {}
         yt_description = _first_non_empty(
             entry.get("yt_description"),
@@ -9529,7 +9722,8 @@ def generate_short(video_pk):
         )
         stored_render_settings_hash = str(generated_record.get("render_settings_hash") or "").strip()
         render_job_id = str(entry.get("render_job_id") or "").strip()
-        render_job_status = str((render_jobs_by_id.get(render_job_id) or {}).get("status") or "").strip().lower()
+        render_job = render_jobs_by_id.get(render_job_id) or active_render_job
+        render_job_status = str((render_job or {}).get("status") or "").strip().lower()
         current_render_settings_hash = ""
         render_settings_outdated = False
         if status == "created" and video_filename and stored_render_settings_hash:
@@ -9551,6 +9745,13 @@ def generate_short(video_pk):
                     exc,
                 )
 
+        updated_at_dt = _as_utc_datetime(generated_record.get("updated_at"))
+        media_version = ""
+        if updated_at_dt:
+            media_version = str(int(updated_at_dt.timestamp()))
+        elif stored_render_settings_hash:
+            media_version = stored_render_settings_hash[:12]
+
         clip_rows.append({
             "plan_index": pi,
             "origin": origin,
@@ -9570,8 +9771,9 @@ def generate_short(video_pk):
             "duration_label": _format_time_label(duration_val) if duration_val is not None else None,
             "transcript_full": transcript_full,
             "video_filename": video_filename,
-            "video_url": video_url,
-            "poster_url": poster_url,
+            "video_url": _versioned_media_url(video_url, media_version),
+            "poster_url": _versioned_media_url(poster_url, media_version),
+            "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
             "render_job_id": render_job_id,
@@ -24300,6 +24502,7 @@ def admin_operation_render_job_status(video_pk: int, job_id: str):
     lowered_error = error_text.lower()
     if "export limit reached" in lowered_error or "monthly export limit reached" in lowered_error:
         error_code = "export_limit_reached"
+    media_payload = render_job_media_payload(job) if str(job.get("status") or "").lower() == "done" else {}
     return jsonify(
         {
             "id": job["id"],
@@ -24309,6 +24512,7 @@ def admin_operation_render_job_status(video_pk: int, job_id: str):
             "started_at": job["started_at"],
             "finished_at": job["finished_at"],
             "result": job.get("result"),
+            "media": media_payload,
             "error": job.get("error"),
             "error_code": error_code,
             "queue_position": job.get("queue_position"),
