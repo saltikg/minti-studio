@@ -41,8 +41,11 @@ SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = 30
 SUBSCRIBE_OVERLAY_PATH = Path(__file__).resolve().parents[1] / "static" / "subscribe.gif"
 SUBTITLE_FONTS_DIR = Path(__file__).resolve().parents[1] / "static" / "fonts"
 FACE_AWARE_FIT_FRAME_TOP = 330.0
-FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN = 520
-FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN}
+FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN = 405
+FACE_AWARE_FILL_CAPTION_GAP = 36.0
+FACE_AWARE_FILL_CAPTION_MIN_TOP = 640.0
+FACE_AWARE_FILL_SUBSCRIBE_ROOM = 300.0
+FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, 520}
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = 720
@@ -796,26 +799,118 @@ def _face_aware_fit_position_metrics(
     }
 
 
-def _face_aware_fill_subtitle_margin(subtitle_margin: Optional[int]) -> int:
+def _face_aware_caption_block_height(subtitle_font_size: Optional[int]) -> float:
+    return max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
+
+
+def _is_face_aware_default_subtitle_margin(subtitle_margin: Optional[int]) -> bool:
     try:
         margin = int(round(float(subtitle_margin)))
     except Exception:
-        return FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN
-    if margin in FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS:
-        return FACE_AWARE_FILL_DEFAULT_SUBTITLE_MARGIN
-    return margin
+        return True
+    return margin in FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS
 
 
-def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
-    for segment in layout_segments or []:
+def _face_aware_fill_subtitle_margin(subtitle_margin: Optional[int]) -> int:
+    if _is_face_aware_default_subtitle_margin(subtitle_margin):
+        return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+    try:
+        return int(round(float(subtitle_margin)))
+    except Exception:
+        return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+
+
+def _face_aware_fill_caption_metrics_for_segment(
+    segment: Dict[str, Any],
+    *,
+    face_track_points: List[Dict[str, float]],
+    crop_h: float,
+    target_height: int,
+    subtitle_font_size: int,
+    subtitle_margin: Optional[int],
+) -> Dict[str, Optional[float]]:
+    caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
+    if not _is_face_aware_default_subtitle_margin(subtitle_margin):
+        margin = _face_aware_fill_subtitle_margin(subtitle_margin)
+        caption_top = max(0.0, float(target_height) - float(margin) - caption_block_height)
+        return {
+            "median_face_bottom": None,
+            "caption_top": caption_top,
+            "caption_margin_v": float(margin),
+            "caption_block_height": caption_block_height,
+            "subscribe_y": caption_top + caption_block_height + 24.0,
+        }
+    try:
+        seg_start = float(segment.get("start") or 0.0)
+        seg_end = float(segment.get("end") or 0.0)
+    except Exception:
+        seg_start = 0.0
+        seg_end = 0.0
+    try:
+        segment_zoom = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+    except Exception:
+        segment_zoom = 1.0
+    segment_crop_h = max(0.01, min(1.0, float(crop_h or 1.0) / segment_zoom))
+    face_bottom_values: List[float] = []
+    for point in face_track_points or []:
+        try:
+            point_t = float(point.get("t") or 0.0)
+            cy = float(point.get("cy") or 0.0)
+            face_h = float(point.get("h") or 0.0)
+        except Exception:
+            continue
+        if not (seg_start <= point_t <= seg_end) or face_h <= 0:
+            continue
+        segment_crop_y = max(0.0, min(max(0.0, 1.0 - segment_crop_h), cy - (segment_crop_h / 2.0)))
+        face_bottom = ((cy + (face_h / 2.0) - segment_crop_y) / segment_crop_h) * float(target_height)
+        face_bottom_values.append(face_bottom)
+    if not face_bottom_values:
+        margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+        caption_top = max(0.0, float(target_height) - float(margin) - caption_block_height)
+        return {
+            "median_face_bottom": None,
+            "caption_top": caption_top,
+            "caption_margin_v": float(margin),
+            "caption_block_height": caption_block_height,
+            "subscribe_y": caption_top + caption_block_height + 24.0,
+        }
+    face_bottom_values.sort()
+    mid = len(face_bottom_values) // 2
+    median_face_bottom = (
+        face_bottom_values[mid]
+        if len(face_bottom_values) % 2
+        else (face_bottom_values[mid - 1] + face_bottom_values[mid]) / 2.0
+    )
+    min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP
+    max_top = max(min_top, float(target_height) - FACE_AWARE_FILL_SUBSCRIBE_ROOM - caption_block_height)
+    caption_top = max(min_top, min(max_top, median_face_bottom + FACE_AWARE_FILL_CAPTION_GAP))
+    caption_margin_v = max(0.0, float(target_height) - caption_top - caption_block_height)
+    return {
+        "median_face_bottom": median_face_bottom,
+        "caption_top": caption_top,
+        "caption_margin_v": caption_margin_v,
+        "caption_block_height": caption_block_height,
+        "subscribe_y": caption_top + caption_block_height + 24.0,
+    }
+
+
+def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> Dict[str, Any]:
+    for index, segment in enumerate(layout_segments or []):
         try:
             start = float(segment.get("start") or 0.0)
             end = float(segment.get("end") or 0.0)
         except Exception:
             continue
         if start <= float(event_start) < end:
-            return str(segment.get("mode") or "fill").strip().lower() or "fill"
-    return "fill"
+            return {**segment, "_index": index}
+    return {"mode": "fill", "_index": 0}
+
+
+def _face_aware_style_suffix_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
+    segment = _face_aware_segment_for_time(layout_segments, event_start)
+    if str(segment.get("mode") or "fill").strip().lower() == "fit":
+        return "Fit"
+    return str(segment.get("caption_style_suffix") or f"Fill{int(segment.get('_index') or 0)}")
 
 
 def _ass_time_to_seconds(value: str) -> float:
@@ -888,7 +983,6 @@ def _build_face_aware_subtitle_path(
     target_width: int,
     target_height: int,
     subtitle_font_size: int,
-    fill_margin: int,
     fit_margin: int,
     subtitle_font: str,
     subtitle_text_color: Optional[str],
@@ -902,6 +996,15 @@ def _build_face_aware_subtitle_path(
     source = Path(subtitle_path)
     text = source.read_text(encoding="utf-8", errors="ignore")
     if source.suffix.lower() == ".srt":
+        fill_styles = []
+        for idx, segment in enumerate(layout_segments or []):
+            if str(segment.get("mode") or "fill").strip().lower() == "fit":
+                continue
+            suffix = str(segment.get("caption_style_suffix") or f"Fill{idx}")
+            margin = int(round(float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)))
+            fill_styles.append((suffix, margin))
+        if not fill_styles:
+            fill_styles = [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
         events: List[Tuple[float, float, str]] = []
         for block in re.split(r"\n\s*\n", text.strip()):
             lines = [line.strip("\ufeff") for line in block.splitlines() if line.strip()]
@@ -929,17 +1032,20 @@ def _build_face_aware_subtitle_path(
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
             "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
             "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            _face_aware_ass_style_line(
-                "FillStyle",
-                subtitle_font_size=subtitle_font_size,
-                subtitle_margin=fill_margin,
-                subtitle_font=subtitle_font,
-                subtitle_text_color=subtitle_text_color,
-                subtitle_text_alpha=subtitle_text_alpha,
-                subtitle_bg_color=subtitle_bg_color,
-                subtitle_bg_alpha=subtitle_bg_alpha,
-                subtitle_style=subtitle_style,
-            ),
+            *[
+                _face_aware_ass_style_line(
+                    f"FillStyle{suffix}",
+                    subtitle_font_size=subtitle_font_size,
+                    subtitle_margin=margin,
+                    subtitle_font=subtitle_font,
+                    subtitle_text_color=subtitle_text_color,
+                    subtitle_text_alpha=subtitle_text_alpha,
+                    subtitle_bg_color=subtitle_bg_color,
+                    subtitle_bg_alpha=subtitle_bg_alpha,
+                    subtitle_style=subtitle_style,
+                )
+                for suffix, margin in fill_styles
+            ],
             _face_aware_ass_style_line(
                 "FitStyle",
                 subtitle_font_size=subtitle_font_size,
@@ -956,7 +1062,8 @@ def _build_face_aware_subtitle_path(
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
         for start, end, body in events:
-            style = "FitStyle" if _face_aware_segment_for_time(layout_segments, start) == "fit" else "FillStyle"
+            suffix = _face_aware_style_suffix_for_time(layout_segments, start)
+            style = "FitStyle" if suffix == "Fit" else f"FillStyle{suffix}"
             ass_lines.append(
                 f"Dialogue: 0,{_format_face_aware_ass_time(start)},{_format_face_aware_ass_time(end)},{style},,0,0,0,,{body}"
             )
@@ -986,7 +1093,16 @@ def _build_face_aware_subtitle_path(
                 if not values:
                     continue
                 base_name = values[style_name_index].strip() or "Default"
-                for suffix, margin in (("Fill", fill_margin), ("Fit", fit_margin)):
+                suffix_margins = [
+                    (
+                        str(segment.get("caption_style_suffix") or f"Fill{idx}"),
+                        int(round(float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN))),
+                    )
+                    for idx, segment in enumerate(layout_segments or [])
+                    if str(segment.get("mode") or "fill").strip().lower() != "fit"
+                ] or [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
+                suffix_margins.append(("Fit", fit_margin))
+                for suffix, margin in suffix_margins:
                     new_values = list(values)
                     new_values[style_name_index] = f"{base_name}{suffix}"
                     if style_margin_index is not None and style_margin_index < len(new_values):
@@ -1007,7 +1123,7 @@ def _build_face_aware_subtitle_path(
         if line.startswith("Dialogue:"):
             parts = line.split(":", 1)[1].split(",", 9)
             if len(parts) >= 10:
-                suffix = "Fit" if _face_aware_segment_for_time(layout_segments, _ass_time_to_seconds(parts[1])) == "fit" else "Fill"
+                suffix = _face_aware_style_suffix_for_time(layout_segments, _ass_time_to_seconds(parts[1]))
                 parts[3] = f"{(parts[3].strip() or 'Default')}{suffix}"
                 output.append("Dialogue: " + ",".join(parts))
                 continue
@@ -1018,7 +1134,16 @@ def _build_face_aware_subtitle_path(
             if not values:
                 continue
             base_name = values[style_name_index].strip() or "Default"
-            for suffix, margin in (("Fill", fill_margin), ("Fit", fit_margin)):
+            suffix_margins = [
+                (
+                    str(segment.get("caption_style_suffix") or f"Fill{idx}"),
+                    int(round(float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN))),
+                )
+                for idx, segment in enumerate(layout_segments or [])
+                if str(segment.get("mode") or "fill").strip().lower() != "fit"
+            ] or [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
+            suffix_margins.append(("Fit", fit_margin))
+            for suffix, margin in suffix_margins:
                 new_values = list(values)
                 new_values[style_name_index] = f"{base_name}{suffix}"
                 if style_margin_index is not None and style_margin_index < len(new_values):
@@ -2377,6 +2502,24 @@ def _compose_trimmed_with_background(
                 crop_h,
             )
         dynamic_crop_enabled = len(face_track_points) >= 2
+        if face_aware_layout_active:
+            for idx, segment in enumerate(layout_segments):
+                if str(segment.get("mode") or "fill").strip().lower() == "fit":
+                    continue
+                metrics = _face_aware_fill_caption_metrics_for_segment(
+                    segment,
+                    face_track_points=face_track_points,
+                    crop_h=crop_h,
+                    target_height=target_height,
+                    subtitle_font_size=subtitle_font_size,
+                    subtitle_margin=subtitle_margin,
+                )
+                segment["caption_style_suffix"] = f"Fill{idx}"
+                segment["caption_margin_v"] = float(metrics["caption_margin_v"] or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
+                segment["caption_top"] = float(metrics["caption_top"] or 0.0)
+                segment["caption_block_height"] = float(metrics["caption_block_height"] or _face_aware_caption_block_height(subtitle_font_size))
+                segment["caption_face_bottom"] = metrics["median_face_bottom"]
+                segment["subscribe_y"] = float(metrics["subscribe_y"] or 0.0)
         if dynamic_crop_enabled:
             x_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "x") or _fmt(crop_x)
             y_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "y") or _fmt(crop_y)
@@ -2505,7 +2648,7 @@ def _compose_trimmed_with_background(
                 "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
             )
             current_app.logger.info(
-                "face_aware_layout compositor_segments=%s duration=%.3f",
+                "face_aware_layout compositor_segments=%s fill_caption_metrics=%s duration=%.3f",
                 [
                     (
                         round(float(seg["start"]), 3),
@@ -2514,6 +2657,23 @@ def _compose_trimmed_with_background(
                         round(float(seg.get("zoom") or 1.0), 3),
                     )
                     for seg in layout_segments
+                ],
+                [
+                    {
+                        "start": round(float(seg.get("start") or 0.0), 3),
+                        "end": round(float(seg.get("end") or 0.0), 3),
+                        "zoom": round(float(seg.get("zoom") or 1.0), 3),
+                        "face_bottom": (
+                            round(float(seg["caption_face_bottom"]), 2)
+                            if seg.get("caption_face_bottom") is not None
+                            else None
+                        ),
+                        "caption_top": round(float(seg.get("caption_top") or 0.0), 2),
+                        "caption_margin_v": round(float(seg.get("caption_margin_v") or 0.0), 2),
+                        "subscribe_y": round(float(seg.get("subscribe_y") or 0.0), 2),
+                    }
+                    for seg in layout_segments
+                    if str(seg.get("mode") or "fill").strip().lower() != "fit"
                 ],
                 duration,
             )
@@ -2736,7 +2896,6 @@ def _compose_trimmed_with_background(
                     target_width=target_width,
                     target_height=target_height,
                     subtitle_font_size=subtitle_font_size,
-                    fill_margin=_face_aware_fill_subtitle_margin(subtitle_margin),
                     fit_margin=int(round(face_aware_fit_metrics["caption_margin_v"])),
                     subtitle_font=subtitle_font,
                     subtitle_text_color=subtitle_text_color,
@@ -2792,13 +2951,19 @@ def _compose_trimmed_with_background(
                 fit_caption_y = 0.0
             caption_overlay_y_expr = "0"
             for segment in reversed(layout_segments):
-                if str(segment.get("mode") or "fill") != "fit":
-                    continue
                 seg_start = float(segment.get("start") or 0.0)
                 seg_end = float(segment.get("end") or duration)
+                if str(segment.get("mode") or "fill") == "fit":
+                    segment_caption_y = fit_caption_y
+                else:
+                    try:
+                        segment_margin = float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
+                        segment_caption_y = max(0.0, fill_margin - segment_margin)
+                    except Exception:
+                        segment_caption_y = 0.0
                 caption_overlay_y_expr = (
                     f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
-                    f"{fit_caption_y:.2f},{caption_overlay_y_expr})"
+                    f"{segment_caption_y:.2f},{caption_overlay_y_expr})"
                 )
             caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
         filter_parts.append(
@@ -2846,13 +3011,15 @@ def _compose_trimmed_with_background(
         if face_aware_layout_active:
             fit_y = f"min(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{face_aware_fit_metrics['subscribe_y']:.2f})"
             for segment in reversed(layout_segments):
-                if str(segment.get("mode") or "fill") != "fit":
-                    continue
                 seg_start = float(segment.get("start") or 0.0)
                 seg_end = float(segment.get("end") or duration)
+                if str(segment.get("mode") or "fill") == "fit":
+                    segment_subscribe_y = fit_y
+                else:
+                    segment_subscribe_y = f"max(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{float(segment.get('subscribe_y') or 0.0):.2f})"
                 subscribe_y_expr = (
                     f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
-                    f"{fit_y},{subscribe_y_expr})"
+                    f"{segment_subscribe_y},{subscribe_y_expr})"
                 )
             subscribe_y_expr = subscribe_y_expr.replace(",", r"\,")
         filter_parts.append(
