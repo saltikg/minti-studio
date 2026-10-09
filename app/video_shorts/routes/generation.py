@@ -25826,8 +25826,6 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     finally:
         conn.close()
     stored_hash = str((generated_row[0] if generated_row else "") or "").strip()
-    if not stored_hash:
-        return jsonify(success=False, message="This Short needs one fresh render before it can be regenerated."), 409
     publish_statuses = {
         str(plan_entry.get("publish_status") or "").strip().lower(),
         str((generated_row[1] if generated_row else "") or "").strip().lower(),
@@ -25855,6 +25853,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         return jsonify(success=False, message="Already published."), 409
     if social_statuses.intersection({"pending", "retry", "uploading", "queued", "scheduled"}):
         return jsonify(success=False, message="Unschedule first."), 409
+    if not stored_hash:
+        return jsonify(success=False, message="This Short needs one fresh render before it can be regenerated."), 409
     current_hash = _compute_render_settings_hash_for_plan_entry(
         video_pk=video_pk,
         video=video,
