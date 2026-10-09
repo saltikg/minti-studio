@@ -1,4 +1,5 @@
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -21,6 +22,7 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
+    FACE_AWARE_MAX_ZOOM,
     STATIC_VISUAL_PRESETS,
     SUBTITLE_PRESETS,
     SUB_MARGIN_DEFAULT,
@@ -103,6 +105,7 @@ def _load_face_track_points(
             t_abs = float(row.get("t"))
             cx = float(row.get("cx_ratio"))
             cy = float(row.get("cy_ratio"))
+            h_ratio = float(row.get("h_ratio") or 0.0)
         except Exception:
             continue
         if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
@@ -110,6 +113,9 @@ def _load_face_track_points(
         points.append(
             {
                 "t": max(0.0, t_abs - float(clip_start)),
+                "cx": cx,
+                "cy": cy,
+                "h": max(0.0, min(1.0, h_ratio)),
                 "x": max(0.0, min(max_x, cx - (float(crop_w) / 2.0))),
                 "y": max(0.0, min(max_y, cy - (float(crop_h) / 2.0))),
             }
@@ -121,6 +127,41 @@ def _load_face_track_points(
         else:
             deduped.append(point)
     return deduped
+
+
+def _face_aware_fill_zoom_for_segment(
+    face_track_points: list[dict[str, float]],
+    *,
+    segment_start: float,
+    segment_end: float,
+    crop_h: float,
+    max_zoom: float = FACE_AWARE_MAX_ZOOM,
+) -> float:
+    """Return a static fill-segment zoom that makes the median face roughly 30% of output height."""
+    try:
+        safe_crop_h = max(0.01, min(1.0, float(crop_h)))
+        safe_max_zoom = max(1.0, float(max_zoom or FACE_AWARE_MAX_ZOOM))
+    except Exception:
+        return 1.0
+    heights: list[float] = []
+    for point in face_track_points or []:
+        try:
+            t_val = float(point.get("t") or 0.0)
+            h_val = float(point.get("h") or 0.0)
+        except Exception:
+            continue
+        if float(segment_start) <= t_val <= float(segment_end) and h_val > 0:
+            heights.append(h_val)
+    if not heights:
+        return 1.0
+    heights.sort()
+    mid = len(heights) // 2
+    median_h = heights[mid] if len(heights) % 2 else (heights[mid - 1] + heights[mid]) / 2.0
+    h_portrait_equiv = median_h / safe_crop_h
+    if h_portrait_equiv <= 0:
+        return 1.0
+    zoom = 0.30 / h_portrait_equiv
+    return round(max(1.0, min(safe_max_zoom, zoom)), 6)
 
 
 def _piecewise_linear_ratio_expr(
@@ -721,6 +762,254 @@ def _subtitle_force_style(
         + "Alignment=2,"
         + f"FontName={clean_font}"
     )
+
+
+def _face_aware_fit_position_metrics(
+    *,
+    target_width: int = VIDEO_TARGET_WIDTH,
+    target_height: int = VIDEO_TARGET_HEIGHT,
+    subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
+) -> Dict[str, float]:
+    frame_height = float(target_width) * 9.0 / 16.0
+    frame_top = (float(target_height) - frame_height) / 2.0
+    frame_bottom = frame_top + frame_height
+    caption_block_height = max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
+    caption_top = min(float(target_height) - caption_block_height - 30.0, frame_bottom + 24.0)
+    caption_margin_v = max(0.0, float(target_height) - caption_top - caption_block_height)
+    subscribe_y = min(float(target_height) - 30.0, caption_top + caption_block_height + 24.0)
+    return {
+        "frame_top": frame_top,
+        "frame_bottom": frame_bottom,
+        "title_bottom": max(0.0, frame_top - 24.0),
+        "caption_top": caption_top,
+        "caption_margin_v": caption_margin_v,
+        "subscribe_y": subscribe_y,
+    }
+
+
+def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
+    for segment in layout_segments or []:
+        try:
+            start = float(segment.get("start") or 0.0)
+            end = float(segment.get("end") or 0.0)
+        except Exception:
+            continue
+        if start <= float(event_start) < end:
+            return str(segment.get("mode") or "fill").strip().lower() or "fill"
+    return "fill"
+
+
+def _ass_time_to_seconds(value: str) -> float:
+    match = re.match(r"\s*(\d+):(\d{2}):(\d{2})(?:[.,](\d+))?", str(value or ""))
+    if not match:
+        return 0.0
+    hrs, mins, secs = [int(match.group(idx)) for idx in range(1, 4)]
+    frac = match.group(4) or "0"
+    return hrs * 3600 + mins * 60 + secs + (float(f"0.{frac}") if frac else 0.0)
+
+
+def _format_face_aware_ass_time(seconds: float) -> str:
+    total_cs = max(0, int(round(float(seconds or 0.0) * 100)))
+    hrs = total_cs // 360000
+    total_cs -= hrs * 360000
+    mins = total_cs // 6000
+    total_cs -= mins * 6000
+    secs = total_cs // 100
+    cs = total_cs - secs * 100
+    return f"{hrs}:{mins:02d}:{secs:02d}.{cs:02d}"
+
+
+def _face_aware_ass_style_line(
+    style_name: str,
+    *,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_font: str,
+    subtitle_text_color: Optional[str],
+    subtitle_text_alpha: Optional[int],
+    subtitle_bg_color: Optional[str],
+    subtitle_bg_alpha: Optional[int],
+    subtitle_style: Optional[str],
+) -> str:
+    clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
+    normalized_subtitle_style = str(subtitle_style or "plain").strip().lower()
+    primary = _hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, "#FFFFFF", DEFAULT_SUBTITLE_TEXT_ALPHA)
+    if normalized_subtitle_style == "karaoke":
+        back = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
+        border_style = "1"
+        outline = "0"
+    else:
+        back = _hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)
+        border_style = "4"
+        outline = "1"
+    return (
+        f"Style: {style_name},"
+        f"{clean_font},"
+        f"{int(subtitle_font_size)},"
+        f"{primary},"
+        f"{primary},"
+        "&H00000000,"
+        f"{back},"
+        f"0,0,0,0,100,100,0,0,{border_style},{outline},0,2,40,40,{int(round(subtitle_margin))},1"
+    )
+
+
+def _parse_srt_timestamp(value: str) -> float:
+    value = str(value or "").strip().replace(",", ".")
+    parts = value.split(":")
+    if len(parts) != 3:
+        return 0.0
+    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+
+def _build_face_aware_subtitle_path(
+    subtitle_path: Path,
+    *,
+    layout_segments: List[Dict[str, Any]],
+    target_width: int,
+    target_height: int,
+    subtitle_font_size: int,
+    fill_margin: int,
+    fit_margin: int,
+    subtitle_font: str,
+    subtitle_text_color: Optional[str],
+    subtitle_text_alpha: Optional[int],
+    subtitle_bg_color: Optional[str],
+    subtitle_bg_alpha: Optional[int],
+    subtitle_style: Optional[str],
+) -> Optional[Path]:
+    if not layout_segments or not subtitle_path or not Path(subtitle_path).exists():
+        return None
+    source = Path(subtitle_path)
+    text = source.read_text(encoding="utf-8", errors="ignore")
+    if source.suffix.lower() == ".srt":
+        events: List[Tuple[float, float, str]] = []
+        for block in re.split(r"\n\s*\n", text.strip()):
+            lines = [line.strip("\ufeff") for line in block.splitlines() if line.strip()]
+            if len(lines) >= 2 and "-->" in lines[0]:
+                timing_index = 0
+            elif len(lines) >= 3 and "-->" in lines[1]:
+                timing_index = 1
+            else:
+                continue
+            start_raw, end_raw = [part.strip() for part in lines[timing_index].split("-->", 1)]
+            body = "\\N".join(lines[timing_index + 1:]).replace("{", "\\{").replace("}", "\\}")
+            if body:
+                events.append((_parse_srt_timestamp(start_raw), _parse_srt_timestamp(end_raw), body))
+        if not events:
+            return None
+        ass_lines = [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "WrapStyle: 2",
+            "ScaledBorderAndShadow: yes",
+            f"PlayResX: {int(target_width)}",
+            f"PlayResY: {int(target_height)}",
+            "",
+            "[V4+ Styles]",
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+            "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
+            "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+            _face_aware_ass_style_line(
+                "FillStyle",
+                subtitle_font_size=subtitle_font_size,
+                subtitle_margin=fill_margin,
+                subtitle_font=subtitle_font,
+                subtitle_text_color=subtitle_text_color,
+                subtitle_text_alpha=subtitle_text_alpha,
+                subtitle_bg_color=subtitle_bg_color,
+                subtitle_bg_alpha=subtitle_bg_alpha,
+                subtitle_style=subtitle_style,
+            ),
+            _face_aware_ass_style_line(
+                "FitStyle",
+                subtitle_font_size=subtitle_font_size,
+                subtitle_margin=fit_margin,
+                subtitle_font=subtitle_font,
+                subtitle_text_color=subtitle_text_color,
+                subtitle_text_alpha=subtitle_text_alpha,
+                subtitle_bg_color=subtitle_bg_color,
+                subtitle_bg_alpha=subtitle_bg_alpha,
+                subtitle_style=subtitle_style,
+            ),
+            "",
+            "[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        ]
+        for start, end, body in events:
+            style = "FitStyle" if _face_aware_segment_for_time(layout_segments, start) == "fit" else "FillStyle"
+            ass_lines.append(
+                f"Dialogue: 0,{_format_face_aware_ass_time(start)},{_format_face_aware_ass_time(end)},{style},,0,0,0,,{body}"
+            )
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".face-aware.ass")
+        tmp_path = Path(tmp.name)
+        tmp.write("\n".join(ass_lines).encode("utf-8"))
+        tmp.close()
+        return tmp_path
+
+    if source.suffix.lower() != ".ass":
+        return None
+    lines = text.splitlines()
+    output: List[str] = []
+    in_styles = False
+    style_lines: List[str] = []
+    style_name_index = 0
+    style_margin_index: Optional[int] = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[V4+ Styles]":
+            in_styles = True
+            output.append(line)
+            continue
+        if in_styles and stripped.startswith("[") and stripped != "[V4+ Styles]":
+            for style_line in style_lines:
+                values = style_line.split(":", 1)[1].split(",")
+                if not values:
+                    continue
+                base_name = values[style_name_index].strip() or "Default"
+                for suffix, margin in (("Fill", fill_margin), ("Fit", fit_margin)):
+                    new_values = list(values)
+                    new_values[style_name_index] = f"{base_name}{suffix}"
+                    if style_margin_index is not None and style_margin_index < len(new_values):
+                        new_values[style_margin_index] = str(int(round(margin)))
+                    output.append("Style: " + ",".join(new_values))
+            in_styles = False
+            output.append(line)
+            continue
+        if in_styles and line.startswith("Format:"):
+            style_format = [part.strip() for part in line.split(":", 1)[1].split(",")]
+            style_name_index = style_format.index("Name") if "Name" in style_format else 0
+            style_margin_index = style_format.index("MarginV") if "MarginV" in style_format else None
+            output.append(line)
+            continue
+        if in_styles and line.startswith("Style:"):
+            style_lines.append(line)
+            continue
+        if line.startswith("Dialogue:"):
+            parts = line.split(":", 1)[1].split(",", 9)
+            if len(parts) >= 10:
+                suffix = "Fit" if _face_aware_segment_for_time(layout_segments, _ass_time_to_seconds(parts[1])) == "fit" else "Fill"
+                parts[3] = f"{(parts[3].strip() or 'Default')}{suffix}"
+                output.append("Dialogue: " + ",".join(parts))
+                continue
+        output.append(line)
+    if in_styles:
+        for style_line in style_lines:
+            values = style_line.split(":", 1)[1].split(",")
+            if not values:
+                continue
+            base_name = values[style_name_index].strip() or "Default"
+            for suffix, margin in (("Fill", fill_margin), ("Fit", fit_margin)):
+                new_values = list(values)
+                new_values[style_name_index] = f"{base_name}{suffix}"
+                if style_margin_index is not None and style_margin_index < len(new_values):
+                    new_values[style_margin_index] = str(int(round(margin)))
+                output.append("Style: " + ",".join(new_values))
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".face-aware.ass")
+    tmp_path = Path(tmp.name)
+    tmp.write("\n".join(output).encode("utf-8"))
+    tmp.close()
+    return tmp_path
 
 
 def _normalize_subtitle_overlay_specs(
@@ -1977,6 +2266,15 @@ def _compose_trimmed_with_background(
         if len(layout_segments) > 1:
             layout_segments[0]["start"] = 0.0
             layout_segments[-1]["end"] = float(duration)
+        elif len(layout_segments) == 1:
+            layout_segments[0]["start"] = 0.0
+            layout_segments[0]["end"] = float(duration)
+    face_aware_layout_active = len(layout_segments) >= 1
+    face_aware_fit_metrics = _face_aware_fit_position_metrics(
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_font_size=subtitle_font_size,
+    )
     if is_default_crop:
         scale_stage = (
             f"scale={overlay_width}:{overlay_height}:force_original_aspect_ratio=increase,"
@@ -2121,7 +2419,40 @@ def _compose_trimmed_with_background(
                         f"format=yuv420p,settb=AVTB{seg_out}"
                     )
                 else:
-                    if dynamic_crop_enabled:
+                    try:
+                        segment_zoom = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+                    except Exception:
+                        segment_zoom = 1.0
+                    if segment_zoom > 1.0001:
+                        seg_crop_w = max(0.01, min(1.0, crop_w / segment_zoom))
+                        seg_crop_h = max(0.01, min(1.0, crop_h / segment_zoom))
+                        if dynamic_crop_enabled:
+                            segment_time_expr = f"(t+{seg_start:.6f})"
+                            seg_cx_expr = _piecewise_linear_ratio_expr(
+                                face_track_points,
+                                "cx",
+                                time_expr=segment_time_expr,
+                            ) or _fmt(crop_x + crop_w / 2.0)
+                            seg_crop_x_expr_raw = f"min(max(({seg_cx_expr})-{_fmt(seg_crop_w / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_w))})"
+                            segment_points = [
+                                point for point in face_track_points
+                                if seg_start <= float(point.get("t") or 0.0) <= seg_end and float(point.get("cy") or 0.0) > 0
+                            ]
+                            if segment_points:
+                                cy_values = sorted(float(point.get("cy") or 0.0) for point in segment_points)
+                                mid = len(cy_values) // 2
+                                median_cy = cy_values[mid] if len(cy_values) % 2 else (cy_values[mid - 1] + cy_values[mid]) / 2.0
+                            else:
+                                median_cy = crop_y + crop_h / 2.0
+                        else:
+                            seg_crop_x_expr_raw = f"{_fmt(crop_x + (crop_w - seg_crop_w) / 2.0)}"
+                            median_cy = crop_y + crop_h / 2.0
+                        seg_crop_y = max(0.0, min(1.0 - seg_crop_h, median_cy - (seg_crop_h * 0.33)))
+                        seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_crop_x_expr_raw)})"
+                        seg_crop_y_expr = f"ih*{_fmt(seg_crop_y)}"
+                        seg_crop_w_for_filter = seg_crop_w
+                        seg_crop_h_for_filter = seg_crop_h
+                    elif dynamic_crop_enabled:
                         segment_time_expr = f"(t+{seg_start:.6f})"
                         seg_x_expr = _piecewise_linear_ratio_expr(
                             face_track_points,
@@ -2135,11 +2466,15 @@ def _compose_trimmed_with_background(
                         ) or _fmt(crop_y)
                         seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_x_expr)})"
                         seg_crop_y_expr = f"ih*({_ffmpeg_filter_expr(seg_y_expr)})"
+                        seg_crop_w_for_filter = crop_w
+                        seg_crop_h_for_filter = crop_h
                     else:
                         seg_crop_x_expr = f"iw*{_fmt(crop_x)}"
                         seg_crop_y_expr = f"ih*{_fmt(crop_y)}"
+                        seg_crop_w_for_filter = crop_w
+                        seg_crop_h_for_filter = crop_h
                     filter_parts.append(
-                        f"{seg_trim}crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{seg_crop_x_expr}:{seg_crop_y_expr},"
+                        f"{seg_trim}crop=iw*{_fmt(seg_crop_w_for_filter)}:ih*{_fmt(seg_crop_h_for_filter)}:{seg_crop_x_expr}:{seg_crop_y_expr},"
                         f"{scale_stage}setsar=1,format=yuv420p,settb=AVTB{seg_out}"
                     )
                 segment_outputs.append(seg_out)
@@ -2241,26 +2576,79 @@ def _compose_trimmed_with_background(
                 title_bg_alpha=title_bg_alpha,
             )
 
-            debug_drawtext = (
-                f"{final_label}drawtext="
-                f"fontfile='{test_font_file}':"
-                f"textfile='{_escape_ass_path(debug_textfile)}':"
-                "x=(w-text_w)/2:"
-                f"y={title_layout['draw_y']}:"
-                f"fontsize={title_layout['font_size']}:"
-                f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                f"line_spacing={safe_title_line_spacing_main}:"
-                f"{title_style}:"
-                "[ov_title_debug]"
-            )
-            filter_parts.append(debug_drawtext)
-            final_label = "[ov_title_debug]"
+            if face_aware_layout_active:
+                current_title_label = final_label
+                for idx, segment in enumerate(layout_segments):
+                    seg_start = float(segment.get("start") or 0.0)
+                    seg_end = float(segment.get("end") or duration)
+                    if str(segment.get("mode") or "fill") == "fit":
+                        title_y_expr = f"max(0,{face_aware_fit_metrics['title_bottom']:.2f}-text_h)"
+                    else:
+                        title_y_expr = str(title_layout["draw_y"])
+                    next_title_label = f"[ov_title_debug_{idx}]"
+                    enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
+                    filter_parts.append(
+                        f"{current_title_label}drawtext="
+                        f"fontfile='{test_font_file}':"
+                        f"textfile='{_escape_ass_path(debug_textfile)}':"
+                        "x=(w-text_w)/2:"
+                        f"y={title_y_expr}:"
+                        f"fontsize={title_layout['font_size']}:"
+                        f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
+                        f"line_spacing={safe_title_line_spacing_main}:"
+                        f"{title_style}:"
+                        f"enable='{enable_expr}'"
+                        f"{next_title_label}"
+                    )
+                    current_title_label = next_title_label
+                final_label = current_title_label
+            else:
+                debug_drawtext = (
+                    f"{final_label}drawtext="
+                    f"fontfile='{test_font_file}':"
+                    f"textfile='{_escape_ass_path(debug_textfile)}':"
+                    "x=(w-text_w)/2:"
+                    f"y={title_layout['draw_y']}:"
+                    f"fontsize={title_layout['font_size']}:"
+                    f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
+                    f"line_spacing={safe_title_line_spacing_main}:"
+                    f"{title_style}:"
+                    "[ov_title_debug]"
+                )
+                filter_parts.append(debug_drawtext)
+                final_label = "[ov_title_debug]"
+    face_aware_subtitle_path: Optional[Path] = None
     if effective_subtitle_path:
+        subtitle_path_for_filter = effective_subtitle_path
+        subtitle_margin_for_filter = subtitle_margin
+        if face_aware_layout_active:
+            try:
+                face_aware_subtitle_path = _build_face_aware_subtitle_path(
+                    effective_subtitle_path,
+                    layout_segments=layout_segments,
+                    target_width=target_width,
+                    target_height=target_height,
+                    subtitle_font_size=subtitle_font_size,
+                    fill_margin=int(subtitle_margin),
+                    fit_margin=int(round(face_aware_fit_metrics["caption_margin_v"])),
+                    subtitle_font=subtitle_font,
+                    subtitle_text_color=subtitle_text_color,
+                    subtitle_text_alpha=subtitle_text_alpha,
+                    subtitle_bg_color=subtitle_bg_color,
+                    subtitle_bg_alpha=subtitle_bg_alpha,
+                    subtitle_style=subtitle_style,
+                )
+            except Exception as exc:
+                current_app.logger.warning("Face-aware subtitle style split skipped: %s", exc)
+                face_aware_subtitle_path = None
+            if face_aware_subtitle_path:
+                subtitle_path_for_filter = face_aware_subtitle_path
+                subtitle_margin_for_filter = 0
         style = _subtitle_force_style(
             target_width=target_width,
             target_height=target_height,
             subtitle_font_size=subtitle_font_size,
-            subtitle_margin=subtitle_margin,
+            subtitle_margin=subtitle_margin_for_filter,
             subtitle_font=subtitle_font,
             subtitle_text_color=subtitle_text_color,
             subtitle_text_alpha=subtitle_text_alpha,
@@ -2268,9 +2656,14 @@ def _compose_trimmed_with_background(
             subtitle_bg_alpha=subtitle_bg_alpha,
             subtitle_style=subtitle_style,
         )
-        filter_parts.append(
-            f"{final_label}subtitles='{_escape_ass_path(effective_subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
-        )
+        if face_aware_subtitle_path:
+            filter_parts.append(
+                f"{final_label}subtitles='{_escape_ass_path(subtitle_path_for_filter)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}'[subout]"
+            )
+        else:
+            filter_parts.append(
+                f"{final_label}subtitles='{_escape_ass_path(subtitle_path_for_filter)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
+            )
         final_label = "[subout]"
     if effective_subtitle_overlay_specs:
         final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
@@ -2323,8 +2716,21 @@ def _compose_trimmed_with_background(
         filter_parts.append(
             f"[{subscribe_input_index}:v]format=rgba{overlay_src_label}"
         )
+        subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
+        if face_aware_layout_active:
+            fit_y = f"min(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{face_aware_fit_metrics['subscribe_y']:.2f})"
+            for segment in reversed(layout_segments):
+                if str(segment.get("mode") or "fill") != "fit":
+                    continue
+                seg_start = float(segment.get("start") or 0.0)
+                seg_end = float(segment.get("end") or duration)
+                subscribe_y_expr = (
+                    f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
+                    f"{fit_y},{subscribe_y_expr})"
+                )
+            subscribe_y_expr = subscribe_y_expr.replace(",", r"\,")
         filter_parts.append(
-            f"{final_label}{overlay_src_label}overlay=(W-w)/2:H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}:shortest=1{overlay_out_label}"
+            f"{final_label}{overlay_src_label}overlay=(W-w)/2:{subscribe_y_expr}:shortest=1{overlay_out_label}"
         )
         final_label = overlay_out_label
     filter_complex = ";".join(filter_parts)
@@ -2475,7 +2881,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, title_overlay_path):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, title_overlay_path, face_aware_subtitle_path):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

@@ -117,6 +117,7 @@ from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay
+from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
@@ -3483,6 +3484,63 @@ def _snap_face_aware_segments(
     return _merge_face_aware_runs(segments), snapped_boundaries
 
 
+def _load_face_aware_zoom_points(
+    face_track_smooth_path: Optional[Path],
+    *,
+    clip_start: float,
+) -> List[Dict[str, float]]:
+    if not face_track_smooth_path or not Path(face_track_smooth_path).exists():
+        return []
+    try:
+        payload = json.loads(Path(face_track_smooth_path).read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    points: List[Dict[str, float]] = []
+    if not isinstance(payload, list):
+        return points
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        try:
+            points.append(
+                {
+                    "t": max(0.0, float(row.get("t")) - float(clip_start)),
+                    "h": max(0.0, min(1.0, float(row.get("h_ratio") or 0.0))),
+                }
+            )
+        except Exception:
+            continue
+    return points
+
+
+def _attach_face_aware_zoom_to_segments(
+    segments: List[Dict[str, Any]],
+    *,
+    face_track_smooth_path: Optional[Path],
+    clip_start: float,
+    crop_settings: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    try:
+        crop_h = float((crop_settings or {}).get("crop_h_ratio") or 1.0)
+    except Exception:
+        crop_h = 1.0
+    points = _load_face_aware_zoom_points(face_track_smooth_path, clip_start=clip_start)
+    enriched: List[Dict[str, Any]] = []
+    for segment in segments or []:
+        item = dict(segment)
+        if item.get("mode") == "fill":
+            item["zoom"] = _face_aware_fill_zoom_for_segment(
+                points,
+                segment_start=float(item.get("start") or 0.0),
+                segment_end=float(item.get("end") or 0.0),
+                crop_h=crop_h,
+            )
+        else:
+            item["zoom"] = 1.0
+        enriched.append(item)
+    return enriched
+
+
 def _sample_face_presence_for_layout(
     *,
     video_id: str,
@@ -3560,6 +3618,7 @@ def _compute_face_aware_layout_segments(
     crop_aspect: Any,
     visual_mode: Any,
     static_visual_key: Any = None,
+    face_track_smooth_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     reason = _face_aware_layout_skip_reason(
         owner_user_id=owner_user_id,
@@ -3586,13 +3645,19 @@ def _compute_face_aware_layout_segments(
             source_path=source_path,
             absolute_start=start_seconds,
         )
+    segments = _attach_face_aware_zoom_to_segments(
+        segments,
+        face_track_smooth_path=face_track_smooth_path,
+        clip_start=start_seconds,
+        crop_settings=crop_settings,
+    )
     elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
     current_app.logger.info(
         "face_aware_layout video_id=%s plan_index=%s samples=%s segments=%s snapped_boundaries=%s elapsed_ms=%s",
         video_id,
         plan_index,
         len(samples),
-        [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"]) for seg in segments],
+        [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"], round(float(seg.get("zoom") or 1.0), 3)) for seg in segments],
         snapped_boundaries,
         elapsed_ms,
     )
@@ -25647,6 +25712,9 @@ def autoclip_video(video_pk):
             if not video_static_visual_key:
                 override_source = None
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
+            face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
+            if not face_track_smooth_path.exists():
+                face_track_smooth_path = None
             face_aware_layout_result: Optional[Dict[str, Any]] = None
             compose_crop_settings = dict(crop_settings)
             compose_crop_aspect = video_crop_aspect
@@ -25662,12 +25730,12 @@ def autoclip_video(video_pk):
                     crop_aspect=video_crop_aspect,
                     visual_mode=video_visual_mode,
                     static_visual_key=video_static_visual_key,
+                    face_track_smooth_path=face_track_smooth_path,
                 )
                 layout_segments = list(face_aware_layout_result.get("segments") or [])
                 if face_aware_layout_result.get("enabled") and layout_segments:
-                    if len(layout_segments) > 1:
-                        compose_crop_settings["layout_segments"] = layout_segments
-                    elif layout_segments[0].get("mode") == "fit":
+                    compose_crop_settings["layout_segments"] = layout_segments
+                    if len(layout_segments) == 1 and layout_segments[0].get("mode") == "fit":
                         compose_crop_aspect = "landscape"
                         compose_crop_settings.update(
                             {
@@ -25691,9 +25759,6 @@ def autoclip_video(video_pk):
                     plan_index,
                     exc,
                 )
-            face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
-            if not face_track_smooth_path.exists():
-                face_track_smooth_path = None
             _compose_trimmed_with_background(
                 bg_path,
                 src_path,
@@ -25749,6 +25814,7 @@ def autoclip_video(video_pk):
                         "start": round(float(segment.get("start") or 0.0), 6),
                         "end": round(float(segment.get("end") or 0.0), 6),
                         "mode": str(segment.get("mode") or ""),
+                        "zoom": round(float(segment.get("zoom") or 1.0), 6),
                     }
                     for segment in (face_aware_layout_result.get("segments") or [])
                 ]

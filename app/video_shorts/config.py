@@ -574,6 +574,7 @@ FACE_AWARE_MIN_FIT_SEC = max(0.0, _env_float("FACE_AWARE_MIN_FIT_SEC", 2.0))
 FACE_AWARE_MIN_FILL_SEC = max(0.0, _env_float("FACE_AWARE_MIN_FILL_SEC", 1.5))
 FACE_AWARE_SNAP_WINDOW_SEC = max(0.0, _env_float("FACE_AWARE_SNAP_WINDOW_SEC", 0.75))
 FACE_AWARE_SCENE_THRESHOLD = max(0.0, _env_float("FACE_AWARE_SCENE_THRESHOLD", 0.3))
+FACE_AWARE_MAX_ZOOM = max(1.0, _env_float("FACE_AWARE_MAX_ZOOM", 1.5))
 MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip duration
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))
