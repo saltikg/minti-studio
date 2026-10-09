@@ -2082,6 +2082,246 @@
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.03);
   }
+  .generate-v2-editor-shell,
+  .generate-v2-preview-mount {
+    display: none;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-panel,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-tab-actions,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing #generate-v2-selected-clip-mount,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing #generate-v2-empty-preview {
+    display: none !important;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-shell,
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-preview-mount {
+    display: grid;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-right-panel[data-generate-v2-right="shorts"] {
+    display: block;
+  }
+  .generate-v2-editor-shell {
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 14px;
+  }
+  .generate-v2-editor-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  }
+  .generate-v2-editor-title {
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 1rem;
+    font-weight: 750;
+    line-height: 1.2;
+  }
+  .generate-v2-editor-subtitle,
+  .generate-v2-editor-status {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.78rem;
+  }
+  .generate-v2-editor-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  .generate-v2-editor-action {
+    min-height: 38px;
+    border: 1px solid #2A3954;
+    border-radius: 12px;
+    background: transparent;
+    color: #E6EBF2;
+    font-size: 0.82rem;
+    font-weight: 750;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .generate-v2-editor-action:hover,
+  .generate-v2-editor-action:focus-visible {
+    border-color: #2BB3A3;
+    background: #2BB3A3;
+    color: #06201D;
+  }
+  .generate-v2-editor-body {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 14px;
+  }
+  .generate-v2-editor-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+  }
+  .generate-v2-editor-rail-btn {
+    position: relative;
+    min-height: 68px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.72rem;
+    font-weight: 760;
+    line-height: 1.1;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .generate-v2-editor-rail-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+  }
+  .generate-v2-editor-rail-btn.is-active {
+    border-color: rgba(45, 212, 191, 0.42);
+    background: rgba(45, 212, 191, 0.13);
+    color: #ccfbf1;
+  }
+  .generate-v2-editor-rail-btn.is-active::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    border-radius: 999px;
+    background: #2BB3A3;
+  }
+  .generate-v2-editor-content {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: visible;
+    padding-right: 4px;
+  }
+  .generate-v2-editor-section {
+    min-width: 0;
+  }
+  .generate-v2-editor-section:not(.is-active) {
+    position: absolute;
+    left: -100000px;
+    top: 0;
+    width: min(720px, 100%);
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .generate-v2-editor-section.is-active {
+    position: relative;
+    visibility: visible;
+  }
+  .generate-v2-editor-section .crop-modal-settings-panel,
+  .generate-v2-editor-section .caption-tab-panel {
+    padding: 14px;
+  }
+  .generate-v2-editor-section .crop-modal-layout-panel {
+    display: grid;
+  }
+  .generate-v2-editor-section .style-template-section {
+    padding: 0;
+  }
+  .generate-v2-editor-section .style-template-label,
+  .generate-v2-editor-section .style-template-carousel-arrow {
+    display: none !important;
+  }
+  .generate-v2-editor-section .style-template-carousel,
+  .generate-v2-editor-section .style-template-carousel-viewport,
+  .generate-v2-editor-section .style-template-grid {
+    display: grid;
+    overflow: visible;
+    min-width: 0;
+  }
+  .generate-v2-editor-section .style-template-carousel {
+    grid-template-columns: 1fr;
+  }
+  .generate-v2-editor-section .style-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0;
+  }
+  .generate-v2-editor-section .style-template-card {
+    flex: none;
+    min-height: 142px;
+  }
+  .generate-v2-editor-section .layout-top-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .generate-v2-editor-section .subscribe-visual-selector {
+    display: grid;
+    gap: 10px;
+  }
+  .generate-v2-editor-pane-hidden {
+    position: absolute !important;
+    left: -100000px !important;
+    top: 0 !important;
+    width: min(720px, 100%) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    display: grid !important;
+  }
+  .generate-v2-preview-mount {
+    gap: 10px;
+    justify-items: center;
+  }
+  .generate-v2-preview-chip {
+    justify-self: center;
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    border-radius: 999px;
+    padding: 3px 10px;
+    color: rgba(204, 251, 241, 0.82);
+    background: rgba(45, 212, 191, 0.08);
+    font-size: 0.72rem;
+    font-weight: 750;
+  }
+  .generate-v2-preview-mount .generate-v2-media-column {
+    width: min(calc((var(--generate-v2-preview-video-height, 420px) * 9) / 16), 100%);
+    align-items: center;
+  }
+  .generate-v2-preview-slot {
+    width: 100%;
+    aspect-ratio: 9 / 16;
+    position: relative;
+  }
+  .generate-v2-preview-slot .cropper-preview-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: var(--generate-v2-preview-frame-source-width, 248px);
+    transform: scale(var(--generate-v2-preview-frame-scale, 1));
+    transform-origin: top left;
+    padding-top: 0;
+  }
+  .generate-v2-preview-slot .cropper-preview-card > .small.text-muted {
+    display: none;
+  }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .short-bg-popover {
+    z-index: 60;
+  }
+  @media (max-width: 991.98px) {
+    .generate-v2-editor-topbar,
+    .generate-v2-editor-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .generate-v2-editor-body {
+      grid-template-columns: 1fr;
+    }
+    .generate-v2-editor-rail {
+      flex-direction: row;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .generate-v2-editor-rail-btn {
+      min-width: 76px;
+    }
+    .generate-v2-editor-section .style-template-grid {
+      grid-template-columns: 1fr;
+    }
+  }
   .generate-v2-source-layout.is-arranged {
     display: none;
   }
@@ -4679,6 +4919,56 @@
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
             </div>
+            <div class="generate-v2-editor-shell" id="generate-v2-editor" aria-hidden="true">
+              <div class="generate-v2-editor-topbar">
+                <div>
+                  <div class="generate-v2-editor-title">Editing design</div>
+                  <div class="generate-v2-editor-subtitle">Applies to all {{ total_clip_count }} clips from this video</div>
+                </div>
+                <div class="generate-v2-editor-actions">
+                  <span class="generate-v2-editor-status" id="generate-v2-editor-status" aria-live="polite"></span>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-cancel">Cancel</button>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save-default">Save as default</button>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">Save</button>
+                </div>
+              </div>
+              <div class="generate-v2-editor-body">
+                <div class="generate-v2-editor-rail" role="tablist" aria-label="Design sections">
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="style" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 0 0 0 18h1.5a1.8 1.8 0 0 0 1.3-3l-.3-.3a1.8 1.8 0 0 1 1.3-3H16a5 5 0 0 0 0-10h-4Z"/><circle cx="7.5" cy="10" r=".8"/><circle cx="10.5" cy="7" r=".8"/><circle cx="14.5" cy="7.5" r=".8"/><circle cx="6.8" cy="14" r=".8"/></svg>
+                    <span>Style</span>
+                  </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="layout" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 8h8M8 16h8"/></svg>
+                    <span>Layout</span>
+                  </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="caption" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h16"/></svg>
+                    <span>Captions</span>
+                  </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="title" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
+                    <span>Title</span>
+                  </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="background" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8" cy="10" r="1.5"/><path d="m21 16-5-5L5 19"/></svg>
+                    <span>Background</span>
+                  </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="subscribe" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 17h8M9 21h6"/><path d="M12 3a5 5 0 0 0-5 5v3.5L5 15h14l-2-3.5V8a5 5 0 0 0-5-5Z"/></svg>
+                    <span>Subscribe</span>
+                  </button>
+                </div>
+                <div class="generate-v2-editor-content">
+                  <div class="generate-v2-editor-section is-active" id="generate-v2-editor-section-style" data-v2-editor-section-panel="style"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-layout" data-v2-editor-section-panel="layout"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-caption" data-v2-editor-section-panel="caption"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-title" data-v2-editor-section-panel="title"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-background" data-v2-editor-section-panel="background"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-subscribe" data-v2-editor-section-panel="subscribe"></div>
+                </div>
+              </div>
+            </div>
             <div class="generate-v2-panel" data-generate-v2-panel="shorts"></div>
             <div class="generate-v2-panel" data-generate-v2-panel="transcript"></div>
           </div>
@@ -4686,6 +4976,12 @@
         <div class="col-12 col-xl-5 clip-workbench-side generate-v2-right-col">
           <div class="generate-v2-right-panel" data-generate-v2-right="shorts">
             <div class="gs-card generate-v2-right-card">
+              <div id="generate-v2-preview-mount" class="generate-v2-preview-mount" aria-hidden="true">
+                <div class="generate-v2-preview-chip">Preview — not rendered</div>
+                <div class="generate-v2-media-column">
+                  <div class="generate-v2-preview-slot" id="generate-v2-preview-slot"></div>
+                </div>
+              </div>
               <div id="generate-v2-selected-clip-mount" class="generate-v2-selected-mount"></div>
               <div id="generate-v2-empty-preview" class="generate-v2-empty-preview d-none">Select a Short to preview it here.</div>
             </div>
@@ -8648,12 +8944,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
   if (designShortsBtn) {
-    designShortsBtn.addEventListener("click", () => {
+    designShortsBtn.addEventListener("click", (event) => {
+      if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+        event.preventDefault();
+        window.enterGenerateV2EditMode({ section: "style" });
+        return;
+      }
       const targetId = designShortsBtn.dataset.openEditorTarget || "choose-crop-btn";
       document.getElementById(targetId)?.click();
     });
   }
   document.getElementById("generate-v2-design-tile")?.addEventListener("click", (event) => {
+    if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+      event.preventDefault();
+      window.enterGenerateV2EditMode({ section: "style" });
+      return;
+    }
     const button = event.currentTarget;
     const targetId = button?.dataset?.openEditorTarget || "choose-crop-btn";
     document.getElementById(targetId)?.click();
@@ -8661,6 +8967,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest(".generate-v2-design-shortcut-btn") : null;
     if (!button) {
+      return;
+    }
+    if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+      event.preventDefault();
+      window.enterGenerateV2EditMode({ section: String(button.dataset.designShortcut || "style").trim() || "style" });
       return;
     }
     window.__generateV2DesignShortcut = String(button.dataset.designShortcut || "").trim();
@@ -8766,6 +9077,263 @@ const restoreGenerateV2MountedClip = () => {
     repository.appendChild(card);
   });
 };
+
+const generateV2EditState = {
+  active: false,
+  moved: [],
+  snapshot: null,
+  labelSnapshot: [],
+  section: "style",
+};
+
+const rememberGenerateV2Node = (node) => {
+  if (!node || generateV2EditState.moved.some((entry) => entry.node === node)) {
+    return;
+  }
+  generateV2EditState.moved.push({
+    node,
+    parent: node.parentNode,
+    next: node.nextSibling,
+  });
+};
+
+const moveGenerateV2Node = (node, target) => {
+  if (!node || !target) {
+    return;
+  }
+  rememberGenerateV2Node(node);
+  target.appendChild(node);
+};
+
+const restoreGenerateV2EditorNodes = () => {
+  [...generateV2EditState.moved].reverse().forEach(({ node, parent, next }) => {
+    if (!node || !parent) {
+      return;
+    }
+    if (next && next.parentNode === parent) {
+      parent.insertBefore(node, next);
+    } else {
+      parent.appendChild(node);
+    }
+  });
+  generateV2EditState.moved = [];
+};
+
+const snapshotGenerateV2EditorFields = () => {
+  const modal = document.getElementById("crop-area-modal");
+  const fields = Array.from(modal?.querySelectorAll("input, select, textarea") || []);
+  return fields.map((field) => ({
+    field,
+    value: field.value,
+    checked: field.checked,
+    selectedIndex: field.selectedIndex,
+  }));
+};
+
+const restoreGenerateV2EditorFields = (snapshot) => {
+  (snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
+    if (!field) {
+      return;
+    }
+    if (field.type === "checkbox" || field.type === "radio") {
+      field.checked = !!checked;
+    } else {
+      field.value = value;
+      if (field.tagName === "SELECT" && Number.isInteger(selectedIndex)) {
+        field.selectedIndex = selectedIndex;
+      }
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+};
+
+const setGenerateV2EditorTitleLabels = (active) => {
+  const modal = document.getElementById("crop-area-modal");
+  const textInput = modal?.querySelector('[name="video_date_text"]');
+  const topInput = modal?.querySelector('[name="video_date_top"]');
+  const textLabel = textInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-main");
+  const topLabel = topInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-main");
+  const topDirection = topInput?.closest(".input-group-inline")?.querySelector(".advanced-field-label-direction");
+  if (active) {
+    generateV2EditState.labelSnapshot = [
+      [textLabel, textLabel?.textContent || ""],
+      [topLabel, topLabel?.textContent || ""],
+      [topDirection, topDirection?.textContent || ""],
+      [textInput, textInput?.getAttribute("placeholder") || ""],
+    ];
+    if (textLabel) textLabel.textContent = "Text";
+    if (topLabel) topLabel.textContent = "Text position";
+    if (topDirection) topDirection.textContent = "from top";
+    textInput?.setAttribute("placeholder", "Optional text");
+    return;
+  }
+  generateV2EditState.labelSnapshot.forEach(([node, value]) => {
+    if (!node) {
+      return;
+    }
+    if (node instanceof HTMLInputElement) {
+      node.setAttribute("placeholder", value || "");
+    } else {
+      node.textContent = value || "";
+    }
+  });
+  generateV2EditState.labelSnapshot = [];
+};
+
+const syncGenerateV2InlinePreviewScale = () => {
+  const slot = document.getElementById("generate-v2-preview-slot");
+  const frame = document.getElementById("shorts-preview-frame");
+  const card = frame?.closest(".cropper-preview-card");
+  if (!slot || !frame || !card || !slot.contains(card)) {
+    return;
+  }
+  const sourceWidth = Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
+  const sourceHeight = Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
+  const targetWidth = Math.max(1, slot.getBoundingClientRect().width || sourceWidth);
+  const scale = Math.max(0.1, targetWidth / sourceWidth);
+  slot.style.setProperty("--generate-v2-preview-frame-source-width", `${sourceWidth}px`);
+  slot.style.setProperty("--generate-v2-preview-frame-scale", String(scale));
+  slot.style.height = `${Math.round(sourceHeight * scale)}px`;
+};
+
+const setGenerateV2EditorSection = (section = "style") => {
+  const root = getGenerateV2Root();
+  const normalized = ["style", "layout", "caption", "title", "background", "subscribe"].includes(section) ? section : "style";
+  generateV2EditState.section = normalized;
+  root?.querySelectorAll("[data-v2-editor-section]").forEach((button) => {
+    const isActive = button.dataset.v2EditorSection === normalized;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  root?.querySelectorAll("[data-v2-editor-section-panel]").forEach((panel) => {
+    panel.classList.toggle("is-active", panel.dataset.v2EditorSectionPanel === normalized);
+  });
+  if (["layout", "caption", "title", "background"].includes(normalized)) {
+    window.setCropEditorModalTab?.(normalized);
+  }
+  window.requestAnimationFrame(() => {
+    window.activateCropEditor?.();
+    syncGenerateV2InlinePreviewScale();
+    if (normalized === "style") {
+      window.updateStyleTemplateCarouselNav?.();
+    }
+  });
+};
+
+const mountGenerateV2EditorNodes = () => {
+  const modal = document.getElementById("crop-area-modal");
+  const styleTarget = document.getElementById("generate-v2-editor-section-style");
+  const layoutTarget = document.getElementById("generate-v2-editor-section-layout");
+  const captionTarget = document.getElementById("generate-v2-editor-section-caption");
+  const titleTarget = document.getElementById("generate-v2-editor-section-title");
+  const backgroundTarget = document.getElementById("generate-v2-editor-section-background");
+  const subscribeTarget = document.getElementById("generate-v2-editor-section-subscribe");
+  const previewTarget = document.getElementById("generate-v2-preview-slot");
+  moveGenerateV2Node(modal?.querySelector(".style-template-section"), styleTarget);
+  moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='layout']"), layoutTarget);
+  moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='caption']"), captionTarget);
+  moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='title']"), titleTarget);
+  moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='background']"), backgroundTarget);
+  moveGenerateV2Node(modal?.querySelector(".subscribe-visual-selector"), subscribeTarget);
+  moveGenerateV2Node(modal?.querySelector(".cropper-preview-card"), previewTarget);
+};
+
+const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
+  const root = getGenerateV2Root();
+  const chooseBtn = document.getElementById("choose-crop-btn");
+  const editor = document.getElementById("generate-v2-editor");
+  const previewMount = document.getElementById("generate-v2-preview-mount");
+  if (!root || !chooseBtn || !editor || generateV2EditState.active) {
+    return;
+  }
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+  generateV2EditState.active = true;
+  window.__generateV2EditModeActive = true;
+  root.classList.add("is-v2-editing");
+  editor.setAttribute("aria-hidden", "false");
+  previewMount?.setAttribute("aria-hidden", "false");
+  mountGenerateV2EditorNodes();
+  window.prepareCropEditor?.(chooseBtn);
+  generateV2EditState.snapshot = snapshotGenerateV2EditorFields();
+  setGenerateV2EditorTitleLabels(true);
+  setGenerateV2EditorSection(section);
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      window.activateCropEditor?.();
+      syncGenerateV2InlinePreviewScale();
+    });
+  });
+};
+
+window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
+  const root = getGenerateV2Root();
+  if (!generateV2EditState.active) {
+    return;
+  }
+  if (!saved) {
+    restoreGenerateV2EditorFields(generateV2EditState.snapshot);
+  }
+  setGenerateV2EditorTitleLabels(false);
+  window.teardownCropEditor?.();
+  restoreGenerateV2EditorNodes();
+  generateV2EditState.snapshot = null;
+  generateV2EditState.active = false;
+  window.__generateV2EditModeActive = false;
+  root?.classList.remove("is-v2-editing");
+  document.getElementById("generate-v2-editor")?.setAttribute("aria-hidden", "true");
+  document.getElementById("generate-v2-preview-mount")?.setAttribute("aria-hidden", "true");
+  if (root?.dataset.activeTab === "shorts") {
+    selectGenerateV2Clip(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
+  }
+};
+
+window.enterGenerateV2EditMode = enterGenerateV2EditMode;
+
+document.addEventListener("DOMContentLoaded", () => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll("[data-v2-editor-section]").forEach((button) => {
+    if (button.dataset.v2EditorBound === "1") {
+      return;
+    }
+    button.dataset.v2EditorBound = "1";
+    button.addEventListener("click", () => {
+      setGenerateV2EditorSection(button.dataset.v2EditorSection || "style");
+    });
+  });
+  document.getElementById("generate-v2-editor-cancel")?.addEventListener("click", () => {
+    window.exitGenerateV2EditMode?.({ saved: false });
+  });
+  document.getElementById("generate-v2-editor-save")?.addEventListener("click", () => {
+    window.cropEditorSave?.();
+  });
+  document.getElementById("generate-v2-editor-save-default")?.addEventListener("click", () => {
+    const status = document.getElementById("generate-v2-editor-status");
+    if (status) {
+      status.textContent = "Saving default...";
+    }
+    window.cropEditorSaveDefault?.();
+    window.setTimeout(() => {
+      if (status && generateV2EditState.active) {
+        status.textContent = "Saved as default";
+      }
+    }, 900);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && generateV2EditState.active) {
+      event.preventDefault();
+      window.exitGenerateV2EditMode?.({ saved: false });
+    }
+  });
+  window.addEventListener("resize", () => {
+    if (generateV2EditState.active) {
+      syncGenerateV2InlinePreviewScale();
+    }
+  });
+});
 
 const arrangeGenerateV2PreviewCard = (card) => {
   if (!card || card.dataset.generateV2Arranged === "1") {
@@ -9072,6 +9640,10 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
     });
   });
   initGenerateV2LazyThumbnails(root);
+  if (window.__generateV2EditModeActive) {
+    initGenerateV2RegenerateControls();
+    return true;
+  }
   const storedTab = readGenerateV2StoredTab(root);
   const defaultTab = root.dataset.defaultTab === "shorts" ? "shorts" : "transcript";
   const activeTab = storedTab === "shorts" || storedTab === "transcript" ? storedTab : defaultTab;
@@ -9224,7 +9796,9 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   const currentModalEl = document.getElementById("clip-detail-modal");
   pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
-  restoreGenerateV2MountedClip();
+  if (!window.__generateV2EditModeActive) {
+    restoreGenerateV2MountedClip();
+  }
   if (currentModalEl?.classList.contains("show")) {
     document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
     if (typeof bootstrap !== "undefined") {
@@ -9272,6 +9846,9 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     }
     if (newClipPanel) {
       clipPanel.replaceWith(newClipPanel);
+      if (window.__generateV2EditModeActive) {
+        newClipPanel.dataset.activePlanIndex = activePlanIndex;
+      }
       loadGenerateUsageSummary();
       initClipDetailModal(activePlanIndex, activeViewMode);
       if (typeof bootstrap !== "undefined") {
@@ -14020,10 +14597,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  modalEl.addEventListener("show.bs.modal", (event) => {
-    const trigger = event?.relatedTarget;
+  const prepareCropEditor = (trigger = null) => {
+    trigger = trigger || chooseBtn;
     if (!trigger) {
-      return;
+      return false;
     }
     latestTrigger = trigger;
     modalEl.dataset.saveUrl = trigger.dataset.saveUrl || modalEl.dataset.saveUrl;
@@ -14086,10 +14663,44 @@ document.addEventListener("DOMContentLoaded", () => {
     syncPreviewTitleText();
     applyPreviewLayout();
     loadActivePreviewImage();
+    return true;
+  };
+
+  const activateCropEditor = () => {
+    applyPreviewLayout();
+    updateSplitUiState();
+    initCroppers();
+    drawPreviewFromCropper();
+    window.dispatchEvent(new CustomEvent("crop-editor-activated"));
+  };
+
+  const teardownCropEditor = () => {
+    resetState();
+    setSaveStatus("", "");
+  };
+
+  window.prepareCropEditor = prepareCropEditor;
+  window.activateCropEditor = activateCropEditor;
+  window.teardownCropEditor = teardownCropEditor;
+  window.cropEditorSave = () => saveBtn?.click();
+  window.cropEditorSaveDefault = () => saveDefaultBtn?.click();
+  window.__cropEditorDebug = () => ({
+    activeCroppers: Object.values(cropperInstances).filter(Boolean).length,
+    naturalSize: { ...naturalSize },
+    hasTopCropper: !!cropperInstances.top,
+    hasBottomCropper: !!cropperInstances.bottom,
+  });
+
+  modalEl.addEventListener("show.bs.modal", (event) => {
+    prepareCropEditor(event?.relatedTarget);
+  });
+
+  modalEl.addEventListener("shown.bs.modal", () => {
+    activateCropEditor();
   });
 
   modalEl.addEventListener("hidden.bs.modal", () => {
-    resetState();
+    teardownCropEditor();
   });
   document.addEventListener("clip-title-preview-sync", (event) => {
     if (!modalEl.classList.contains("show")) {
@@ -14393,6 +15004,7 @@ document.addEventListener("DOMContentLoaded", () => {
           window.showGenerateV2DesignUpdatedDialog?.();
         }
       }
+      window.exitGenerateV2EditMode?.({ saved: true });
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");
@@ -15429,10 +16041,21 @@ document.addEventListener("DOMContentLoaded", function () {
       candidate.classList.toggle("is-active", isActive);
       candidate.setAttribute("aria-selected", isActive ? "true" : "false");
     });
+    const keepMeasurable = !!window.__generateV2EditModeActive;
     cropModalPanels.forEach((panel) => {
-      panel.hidden = panel.dataset.cropModalPanel !== target;
+      const isActive = panel.dataset.cropModalPanel === target;
+      panel.hidden = keepMeasurable ? false : !isActive;
+      panel.classList.toggle("generate-v2-editor-pane-hidden", keepMeasurable && !isActive);
     });
   };
+  window.setCropEditorModalTab = (targetName) => {
+    const target = String(targetName || "").trim().toLowerCase();
+    const targetTab = cropModalTabs.find((tab) => tab.dataset.cropModalTabTarget === target);
+    if (targetTab) {
+      setActiveCropModalTab(targetTab);
+    }
+  };
+  window.updateStyleTemplateCarouselNav = updateStyleTemplateCarouselNav;
   const focusGenerateV2DesignShortcut = () => {
     const requested = String(window.__generateV2DesignShortcut || "").trim().toLowerCase();
     if (!requested) {
