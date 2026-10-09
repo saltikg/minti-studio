@@ -2109,18 +2109,27 @@
   .generate-v2-editor-topbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-wrap: wrap;
     gap: 12px;
     padding-bottom: 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   }
-  .generate-v2-editor-title {
-    color: rgba(255, 255, 255, 0.95);
-    font-size: 1rem;
-    font-weight: 750;
-    line-height: 1.2;
+  .generate-v2-editor-note {
+    flex: 1 1 200px;
+    min-width: 0;
   }
-  .generate-v2-editor-subtitle,
+  .generate-v2-editor-subtitle {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 13px;
+    line-height: 1.25;
+  }
   .generate-v2-editor-status {
     color: rgba(255, 255, 255, 0.55);
     font-size: 0.78rem;
@@ -2134,8 +2143,13 @@
   .generate-v2-editor-actions {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 8px;
     flex: 0 0 auto;
+    margin-left: auto;
+    min-width: max-content;
+    white-space: nowrap;
   }
   .generate-v2-editor-action {
     min-height: 38px;
@@ -2167,8 +2181,8 @@
   .generate-v2-editor-body {
     min-height: 0;
     display: grid;
-    grid-template-columns: 84px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: minmax(72px, 84px) minmax(0, 1fr);
+    gap: clamp(8px, 1.2vw, 14px);
     overflow: visible;
   }
   .generate-v2-editor-rail {
@@ -2216,6 +2230,7 @@
     background: #2BB3A3;
   }
   .generate-v2-editor-content {
+    container-type: inline-size;
     min-height: 0;
     overflow-y: auto;
     overflow-x: visible;
@@ -2268,6 +2283,19 @@
   .generate-v2-editor-section .style-template-card {
     flex: none;
     min-height: 142px;
+  }
+  @media (max-width: 1199.98px) {
+    .generate-v2-editor-actions {
+      flex: 1 1 100%;
+    }
+    .generate-v2-editor-section .style-template-grid {
+      grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+    }
+  }
+  @container (max-width: 420px) {
+    .generate-v2-editor-section .style-template-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   .generate-v2-editor-section .layout-top-row {
     grid-template-columns: minmax(0, 1fr);
@@ -5029,15 +5057,8 @@
             </div>
             <div class="generate-v2-editor-shell" id="generate-v2-editor" aria-hidden="true">
               <div class="generate-v2-editor-topbar">
-                <div>
-                  <div class="generate-v2-editor-title">Short design</div>
-                  <div class="generate-v2-editor-subtitle">
-                    {% if created_clip_count > 0 %}
-                      New clips use this design. Your {{ created_clip_count }} ready clip{% if created_clip_count != 1 %}s{% endif %} keep their current look until you regenerate them.
-                    {% else %}
-                      All new clips from this video will use this design.
-                    {% endif %}
-                  </div>
+                <div class="generate-v2-editor-note">
+                  <div class="generate-v2-editor-subtitle">Applies to new and regenerated clips.</div>
                 </div>
                 <div class="generate-v2-editor-actions">
                   <span class="generate-v2-editor-status" id="generate-v2-editor-status" aria-live="polite"></span>
@@ -15814,6 +15835,10 @@ document.addEventListener("DOMContentLoaded", function () {
       fontFamily: '"Archivo Black", "Archivo", sans-serif',
       fontWeight: "900",
       uppercase: true,
+      activePadding: "0.14em 0.48em",
+      activeRadius: "999px",
+      textShadow: outlineShadow(3),
+      activeTextShadow: "none",
     },
     green_pop: {
       pillColor: "transparent",
