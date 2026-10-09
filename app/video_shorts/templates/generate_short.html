@@ -2085,8 +2085,15 @@
     gap: 10px;
     width: 100%;
   }
-  .generate-v2-media-shell > video,
-  .generate-v2-media-shell > .clip-card-placeholder {
+  .generate-v2-media-column {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .generate-v2-media-column > video,
+  .generate-v2-media-column > .clip-card-placeholder {
     min-width: 0;
   }
   .generate-v2-design-shortcuts {
@@ -2163,8 +2170,23 @@
     white-space: nowrap;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn span:not(.material-symbols-outlined):not(.spinner-border),
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn .btn-label {
+    white-space: nowrap;
+    font-size: 0.75rem;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .material-symbols-outlined {
-    font-size: 1.2rem;
+    font-size: 18px;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .bi {
+    font-size: 18px;
+    line-height: 1;
+  }
+  @media (max-width: 1180px) {
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn span:not(.material-symbols-outlined):not(.spinner-border),
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn .btn-label {
+      font-size: 0.6875rem;
+    }
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-download-btn[data-download-busy="1"] {
     pointer-events: none;
@@ -5234,11 +5256,41 @@
                   {% if row.status == "created" and row.video_filename and row.video_url %}
                     {% if generate_v2 %}
                     <div class="generate-v2-media-shell">
+                      <div class="generate-v2-media-column">
                     {% endif %}
                     <video controls preload="metadata">
                       <source src="{{ row.video_url }}" type="video/mp4">
                     </video>
                     {% if generate_v2 %}
+                      <div class="clip-card-media-actions generate-v2-primary-actions">
+                        <a
+                          class="btn btn-sm generate-v2-tile generate-v2-open-btn"
+                          href="{{ row.video_url }}"
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open video">
+                          <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+                          <span>Open</span>
+                        </a>
+                        <a
+                          class="btn btn-sm generate-v2-tile generate-v2-download-btn"
+                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}">
+                          <i class="bi bi-download" aria-hidden="true"></i>
+                          <span>Download</span>
+                        </a>
+                        <button
+                          type="button"
+                          class="btn btn-sm generate-v2-tile generate-v2-regenerate-btn"
+                          data-plan-index="{{ row.plan_index }}"
+                          data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
+                          {% if row.regenerate_locked %}hidden{% endif %}
+                          title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Regenerate with current design' if row.render_settings_outdated else 'Regenerate this clip') }}">
+                          <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                          <span>Regenerate</span>
+                        </button>
+                      </div>
+                      <div class="generate-v2-download-toast d-none" role="status" aria-live="polite">Preparing your download…</div>
+                      </div>
                       <div class="generate-v2-design-shortcuts" aria-label="Design shortcuts">
                         <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="style"><i class="bi bi-palette2" aria-hidden="true"></i><span>Style</span></button>
                         <button type="button" class="generate-v2-design-shortcut-btn" data-design-shortcut="layout"><i class="bi bi-aspect-ratio" aria-hidden="true"></i><span>Reframe</span></button>
@@ -5247,55 +5299,29 @@
                         <div class="generate-v2-design-shortcut-note">Applies to all clips</div>
                       </div>
                     </div>
-                    {% endif %}
+                    {% else %}
                     <div class="clip-card-media-actions d-flex gap-2 mt-2">
                       <a
-                        class="{% if generate_v2 %}btn btn-sm generate-v2-tile generate-v2-open-btn{% else %}btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center{% endif %}"
+                        class="btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center"
                         href="{{ row.video_url }}"
                         target="_blank"
                         rel="noreferrer"
                         title="Open video">
-                        {% if not generate_v2 %}
                         <span class="visually-hidden">Open video</span>
-                        {% endif %}
                         <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
-                        {% if generate_v2 %}
-                        <span>Open</span>
-                        {% endif %}
                       </a>
-                      {% if generate_v2 %}
-                      <a
-                        class="btn btn-sm generate-v2-tile generate-v2-download-btn"
-                        href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}">
-                        <i class="bi bi-download" aria-hidden="true"></i>
-                        <span>Download</span>
-                      </a>
-                      <button
-                        type="button"
-                        class="btn btn-sm generate-v2-tile generate-v2-regenerate-btn"
-                        data-plan-index="{{ row.plan_index }}"
-                        data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
-                        {% if row.regenerate_locked %}hidden{% endif %}
-                        title="{{ row.regenerate_lock_reason if row.regenerate_locked else ('Regenerate with current design' if row.render_settings_outdated else 'Regenerate this clip') }}">
-                        <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
-                        <span>Regenerate</span>
-                      </button>
-                      {% else %}
-	                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
-	                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
-	                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-	                          <button
-	                            type="submit"
-	                            class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
-	                            data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
-	                            <i class="bi bi-trash3" aria-hidden="true"></i>
-	                            <span>Delete video (keep clip)</span>
-	                          </button>
-	                        </form>
-                      {% endif %}
+                      <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
+                        <input type="hidden" name="filename" value="{{ row.video_filename }}">
+                        <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                        <button
+                          type="submit"
+                          class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1"
+                          data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
+                          <i class="bi bi-trash3" aria-hidden="true"></i>
+                          <span>Delete video (keep clip)</span>
+                        </button>
+                      </form>
                     </div>
-                    {% if generate_v2 %}
-                    <div class="generate-v2-download-toast d-none" role="status" aria-live="polite">Preparing your download…</div>
                     {% endif %}
                   {% else %}
                     {% if generate_v2 %}
@@ -8721,7 +8747,7 @@ const arrangeGenerateV2PreviewCard = (card) => {
   }
   card.dataset.generateV2Arranged = "1";
   const mediaActions = card.querySelector(".clip-card-media-actions");
-  const mediaVideo = card.querySelector(".generate-v2-media-shell > video, .generate-v2-media-shell > .clip-card-placeholder");
+  const mediaVideo = card.querySelector(".generate-v2-media-column > video, .generate-v2-media-column > .clip-card-placeholder");
   const scheduleBlock = card.querySelector(".clip-card-action-primary");
   const regenerateBtn = card.querySelector(".generate-v2-regenerate-btn");
   if (mediaActions) {
