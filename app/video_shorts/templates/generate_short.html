@@ -1805,6 +1805,7 @@
   }
   .generate-v2-tab:focus {
     outline: none;
+    box-shadow: none;
   }
   .generate-v2-tab:focus-visible {
     outline: 1px solid rgba(45, 212, 191, 0.5);
@@ -2245,6 +2246,7 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus {
       outline: none;
+      box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus-visible {
       outline: 1px solid rgba(45, 212, 191, 0.42);
@@ -2263,10 +2265,11 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 2px 7px;
       flex-wrap: wrap;
       min-width: 0;
+      text-align: left;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-title {
       order: 1;
@@ -2279,15 +2282,21 @@
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-meta {
       order: 2;
-      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex: 0 1 auto;
+      min-width: 0;
       font-size: 0.8rem;
+      text-align: left;
+      white-space: nowrap;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms {
-      order: 3;
       display: inline-flex;
       align-items: center;
       gap: 5px;
       flex: 0 0 auto;
+      margin-top: 0;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms .gs-schedule-icon {
       font-size: 16px;
@@ -4651,7 +4660,59 @@
                     </span>
                     <span class="clip-rail-copy">
                       <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
-                      <span class="clip-rail-meta">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                      <span class="clip-rail-meta">
+                        <span>{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                        {% if generate_v2 %}
+                        <span class="clip-rail-platforms">
+                          {% if row.db_publish_display %}
+                            {% if row.db_publish_status == "published" %}
+                            {% set rail_yt_icon_class = "text-success" %}
+                            {% elif row.db_publish_status == "scheduled" %}
+                              {% set rail_yt_icon_class = "text-warning" %}
+                            {% else %}
+                              {% set rail_yt_icon_class = "text-danger" %}
+                            {% endif %}
+                            {% set rail_yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
+                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.db_publish_display }}">
+                              <i class="bi bi-youtube {{ rail_yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                            </span>
+                          {% endif %}
+                          {% if row.instagram_display %}
+                            {% set rail_ig_label_lower = (row.instagram_label or "")|lower %}
+                            {% if "published" in rail_ig_label_lower %}
+                              {% set rail_ig_icon_class = "text-success" %}
+                            {% elif "scheduled" in rail_ig_label_lower or "queued" in rail_ig_label_lower %}
+                              {% set rail_ig_icon_class = "text-warning" %}
+                            {% elif "failed" in rail_ig_label_lower %}
+                              {% set rail_ig_icon_class = "text-danger" %}
+                            {% else %}
+                              {% set rail_ig_icon_class = "text-warning" %}
+                            {% endif %}
+                            {% set rail_ig_tooltip_label = "Published date" if "published" in rail_ig_label_lower else "Schedule date" %}
+                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_ig_tooltip_label }}: {{ row.instagram_display }}">
+                              <i class="bi bi-instagram {{ rail_ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                            </span>
+                          {% endif %}
+                          {% if row.facebook_label or row.facebook_display %}
+                            {% set rail_fb_tooltip = row.facebook_display or (row.facebook_mode == 'sync' and row.publish_display) or row.facebook_label %}
+                            {% set rail_fb_label_lower = (row.facebook_label or "")|lower %}
+                            {% if "published" in rail_fb_label_lower %}
+                              {% set rail_fb_icon_class = "text-success" %}
+                            {% elif "scheduled" in rail_fb_label_lower or "queued" in rail_fb_label_lower %}
+                              {% set rail_fb_icon_class = "text-warning" %}
+                            {% elif "failed" in rail_fb_label_lower %}
+                              {% set rail_fb_icon_class = "text-danger" %}
+                            {% else %}
+                              {% set rail_fb_icon_class = "text-primary" %}
+                            {% endif %}
+                            {% set rail_fb_tooltip_label = "Published date" if "published" in rail_fb_label_lower else "Schedule date" %}
+                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_fb_tooltip_label }}: {{ rail_fb_tooltip }}">
+                              <i class="bi bi-facebook {{ rail_fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
+                            </span>
+                          {% endif %}
+                        </span>
+                        {% endif %}
+                      </span>
                       <span class="clip-rail-status d-none text-white-50" aria-live="polite">
                         <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                         <span class="clip-rail-status-text"></span>
@@ -4661,12 +4722,13 @@
                           <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                           Regenerating...
                         </span>
-                      {% elif generate_v2 and row.render_settings_outdated and not row.regenerate_locked %}
+                      {% elif generate_v2 and row.render_settings_outdated %}
                         <span class="clip-rail-state-chip">
                           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
                           Old design
                         </span>
                       {% endif %}
+                      {% if not generate_v2 %}
                       <span class="clip-rail-platforms">
                         {% if row.db_publish_display %}
                           {% if row.db_publish_status == "published" %}
@@ -4715,6 +4777,7 @@
                           </span>
                         {% endif %}
                       </span>
+                      {% endif %}
                     </span>
                     {% if generate_v2 %}
                       {% if row.is_ai_suggestion %}
@@ -8602,6 +8665,11 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       return;
     }
     button.dataset.generateV2Bound = "1";
+    button.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") {
+        event.preventDefault();
+      }
+    });
     button.addEventListener("click", () => {
       window.setGenerateV2ActiveTab(button.dataset.generateV2Tab || "shorts");
     });
@@ -8611,6 +8679,11 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       return;
     }
     item.dataset.generateV2SelectBound = "1";
+    item.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") {
+        event.preventDefault();
+      }
+    });
     item.addEventListener("click", () => {
       window.setGenerateV2ActiveTab("shorts", {
         selectedPlanIndex: item.dataset.planIndex || "",
