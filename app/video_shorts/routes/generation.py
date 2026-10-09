@@ -10156,6 +10156,7 @@ def generate_short(video_pk):
         selected_subtitle_bg_color=selected_subtitle_bg_color,
         selected_subtitle_bg_alpha=selected_subtitle_bg_alpha,
         selected_subtitle_text_alpha=selected_subtitle_text_alpha,
+        subtitle_presets=SUBTITLE_PRESETS,
         style_templates=STYLE_TEMPLATES,
         default_style_template_key=DEFAULT_STYLE_TEMPLATE_KEY,
         clip_has_saved_style_template=clip_has_saved_style_template,

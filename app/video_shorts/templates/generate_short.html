@@ -6363,12 +6363,21 @@
                   {% set selected_style_preset = selected_subtitle_preset|string %}
                   {% for template in style_templates if template.enabled is not defined or template.enabled or template.subtitle_preset == selected_style_preset %}
                     {% set preview_variant = template.key|replace('_', '-') %}
+                    {% set subtitle_preset_config = subtitle_presets.get(template.subtitle_preset, {}) if subtitle_presets else {} %}
+                    {% set subtitle_font_name = subtitle_preset_config.get('font', '') if subtitle_preset_config else '' %}
+                    {% set subtitle_font_ns = namespace(key='') %}
+                    {% for f in sub_fonts %}
+                      {% if subtitle_font_name and not subtitle_font_ns.key and (f.fontname|string|lower == subtitle_font_name|string|lower or f.label|string|lower == subtitle_font_name|string|lower) %}
+                        {% set subtitle_font_ns.key = f.key %}
+                      {% endif %}
+                    {% endfor %}
                     <button
                       type="button"
                       class="style-template-card"
                       data-style-template-card
                       data-style-template-key="{{ template.key }}"
                       data-style-template-subtitle-preset="{{ template.subtitle_preset }}"
+                      data-style-template-subtitle-font-key="{{ subtitle_font_ns.key }}"
                       data-style-template-title-font-key="{{ template.title_font_key }}"
                       data-style-template-title-font-family="{{ template.title_font }}"
                       data-style-template-title-text-color="{{ template.title_text_color }}"
@@ -13380,11 +13389,38 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
-  const editorFieldRoot = modalEl;
-  const getEditorField = (name) => editorFieldRoot?.querySelector(`[name="${name}"]`) || null;
+  const getEditorRoots = () => {
+    const roots = [
+      document.getElementById("generate-v2-editor"),
+      modalEl,
+    ].filter(Boolean);
+    return Array.from(new Set(roots));
+  };
+  const getEditorField = (name) => {
+    for (const root of getEditorRoots()) {
+      const field = root.querySelector(`[name="${name}"]`);
+      if (field) {
+        return field;
+      }
+    }
+    return null;
+  };
+  const queryEditorFields = (selector) => {
+    const seen = new Set();
+    const results = [];
+    getEditorRoots().forEach((root) => {
+      root.querySelectorAll(selector).forEach((node) => {
+        if (!seen.has(node)) {
+          seen.add(node);
+          results.push(node);
+        }
+      });
+    });
+    return results;
+  };
   const subtitlePresetField = getEditorField("subtitle_preset");
   const subtitleStyleField = getEditorField("subtitle_style");
-  const subtitlePresetCards = Array.from(editorFieldRoot?.querySelectorAll("[data-subtitle-preset-card]") || []);
+  const subtitlePresetCards = queryEditorFields("[data-subtitle-preset-card]");
   const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
   const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
   const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
@@ -13392,8 +13428,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitleFontSizeInput = getEditorField("sub_font_size");
   const titleMarginInput = getEditorField("title_margin");
   const subtitleMarginInput = getEditorField("sub_margin");
-  const showTitleToggle = modalEl.querySelector('[name="show_title"]');
-  const showSubtitleToggle = modalEl.querySelector('[name="show_subtitle"]');
+  const showTitleToggle = getEditorField("show_title");
+  const showSubtitleToggle = getEditorField("show_subtitle");
   const videoOverlayOffsetInput = getEditorField("video_overlay_offset");
   const layoutVideoPositionRow = settingsContainer?.querySelector(".layout-video-position-row");
   const videoDateTopInput = getEditorField("video_date_top");
@@ -15150,7 +15186,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const currentShortDesignDetails = () => {
-    const activeStyleCard = modalEl.querySelector("[data-style-template-card].is-active");
+    const activeStyleCard = queryEditorFields("[data-style-template-card].is-active")[0];
     const activeStyleLabel = activeStyleCard?.querySelector(".style-template-card-title")?.textContent?.trim();
     const presetLabel = String(subtitlePresetField?.value || "default")
       .replace(/_/g, " ")
@@ -16286,6 +16322,11 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
     applySubtitlePresetValue(String(card.dataset.styleTemplateSubtitlePreset || "").trim());
+    const nextSubtitleFontKey = String(card.dataset.styleTemplateSubtitleFontKey || "").trim();
+    if (subtitleFont && nextSubtitleFontKey) {
+      subtitleFont.value = nextSubtitleFontKey;
+      subtitleFont.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     const nextFontKey = String(card.dataset.styleTemplateTitleFontKey || "").trim();
     if (titleFont && nextFontKey) {
       titleFont.value = nextFontKey;
