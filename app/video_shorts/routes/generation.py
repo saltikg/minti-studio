@@ -8853,6 +8853,7 @@ def generate_short(video_pk):
         clip_filename = entry.get("clip_filename") or entry.get("output_filename")
         clip_exists = _short_exists(clip_filename) if clip_filename else False
         video_url = _short_public_url(clip_filename) if clip_exists and clip_filename else ""
+        poster_url = _short_poster_public_url(clip_filename) if clip_exists and clip_filename else ""
         status = "created" if clip_exists else (entry.get("status") or "pending")
         video_filename = clip_filename if clip_exists else None
         yt_id = entry.get("yt_video_id")
@@ -9103,6 +9104,7 @@ def generate_short(video_pk):
             "transcript_full": transcript_full,
             "video_filename": video_filename,
             "video_url": video_url,
+            "poster_url": poster_url,
             "subtitle": subtitle_source,
             "status": status,
             "render_job_id": render_job_id,

@@ -2270,8 +2270,8 @@
       border-bottom: 1px solid rgba(255, 255, 255, 0.075);
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
-      min-height: 104px;
-      grid-template-columns: 28px 128px minmax(0, 1fr) auto;
+      min-height: 112px;
+      grid-template-columns: 28px 54px minmax(0, 1fr) auto;
       gap: 14px;
       padding: 16px 14px;
       border: 0;
@@ -2303,10 +2303,16 @@
       box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb {
-      width: 128px;
-      height: 72px;
+      width: 54px;
+      height: 96px;
       border-radius: 10px;
       align-self: center;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb img,
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item[data-status="pending"] .clip-rail-thumb {
       border: 1px dashed rgba(125, 211, 252, 0.42);
@@ -2436,13 +2442,13 @@
       line-height: 1.45;
     }
     #clip-workbench-shell[data-generate-v2="1"] .trs-row {
-      grid-template-columns: 40px minmax(0, 1fr) auto;
-      gap: 10px;
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      gap: 8px;
       padding: 8px 10px;
       align-items: start;
     }
     #clip-workbench-shell[data-generate-v2="1"] .trs-row-time {
-      width: 40px;
+      width: 52px;
       padding: 0;
       gap: 2px;
       justify-content: flex-start;
@@ -4617,7 +4623,7 @@
               <div class="trs-player-frame" id="trs-player-frame"></div>
               <div class="trs-player-status">
                 <span class="trs-player-ready-copy"><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
-                {% if video.video_url %}
+                {% if video.video_url and not generate_v2 %}
                   <a href="{{ video.video_url }}" target="_blank" rel="noreferrer" class="btn btn-outline-secondary btn-sm">Watch source</a>
                 {% endif %}
               </div>
@@ -4731,14 +4737,22 @@
                     {% endif %}
                     <span class="clip-rail-thumb">
                       {% if row.status == "created" and row.video_url %}
-                        <video muted playsinline preload="metadata">
-                          <source src="{{ row.video_url }}" type="video/mp4">
-                        </video>
-                      {% else %}
-                        {% if row.is_ai_suggestion %}
-                          <span class="clip-rail-ai-badge">✨ AI</span>
+                        {% if generate_v2 and row.poster_url %}
+                          <img src="{{ row.poster_url }}" alt="" loading="lazy">
+                        {% else %}
+                          <video muted playsinline preload="metadata"{% if row.poster_url %} poster="{{ row.poster_url }}"{% endif %}>
+                            <source src="{{ row.video_url }}" type="video/mp4">
+                          </video>
                         {% endif %}
-                        <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                      {% else %}
+                        {% if generate_v2 and video.thumbnail_url %}
+                          <img src="{{ video.thumbnail_url }}" alt="" loading="lazy">
+                        {% elif row.is_ai_suggestion %}
+                          <span class="clip-rail-ai-badge">✨ AI</span>
+                          <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                        {% else %}
+                          <span class="material-symbols-outlined" aria-hidden="true">movie</span>
+                        {% endif %}
                       {% endif %}
                       {% if generate_v2 %}
                       <span class="clip-rail-duration">{{ rail_duration_label }}</span>
