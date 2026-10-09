@@ -1141,6 +1141,13 @@
         }).join("");
       };
 
+      const isGenerateV2Page = () => Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]'));
+      const isShortReadyNotification = (item) => {
+        const title = String(item?.title || "").trim().toLowerCase();
+        const message = String(item?.message || "").trim().toLowerCase();
+        return title === "short ready" && message === "your short video is ready.";
+      };
+
       const renderNotificationBanner = () => {
         const banner = document.getElementById("vs-page-notification-banner");
         if (!banner) {
@@ -1148,7 +1155,7 @@
         }
         const items = readNotifications();
         const latest = items.length ? items[items.length - 1] : null;
-        if (!latest) {
+        if (!latest || (isGenerateV2Page() && isShortReadyNotification(latest))) {
           banner.classList.add("d-none");
           banner.innerHTML = "";
           return;
