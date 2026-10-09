@@ -1778,29 +1778,106 @@
   .generate-v2-right-card {
     min-height: 100%;
   }
-  .generate-v2-tabbar {
-    display: inline-flex;
+  .generate-v2-tabs-row {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px;
-    margin-bottom: 14px;
-    border: 1px solid rgba(45, 212, 191, 0.18);
-    border-radius: 12px;
-    background: rgba(15, 23, 42, 0.62);
+    justify-content: space-between;
+    gap: 14px;
+    margin: 0 0 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .generate-v2-tabbar {
+    display: flex;
+    align-items: flex-end;
+    gap: 20px;
+    min-width: 0;
   }
   .generate-v2-tab {
     border: 0;
-    border-radius: 9px;
-    padding: 8px 12px;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0 0 10px;
     background: transparent;
     color: rgba(255, 255, 255, 0.72);
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     font-weight: 750;
+    white-space: nowrap;
   }
   .generate-v2-tab.is-active {
-    background: rgba(45, 212, 191, 0.16);
+    border-bottom-color: #2dd4bf;
     color: #ccfbf1;
-    box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.22);
+  }
+  .generate-v2-tab-count {
+    color: rgba(255, 255, 255, 0.48);
+    font-weight: 700;
+  }
+  .generate-v2-tab-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    padding-bottom: 8px;
+  }
+  #clip-workbench-shell[data-active-tab="transcript"] .generate-v2-tab-actions {
+    display: none;
+  }
+  .generate-v2-tab-status {
+    max-width: 220px;
+    margin: 0 !important;
+    text-align: right;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
+    align-items: center;
+    border-color: rgba(45, 212, 191, 0.16);
+    background: rgba(45, 212, 191, 0.08);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-management-panel {
+    position: relative;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-select {
+    width: auto;
+    min-width: 104px;
+    color: #ccfbf1;
+    border-color: rgba(45, 212, 191, 0.22);
+    background-color: rgba(15, 23, 42, 0.88);
+  }
+  .generate-v2-suggestion-copy {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 0.82rem;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+  .generate-v2-design-dialog {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(45, 212, 191, 0.22);
+    border-radius: 14px;
+    background: rgba(9, 14, 27, 0.96);
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+  }
+  .generate-v2-design-dialog-title {
+    color: #fff;
+    font-size: 0.92rem;
+    font-weight: 800;
+  }
+  .generate-v2-design-dialog-copy {
+    color: rgba(255, 255, 255, 0.64);
+    font-size: 0.8rem;
+  }
+  .generate-v2-design-dialog-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
   }
   .generate-v2-panel,
   .generate-v2-right-panel {
@@ -1926,11 +2003,6 @@
     gap: 10px;
     margin-top: 10px;
   }
-  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-regenerate-all {
-    min-height: 34px;
-    padding: 0 11px;
-    font-size: 0.78rem;
-  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge {
     justify-self: end;
     display: inline-flex;
@@ -2028,7 +2100,7 @@
       overflow-y: auto;
       overflow-x: hidden;
     }
-    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabbar {
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabs-row {
       flex: 0 0 auto;
       margin-bottom: 10px;
     }
@@ -2047,38 +2119,12 @@
       flex-direction: column;
       overflow: hidden;
     }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header {
-      flex: 0 0 auto;
-      display: grid;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:first-child {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      justify-content: space-between;
-      white-space: normal;
-      min-width: 0;
-    }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header .clip-pane-title {
-      font-size: 0.98rem;
-    }
     #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
       flex: 0 0 auto;
       justify-content: flex-start;
       gap: 8px;
       margin-bottom: 8px;
       padding: 6px 8px;
-    }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:last-child {
-      flex: 0 1 auto;
-      min-width: 0;
-      align-items: center !important;
-      justify-content: flex-end !important;
-    }
-    #clip-workbench-shell[data-generate-v2="1"] .clip-pane-header > div:last-child > .d-flex.flex-column {
-      align-items: flex-end !important;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-label {
       font-size: 0.76rem;
@@ -4132,21 +4178,65 @@
       <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>
         <div class="col-12 col-xl-7">
           <div class="gs-card generate-v2-left-card">
-            <div class="generate-v2-tabbar" role="tablist" aria-label="Clip workflow">
-              <button type="button"
-                      class="generate-v2-tab"
-                      data-generate-v2-tab="shorts"
-                      role="tab"
-                      aria-selected="false">
-                Shorts ({{ total_clip_count }})
-              </button>
-              <button type="button"
-                      class="generate-v2-tab"
-                      data-generate-v2-tab="transcript"
-                      role="tab"
-                      aria-selected="false">
-                Pick from transcript
-              </button>
+            <div class="generate-v2-tabs-row">
+              <div class="generate-v2-tabbar" role="tablist" aria-label="Clip workflow">
+                <button type="button"
+                        class="generate-v2-tab"
+                        data-generate-v2-tab="shorts"
+                        role="tab"
+                        aria-selected="false">
+                  Clips <span class="generate-v2-tab-count">{{ total_clip_count }}</span>
+                </button>
+                <button type="button"
+                        class="generate-v2-tab"
+                        data-generate-v2-tab="transcript"
+                        role="tab"
+                        aria-selected="false">
+                  Pick from transcript
+                </button>
+              </div>
+              <div class="generate-v2-tab-actions" aria-label="Clip actions">
+                {% set v2_schedule_all_ns = namespace(count=0) %}
+                {% for candidate in clip_rows %}
+                  {% set candidate_publish_status = (candidate.publish_status or '')|lower %}
+                  {% set candidate_db_publish_status = (candidate.db_publish_status or '')|lower %}
+                  {% if candidate.status == 'created'
+                    and candidate.video_filename
+                    and not candidate.yt_video_id
+                    and not candidate.publish_at
+                    and not candidate.publish_at_iso
+                    and candidate_publish_status not in ['scheduled', 'uploaded', 'published']
+                    and candidate_db_publish_status not in ['scheduled', 'uploaded', 'published'] %}
+                    {% set v2_schedule_all_ns.count = v2_schedule_all_ns.count + 1 %}
+                  {% endif %}
+                {% endfor %}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                  id="clip-schedule-all-btn"
+                  data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
+                  data-instagram-connected="{{ '1' if instagram_connected else '0' }}"
+                  data-facebook-connected="{{ '1' if facebook_connected else '0' }}"
+                  {% if not (youtube_connected or instagram_connected or facebook_connected) %}
+                    disabled title="Connect a publishing platform first"
+                  {% elif v2_schedule_all_ns.count == 0 %}
+                    disabled title="No created clips to schedule yet — use Create clips first."
+                  {% endif %}>
+                  <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
+                  Schedule all
+                </button>
+                <button
+                  type="submit"
+                  form="step2-form"
+                  class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                  id="ai-generate-btn"
+                  {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
+                  <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                  <i class="bi bi-stars" aria-hidden="true"></i>
+                  <span class="btn-label">Find more</span>
+                </button>
+                <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
+              </div>
             </div>
             <div class="generate-v2-panel" data-generate-v2-panel="shorts"></div>
             <div class="generate-v2-panel" data-generate-v2-panel="transcript"></div>
@@ -4235,25 +4325,8 @@
           </div>
           <div class="gs-card h-100 clip-management-panel" id="clip-management-panel">
             <div class="clip-pane clip-pane-list is-active" id="clip-pane-list">
+              {% if not generate_v2 %}
               <div class="clip-pane-header">
-                {% if generate_v2 %}
-                <div class="clip-pane-heading-row">
-                  <div class="clip-pane-title">Clips · {{ total_clip_count }} · {{ created_clip_count }} created</div>
-                  <div class="d-flex flex-column align-items-end">
-                    <button
-                      type="submit"
-                      form="step2-form"
-                      class="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
-                      id="ai-generate-btn"
-                      {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
-                      <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                      <i class="bi bi-stars" aria-hidden="true"></i>
-                      <span class="btn-label">Suggest clips with AI</span>
-                    </button>
-                    <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
-                  </div>
-                </div>
-                {% else %}
                 <div>
                   <div class="clip-pane-title">Clips · {{ total_clip_count }}</div>
                   <div class="small text-white-50">{{ created_clip_count }}/{{ total_clip_count }} created</div>
@@ -4273,11 +4346,10 @@
                     <div id="plan-live-status" class="ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small mt-2 text-end" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
                   </div>
                 </div>
-                {% endif %}
               </div>
+              {% endif %}
               <div class="clip-score-batch-controls{% if not clip_rows %} d-none{% endif %}" id="clip-score-batch-controls">
                 {% set schedule_all_ns = namespace(count=0) %}
-                {% set regenerate_all_ns = namespace(count=0) %}
                 {% for candidate in clip_rows %}
                   {% set candidate_publish_status = (candidate.publish_status or '')|lower %}
                   {% set candidate_db_publish_status = (candidate.db_publish_status or '')|lower %}
@@ -4290,12 +4362,18 @@
                     and candidate_db_publish_status not in ['scheduled', 'uploaded', 'published'] %}
                     {% set schedule_all_ns.count = schedule_all_ns.count + 1 %}
                   {% endif %}
-                  {% if generate_v2 and candidate.render_settings_outdated and not candidate.regenerate_locked %}
-                    {% set regenerate_all_ns.count = regenerate_all_ns.count + 1 %}
-                  {% endif %}
                 {% endfor %}
+                {% if generate_v2 %}
+                <span class="generate-v2-suggestion-copy" id="clip-score-batch-banner-copy">✦ 0 strong suggestions not created yet</span>
+                <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">score ≥</label>
+                <select class="form-select form-select-sm clip-score-threshold-input clip-score-threshold-select" id="clip-score-threshold">
+                  {% for threshold_option in [50, 60, 70, 80, 90] %}
+                    <option value="{{ threshold_option }}"{% if threshold_option == 70 %} selected{% endif %}>{{ threshold_option }}</option>
+                  {% endfor %}
+                </select>
+                {% else %}
                 <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
-                  {% if generate_v2 %}Auto-create ≥{% else %}Auto-create clips scoring ≥{% endif %} <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
+                  Auto-create clips scoring ≥ <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
                 </label>
                 <input
                   type="range"
@@ -4305,10 +4383,12 @@
                   max="100"
                   step="1"
                   value="70">
+                {% endif %}
                 <button type="button" class="btn btn-sm btn-primary d-inline-flex align-items-center gap-2" id="clip-score-batch-create-btn" disabled>
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <span class="btn-label">{% if generate_v2 %}Create 0 clips{% else %}Create 0 clips (score ≥ 70){% endif %}</span>
                 </button>
+                {% if not generate_v2 %}
                 <button
                   type="button"
                   class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
@@ -4323,15 +4403,6 @@
                   {% endif %}>
                   <i class="bi bi-calendar2-plus" aria-hidden="true"></i>
                   Schedule all
-                </button>
-                {% if generate_v2 %}
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-warning d-inline-flex align-items-center gap-1 generate-v2-regenerate-all{% if regenerate_all_ns.count == 0 %} d-none{% endif %}"
-                  id="generate-v2-regenerate-all-btn"
-                  data-count="{{ regenerate_all_ns.count }}">
-                  <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
-                  <span>Regenerate all{% if regenerate_all_ns.count > 0 %} ({{ regenerate_all_ns.count }}){% endif %}</span>
                 </button>
                 {% endif %}
                 <div class="clip-score-batch-feedback text-white-50 d-none" id="clip-score-batch-feedback" aria-live="polite"></div>
@@ -4382,7 +4453,7 @@
                       {% elif generate_v2 and row.render_settings_outdated %}
                         <span class="clip-rail-state-chip">
                           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
-                          Outdated
+                          Old design
                         </span>
                       {% endif %}
                       <span class="clip-rail-platforms">
@@ -4500,6 +4571,18 @@
                   </div>
                 {% endfor %}
               </div>
+              {% if generate_v2 %}
+              <div class="generate-v2-design-dialog d-none" id="generate-v2-design-updated-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-design-dialog-title">
+                <div>
+                  <div class="generate-v2-design-dialog-title" id="generate-v2-design-dialog-title">Design updated</div>
+                  <div class="generate-v2-design-dialog-copy" id="generate-v2-design-dialog-copy">Apply it to your existing clips?</div>
+                </div>
+                <div class="generate-v2-design-dialog-actions">
+                  <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-design-dialog-dismiss">Not now</button>
+                  <button type="button" class="btn btn-sm btn-primary" id="generate-v2-design-dialog-update">Update clips</button>
+                </div>
+              </div>
+              {% endif %}
             </div>
             <div id="clip-card-repository" class="clip-card-repository">
               {% for row in clip_rows %}
@@ -8485,6 +8568,27 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
     const newClipPanel = doc.getElementById("clip-management-panel");
+    if (getGenerateV2Root()) {
+      const currentTabCount = document.querySelector(".generate-v2-tab-count");
+      const newTabCount = doc.querySelector(".generate-v2-tab-count");
+      if (currentTabCount && newTabCount) {
+        currentTabCount.textContent = newTabCount.textContent;
+      }
+      const currentScheduleButton = document.getElementById("clip-schedule-all-btn");
+      const newScheduleButton = doc.getElementById("clip-schedule-all-btn");
+      if (currentScheduleButton && newScheduleButton) {
+        currentScheduleButton.disabled = newScheduleButton.disabled;
+        currentScheduleButton.title = newScheduleButton.title || "";
+        currentScheduleButton.dataset.youtubeConnected = newScheduleButton.dataset.youtubeConnected || "0";
+        currentScheduleButton.dataset.instagramConnected = newScheduleButton.dataset.instagramConnected || "0";
+        currentScheduleButton.dataset.facebookConnected = newScheduleButton.dataset.facebookConnected || "0";
+      }
+      const currentAiButton = document.getElementById("ai-generate-btn");
+      const newAiButton = doc.getElementById("ai-generate-btn");
+      if (currentAiButton && newAiButton) {
+        currentAiButton.disabled = newAiButton.disabled;
+      }
+    }
     if (newClipPanel) {
       clipPanel.replaceWith(newClipPanel);
       loadGenerateUsageSummary();
@@ -9300,18 +9404,53 @@ const initGenerateV2RegenerateControls = () => {
       void enqueueRegenerateClip(button.closest(".clip-card"));
     });
   });
-  const allButton = document.getElementById("generate-v2-regenerate-all-btn");
-  if (allButton && allButton.dataset.regenerateAllBound !== "1") {
-    allButton.dataset.regenerateAllBound = "1";
-    allButton.addEventListener("click", async () => {
-      const cards = Array.from(document.querySelectorAll(".clip-card[data-outdated='1'][data-regenerate-locked='0']"));
-      allButton.disabled = true;
+  const dialog = document.getElementById("generate-v2-design-updated-dialog");
+  const dismissButton = document.getElementById("generate-v2-design-dialog-dismiss");
+  const updateButton = document.getElementById("generate-v2-design-dialog-update");
+  if (dismissButton && dismissButton.dataset.designDialogDismissBound !== "1") {
+    dismissButton.dataset.designDialogDismissBound = "1";
+    dismissButton.addEventListener("click", () => {
+      dialog?.classList.add("d-none");
+    });
+  }
+  if (updateButton && updateButton.dataset.designDialogUpdateBound !== "1") {
+    updateButton.dataset.designDialogUpdateBound = "1";
+    updateButton.addEventListener("click", async () => {
+      const cards = getGenerateV2RegenerateTargets();
+      if (!cards.length) {
+        dialog?.classList.add("d-none");
+        return;
+      }
+      updateButton.disabled = true;
       for (const card of cards) {
         await enqueueRegenerateClip(card);
       }
-      allButton.disabled = false;
+      updateButton.disabled = false;
+      dialog?.classList.add("d-none");
     });
   }
+};
+
+const getGenerateV2RegenerateTargets = () => Array.from(
+  document.querySelectorAll(".clip-card[data-outdated='1'][data-regenerate-locked='0'][data-status='created']"),
+);
+
+window.showGenerateV2DesignUpdatedDialog = () => {
+  const root = getGenerateV2Root();
+  const dialog = document.getElementById("generate-v2-design-updated-dialog");
+  const copy = document.getElementById("generate-v2-design-dialog-copy");
+  const updateButton = document.getElementById("generate-v2-design-dialog-update");
+  if (!root || !dialog || !copy || !updateButton) {
+    return;
+  }
+  const count = getGenerateV2RegenerateTargets().length;
+  if (!count) {
+    dialog.classList.add("d-none");
+    return;
+  }
+  copy.textContent = `Apply it to your ${count} existing ${count === 1 ? "clip" : "clips"}?`;
+  updateButton.textContent = `Update ${count} ${count === 1 ? "clip" : "clips"}`;
+  dialog.classList.remove("d-none");
 };
 
 const usageResetCopy = (resetAt) => {
@@ -9378,12 +9517,22 @@ const clampScoreThreshold = (value) => {
   return Math.max(0, Math.min(100, Math.round(numeric)));
 };
 
+const normalizeScoreThresholdForControl = (input, value) => {
+  const threshold = clampScoreThreshold(value);
+  if (!input || input.tagName !== "SELECT") {
+    return threshold;
+  }
+  const allowed = Array.from(input.options).map((option) => Number(option.value));
+  return allowed.includes(threshold) ? threshold : 70;
+};
+
 const getScoreBatchControls = () => ({
   wrapper: document.getElementById("clip-score-batch-controls"),
   input: document.getElementById("clip-score-threshold"),
   value: document.getElementById("clip-score-threshold-value"),
   button: document.getElementById("clip-score-batch-create-btn"),
   label: document.querySelector("#clip-score-batch-create-btn .btn-label"),
+  bannerCopy: document.getElementById("clip-score-batch-banner-copy"),
   spinner: document.querySelector("#clip-score-batch-create-btn .spinner-border"),
   feedback: document.getElementById("clip-score-batch-feedback"),
 });
@@ -9472,20 +9621,27 @@ const updateClipBatchControlsVisibility = () => {
 };
 
 const updateScoreBatchControls = () => {
-  const { input, value, button, label, spinner } = getScoreBatchControls();
+  const { input, value, button, label, bannerCopy, spinner, wrapper } = getScoreBatchControls();
   const hasClips = updateClipBatchControlsVisibility();
   if (!input || !button || !label) {
     return;
   }
-  const threshold = clampScoreThreshold(input.value);
+  const isV2 = !!getGenerateV2Root();
+  const threshold = normalizeScoreThresholdForControl(input, input.value);
   input.value = threshold;
   if (value) {
     value.textContent = threshold;
   }
   applyScoreThresholdDimming(threshold);
   const count = getQualifyingScoreClipTargets(threshold).length;
-  label.textContent = getGenerateV2Root()
-    ? `Create ${count} ${count === 1 ? "clip" : "clips"}`
+  if (isV2 && wrapper) {
+    wrapper.classList.toggle("d-none", count === 0);
+  }
+  if (bannerCopy) {
+    bannerCopy.textContent = `✦ ${count} strong ${count === 1 ? "suggestion" : "suggestions"} not created yet`;
+  }
+  label.textContent = isV2
+    ? `Create ${count}`
     : `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
   button.disabled = !hasClips || scoreBatchState.running || count === 0;
   spinner?.classList.toggle("d-none", !scoreBatchState.running);
@@ -9642,16 +9798,16 @@ const initScoreThresholdBatchControls = () => {
   }
   if (input.dataset.scoreThresholdRestored !== "1") {
     try {
-      input.value = clampScoreThreshold(window.localStorage.getItem(scoreThresholdStorageKey) || input.value);
+      input.value = normalizeScoreThresholdForControl(input, window.localStorage.getItem(scoreThresholdStorageKey) || input.value);
     } catch (error) {
-      input.value = clampScoreThreshold(input.value);
+      input.value = normalizeScoreThresholdForControl(input, input.value);
     }
     input.dataset.scoreThresholdRestored = "1";
   }
   if (input.dataset.scoreThresholdBound !== "1") {
     input.dataset.scoreThresholdBound = "1";
-    input.addEventListener("input", () => {
-      const threshold = clampScoreThreshold(input.value);
+    const onThresholdChange = () => {
+      const threshold = normalizeScoreThresholdForControl(input, input.value);
       input.value = threshold;
       try {
         window.localStorage.setItem(scoreThresholdStorageKey, String(threshold));
@@ -9660,7 +9816,9 @@ const initScoreThresholdBatchControls = () => {
       }
       updateScoreBatchControls();
       setScoreBatchFeedback("");
-    });
+    };
+    input.addEventListener("input", onThresholdChange);
+    input.addEventListener("change", onThresholdChange);
   }
   if (button.dataset.scoreBatchBound !== "1") {
     button.dataset.scoreBatchBound = "1";
@@ -13537,7 +13695,10 @@ document.addEventListener("DOMContentLoaded", () => {
       window.updateShortDesignStrip?.(currentShortDesignDetails());
       if (getGenerateV2Root() && typeof refreshClipList === "function") {
         const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
-        refreshClipList(activePlanIndex, "list");
+        const refreshed = await refreshClipList(activePlanIndex, "list");
+        if (refreshed) {
+          window.showGenerateV2DesignUpdatedDialog?.();
+        }
       }
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
