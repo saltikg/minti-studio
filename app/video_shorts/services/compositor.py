@@ -2582,7 +2582,7 @@ def _compose_trimmed_with_background(
                     seg_start = float(segment.get("start") or 0.0)
                     seg_end = float(segment.get("end") or duration)
                     if str(segment.get("mode") or "fill") == "fit":
-                        title_y_expr = f"max(0,{face_aware_fit_metrics['title_bottom']:.2f}-text_h)"
+                        title_y_expr = f"max(0,{face_aware_fit_metrics['title_bottom']:.2f}-text_h)".replace(",", r"\,")
                     else:
                         title_y_expr = str(title_layout["draw_y"])
                     next_title_label = f"[ov_title_debug_{idx}]"
