@@ -12186,6 +12186,7 @@ def save_crop_area(video_pk):
     editor_context = _active_editor_context()
     brand_id = editor_context["brand_id"]
     editor_owner_user_id = editor_context["owner_user_id"]
+    form_fields = set(request.form.keys())
     def _parse_ratio(name: str):
         value = request.form.get(name)
         if value is None or value == "":
@@ -12195,12 +12196,16 @@ def save_crop_area(video_pk):
         except Exception:
             return None
 
-    static_visual_key = (request.form.get("static_visual_key") or "").strip()
-    if static_visual_key == "":
-        static_visual_key = None
-    background_visual_key = (request.form.get("background_visual_key") or "").strip()
-    if background_visual_key == "":
-        background_visual_key = None
+    static_visual_key = None
+    if "static_visual_key" in form_fields:
+        static_visual_key = (request.form.get("static_visual_key") or "").strip()
+        if static_visual_key == "":
+            static_visual_key = None
+    background_visual_key = None
+    if "background_visual_key" in form_fields:
+        background_visual_key = (request.form.get("background_visual_key") or "").strip()
+        if background_visual_key == "":
+            background_visual_key = None
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
         expected_owner_user_id=editor_owner_user_id,
@@ -12209,9 +12214,11 @@ def save_crop_area(video_pk):
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
     subscribe_overlay_enabled_raw = (subscribe_overlay_value or "").strip().lower()
     subscribe_overlay_enabled = subscribe_overlay_enabled_raw in {"1", "true", "yes", "on"}
-    crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
-    if crop_aspect not in {"landscape", "portrait"}:
-        crop_aspect = "landscape"
+    crop_aspect = None
+    if "crop_aspect" in form_fields:
+        crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
+        if crop_aspect not in {"landscape", "portrait"}:
+            crop_aspect = "landscape"
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
     crop_changed_param_present = "crop_changed" in request.form
     crop_changed = (request.form.get("crop_changed") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -12334,46 +12341,45 @@ def save_crop_area(video_pk):
                     crop2_values["crop2_h_ratio"],
                 ]
             )
-        update_set_parts.extend(
-            [
-                "static_visual_key = ?",
-                "background_visual_key = ?",
-                "crop_aspect = ?",
-                "subscribe_overlay_enabled = ?",
-            ]
-        )
+        if "static_visual_key" in form_fields:
+            update_set_parts.append("static_visual_key = ?")
+            update_params.append(static_visual_key)
+        if "background_visual_key" in form_fields:
+            update_set_parts.append("background_visual_key = ?")
+            update_params.append(background_visual_key)
+        if "crop_aspect" in form_fields:
+            update_set_parts.append("crop_aspect = ?")
+            update_params.append(crop_aspect or "landscape")
+        if "enable_subscribe_overlay" in form_fields:
+            update_set_parts.append("subscribe_overlay_enabled = ?")
+            update_params.append(subscribe_overlay_enabled)
         update_sql = f"""
             UPDATE youtube_videos
             SET {", ".join(update_set_parts)}
             WHERE id = ?
               AND owner_user_id = ?
         """
-        update_params.extend(
-            [
-                static_visual_key,
-                background_visual_key,
-                crop_aspect,
-                subscribe_overlay_enabled,
-                video_pk,
-                editor_owner_user_id,
-            ]
-        )
+        update_params.extend([video_pk, editor_owner_user_id])
         if "brand_id" in video_columns:
             if brand_id is None:
                 update_sql += "\n AND brand_id IS NULL"
             else:
                 update_sql += "\n AND brand_id = ?"
                 update_params.append(brand_id)
-        cursor = conn.execute(update_sql, update_params)
-        conn.commit()
-        if cursor.rowcount == 0:
-            return jsonify(success=False, message="Video not found."), 404
-        _save_subscribe_overlay_key(
-            editor_owner_user_id,
-            brand_id,
-            video_pk,
-            subscribe_overlay_key,
-        )
+        if update_set_parts:
+            cursor = conn.execute(update_sql, update_params)
+            conn.commit()
+            if cursor.rowcount == 0:
+                return jsonify(success=False, message="Video not found."), 404
+        else:
+            conn.commit()
+        if "subscribe_overlay_image" in form_fields:
+            _save_subscribe_overlay_key(
+                editor_owner_user_id,
+                brand_id,
+                video_pk,
+                subscribe_overlay_key,
+            )
     except Exception as exc:
         current_app.logger.exception("Crop save failed for video %s: %s", video_pk, exc)
         return jsonify(success=False, message="Unable to save crop settings."), 500
@@ -24341,6 +24347,14 @@ def save_short_settings(video_pk):
     editor_context = _active_editor_context()
     brand_id = editor_context["brand_id"]
     editor_owner_user_id = editor_context["owner_user_id"]
+    form_fields = set(request.form.keys())
+    current_app.logger.info(
+        "save_short_settings fields video=%s fields=%s subtitle_preset=%s subtitle_style=%s",
+        video_pk,
+        sorted(form_fields),
+        request.form.get("subtitle_preset"),
+        request.form.get("subtitle_style"),
+    )
     font_key = request.form.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
     try:
@@ -24482,6 +24496,42 @@ def save_short_settings(video_pk):
             "visual_mode": visual_mode,
             "podcast_overlay_short_ids": json.dumps(podcast_overlay_short_ids, ensure_ascii=False),
         }
+        source_fields_by_column = {
+            "title_font_key": "font",
+            "title_font_size": "title_font_size",
+            "subtitle_font_key": "sub_font",
+            "subtitle_font_size": "sub_font_size",
+            "subtitle_margin": "sub_margin",
+            "subtitle_style": "subtitle_style",
+            "subtitle_preset": "subtitle_preset",
+            "title_margin": "title_margin",
+            "title_line_spacing": "title_line_spacing",
+            "title_bg_color": "title_bg_color",
+            "title_bg_alpha": "title_bg_alpha",
+            "title_text_color": "title_text_color",
+            "subtitle_text_color": "subtitle_text_color",
+            "subtitle_bg_color": "subtitle_bg_color",
+            "subtitle_bg_alpha": "subtitle_bg_alpha",
+            "subtitle_text_alpha": "subtitle_text_alpha",
+            "video_date_text": "video_date_text",
+            "video_date_top": "video_date_top",
+            "show_title": "show_title",
+            "show_subtitle": "show_subtitle",
+            "subscribe_overlay_enabled": "enable_subscribe_overlay",
+            "is_music_only": "is_music_only",
+            "video_overlay_offset": "video_overlay_offset",
+            "podcast_audio_filename": "podcast_audio_filename",
+            "visual_mode": "visual_mode",
+            "podcast_overlay_short_ids": "podcast_overlay_short_ids",
+        }
+        if "visual_mode" in form_fields:
+            source_fields_by_column["podcast_audio_filename"] = "visual_mode"
+            source_fields_by_column["podcast_overlay_short_ids"] = "visual_mode"
+        update_values = {
+            column: value
+            for column, value in update_values.items()
+            if source_fields_by_column.get(column) in form_fields
+        }
         assignments = []
         params: List[Any] = []
         for column, value in update_values.items():
@@ -24508,12 +24558,13 @@ def save_short_settings(video_pk):
                 params,
             )
         conn.commit()
-        _save_subscribe_overlay_key(
-            editor_owner_user_id,
-            brand_id,
-            video_pk,
-            subscribe_overlay_key,
-        )
+        if "subscribe_overlay_image" in form_fields:
+            _save_subscribe_overlay_key(
+                editor_owner_user_id,
+                brand_id,
+                video_pk,
+                subscribe_overlay_key,
+            )
     except Exception as exc:
         conn.close()
         current_app.logger.warning("Failed to save short settings for %s: %s", video_pk, exc)

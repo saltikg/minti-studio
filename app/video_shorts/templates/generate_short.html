@@ -13343,7 +13343,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPresetRatiosBottom = { x: 0, y: 0, w: 1, h: 1 };
   let lastSinglePresetRatios = { x: 0, y: 0, w: 1, h: 1 };
   let activeSplitEnabled = false;
-  let initialCropSnapshot = null;
+  let cropDirty = false;
+  let cropperProgrammaticUpdateDepth = 0;
   let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
   let backgroundPickerImagesHydrated = false;
@@ -13379,22 +13380,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
-  const subtitlePresetField = settingsContainer?.querySelector('[name="subtitle_preset"]');
-  const subtitleStyleField = settingsContainer?.querySelector('[name="subtitle_style"]');
-  const subtitlePresetCards = Array.from(settingsContainer?.querySelectorAll("[data-subtitle-preset-card]") || []);
+  const editorFieldRoot = modalEl;
+  const getEditorField = (name) => editorFieldRoot?.querySelector(`[name="${name}"]`) || null;
+  const subtitlePresetField = getEditorField("subtitle_preset");
+  const subtitleStyleField = getEditorField("subtitle_style");
+  const subtitlePresetCards = Array.from(editorFieldRoot?.querySelectorAll("[data-subtitle-preset-card]") || []);
   const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
   const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
   const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
-  const titleFontSizeInput = settingsContainer?.querySelector('[name="title_font_size"]');
-  const subtitleFontSizeInput = settingsContainer?.querySelector('[name="sub_font_size"]');
-  const titleMarginInput = settingsContainer?.querySelector('[name="title_margin"]');
-  const subtitleMarginInput = settingsContainer?.querySelector('[name="sub_margin"]');
+  const titleFontSizeInput = getEditorField("title_font_size");
+  const subtitleFontSizeInput = getEditorField("sub_font_size");
+  const titleMarginInput = getEditorField("title_margin");
+  const subtitleMarginInput = getEditorField("sub_margin");
   const showTitleToggle = modalEl.querySelector('[name="show_title"]');
   const showSubtitleToggle = modalEl.querySelector('[name="show_subtitle"]');
-  const videoOverlayOffsetInput = settingsContainer?.querySelector('[name="video_overlay_offset"]');
+  const videoOverlayOffsetInput = getEditorField("video_overlay_offset");
   const layoutVideoPositionRow = settingsContainer?.querySelector(".layout-video-position-row");
-  const videoDateTopInput = settingsContainer?.querySelector('[name="video_date_top"]');
-  const videoDateTextInput = settingsContainer?.querySelector('[name="video_date_text"]');
+  const videoDateTopInput = getEditorField("video_date_top");
+  const videoDateTextInput = getEditorField("video_date_text");
   const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
   const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
   const videoPositionAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="video-position"]') || []);
@@ -13885,35 +13888,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return normalized;
   };
-  const CROP_CHANGE_EPSILON = 0.001;
-  const buildCropSnapshot = (topRatios = currentPresetRatios, bottomRatios = currentPresetRatiosBottom) => ({
-    crop_aspect: activeCropAspect || "landscape",
-    split_enabled: getEffectiveSplitEnabled() ? "1" : "0",
-    top: normalizePresetRatios(topRatios),
-    bottom: getEffectiveSplitEnabled() ? normalizePresetRatios(bottomRatios) : null,
-  });
-  const ratiosDiffer = (left, right) => {
-    const a = normalizePresetRatios(left || {});
-    const b = normalizePresetRatios(right || {});
-    return ["x", "y", "w", "h"].some((key) => Math.abs(Number(a[key] || 0) - Number(b[key] || 0)) > CROP_CHANGE_EPSILON);
+  const markCropDirty = () => {
+    cropDirty = true;
   };
-  const cropSnapshotChanged = (snapshot) => {
-    if (!initialCropSnapshot || !snapshot) {
-      return true;
+  const markCropDirtyFromCropperEvent = (event) => {
+    if (cropperProgrammaticUpdateDepth > 0) {
+      return;
     }
-    if (String(initialCropSnapshot.crop_aspect || "") !== String(snapshot.crop_aspect || "")) {
-      return true;
+    const originalEvent = event?.detail?.originalEvent || event?.originalEvent || event;
+    if (!originalEvent) {
+      return;
     }
-    if (String(initialCropSnapshot.split_enabled || "0") !== String(snapshot.split_enabled || "0")) {
-      return true;
+    const type = String(originalEvent.type || "");
+    if (
+      originalEvent.isTrusted === true ||
+      /^(pointer|mouse|touch|wheel)/.test(type)
+    ) {
+      markCropDirty();
     }
-    if (ratiosDiffer(initialCropSnapshot.top, snapshot.top)) {
-      return true;
-    }
-    if (String(snapshot.split_enabled || "0") === "1" && ratiosDiffer(initialCropSnapshot.bottom, snapshot.bottom)) {
-      return true;
-    }
-    return false;
   };
   const destroyCropperInstance = (boxKey) => {
     const instance = cropperInstances[boxKey];
@@ -14156,6 +14148,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const resetState = () => {
     destroyAllCroppers();
     dragState = null;
+    cropDirty = false;
     setSelectedPreviewElement("");
     previewFrame?.classList.remove("is-dragging");
     naturalSize = { width: 0, height: 0 };
@@ -14779,9 +14772,14 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   cropAspectButtons.forEach((button) => {
     button.addEventListener("click", () => {
+      const nextAspect = button.dataset.cropAspect || "landscape";
+      const nextSplit = (button.dataset.splitEnabled || "") === "1";
+      if ((activeCropAspect || "landscape") !== nextAspect || getEffectiveSplitEnabled() !== nextSplit) {
+        markCropDirty();
+      }
       setCropFormat(
-        button.dataset.cropAspect || "landscape",
-        (button.dataset.splitEnabled || "") === "1",
+        nextAspect,
+        nextSplit,
       );
     });
   });
@@ -14851,13 +14849,31 @@ document.addEventListener("DOMContentLoaded", () => {
             width: presetW * naturalSize.width,
             height: presetH * naturalSize.height,
           };
+          cropperProgrammaticUpdateDepth += 1;
           instance.setData(data);
+          window.setTimeout(() => {
+            cropperProgrammaticUpdateDepth = Math.max(0, cropperProgrammaticUpdateDepth - 1);
+            cropDirty = false;
+          }, 0);
         };
         applyPreset(presets);
         if (saveBtn) {
           saveBtn.disabled = false;
         }
         updateCropInfo();
+        cropDirty = false;
+      },
+      cropstart(event) {
+        markCropDirtyFromCropperEvent(event);
+      },
+      cropmove(event) {
+        markCropDirtyFromCropperEvent(event);
+      },
+      cropend(event) {
+        markCropDirtyFromCropperEvent(event);
+      },
+      zoom(event) {
+        markCropDirtyFromCropperEvent(event);
       },
       crop() {
         updateCropInfo();
@@ -14948,7 +14964,6 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSplitUiState();
     syncPreviewTitleText();
     applyPreviewLayout();
-    initialCropSnapshot = buildCropSnapshot();
     loadActivePreviewImage();
     return true;
   };
@@ -15006,41 +15021,52 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout();
   });
 
-  const collectShortEditorDefaultParams = () => {
-    const params = new URLSearchParams();
-    [
-      "font",
-      "sub_font",
-      "title_font_size",
-      "sub_font_size",
-      "sub_margin",
-      "subtitle_style",
-      "subtitle_preset",
-      "title_margin",
-      "title_line_spacing",
-      "title_bg_color",
-      "title_bg_alpha",
-      "title_text_color",
-      "subtitle_text_color",
-      "subtitle_text_alpha",
-      "subtitle_bg_color",
-      "subtitle_bg_alpha",
-      "video_overlay_offset",
-    ].forEach((name) => {
-      const field = settingsContainer?.querySelector(`[name="${name}"]`);
+  const shortDesignFieldNames = [
+    "font",
+    "sub_font",
+    "title_font_size",
+    "sub_font_size",
+    "sub_margin",
+    "subtitle_style",
+    "subtitle_preset",
+    "title_margin",
+    "title_line_spacing",
+    "title_bg_color",
+    "title_bg_alpha",
+    "title_text_color",
+    "subtitle_text_color",
+    "subtitle_text_alpha",
+    "subtitle_bg_color",
+    "subtitle_bg_alpha",
+    "video_date_text",
+    "video_date_top",
+    "video_overlay_offset",
+  ];
+
+  const appendShortDesignFields = (params, names = shortDesignFieldNames) => {
+    names.forEach((name) => {
+      const field = getEditorField(name);
       if (field) {
         params.set(name, getPersistedFieldValue(field));
       }
     });
-    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
+  };
+
+  const collectShortEditorDefaultParams = () => {
+    const params = new URLSearchParams();
+    appendShortDesignFields(
+      params,
+      shortDesignFieldNames.filter((name) => name !== "video_date_text" && name !== "video_date_top"),
+    );
+    const subscribeToggle = getEditorField("enable_subscribe_overlay");
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
-    const showTitleField = modalEl.querySelector(`[name="show_title"]`);
+    const showTitleField = getEditorField("show_title");
     if (showTitleField) {
       params.set("show_title", showTitleField.checked ? "1" : "0");
     }
-    const showSubtitleField = modalEl.querySelector(`[name="show_subtitle"]`);
+    const showSubtitleField = getEditorField("show_subtitle");
     if (showSubtitleField) {
       params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
     }
@@ -15067,42 +15093,35 @@ document.addEventListener("DOMContentLoaded", () => {
     return payload;
   };
 
-  const saveShortSettings = async () => {
-    if (!settingsSaveUrl || !settingsContainer) {
-      return;
-    }
-    const params = new URLSearchParams();
-    ["font", "sub_font", "title_font_size", "sub_font_size", "sub_margin", "subtitle_style", "subtitle_preset", "title_margin", "title_line_spacing", "title_bg_color", "title_bg_alpha", "title_text_color", "subtitle_text_color", "subtitle_text_alpha", "subtitle_bg_color", "subtitle_bg_alpha", "video_date_text", "video_date_top", "video_overlay_offset"].forEach(
-      (name) => {
-        const field = settingsContainer.querySelector(`[name="${name}"]`);
-        if (field) {
-          params.set(name, getPersistedFieldValue(field));
-        }
-      },
-    );
-    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
-    if (subscribeToggle) {
-      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
-    }
-    params.set("subscribe_overlay_image", activeSubscribeKey || "");
-    const showTitleField = modalEl.querySelector(`[name="show_title"]`);
-    if (showTitleField) {
-      params.set("show_title", showTitleField.checked ? "1" : "0");
-    }
-    const showSubtitleField = modalEl.querySelector(`[name="show_subtitle"]`);
-    if (showSubtitleField) {
-      params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
-    }
-    const musicOnlyToggle = modalEl.querySelector(`[name="is_music_only"]`);
-    if (musicOnlyToggle) {
-      params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
-    }
-    const podcastAudioField = modalEl.querySelector(`[name="podcast_audio_filename"]`);
-    if (podcastAudioField && activeVisualMode === "podcast") {
-      params.set("podcast_audio_filename", podcastAudioField.value || "");
-    } else {
-      params.set("podcast_audio_filename", "");
-    }
+	  const saveShortSettings = async () => {
+	    if (!settingsSaveUrl || !settingsContainer) {
+	      return;
+	    }
+	    const params = new URLSearchParams();
+	    appendShortDesignFields(params);
+	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
+	    if (subscribeToggle) {
+	      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
+	    }
+	    params.set("subscribe_overlay_image", activeSubscribeKey || "");
+	    const showTitleField = getEditorField("show_title");
+	    if (showTitleField) {
+	      params.set("show_title", showTitleField.checked ? "1" : "0");
+	    }
+	    const showSubtitleField = getEditorField("show_subtitle");
+	    if (showSubtitleField) {
+	      params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
+	    }
+	    const musicOnlyToggle = getEditorField("is_music_only");
+	    if (musicOnlyToggle) {
+	      params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
+	    }
+	    const podcastAudioField = getEditorField("podcast_audio_filename");
+	    if (podcastAudioField && activeVisualMode === "podcast") {
+	      params.set("podcast_audio_filename", podcastAudioField.value || "");
+	    } else {
+	      params.set("podcast_audio_filename", "");
+	    }
     if (activeVisualMode === "podcast") {
       params.set("podcast_overlay_short_ids", JSON.stringify((podcastShortClipState.selectedIds || []).slice(0, 2)));
     } else {
@@ -15219,14 +15238,11 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
-    params.append("crop_changed", cropSnapshotChanged(buildCropSnapshot(
-      { x: xRatio, y: yRatio, w: wRatio, h: hRatio },
-      crop2Ratios || currentPresetRatiosBottom,
-    )) ? "1" : "0");
+	    params.append("crop_changed", cropDirty ? "1" : "0");
     if (subtitleStyleField) {
       params.append("subtitle_style", getPersistedFieldValue(subtitleStyleField));
     }
-    const subscribeToggle = modalEl.querySelector(`[name="enable_subscribe_overlay"]`);
+	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
     if (subscribeToggle) {
       params.append("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
@@ -15250,7 +15266,8 @@ document.addEventListener("DOMContentLoaded", () => {
       updateInfo(
         `Saved – x:${xRatio.toFixed(3)} y:${yRatio.toFixed(3)} w:${wRatio.toFixed(3)} h:${hRatio.toFixed(3)}`
       );
-      setSaveStatus("Saved", "success");
+	      setSaveStatus("Saved", "success");
+	      cropDirty = false;
       if (statusText) {
         if (cropStatusTimer) {
           window.clearTimeout(cropStatusTimer);
