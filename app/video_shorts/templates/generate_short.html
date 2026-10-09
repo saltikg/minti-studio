@@ -1803,6 +1803,13 @@
     font-weight: 750;
     white-space: nowrap;
   }
+  .generate-v2-tab:focus {
+    outline: none;
+  }
+  .generate-v2-tab:focus-visible {
+    outline: 1px solid rgba(45, 212, 191, 0.5);
+    outline-offset: 4px;
+  }
   .generate-v2-tab.is-active {
     border-bottom-color: #2dd4bf;
     color: #ccfbf1;
@@ -2150,6 +2157,14 @@
       flex: 1 1 0;
       max-width: none;
     }
+    #clip-workbench-shell[data-generate-v2="1"][data-active-tab="transcript"] .generate-v2-left-col {
+      flex: 0 0 58%;
+      max-width: 58%;
+    }
+    #clip-workbench-shell[data-generate-v2="1"][data-active-tab="transcript"] .generate-v2-right-col {
+      flex: 1 1 0;
+      max-width: 42%;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench > .clip-workbench-side {
       position: relative;
       top: auto;
@@ -2226,6 +2241,20 @@
       gap: 8px;
       padding: 6px;
       border-radius: 12px;
+      text-align: left;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus {
+      outline: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus-visible {
+      outline: 1px solid rgba(45, 212, 191, 0.42);
+      outline-offset: 2px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-active {
+      box-shadow: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion.is-active {
+      box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.14);
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb {
       width: 48px;
@@ -2274,6 +2303,31 @@
       display: flex;
       flex-direction: column;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-toolbar {
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+      margin-bottom: 4px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-search-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-search-group .form-control {
+      min-width: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-language-badge {
+      flex: 0 0 auto;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-hint {
+      flex: 0 0 auto;
+      margin-bottom: 8px;
+      color: rgba(255, 255, 255, 0.52);
+      font-size: 0.78rem;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .trs-shell,
     #clip-workbench-shell[data-generate-v2="1"] .trs-panel {
       min-height: 0;
@@ -2281,11 +2335,54 @@
       display: flex;
       flex-direction: column;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-panel {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .trs-document {
       flex: 1 1 auto;
       min-height: 0;
       max-height: none;
       overflow: auto;
+      padding: 0 2px 88px;
+      line-height: 1.45;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-row {
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 8px 10px;
+      align-items: start;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-row-time {
+      width: 40px;
+      padding: 0;
+      gap: 2px;
+      justify-content: flex-start;
+      align-items: flex-start;
+      line-height: 1.45;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-row-time-icon {
+      font-size: 13px;
+      margin-top: 1px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-row-content-inline {
+      align-items: flex-start;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-row-view {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      line-height: 1.45;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-player-shell {
+      padding: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-player-status {
+      justify-content: flex-end;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .trs-player-ready-copy {
+      display: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-panel.is-active {
       flex: 1 1 auto;
@@ -4357,9 +4454,11 @@
       <div class="row g-3 clip-workbench-row{% if generate_v2 %} generate-v2-source-layout{% endif %}"{% if generate_v2 %} data-generate-v2-source-layout{% endif %}>
         <div class="col-12 col-xl-6">
           <div class="gs-card h-100"{% if generate_v2 %} data-generate-v2-transcript-card{% endif %}>
+            {% if not generate_v2 %}
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
               <h5 class="mb-0">Transcript{% if transcript_language %} <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle">{{ transcript_language|upper }}</span>{% endif %} <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
             </div>
+            {% endif %}
             <div class="trs-shell"
                  id="transcript-range-selector"
                  data-add-clip-url="{{ editor_url('add_clip_section', video_pk=video.id) }}"
@@ -4390,14 +4489,25 @@
                     class="form-control form-control-sm"
                     id="trs-search-input"
                     placeholder="Search transcript">
+                  {% if generate_v2 and transcript_language %}
+                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle trs-language-badge">{{ transcript_language|upper }}</span>
+                  {% endif %}
+                  {% if not generate_v2 %}
                   <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
+                  {% endif %}
                 </div>
                 <div class="trs-match-nav">
                   <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-prev" aria-label="Previous match">↑</button>
                   <span class="trs-match-count" id="trs-match-count">0 / 0</span>
                   <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
                 </div>
+                {% if generate_v2 %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
+                {% endif %}
               </div>
+              {% if generate_v2 %}
+              <div class="trs-hint">Click a line to set the start, then another line to set the end.</div>
+              {% endif %}
               <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
               <div class="trs-panel">
                 <div class="trs-document" id="trs-document" aria-label="Transcript segments"></div>
@@ -4417,7 +4527,7 @@
             <div class="trs-player-shell" id="trs-player-shell">
               <div class="trs-player-frame" id="trs-player-frame"></div>
               <div class="trs-player-status">
-                <span><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
+                <span class="trs-player-ready-copy"><strong>Player</strong> <span id="trs-player-status-copy">Ready</span></span>
                 {% if video.video_url %}
                   <a href="{{ video.video_url }}" target="_blank" rel="noreferrer" class="btn btn-outline-secondary btn-sm">Watch source</a>
                 {% endif %}
@@ -4551,7 +4661,7 @@
                           <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                           Regenerating...
                         </span>
-                      {% elif generate_v2 and row.render_settings_outdated %}
+                      {% elif generate_v2 and row.render_settings_outdated and not row.regenerate_locked %}
                         <span class="clip-rail-state-chip">
                           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
                           Old design
@@ -7853,7 +7963,7 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
         const useCompactTime = !!document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
         const timeCopy = useCompactTime
-          ? `${formatSecondsCompact(segment.start)} – ${formatSecondsCompact(segment.end)}`
+          ? formatSecondsCompact(segment.start)
           : `${segment.startLabel} – ${segment.endLabel}`;
         timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(timeCopy)}&nbsp;</span>`;
 
