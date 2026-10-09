@@ -799,6 +799,20 @@ def _face_aware_fit_position_metrics(
     }
 
 
+def _face_aware_split_position_metrics(
+    *,
+    target_height: int = VIDEO_TARGET_HEIGHT,
+    subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
+) -> Dict[str, float]:
+    caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
+    caption_top = max(0.0, min(float(target_height) - caption_block_height, (float(target_height) / 2.0) - (caption_block_height / 2.0)))
+    return {
+        "caption_top": caption_top,
+        "caption_margin_v": max(0.0, float(target_height) - caption_top - caption_block_height),
+        "caption_block_height": caption_block_height,
+    }
+
+
 def _face_aware_caption_block_height(subtitle_font_size: Optional[int]) -> float:
     return max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
 
@@ -908,8 +922,11 @@ def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_st
 
 def _face_aware_style_suffix_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
     segment = _face_aware_segment_for_time(layout_segments, event_start)
-    if str(segment.get("mode") or "fill").strip().lower() == "fit":
+    mode = str(segment.get("mode") or "fill").strip().lower()
+    if mode == "fit":
         return "Fit"
+    if mode == "split":
+        return "Split"
     return str(segment.get("caption_style_suffix") or f"Fill{int(segment.get('_index') or 0)}")
 
 
@@ -1005,6 +1022,10 @@ def _build_face_aware_subtitle_path(
             fill_styles.append((suffix, margin))
         if not fill_styles:
             fill_styles = [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
+        split_margin = int(round(_face_aware_split_position_metrics(
+            target_height=target_height,
+            subtitle_font_size=subtitle_font_size,
+        )["caption_margin_v"]))
         events: List[Tuple[float, float, str]] = []
         for block in re.split(r"\n\s*\n", text.strip()):
             lines = [line.strip("\ufeff") for line in block.splitlines() if line.strip()]
@@ -1057,13 +1078,24 @@ def _build_face_aware_subtitle_path(
                 subtitle_bg_alpha=subtitle_bg_alpha,
                 subtitle_style=subtitle_style,
             ),
+            _face_aware_ass_style_line(
+                "SplitStyle",
+                subtitle_font_size=subtitle_font_size,
+                subtitle_margin=split_margin,
+                subtitle_font=subtitle_font,
+                subtitle_text_color=subtitle_text_color,
+                subtitle_text_alpha=subtitle_text_alpha,
+                subtitle_bg_color=subtitle_bg_color,
+                subtitle_bg_alpha=subtitle_bg_alpha,
+                subtitle_style=subtitle_style,
+            ),
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
         for start, end, body in events:
             suffix = _face_aware_style_suffix_for_time(layout_segments, start)
-            style = "FitStyle" if suffix == "Fit" else f"FillStyle{suffix}"
+            style = f"{suffix}Style" if suffix in {"Fit", "Split"} else f"FillStyle{suffix}"
             ass_lines.append(
                 f"Dialogue: 0,{_format_face_aware_ass_time(start)},{_format_face_aware_ass_time(end)},{style},,0,0,0,,{body}"
             )
@@ -1099,9 +1131,13 @@ def _build_face_aware_subtitle_path(
                         int(round(float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN))),
                     )
                     for idx, segment in enumerate(layout_segments or [])
-                    if str(segment.get("mode") or "fill").strip().lower() != "fit"
+                    if str(segment.get("mode") or "fill").strip().lower() == "fill"
                 ] or [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
                 suffix_margins.append(("Fit", fit_margin))
+                suffix_margins.append(("Split", int(round(_face_aware_split_position_metrics(
+                    target_height=target_height,
+                    subtitle_font_size=subtitle_font_size,
+                )["caption_margin_v"]))))
                 for suffix, margin in suffix_margins:
                     new_values = list(values)
                     new_values[style_name_index] = f"{base_name}{suffix}"
@@ -1140,9 +1176,13 @@ def _build_face_aware_subtitle_path(
                     int(round(float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN))),
                 )
                 for idx, segment in enumerate(layout_segments or [])
-                if str(segment.get("mode") or "fill").strip().lower() != "fit"
+                if str(segment.get("mode") or "fill").strip().lower() == "fill"
             ] or [("Fill0", FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)]
             suffix_margins.append(("Fit", fit_margin))
+            suffix_margins.append(("Split", int(round(_face_aware_split_position_metrics(
+                target_height=target_height,
+                subtitle_font_size=subtitle_font_size,
+            )["caption_margin_v"]))))
             for suffix, margin in suffix_margins:
                 new_values = list(values)
                 new_values[style_name_index] = f"{base_name}{suffix}"
@@ -2399,13 +2439,34 @@ def _compose_trimmed_with_background(
             except Exception:
                 continue
             mode = str(segment.get("mode") or "").strip().lower()
-            if mode not in {"fill", "fit"} or seg_end - seg_start <= 1e-3:
+            if mode not in {"fill", "fit", "split"} or seg_end - seg_start <= 1e-3:
                 continue
             normalized_segment = {"start": seg_start, "end": seg_end, "mode": mode}
             if mode == "fill":
                 try:
                     normalized_segment["zoom"] = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
                 except Exception:
+                    normalized_segment["zoom"] = 1.0
+            elif mode == "split":
+                normalized_segment["zoom"] = 1.0
+                split_crops = segment.get("split_crops") if isinstance(segment.get("split_crops"), dict) else {}
+                clean_crops: Dict[str, Dict[str, float]] = {}
+                for key in ("top", "bottom"):
+                    rect = split_crops.get(key) if isinstance(split_crops, dict) else None
+                    if not isinstance(rect, dict):
+                        continue
+                    try:
+                        rect_x = max(0.0, min(1.0, float(rect.get("x") or 0.0)))
+                        rect_y = max(0.0, min(1.0, float(rect.get("y") or 0.0)))
+                        rect_w = max(0.01, min(1.0 - rect_x, float(rect.get("w") or 1.0)))
+                        rect_h = max(0.01, min(1.0 - rect_y, float(rect.get("h") or 1.0)))
+                    except Exception:
+                        continue
+                    clean_crops[key] = {"x": rect_x, "y": rect_y, "w": rect_w, "h": rect_h}
+                if set(clean_crops) == {"top", "bottom"}:
+                    normalized_segment["split_crops"] = clean_crops
+                else:
+                    normalized_segment["mode"] = "fit"
                     normalized_segment["zoom"] = 1.0
             else:
                 normalized_segment["zoom"] = 1.0
@@ -2424,6 +2485,10 @@ def _compose_trimmed_with_background(
     face_aware_layout_active = len(layout_segments) >= 1
     face_aware_fit_metrics = _face_aware_fit_position_metrics(
         target_width=target_width,
+        target_height=target_height,
+        subtitle_font_size=subtitle_font_size,
+    )
+    face_aware_split_metrics = _face_aware_split_position_metrics(
         target_height=target_height,
         subtitle_font_size=subtitle_font_size,
     )
@@ -2504,7 +2569,7 @@ def _compose_trimmed_with_background(
         dynamic_crop_enabled = len(face_track_points) >= 2
         if face_aware_layout_active:
             for idx, segment in enumerate(layout_segments):
-                if str(segment.get("mode") or "fill").strip().lower() == "fit":
+                if str(segment.get("mode") or "fill").strip().lower() != "fill":
                     continue
                 metrics = _face_aware_fill_caption_metrics_for_segment(
                     segment,
@@ -2545,9 +2610,10 @@ def _compose_trimmed_with_background(
                     is_default_crop,
                     podcast_mode,
                 )
-        if len(layout_segments) > 1:
-            source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
-            filter_parts.append(f"[1:v]split={len(layout_segments)}{source_labels}")
+        if face_aware_layout_active:
+            if len(layout_segments) > 1:
+                source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
+                filter_parts.append(f"[1:v]split={len(layout_segments)}{source_labels}")
             fit_indices = [idx for idx, segment in enumerate(layout_segments) if segment["mode"] == "fit"]
             fit_bg_labels = {}
             if fit_indices:
@@ -2569,8 +2635,9 @@ def _compose_trimmed_with_background(
                 seg_duration = max(0.001, seg_end - seg_start)
                 seg_trim = f"[layout_trim_{idx}]"
                 seg_out = f"[layout_out_{idx}]"
+                layout_src = f"[layout_src_{idx}]" if len(layout_segments) > 1 else "[1:v]"
                 filter_parts.append(
-                    f"[layout_src_{idx}]trim=start={seg_start:.6f}:end={seg_end:.6f},"
+                    f"{layout_src}trim=start={seg_start:.6f}:end={seg_end:.6f},"
                     f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
                 )
                 if segment["mode"] == "fit":
@@ -2587,6 +2654,52 @@ def _compose_trimmed_with_background(
                     fit_overlay_y = _fmt(face_aware_fit_metrics["frame_top"])
                     filter_parts.append(
                         f"{fit_bg}{fit_scaled}overlay=(W-w)/2:{fit_overlay_y}:shortest=1,"
+                        f"format=yuv420p,settb=AVTB{seg_out}"
+                    )
+                elif segment["mode"] == "split":
+                    split_crops = segment.get("split_crops") if isinstance(segment.get("split_crops"), dict) else {}
+                    top_rect = split_crops.get("top") if isinstance(split_crops, dict) else {}
+                    bottom_rect = split_crops.get("bottom") if isinstance(split_crops, dict) else {}
+                    split_tile_width = target_width
+                    split_tile_height = max(2, int(target_height / 2))
+                    split_tile_height -= split_tile_height % 2
+                    split_seam_y = int(target_height / 2)
+                    split_divider_thickness = 6
+                    split_divider_outline_thickness = 1
+                    split_top_src = f"[layout_split_top_src_{idx}]"
+                    split_bottom_src = f"[layout_split_bottom_src_{idx}]"
+                    split_top = f"[layout_split_top_{idx}]"
+                    split_bottom = f"[layout_split_bottom_{idx}]"
+                    split_stack = f"[layout_split_stack_{idx}]"
+                    split_div_base = f"[layout_split_div_base_{idx}]"
+                    split_div_top = f"[layout_split_div_top_{idx}]"
+                    filter_parts.append(f"{seg_trim}split=2{split_top_src}{split_bottom_src}")
+                    filter_parts.append(
+                        f"{split_top_src}crop=iw*{_fmt(float(top_rect.get('w') or 1.0))}:"
+                        f"ih*{_fmt(float(top_rect.get('h') or 1.0))}:"
+                        f"iw*{_fmt(float(top_rect.get('x') or 0.0))}:"
+                        f"ih*{_fmt(float(top_rect.get('y') or 0.0))},"
+                        f"scale={split_tile_width}:{split_tile_height},setsar=1,settb=AVTB{split_top}"
+                    )
+                    filter_parts.append(
+                        f"{split_bottom_src}crop=iw*{_fmt(float(bottom_rect.get('w') or 1.0))}:"
+                        f"ih*{_fmt(float(bottom_rect.get('h') or 1.0))}:"
+                        f"iw*{_fmt(float(bottom_rect.get('x') or 0.0))}:"
+                        f"ih*{_fmt(float(bottom_rect.get('y') or 0.0))},"
+                        f"scale={split_tile_width}:{split_tile_height},setsar=1,settb=AVTB{split_bottom}"
+                    )
+                    filter_parts.append(f"{split_top}{split_bottom}vstack=inputs=2{split_stack}")
+                    filter_parts.append(
+                        f"{split_stack}drawbox=x=0:y={split_seam_y}-{split_divider_thickness}/2:"
+                        f"w={target_width}:h={split_divider_thickness}:color=white@1.0:t=fill{split_div_base}"
+                    )
+                    filter_parts.append(
+                        f"{split_div_base}drawbox=x=0:y={split_seam_y}-{split_divider_thickness}/2-{split_divider_outline_thickness}:"
+                        f"w={target_width}:h={split_divider_outline_thickness}:color=black@1.0:t=fill{split_div_top}"
+                    )
+                    filter_parts.append(
+                        f"{split_div_top}drawbox=x=0:y={split_seam_y}+{split_divider_thickness}/2:"
+                        f"w={target_width}:h={split_divider_outline_thickness}:color=black@1.0:t=fill,"
                         f"format=yuv420p,settb=AVTB{seg_out}"
                     )
                 else:
@@ -2648,7 +2761,7 @@ def _compose_trimmed_with_background(
                 "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
             )
             current_app.logger.info(
-                "face_aware_layout compositor_segments=%s fill_caption_metrics=%s duration=%.3f",
+                "face_aware_layout compositor_segments=%s fill_caption_metrics=%s split_crops=%s duration=%.3f",
                 [
                     (
                         round(float(seg["start"]), 3),
@@ -2673,7 +2786,17 @@ def _compose_trimmed_with_background(
                         "subscribe_y": round(float(seg.get("subscribe_y") or 0.0), 2),
                     }
                     for seg in layout_segments
-                    if str(seg.get("mode") or "fill").strip().lower() != "fit"
+                    if str(seg.get("mode") or "fill").strip().lower() == "fill"
+                ],
+                [
+                    {
+                        "start": round(float(seg.get("start") or 0.0), 3),
+                        "end": round(float(seg.get("end") or 0.0), 3),
+                        "face_count": 2,
+                        "crops": seg.get("split_crops"),
+                    }
+                    for seg in layout_segments
+                    if str(seg.get("mode") or "").strip().lower() == "split"
                 ],
                 duration,
             )
@@ -2946,15 +3069,21 @@ def _compose_trimmed_with_background(
             try:
                 fill_margin = float(subtitle_margin or 0)
                 fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
+                split_margin = float(face_aware_split_metrics["caption_margin_v"])
                 fit_caption_y = max(0.0, fill_margin - fit_margin)
+                split_caption_y = max(0.0, fill_margin - split_margin)
             except Exception:
                 fit_caption_y = 0.0
+                split_caption_y = 0.0
             caption_overlay_y_expr = "0"
             for segment in reversed(layout_segments):
                 seg_start = float(segment.get("start") or 0.0)
                 seg_end = float(segment.get("end") or duration)
-                if str(segment.get("mode") or "fill") == "fit":
+                segment_mode = str(segment.get("mode") or "fill")
+                if segment_mode == "fit":
                     segment_caption_y = fit_caption_y
+                elif segment_mode == "split":
+                    segment_caption_y = split_caption_y
                 else:
                     try:
                         segment_margin = float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)

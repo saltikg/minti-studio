@@ -58,6 +58,7 @@ from app.video_shorts.config import (
     FACE_AWARE_LAYOUT_ALL,
     FACE_AWARE_MIN_FILL_SEC,
     FACE_AWARE_MIN_FIT_SEC,
+    FACE_AWARE_MIN_SPLIT_SEC,
     FACE_AWARE_SAMPLE_SEC,
     FACE_AWARE_SCENE_THRESHOLD,
     FACE_AWARE_SNAP_WINDOW_SEC,
@@ -3317,8 +3318,52 @@ def _merge_face_aware_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def _face_aware_mode_for_count(face_count: int) -> str:
+    if face_count <= 0:
+        return "fit"
+    if face_count == 1:
+        return "fill"
+    if face_count == 2:
+        return "split"
+    return "fit"
+
+
+def _merge_short_face_aware_runs(
+    runs: List[Dict[str, Any]],
+    *,
+    target_mode: str,
+    min_duration: float,
+    replacement_mode: str,
+) -> List[Dict[str, Any]]:
+    if not runs or float(min_duration or 0.0) <= 0:
+        return _merge_face_aware_runs(runs)
+    updated = [dict(run) for run in runs]
+    for idx, run in enumerate(updated):
+        if run.get("mode") != target_mode:
+            continue
+        if (float(run.get("end") or 0.0) - float(run.get("start") or 0.0)) >= float(min_duration):
+            continue
+        prev_mode = updated[idx - 1].get("mode") if idx > 0 else None
+        next_mode = updated[idx + 1].get("mode") if idx + 1 < len(updated) else None
+        if prev_mode == next_mode and prev_mode:
+            run["mode"] = prev_mode
+        elif prev_mode:
+            run["mode"] = prev_mode
+        elif next_mode:
+            run["mode"] = next_mode
+        else:
+            run["mode"] = replacement_mode
+    return _merge_face_aware_runs(updated)
+
+
 def _smooth_face_aware_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     smoothed = [dict(run) for run in runs]
+    smoothed = _merge_short_face_aware_runs(
+        smoothed,
+        target_mode="split",
+        min_duration=float(FACE_AWARE_MIN_SPLIT_SEC),
+        replacement_mode="fill",
+    )
     for run in smoothed:
         if run["mode"] == "fit" and (float(run["end"]) - float(run["start"])) < float(FACE_AWARE_MIN_FIT_SEC):
             run["mode"] = "fill"
@@ -3345,7 +3390,10 @@ def _build_face_aware_layout_segments_from_samples(
         return []
     clean_samples = sorted(
         [
-            {"t": max(0.0, min(duration, float(sample.get("t") or 0.0))), "face_present": bool(sample.get("face_present"))}
+            {
+                "t": max(0.0, min(duration, float(sample.get("t") or 0.0))),
+                "face_count": max(0, int(sample.get("face_count") or (1 if sample.get("face_present") else 0))),
+            }
             for sample in samples or []
         ],
         key=lambda item: item["t"],
@@ -3354,17 +3402,17 @@ def _build_face_aware_layout_segments_from_samples(
         return [{"start": 0.0, "end": duration, "mode": "fill"}]
 
     runs: List[Dict[str, Any]] = []
-    current_face = clean_samples[0]["face_present"]
+    current_mode = _face_aware_mode_for_count(clean_samples[0]["face_count"])
     run_start = 0.0
     for prev, current in zip(clean_samples, clean_samples[1:]):
-        next_face = current["face_present"]
-        if next_face == current_face:
+        next_mode = _face_aware_mode_for_count(current["face_count"])
+        if next_mode == current_mode:
             continue
         boundary = max(run_start, min(duration, (float(prev["t"]) + float(current["t"])) / 2.0))
-        runs.append({"start": run_start, "end": boundary, "mode": "fill" if current_face else "fit"})
+        runs.append({"start": run_start, "end": boundary, "mode": current_mode})
         run_start = boundary
-        current_face = next_face
-    runs.append({"start": run_start, "end": duration, "mode": "fill" if current_face else "fit"})
+        current_mode = next_mode
+    runs.append({"start": run_start, "end": duration, "mode": current_mode})
     return _smooth_face_aware_runs(runs)
 
 
@@ -3568,6 +3616,122 @@ def _attach_face_aware_zoom_to_segments(
     return enriched
 
 
+def _median_float(values: List[float]) -> Optional[float]:
+    clean = sorted(float(value) for value in values if value is not None)
+    if not clean:
+        return None
+    mid = len(clean) // 2
+    return clean[mid] if len(clean) % 2 else (clean[mid - 1] + clean[mid]) / 2.0
+
+
+def _face_aware_split_crop_rect(
+    face: Dict[str, float],
+    *,
+    frame_width: float,
+    frame_height: float,
+    target_face_ratio: float = 0.40,
+) -> Dict[str, float]:
+    """Return a static 9:8 source crop that places one face in the upper-middle of a split half."""
+    safe_frame_width = max(1.0, float(frame_width or 1.0))
+    safe_frame_height = max(1.0, float(frame_height or 1.0))
+    ratio_units = (9.0 / 8.0) * (safe_frame_height / safe_frame_width)
+    face_h = max(0.001, min(1.0, float(face.get("h_ratio") or 0.0)))
+    crop_h = max(0.05, min(1.0, face_h / max(0.01, float(target_face_ratio or 0.40))))
+    crop_w = crop_h * ratio_units
+    if crop_w > 1.0:
+        crop_w = 1.0
+        crop_h = min(1.0, crop_w / ratio_units)
+    if crop_h > 1.0:
+        crop_h = 1.0
+        crop_w = min(1.0, crop_h * ratio_units)
+    cx = max(0.0, min(1.0, float(face.get("cx_ratio") or 0.5)))
+    cy = max(0.0, min(1.0, float(face.get("cy_ratio") or 0.5)))
+    crop_x = max(0.0, min(max(0.0, 1.0 - crop_w), cx - (crop_w / 2.0)))
+    crop_y = max(0.0, min(max(0.0, 1.0 - crop_h), cy - (crop_h * 0.38)))
+    return {
+        "x": round(crop_x, 6),
+        "y": round(crop_y, 6),
+        "w": round(crop_w, 6),
+        "h": round(crop_h, 6),
+        "cx": round(cx, 6),
+        "cy": round(cy, 6),
+    }
+
+
+def _median_face_for_split(samples: List[Dict[str, Any]], *, side: str) -> Optional[Dict[str, float]]:
+    rows: List[Dict[str, float]] = []
+    side_index = 0 if side == "left" else 1
+    for sample in samples or []:
+        faces = sample.get("faces") or []
+        if not isinstance(faces, list) or len(faces) != 2:
+            continue
+        ordered = sorted(
+            [face for face in faces if isinstance(face, dict)],
+            key=lambda face: float(face.get("cx_ratio") or 0.0),
+        )
+        if len(ordered) != 2:
+            continue
+        face = ordered[side_index]
+        try:
+            rows.append(
+                {
+                    "cx_ratio": float(face.get("cx_ratio")),
+                    "cy_ratio": float(face.get("cy_ratio")),
+                    "w_ratio": float(face.get("w_ratio")),
+                    "h_ratio": float(face.get("h_ratio")),
+                }
+            )
+        except Exception:
+            continue
+    if not rows:
+        return None
+    result: Dict[str, float] = {}
+    for key in ("cx_ratio", "cy_ratio", "w_ratio", "h_ratio"):
+        median_value = _median_float([row[key] for row in rows])
+        if median_value is None:
+            return None
+        result[key] = median_value
+    return result
+
+
+def _attach_face_aware_split_crops_to_segments(
+    segments: List[Dict[str, Any]],
+    *,
+    samples: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for segment in segments or []:
+        item = dict(segment)
+        if item.get("mode") != "split":
+            enriched.append(item)
+            continue
+        try:
+            seg_start = float(item.get("start") or 0.0)
+            seg_end = float(item.get("end") or 0.0)
+        except Exception:
+            enriched.append(item)
+            continue
+        segment_samples = [
+            sample for sample in samples or []
+            if seg_start <= float(sample.get("t") or 0.0) <= seg_end and int(sample.get("face_count") or 0) == 2
+        ]
+        left_face = _median_face_for_split(segment_samples, side="left")
+        right_face = _median_face_for_split(segment_samples, side="right")
+        frame_width = _median_float([float(sample.get("frame_width") or 0.0) for sample in segment_samples]) or 720.0
+        frame_height = _median_float([float(sample.get("frame_height") or 0.0) for sample in segment_samples]) or 405.0
+        if left_face and right_face:
+            item["split_faces"] = {
+                "left": {key: round(float(value), 6) for key, value in left_face.items()},
+                "right": {key: round(float(value), 6) for key, value in right_face.items()},
+            }
+            item["split_crops"] = {
+                "top": _face_aware_split_crop_rect(left_face, frame_width=frame_width, frame_height=frame_height),
+                "bottom": _face_aware_split_crop_rect(right_face, frame_width=frame_width, frame_height=frame_height),
+            }
+        enriched.append(item)
+    return enriched
+
+
 def _sample_face_presence_for_layout(
     *,
     video_id: str,
@@ -3618,16 +3782,29 @@ def _sample_face_presence_for_layout(
 
         for idx, frame_path in enumerate(sorted(temp_dir_path.glob("frame_*.jpg"))):
             image = cv2.imread(str(frame_path))
-            face_present = False
+            filtered_faces: List[Dict[str, Any]] = []
+            frame_height = 0
+            frame_width = 0
             if image is not None:
                 frame_height, frame_width = image.shape[:2]
                 faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
-                filtered_faces = _filter_preview_faces_by_size(faces)
-                face_present = len(filtered_faces) >= 1
+                filtered_faces = [
+                    {
+                        "cx_ratio": float(face.get("cx_ratio") or 0.0),
+                        "cy_ratio": float(face.get("cy_ratio") or 0.0),
+                        "w_ratio": float(face.get("w_ratio") or 0.0),
+                        "h_ratio": float(face.get("h_ratio") or 0.0),
+                    }
+                    for face in _filter_preview_faces_by_size(faces)
+                ]
             samples.append(
                 {
                     "t": min(duration, idx * sample_sec),
-                    "face_present": face_present,
+                    "face_present": len(filtered_faces) >= 1,
+                    "face_count": len(filtered_faces),
+                    "faces": filtered_faces,
+                    "frame_width": frame_width,
+                    "frame_height": frame_height,
                 }
             )
     return samples
@@ -3678,13 +3855,33 @@ def _compute_face_aware_layout_segments(
         clip_start=start_seconds,
         crop_settings=crop_settings,
     )
+    segments = _attach_face_aware_split_crops_to_segments(
+        segments,
+        samples=samples,
+    )
     elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
     current_app.logger.info(
-        "face_aware_layout video_id=%s plan_index=%s samples=%s segments=%s snapped_boundaries=%s elapsed_ms=%s",
+        "face_aware_layout video_id=%s plan_index=%s samples=%s face_counts=%s segments=%s split_crops=%s snapped_boundaries=%s elapsed_ms=%s",
         video_id,
         plan_index,
         len(samples),
+        [
+            (
+                round(float(sample.get("t") or 0.0), 3),
+                int(sample.get("face_count") or 0),
+            )
+            for sample in samples
+        ],
         [(round(float(seg["start"]), 3), round(float(seg["end"]), 3), seg["mode"], round(float(seg.get("zoom") or 1.0), 3)) for seg in segments],
+        [
+            {
+                "start": round(float(seg.get("start") or 0.0), 3),
+                "end": round(float(seg.get("end") or 0.0), 3),
+                "crops": seg.get("split_crops"),
+            }
+            for seg in segments
+            if seg.get("mode") == "split"
+        ],
         snapped_boundaries,
         elapsed_ms,
     )
@@ -26140,6 +26337,7 @@ def autoclip_video(video_pk):
                         "end": round(float(segment.get("end") or 0.0), 6),
                         "mode": str(segment.get("mode") or ""),
                         "zoom": round(float(segment.get("zoom") or 1.0), 6),
+                        "split_crops": segment.get("split_crops") if segment.get("mode") == "split" else None,
                     }
                     for segment in (face_aware_layout_result.get("segments") or [])
                 ]
