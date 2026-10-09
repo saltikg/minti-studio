@@ -5193,9 +5193,15 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, str]:
                 break
         except Exception:
             continue
-    if not target_entry:
-        return {}
-    clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "").strip()
+    result_payload = (job or {}).get("result") or {}
+    if not isinstance(result_payload, dict):
+        result_payload = {}
+    clip_filename = str(
+        (target_entry or {}).get("clip_filename")
+        or (target_entry or {}).get("output_filename")
+        or result_payload.get("clip_filename")
+        or ""
+    ).strip()
     if not clip_filename or not _short_exists(clip_filename):
         return {}
     media_version = ""
