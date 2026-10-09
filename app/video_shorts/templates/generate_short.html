@@ -218,7 +218,7 @@
   .editor-topbar-status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     padding: 4px 10px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2099,6 +2099,7 @@
     display: block;
   }
   .generate-v2-editor-shell {
+    position: relative;
     min-height: 0;
     height: 100%;
     grid-template-rows: auto minmax(0, 1fr);
@@ -2163,7 +2164,7 @@
   }
   .generate-v2-editor-rail-btn {
     position: relative;
-    min-height: 64px;
+    min-height: 58px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.035);
@@ -2175,7 +2176,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
   }
   .generate-v2-editor-rail-btn svg {
     width: 20px;
@@ -5018,6 +5019,16 @@
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-subscribe" data-v2-editor-section-panel="subscribe"></div>
                 </div>
               </div>
+              <div class="generate-v2-discard-dialog d-none" id="generate-v2-discard-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-discard-title">
+                <div>
+                  <div class="generate-v2-discard-dialog-title" id="generate-v2-discard-title">Discard changes?</div>
+                  <div class="generate-v2-discard-dialog-copy">Your edits have not been saved.</div>
+                </div>
+                <div class="generate-v2-discard-dialog-actions">
+                  <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-discard-keep">Keep editing</button>
+                  <button type="button" class="btn btn-sm btn-warning" id="generate-v2-discard-confirm">Discard</button>
+                </div>
+              </div>
             </div>
             <div class="generate-v2-panel" data-generate-v2-panel="shorts"></div>
             <div class="generate-v2-panel" data-generate-v2-panel="transcript"></div>
@@ -5448,16 +5459,6 @@
                 <div class="generate-v2-design-dialog-actions">
                   <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-design-dialog-dismiss">Not now</button>
                   <button type="button" class="btn btn-sm btn-primary" id="generate-v2-design-dialog-update">Update clips</button>
-                </div>
-              </div>
-              <div class="generate-v2-discard-dialog d-none" id="generate-v2-discard-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-discard-title">
-                <div>
-                  <div class="generate-v2-discard-dialog-title" id="generate-v2-discard-title">Discard changes?</div>
-                  <div class="generate-v2-discard-dialog-copy">Your edits have not been saved.</div>
-                </div>
-                <div class="generate-v2-discard-dialog-actions">
-                  <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-discard-keep">Keep editing</button>
-                  <button type="button" class="btn btn-sm btn-warning" id="generate-v2-discard-confirm">Discard</button>
                 </div>
               </div>
               {% endif %}
