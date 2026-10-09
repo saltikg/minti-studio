@@ -5517,7 +5517,7 @@
               <div class="generate-v2-design-dialog d-none" id="generate-v2-design-updated-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-design-dialog-title">
                 <div>
                   <div class="generate-v2-design-dialog-title" id="generate-v2-design-dialog-title">Design updated</div>
-                  <div class="generate-v2-design-dialog-copy" id="generate-v2-design-dialog-copy">Update your ready clips to the new design?</div>
+                  <div class="generate-v2-design-dialog-copy" id="generate-v2-design-dialog-copy">{% if generate_v2 %}Update your ready clips to the new design?{% else %}Apply it to your existing clips?{% endif %}</div>
                 </div>
                 <div class="generate-v2-design-dialog-actions">
                   <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-design-dialog-dismiss">Not now</button>
@@ -9309,7 +9309,7 @@ const setGenerateV2EditorStatus = (message = "", variant = "") => {
   status.classList.toggle("is-success", variant === "success");
 };
 
-const setGenerateV2EditorBusy = (busy, { message = "", saveLabel = "Save design" } = {}) => {
+const setGenerateV2EditorBusy = (busy, { message = "", saveLabel = "" } = {}) => {
   const root = getGenerateV2Root();
   const save = document.getElementById("generate-v2-editor-save");
   const cancel = document.getElementById("generate-v2-editor-cancel");
