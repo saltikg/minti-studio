@@ -9269,11 +9269,11 @@ const mountGenerateV2EditorNodes = () => {
   const subscribeTarget = document.getElementById("generate-v2-editor-section-subscribe");
   const previewTarget = document.getElementById("generate-v2-preview-slot");
   moveGenerateV2Node(modal?.querySelector(".style-template-section"), styleTarget);
+  moveGenerateV2Node(modal?.querySelector(".subscribe-visual-selector"), subscribeTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='layout']"), layoutTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='caption']"), captionTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='title']"), titleTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='background']"), backgroundTarget);
-  moveGenerateV2Node(modal?.querySelector(".subscribe-visual-selector"), subscribeTarget);
   moveGenerateV2Node(modal?.querySelector(".cropper-preview-card"), previewTarget);
 };
 
