@@ -363,11 +363,28 @@
     font-size: 0.68rem;
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-summary {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
     font-size: 0.9rem;
     line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-align: left;
+    cursor: pointer;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-summary:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-summary:focus {
+    outline: none;
+  }
+  .short-design-strip[data-short-design-strip] .short-design-strip-summary:focus-visible {
+    border-radius: 6px;
+    box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.45);
   }
   .short-design-strip[data-short-design-strip] .short-design-strip-helper {
     font-size: 0.78rem;
@@ -375,27 +392,6 @@
   }
   .generate-v2-header .short-design-strip[data-short-design-strip] .short-design-strip-helper {
     display: none;
-  }
-  .short-design-strip[data-short-design-strip] .short-design-strip-action {
-    flex: 0 0 auto;
-    min-height: 44px;
-    padding: 0.45rem 0.85rem;
-    border: 1px solid #2A3954;
-    border-radius: 12px;
-    background: transparent;
-    color: #E6EBF2;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    align-self: center;
-    white-space: nowrap;
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
-  }
-  .short-design-strip[data-short-design-strip] .short-design-strip-action:hover,
-  .short-design-strip[data-short-design-strip] .short-design-strip-action:focus-visible {
-    border-color: #2BB3A3;
-    background: #2BB3A3;
-    color: #06201D;
   }
   .editor-topbar-editor-btn {
     min-height: 40px;
@@ -1815,20 +1811,23 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
     margin: 0 0 14px;
   }
   .generate-v2-tabbar {
     display: flex;
     align-items: center;
     gap: 5px;
-    min-width: 0;
+    flex: 0 1 auto;
+    min-width: max-content;
     padding: 5px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     background: rgba(9, 14, 27, 0.72);
   }
   .generate-v2-tab {
-    width: 128px;
+    min-width: 128px;
+    width: max-content;
     height: 64px;
     border: 1px solid transparent;
     border-radius: 12px;
@@ -1873,7 +1872,8 @@
     gap: 8px;
     min-width: 0;
   }
-  #clip-workbench-shell[data-active-tab="transcript"] .generate-v2-tab-actions {
+  #clip-workbench-shell[data-active-tab="transcript"] .generate-v2-tab-actions,
+  #clip-workbench-shell[data-active-tab="edit"] .generate-v2-tab-actions {
     display: none;
   }
   .generate-v2-tab-status {
@@ -2087,7 +2087,6 @@
     display: none;
   }
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-panel,
-  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-tab-actions,
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing #generate-v2-selected-clip-mount,
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing #generate-v2-empty-preview {
     display: none !important;
@@ -2101,8 +2100,10 @@
   }
   .generate-v2-editor-shell {
     min-height: 0;
+    height: 100%;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 14px;
+    overflow: visible;
   }
   .generate-v2-editor-topbar {
     display: flex;
@@ -2150,16 +2151,19 @@
     display: grid;
     grid-template-columns: 84px minmax(0, 1fr);
     gap: 14px;
+    overflow: visible;
   }
   .generate-v2-editor-rail {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   .generate-v2-editor-rail-btn {
     position: relative;
-    min-height: 68px;
+    min-height: 64px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.035);
@@ -2297,6 +2301,37 @@
   }
   .generate-v2-preview-slot .cropper-preview-card > .small.text-muted {
     display: none;
+  }
+  .generate-v2-discard-dialog {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: 14px;
+    background: rgba(9, 14, 27, 0.97);
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+  }
+  .generate-v2-discard-dialog-title {
+    color: #fff;
+    font-size: 0.92rem;
+    font-weight: 800;
+  }
+  .generate-v2-discard-dialog-copy {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.8rem;
+  }
+  .generate-v2-discard-dialog-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
   }
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .short-bg-popover {
     z-index: 60;
@@ -2580,7 +2615,10 @@
       padding: 12px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-card {
-      overflow: hidden;
+      overflow: visible;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
       overflow-y: auto;
@@ -2589,6 +2627,10 @@
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabs-row {
       flex: 0 0 auto;
       margin-bottom: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-shell {
+      flex: 1 1 auto;
+      min-height: 0;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel.is-active {
       min-height: 0;
@@ -4707,18 +4749,11 @@
          data-subscribe-enabled="{{ '1' if selected_subscribe_overlay else '0' }}">
       <div class="short-design-strip-main">
         <div class="short-design-strip-label">SHORT DESIGN</div>
-        <div class="short-design-strip-summary" id="short-design-summary">
+        <button type="button" class="short-design-strip-summary" id="short-design-summary" data-generate-v2-open-edit-tab>
           Captions: {{ caption_ns.label }} · Layout: {{ design_layout_label }} · Title: {{ 'On' if selected_show_title else 'Off' }}{% if selected_subscribe_overlay %} · Subscribe animation{% endif %}
-        </div>
+        </button>
         <div class="short-design-strip-helper">Applies to every Short you create from this video</div>
       </div>
-      <button type="button"
-              class="btn short-design-strip-action"
-              id="design-shorts-btn"
-              data-open-editor-target="choose-crop-btn">
-        <i class="bi bi-sliders" aria-hidden="true"></i>
-        <span>Edit Shorts</span>
-      </button>
     </div>
     {% endif %}
   </div>
@@ -4882,6 +4917,14 @@
                   <i class="bi bi-text-left" aria-hidden="true"></i>
                   <span>Make a Clip</span>
                 </button>
+                <button type="button"
+                        class="generate-v2-tab"
+                        data-generate-v2-tab="edit"
+                        role="tab"
+                        aria-selected="false">
+                  <i class="bi bi-sliders" aria-hidden="true"></i>
+                  <span>Edit Shorts</span>
+                </button>
               </div>
               <div class="generate-v2-tab-actions" aria-label="Clip actions">
                 {% set v2_schedule_all_ns = namespace(count=0) %}
@@ -4922,14 +4965,6 @@
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <i class="bi bi-stars" aria-hidden="true"></i>
                   <span class="btn-label">AI Suggest</span>
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm generate-v2-tab-action generate-v2-tile"
-                  id="generate-v2-design-tile"
-                  data-open-editor-target="choose-crop-btn">
-                  <i class="bi bi-sliders" aria-hidden="true"></i>
-                  <span class="btn-label">Edit Shorts</span>
                 </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
@@ -5413,6 +5448,16 @@
                 <div class="generate-v2-design-dialog-actions">
                   <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-design-dialog-dismiss">Not now</button>
                   <button type="button" class="btn btn-sm btn-primary" id="generate-v2-design-dialog-update">Update clips</button>
+                </div>
+              </div>
+              <div class="generate-v2-discard-dialog d-none" id="generate-v2-discard-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-discard-title">
+                <div>
+                  <div class="generate-v2-discard-dialog-title" id="generate-v2-discard-title">Discard changes?</div>
+                  <div class="generate-v2-discard-dialog-copy">Your edits have not been saved.</div>
+                </div>
+                <div class="generate-v2-discard-dialog-actions">
+                  <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-discard-keep">Keep editing</button>
+                  <button type="button" class="btn btn-sm btn-warning" id="generate-v2-discard-confirm">Discard</button>
                 </div>
               </div>
               {% endif %}
@@ -8960,33 +9005,37 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (designShortsBtn) {
     designShortsBtn.addEventListener("click", (event) => {
-      if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+      if (getGenerateV2Root() && typeof window.setGenerateV2ActiveTab === "function") {
         event.preventDefault();
-        window.enterGenerateV2EditMode({ section: "style" });
+        window.setGenerateV2ActiveTab("edit");
         return;
       }
       const targetId = designShortsBtn.dataset.openEditorTarget || "choose-crop-btn";
       document.getElementById(targetId)?.click();
     });
   }
-  document.getElementById("generate-v2-design-tile")?.addEventListener("click", (event) => {
-    if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+  document.querySelectorAll("[data-generate-v2-open-edit-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (!getGenerateV2Root() || typeof window.setGenerateV2ActiveTab !== "function") {
+        return;
+      }
       event.preventDefault();
-      window.enterGenerateV2EditMode({ section: "style" });
-      return;
-    }
-    const button = event.currentTarget;
-    const targetId = button?.dataset?.openEditorTarget || "choose-crop-btn";
-    document.getElementById(targetId)?.click();
+      window.setGenerateV2ActiveTab("edit");
+    });
   });
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest(".generate-v2-design-shortcut-btn") : null;
     if (!button) {
       return;
     }
-    if (getGenerateV2Root() && typeof window.enterGenerateV2EditMode === "function") {
+    if (getGenerateV2Root() && typeof window.setGenerateV2ActiveTab === "function") {
       event.preventDefault();
-      window.enterGenerateV2EditMode({ section: String(button.dataset.designShortcut || "style").trim() || "style" });
+      const section = String(button.dataset.designShortcut || "style").trim() || "style";
+      window.setGenerateV2ActiveTab("edit").then((changed) => {
+        if (changed !== false) {
+          setGenerateV2EditorSection(section);
+        }
+      });
       return;
     }
     window.__generateV2DesignShortcut = String(button.dataset.designShortcut || "").trim();
@@ -9164,6 +9213,56 @@ const restoreGenerateV2EditorFields = (snapshot) => {
   });
 };
 
+const isGenerateV2EditorDirty = () => {
+  const snapshot = generateV2EditState.snapshot || [];
+  return snapshot.some(({ field, value, checked, selectedIndex }) => {
+    if (!field) {
+      return false;
+    }
+    if (field.type === "checkbox" || field.type === "radio") {
+      return field.checked !== !!checked;
+    }
+    if (field.tagName === "SELECT" && Number.isInteger(selectedIndex) && field.selectedIndex !== selectedIndex) {
+      return true;
+    }
+    return String(field.value ?? "") !== String(value ?? "");
+  });
+};
+
+const requestGenerateV2DiscardConfirm = () => new Promise((resolve) => {
+  const dialog = document.getElementById("generate-v2-discard-dialog");
+  const keep = document.getElementById("generate-v2-discard-keep");
+  const discard = document.getElementById("generate-v2-discard-confirm");
+  if (!dialog || !keep || !discard) {
+    resolve(window.confirm("Discard changes?"));
+    return;
+  }
+  let settled = false;
+  const cleanup = (result) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    dialog.classList.add("d-none");
+    keep.removeEventListener("click", onKeep);
+    discard.removeEventListener("click", onDiscard);
+    resolve(result);
+  };
+  const onKeep = () => cleanup(false);
+  const onDiscard = () => cleanup(true);
+  keep.addEventListener("click", onKeep);
+  discard.addEventListener("click", onDiscard);
+  dialog.classList.remove("d-none");
+  keep.focus({ preventScroll: true });
+});
+
+const confirmGenerateV2LeaveEditor = async () => {
+  if (!generateV2EditState.active || !isGenerateV2EditorDirty()) {
+    return true;
+  }
+  return requestGenerateV2DiscardConfirm();
+};
+
 const setGenerateV2EditorTitleLabels = (active) => {
   const textInput = document.querySelector('[name="video_date_text"]');
   const topInput = document.querySelector('[name="video_date_top"]');
@@ -9307,11 +9406,13 @@ const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
 window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
   const root = getGenerateV2Root();
   if (!generateV2EditState.active) {
-    return;
+    return true;
   }
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
   if (!saved) {
     restoreGenerateV2EditorFields(generateV2EditState.snapshot);
   }
+  document.getElementById("generate-v2-discard-dialog")?.classList.add("d-none");
   setGenerateV2EditorTitleLabels(false);
   window.teardownCropEditor?.();
   restoreGenerateV2EditorNodes();
@@ -9324,6 +9425,7 @@ window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
   if (root?.dataset.activeTab === "shorts") {
     selectGenerateV2Clip(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
   }
+  return true;
 };
 
 window.enterGenerateV2EditMode = enterGenerateV2EditMode;
@@ -9342,8 +9444,11 @@ document.addEventListener("DOMContentLoaded", () => {
       setGenerateV2EditorSection(button.dataset.v2EditorSection || "style");
     });
   });
-  document.getElementById("generate-v2-editor-cancel")?.addEventListener("click", () => {
-    window.exitGenerateV2EditMode?.({ saved: false });
+  document.getElementById("generate-v2-editor-cancel")?.addEventListener("click", async () => {
+    if (await confirmGenerateV2LeaveEditor()) {
+      window.exitGenerateV2EditMode?.({ saved: false });
+      await window.setGenerateV2ActiveTab?.("shorts");
+    }
   });
   document.getElementById("generate-v2-editor-save")?.addEventListener("click", () => {
     window.cropEditorSave?.();
@@ -9363,7 +9468,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && generateV2EditState.active) {
       event.preventDefault();
-      window.exitGenerateV2EditMode?.({ saved: false });
+      (async () => {
+        if (await confirmGenerateV2LeaveEditor()) {
+          window.exitGenerateV2EditMode?.({ saved: false });
+          await window.setGenerateV2ActiveTab?.("shorts");
+        }
+      })();
     }
   });
   document.addEventListener("click", () => {
@@ -9599,14 +9709,28 @@ const selectGenerateV2Clip = (planIndex = "") => {
   empty?.classList.toggle("d-none", !!activeCard);
 };
 
-window.setGenerateV2ActiveTab = (tab, { persist = true, selectedPlanIndex = "" } = {}) => {
+window.setGenerateV2ActiveTab = async (tab, { persist = true, selectedPlanIndex = "" } = {}) => {
   const root = getGenerateV2Root();
   if (!root) {
-    return;
+    return false;
   }
-  const normalized = tab === "transcript" ? "transcript" : "shorts";
+  const normalized = tab === "edit" ? "edit" : (tab === "transcript" ? "transcript" : "shorts");
   const previousTab = root.dataset.activeTab || "";
-  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: previousTab === "transcript" && normalized !== "transcript" });
+  if (normalized !== "edit" && generateV2EditState.active) {
+    const canLeave = await confirmGenerateV2LeaveEditor();
+    if (!canLeave) {
+      root.querySelectorAll("[data-generate-v2-tab]").forEach((button) => {
+        const isActive = button.dataset.generateV2Tab === "edit";
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      return false;
+    }
+    window.exitGenerateV2EditMode?.({ saved: false });
+  }
+  pauseGenerateV2WorkbenchVideos({
+    pauseSourcePlayer: (previousTab === "transcript" && normalized !== "transcript") || normalized === "edit",
+  });
   root.dataset.activeTab = normalized;
   if (persist) {
     writeGenerateV2StoredTab(root, normalized);
@@ -9622,9 +9746,15 @@ window.setGenerateV2ActiveTab = (tab, { persist = true, selectedPlanIndex = "" }
   root.querySelectorAll("[data-generate-v2-right]").forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.generateV2Right === normalized);
   });
-  if (normalized === "shorts") {
+  if (normalized === "edit") {
+    root.querySelectorAll("[data-generate-v2-right]").forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.generateV2Right === "shorts");
+    });
+    enterGenerateV2EditMode({ section: "style" });
+  } else if (normalized === "shorts") {
     selectGenerateV2Clip(selectedPlanIndex || "");
   }
+  return true;
 };
 
 const initGenerateV2Workbench = (preferredPlanIndex = "") => {
@@ -15041,14 +15171,15 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
       }
       window.updateShortDesignStrip?.(currentShortDesignDetails());
+      const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
       if (getGenerateV2Root() && typeof refreshClipList === "function") {
-        const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
         const refreshed = await refreshClipList(activePlanIndex, "list");
         if (refreshed) {
           window.showGenerateV2DesignUpdatedDialog?.();
         }
       }
       window.exitGenerateV2EditMode?.({ saved: true });
+      window.setGenerateV2ActiveTab?.("shorts", { persist: true, selectedPlanIndex: activePlanIndex || "" });
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");
