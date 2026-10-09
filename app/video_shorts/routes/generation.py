@@ -3629,24 +3629,31 @@ def _face_aware_split_crop_rect(
     *,
     frame_width: float,
     frame_height: float,
+    region_min_x: float = 0.0,
+    region_max_x: float = 1.0,
     target_face_ratio: float = 0.40,
 ) -> Dict[str, float]:
-    """Return a static 9:8 source crop that places one face in the upper-middle of a split half."""
+    """Return a static 9:8 crop for one split half, constrained to that person's region."""
     safe_frame_width = max(1.0, float(frame_width or 1.0))
     safe_frame_height = max(1.0, float(frame_height or 1.0))
+    region_min = max(0.0, min(1.0, float(region_min_x)))
+    region_max = max(region_min + 0.001, min(1.0, float(region_max_x)))
+    region_width = max(0.001, region_max - region_min)
     ratio_units = (9.0 / 8.0) * (safe_frame_height / safe_frame_width)
     face_h = max(0.001, min(1.0, float(face.get("h_ratio") or 0.0)))
     crop_h = max(0.05, min(1.0, face_h / max(0.01, float(target_face_ratio or 0.40))))
     crop_w = crop_h * ratio_units
-    if crop_w > 1.0:
-        crop_w = 1.0
+    if crop_w > region_width:
+        crop_w = region_width
         crop_h = min(1.0, crop_w / ratio_units)
     if crop_h > 1.0:
         crop_h = 1.0
-        crop_w = min(1.0, crop_h * ratio_units)
+        crop_w = min(region_width, crop_h * ratio_units)
+        crop_h = min(1.0, crop_w / ratio_units)
     cx = max(0.0, min(1.0, float(face.get("cx_ratio") or 0.5)))
     cy = max(0.0, min(1.0, float(face.get("cy_ratio") or 0.5)))
-    crop_x = max(0.0, min(max(0.0, 1.0 - crop_w), cx - (crop_w / 2.0)))
+    max_x = max(region_min, region_max - crop_w)
+    crop_x = max(region_min, min(max_x, cx - (crop_w / 2.0)))
     crop_y = max(0.0, min(max(0.0, 1.0 - crop_h), cy - (crop_h * 0.38)))
     return {
         "x": round(crop_x, 6),
@@ -3720,13 +3727,33 @@ def _attach_face_aware_split_crops_to_segments(
         frame_width = _median_float([float(sample.get("frame_width") or 0.0) for sample in segment_samples]) or 720.0
         frame_height = _median_float([float(sample.get("frame_height") or 0.0) for sample in segment_samples]) or 405.0
         if left_face and right_face:
+            mid_x = max(
+                0.001,
+                min(
+                    0.999,
+                    (float(left_face.get("cx_ratio") or 0.0) + float(right_face.get("cx_ratio") or 1.0)) / 2.0,
+                ),
+            )
             item["split_faces"] = {
                 "left": {key: round(float(value), 6) for key, value in left_face.items()},
                 "right": {key: round(float(value), 6) for key, value in right_face.items()},
             }
+            item["split_boundary_x"] = round(mid_x, 6)
             item["split_crops"] = {
-                "top": _face_aware_split_crop_rect(left_face, frame_width=frame_width, frame_height=frame_height),
-                "bottom": _face_aware_split_crop_rect(right_face, frame_width=frame_width, frame_height=frame_height),
+                "top": _face_aware_split_crop_rect(
+                    left_face,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    region_min_x=0.0,
+                    region_max_x=mid_x,
+                ),
+                "bottom": _face_aware_split_crop_rect(
+                    right_face,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    region_min_x=mid_x,
+                    region_max_x=1.0,
+                ),
             }
         enriched.append(item)
     return enriched

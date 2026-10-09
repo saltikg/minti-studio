@@ -3079,11 +3079,17 @@ def _compose_trimmed_with_background(
         caption_overlay_y_expr = "0"
         if face_aware_layout_active:
             try:
-                fill_margin = float(subtitle_margin or 0)
+                fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
                 fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
-                split_margin = float(face_aware_split_metrics["caption_margin_v"])
-                fit_caption_y = max(0.0, fill_margin - fit_margin)
-                split_caption_y = max(0.0, fill_margin - split_margin)
+                caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
+                split_caption_top = float(face_aware_split_metrics["caption_top"])
+                split_base_top = (
+                    float(target_height)
+                    - fill_margin
+                    - caption_block_height
+                )
+                fit_caption_y = fill_margin - fit_margin
+                split_caption_y = split_caption_top - split_base_top
             except Exception:
                 fit_caption_y = 0.0
                 split_caption_y = 0.0
@@ -3099,7 +3105,7 @@ def _compose_trimmed_with_background(
                 else:
                     try:
                         segment_margin = float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
-                        segment_caption_y = max(0.0, fill_margin - segment_margin)
+                        segment_caption_y = fill_margin - segment_margin
                     except Exception:
                         segment_caption_y = 0.0
                 caption_overlay_y_expr = (
