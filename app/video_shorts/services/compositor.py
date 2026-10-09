@@ -2757,9 +2757,12 @@ def _compose_trimmed_with_background(
                         f"{scale_stage}setsar=1,format=yuv420p,settb=AVTB{seg_out}"
                     )
                 segment_outputs.append(seg_out)
-            filter_parts.append(
-                "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
-            )
+            if len(segment_outputs) == 1:
+                filter_parts.append(f"{segment_outputs[0]}null[ov]")
+            else:
+                filter_parts.append(
+                    "".join(segment_outputs) + f"concat=n={len(segment_outputs)}:v=1:a=0[ov]"
+                )
             current_app.logger.info(
                 "face_aware_layout compositor_segments=%s fill_caption_metrics=%s split_crops=%s duration=%.3f",
                 [
@@ -2859,7 +2862,6 @@ def _compose_trimmed_with_background(
                 title_outline_width=title_outline_width,
                 video_top_limit=video_top_limit,
             )
-            title_overlay_paths.append(title_overlay_path)
             current_app.logger.info(
                 "Pillow title overlay text_width=%s margin=%s font_size=%s lines=%s draw_y=%s shadow=%s",
                 title_overlay_meta["max_text_width"],
@@ -2870,36 +2872,6 @@ def _compose_trimmed_with_background(
                 title_overlay_meta["shadow"],
             )
             if face_aware_layout_active:
-                fit_title_overlay_path, fit_title_overlay_meta = _render_title_overlay(
-                    title_txt,
-                    font_path=test_font_file,
-                    font_size=title_font_size,
-                    target_width=target_width,
-                    target_height=target_height,
-                    base_y=int(round(face_aware_fit_metrics["title_bottom"])),
-                    line_spacing=safe_title_line_spacing_main,
-                    title_text_color=title_text_color,
-                    subtitle_preset=subtitle_preset,
-                    uppercase=bool(title_uppercase),
-                    title_language=title_language,
-                    title_outline_color=title_outline_color,
-                    title_outline_width=title_outline_width,
-                    video_top_limit=int(round(face_aware_fit_metrics["title_bottom"])),
-                )
-                title_overlay_paths.append(fit_title_overlay_path)
-                current_app.logger.info(
-                    "Pillow title overlay fit text_width=%s margin=%s font_size=%s lines=%s draw_y=%s title_bottom=%.2f shadow=%s",
-                    fit_title_overlay_meta["max_text_width"],
-                    fit_title_overlay_meta["side_margin"],
-                    fit_title_overlay_meta["font_size"],
-                    fit_title_overlay_meta["line_count"],
-                    fit_title_overlay_meta["draw_y"],
-                    face_aware_fit_metrics["title_bottom"],
-                    fit_title_overlay_meta["shadow"],
-                )
-                fill_title_input_index = next_video_input_index
-                fit_title_input_index = next_video_input_index + 1
-                next_video_input_index += 2
                 fill_segment_indices = [
                     idx for idx, segment in enumerate(layout_segments)
                     if str(segment.get("mode") or "fill") != "fit"
@@ -2910,20 +2882,54 @@ def _compose_trimmed_with_background(
                 ]
                 fill_source_by_index: Dict[int, str] = {}
                 fit_source_by_index: Dict[int, str] = {}
-                filter_parts.append(f"[{fill_title_input_index}:v]format=rgba[title_fill_src]")
-                filter_parts.append(f"[{fit_title_input_index}:v]format=rgba[title_fit_src]")
-                if len(fill_segment_indices) > 1:
-                    fill_split_labels = "".join(f"[title_fill_src_{idx}]" for idx in fill_segment_indices)
-                    filter_parts.append(f"[title_fill_src]split={len(fill_segment_indices)}{fill_split_labels}")
-                    fill_source_by_index = {idx: f"[title_fill_src_{idx}]" for idx in fill_segment_indices}
-                elif len(fill_segment_indices) == 1:
-                    fill_source_by_index[fill_segment_indices[0]] = "[title_fill_src]"
-                if len(fit_segment_indices) > 1:
-                    fit_split_labels = "".join(f"[title_fit_src_{idx}]" for idx in fit_segment_indices)
-                    filter_parts.append(f"[title_fit_src]split={len(fit_segment_indices)}{fit_split_labels}")
-                    fit_source_by_index = {idx: f"[title_fit_src_{idx}]" for idx in fit_segment_indices}
-                elif len(fit_segment_indices) == 1:
-                    fit_source_by_index[fit_segment_indices[0]] = "[title_fit_src]"
+                if fill_segment_indices:
+                    title_overlay_paths.append(title_overlay_path)
+                    fill_title_input_index = next_video_input_index
+                    next_video_input_index += 1
+                    filter_parts.append(f"[{fill_title_input_index}:v]format=rgba[title_fill_src]")
+                    if len(fill_segment_indices) > 1:
+                        fill_split_labels = "".join(f"[title_fill_src_{idx}]" for idx in fill_segment_indices)
+                        filter_parts.append(f"[title_fill_src]split={len(fill_segment_indices)}{fill_split_labels}")
+                        fill_source_by_index = {idx: f"[title_fill_src_{idx}]" for idx in fill_segment_indices}
+                    else:
+                        fill_source_by_index[fill_segment_indices[0]] = "[title_fill_src]"
+                if fit_segment_indices:
+                    fit_title_overlay_path, fit_title_overlay_meta = _render_title_overlay(
+                        title_txt,
+                        font_path=test_font_file,
+                        font_size=title_font_size,
+                        target_width=target_width,
+                        target_height=target_height,
+                        base_y=int(round(face_aware_fit_metrics["title_bottom"])),
+                        line_spacing=safe_title_line_spacing_main,
+                        title_text_color=title_text_color,
+                        subtitle_preset=subtitle_preset,
+                        uppercase=bool(title_uppercase),
+                        title_language=title_language,
+                        title_outline_color=title_outline_color,
+                        title_outline_width=title_outline_width,
+                        video_top_limit=int(round(face_aware_fit_metrics["title_bottom"])),
+                    )
+                    title_overlay_paths.append(fit_title_overlay_path)
+                    current_app.logger.info(
+                        "Pillow title overlay fit text_width=%s margin=%s font_size=%s lines=%s draw_y=%s title_bottom=%.2f shadow=%s",
+                        fit_title_overlay_meta["max_text_width"],
+                        fit_title_overlay_meta["side_margin"],
+                        fit_title_overlay_meta["font_size"],
+                        fit_title_overlay_meta["line_count"],
+                        fit_title_overlay_meta["draw_y"],
+                        face_aware_fit_metrics["title_bottom"],
+                        fit_title_overlay_meta["shadow"],
+                    )
+                    fit_title_input_index = next_video_input_index
+                    next_video_input_index += 1
+                    filter_parts.append(f"[{fit_title_input_index}:v]format=rgba[title_fit_src]")
+                    if len(fit_segment_indices) > 1:
+                        fit_split_labels = "".join(f"[title_fit_src_{idx}]" for idx in fit_segment_indices)
+                        filter_parts.append(f"[title_fit_src]split={len(fit_segment_indices)}{fit_split_labels}")
+                        fit_source_by_index = {idx: f"[title_fit_src_{idx}]" for idx in fit_segment_indices}
+                    else:
+                        fit_source_by_index[fit_segment_indices[0]] = "[title_fit_src]"
                 current_title_label = final_label
                 for idx, segment in enumerate(layout_segments):
                     seg_start = float(segment.get("start") or 0.0)
@@ -2943,6 +2949,7 @@ def _compose_trimmed_with_background(
                     current_title_label = next_title_label
                 final_label = current_title_label
             else:
+                title_overlay_paths.append(title_overlay_path)
                 title_input_index = next_video_input_index
                 filter_parts.append(f"[{title_input_index}:v]format=rgba[title_src]")
                 filter_parts.append(
