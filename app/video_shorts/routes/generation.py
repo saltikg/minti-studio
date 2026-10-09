@@ -1462,42 +1462,62 @@ def _cleanup_managed_temp_path(path_obj: Any) -> None:
             pass
 
 
-def _ensure_shared_short_poster(filename: str) -> None:
+def _ensure_shared_short_poster(
+    filename: str,
+    *,
+    input_path: Optional[Path] = None,
+    duration_seconds: Optional[float] = None,
+    overwrite: bool = False,
+) -> bool:
     safe_name = Path(filename or "").name
     if not safe_name:
-        return
+        return False
     poster_key = _short_poster_storage_key(safe_name)
     if not poster_key:
-        return
+        return False
     storage = get_media_storage()
-    try:
-        if storage.exists(poster_key):
-            return
-    except Exception:
-        current_app.logger.exception("Failed to check short poster existence filename=%s key=%s", safe_name, poster_key)
-        return
+    if not overwrite:
+        try:
+            if storage.exists(poster_key):
+                return False
+        except Exception:
+            current_app.logger.warning("Failed to check short poster existence filename=%s key=%s", safe_name, poster_key)
+            return False
 
     short_key = _short_storage_key(safe_name)
     input_path_obj = None
     output_path = None
     try:
-        input_path_obj = storage.download_to_temp(short_key)
-        input_path = Path(str(input_path_obj))
-        if not input_path.exists():
-            return
+        if input_path is None:
+            input_path_obj = storage.download_to_temp(short_key)
+            resolved_input_path = Path(str(input_path_obj))
+        else:
+            resolved_input_path = Path(input_path)
+        if not resolved_input_path.exists():
+            return False
         with tempfile.NamedTemporaryFile(prefix="short_poster_", suffix=".jpg", delete=False) as handle:
             output_path = Path(handle.name)
         ffmpeg_bin = _resolve_ffmpeg()
+        seek_seconds = 1.0
+        if duration_seconds is not None:
+            try:
+                duration_float = max(0.0, float(duration_seconds))
+                if 0.0 < duration_float < 2.0:
+                    seek_seconds = max(0.05, duration_float / 2.0)
+            except (TypeError, ValueError):
+                seek_seconds = 1.0
         run_media_subprocess(
             [
                 ffmpeg_bin,
                 "-y",
                 "-ss",
-                "1",
+                f"{seek_seconds:.3f}",
                 "-i",
-                str(input_path),
+                str(resolved_input_path),
                 "-frames:v",
                 "1",
+                "-vf",
+                "scale=360:-2",
                 "-q:v",
                 "3",
                 str(output_path),
@@ -1512,8 +1532,9 @@ def _ensure_shared_short_poster(filename: str) -> None:
         )
         if output_path.exists() and output_path.stat().st_size > 0:
             storage.put_file(output_path, poster_key)
+            return True
     except Exception:
-        current_app.logger.exception("Failed to generate shared short poster filename=%s", safe_name)
+        current_app.logger.warning("Failed to generate short poster filename=%s", safe_name, exc_info=True)
     finally:
         _cleanup_managed_temp_path(input_path_obj)
         if output_path is not None:
@@ -1521,6 +1542,7 @@ def _ensure_shared_short_poster(filename: str) -> None:
                 output_path.unlink(missing_ok=True)
             except Exception:
                 pass
+    return False
 
 
 def _short_exists(filename: str) -> bool:
@@ -25315,6 +25337,17 @@ def autoclip_video(video_pk):
                     clip_filename,
                     f"short:{clip_filename}",
                 )
+            try:
+                poster_created = _ensure_shared_short_poster(
+                    clip_filename,
+                    input_path=final_file,
+                    duration_seconds=max(0.0, float(end) - float(start)) if end is not None and start is not None else None,
+                    overwrite=True,
+                )
+                if poster_created:
+                    current_app.logger.info("short poster generated clip_filename=%s", clip_filename)
+            except Exception as exc:
+                current_app.logger.warning("Short poster generation skipped clip_filename=%s: %s", clip_filename, exc)
             if getattr(storage, "backend_name", "local") == "s3" and final_file.exists():
                 try:
                     final_file.unlink()

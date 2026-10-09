@@ -1869,6 +1869,11 @@
     background: rgba(45, 212, 191, 0.13);
     color: #ccfbf1;
   }
+  #clip-workbench-shell[data-generate-v2="1"] #generate-v2-design-tile.generate-v2-tab-action {
+    border-color: rgba(45, 212, 191, 0.28);
+    background: rgba(45, 212, 191, 0.13);
+    color: #ccfbf1;
+  }
   #clip-workbench-shell[data-generate-v2="1"] #clip-schedule-all-btn.generate-v2-tab-action {
     border-color: rgba(255, 255, 255, 0.14);
     background: rgba(255, 255, 255, 0.035);
@@ -1962,24 +1967,50 @@
     margin: 0 auto;
   }
   .generate-v2-selected-mount .clip-card-meta-row {
-    display: block !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px;
     margin-bottom: 10px;
   }
+  .generate-v2-selected-mount .clip-card-meta-time {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
   .generate-v2-selected-mount .clip-card-meta-status {
-    margin-top: 4px;
+    flex: 0 0 auto;
+    margin-top: 0;
+  }
+  .generate-v2-selected-mount .clip-card-meta-status .small {
+    gap: 7px !important;
+    flex-wrap: nowrap !important;
+  }
+  .generate-v2-selected-mount .clip-card-meta-status .gs-schedule-icon {
+    font-size: 18px;
+  }
+  .generate-v2-selected-mount .clip-card-suggestion-badge,
+  .generate-v2-selected-mount .clip-card-score-badge {
+    display: none;
   }
   .generate-v2-preview-title {
     color: rgba(255, 255, 255, 0.94);
     font-size: 0.98rem;
-    font-weight: 750;
+    font-weight: 650;
     line-height: 1.25;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .generate-v2-preview-time {
-    margin-top: 3px;
     color: rgba(255, 255, 255, 0.58);
     font-size: 0.8rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
   }
   .generate-v2-selected-mount .clip-card-media video {
     width: 100%;
@@ -2135,9 +2166,14 @@
     font-size: 1.28rem;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-manual {
+    width: 48px;
+    height: 48px;
     border-color: rgba(255, 255, 255, 0.16);
     background: rgba(255, 255, 255, 0.055);
     color: rgba(255, 255, 255, 0.78);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-manual .bi {
+    font-size: 18px;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu {
     position: relative;
@@ -2343,19 +2379,20 @@
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy {
       display: flex;
       align-items: flex-start;
-      align-self: center;
-      gap: 5px 7px;
+      align-self: start;
+      gap: 6px 7px;
       flex-wrap: wrap;
       min-width: 0;
       text-align: left;
+      padding-top: 1px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-title {
       order: 1;
       flex: 0 0 100%;
       min-width: 0;
-      font-size: 1rem;
-      font-weight: 700;
-      line-height: 1.25;
+      font-size: 1.0625rem;
+      font-weight: 500;
+      line-height: 1.35;
       white-space: normal;
       overflow: hidden;
       display: -webkit-box;
@@ -2369,7 +2406,7 @@
       gap: 5px;
       flex: 0 1 auto;
       min-width: 0;
-      font-size: 0.8rem;
+      font-size: 0.8125rem;
       text-align: left;
       white-space: nowrap;
       color: rgba(255, 255, 255, 0.54);
@@ -4528,6 +4565,14 @@
                   <i class="bi bi-stars" aria-hidden="true"></i>
                   <span class="btn-label">Find Moments</span>
                 </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-info generate-v2-tab-action"
+                  id="generate-v2-design-tile"
+                  data-open-editor-target="choose-crop-btn">
+                  <i class="bi bi-palette2" aria-hidden="true"></i>
+                  <span class="btn-label">Design Shorts</span>
+                </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
             </div>
@@ -4739,6 +4784,8 @@
                       {% if row.status == "created" and row.video_url %}
                         {% if generate_v2 and row.poster_url %}
                           <img src="{{ row.poster_url }}" alt="" loading="lazy">
+                        {% elif generate_v2 %}
+                          <video muted playsinline preload="metadata" data-lazy-short-thumb="{{ row.video_url }}#t=1" aria-hidden="true"></video>
                         {% else %}
                           <video muted playsinline preload="metadata"{% if row.poster_url %} poster="{{ row.poster_url }}"{% endif %}>
                             <source src="{{ row.video_url }}" type="video/mp4">
@@ -8497,6 +8544,11 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById(targetId)?.click();
     });
   }
+  document.getElementById("generate-v2-design-tile")?.addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const targetId = button?.dataset?.openEditorTarget || "choose-crop-btn";
+    document.getElementById(targetId)?.click();
+  });
   document.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest(".generate-v2-design-shortcut-btn") : null;
     if (!button) {
@@ -8674,6 +8726,48 @@ const syncGenerateV2WorkbenchHeight = () => {
   root.style.setProperty("--generate-v2-workbench-height", `${height}px`);
 };
 
+const initGenerateV2LazyThumbnails = (scope = document) => {
+  const videos = Array.from(scope.querySelectorAll("video[data-lazy-short-thumb]"));
+  if (!videos.length) {
+    return;
+  }
+  const loadVideo = (video) => {
+    if (!(video instanceof HTMLVideoElement) || video.dataset.lazyLoaded === "1") {
+      return;
+    }
+    const src = String(video.dataset.lazyShortThumb || "").trim();
+    if (!src) {
+      return;
+    }
+    video.dataset.lazyLoaded = "1";
+    video.muted = true;
+    video.controls = false;
+    video.preload = "metadata";
+    video.src = src;
+    video.load();
+  };
+  if (!("IntersectionObserver" in window)) {
+    videos.forEach(loadVideo);
+    return;
+  }
+  const observer = new IntersectionObserver((entries, activeObserver) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) {
+        return;
+      }
+      loadVideo(entry.target);
+      activeObserver.unobserve(entry.target);
+    });
+  }, { root: document.getElementById("clip-rail-list") || null, rootMargin: "240px 0px" });
+  videos.forEach((video) => {
+    if (video.dataset.lazyObserved === "1") {
+      return;
+    }
+    video.dataset.lazyObserved = "1";
+    observer.observe(video);
+  });
+};
+
 const selectGenerateV2Clip = (planIndex = "") => {
   const root = getGenerateV2Root();
   const panel = document.getElementById("clip-management-panel");
@@ -8788,6 +8882,7 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       });
     });
   });
+  initGenerateV2LazyThumbnails(root);
   const storedTab = readGenerateV2StoredTab(root);
   const defaultTab = root.dataset.defaultTab === "shorts" ? "shorts" : "transcript";
   const activeTab = storedTab === "shorts" || storedTab === "transcript" ? storedTab : defaultTab;
