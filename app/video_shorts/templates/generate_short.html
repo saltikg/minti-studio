@@ -1863,21 +1863,30 @@
     justify-content: center;
     gap: 5px;
     white-space: nowrap;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
-  #clip-workbench-shell[data-generate-v2="1"] #ai-generate-btn.generate-v2-tab-action {
-    border-color: rgba(45, 212, 191, 0.28);
-    background: rgba(45, 212, 191, 0.13);
-    color: #ccfbf1;
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile {
+    border: 1px solid #2A3954 !important;
+    background: transparent !important;
+    color: #E6EBF2 !important;
   }
-  #clip-workbench-shell[data-generate-v2="1"] #generate-v2-design-tile.generate-v2-tab-action {
-    border-color: rgba(45, 212, 191, 0.28);
-    background: rgba(45, 212, 191, 0.13);
-    color: #ccfbf1;
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile .bi,
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile .material-symbols-outlined {
+    color: currentColor;
   }
-  #clip-workbench-shell[data-generate-v2="1"] #clip-schedule-all-btn.generate-v2-tab-action {
-    border-color: rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.035);
-    color: rgba(255, 255, 255, 0.74);
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile:hover,
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile:focus-visible {
+    border-color: #2BB3A3 !important;
+    background: #2BB3A3 !important;
+    color: #06201D !important;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile:disabled,
+  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile[aria-disabled="true"] {
+    border-color: rgba(42, 57, 84, 0.55) !important;
+    background: transparent !important;
+    color: rgba(230, 235, 242, 0.38) !important;
+    opacity: 1;
+    pointer-events: none;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
     align-items: center;
@@ -2103,30 +2112,33 @@
     border: 1px solid rgba(245, 158, 11, 0.24);
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr) minmax(0, 1fr);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 8px;
     width: 100%;
     margin-top: 10px;
   }
-  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions:not(:has(.generate-v2-regenerate-btn:not([hidden]))) {
-    grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
-  }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .btn {
-    min-height: 40px;
-    height: 40px;
-    padding: 0 12px;
-    font-size: 0.82rem;
+    width: 88px;
+    min-height: 64px;
+    height: 64px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    font-size: 0.79rem;
+    font-weight: 800;
+    line-height: 1.1;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
+    gap: 5px;
+    white-space: nowrap;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions .material-symbols-outlined {
-    font-size: 1.08rem;
-  }
-  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-primary {
-    border-color: rgba(45, 212, 191, 0.55) !important;
-    background: #2dd4bf !important;
-    color: #042f2e !important;
-    font-weight: 800;
+    font-size: 1.2rem;
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-share-stats {
     width: 100%;
@@ -4359,7 +4371,7 @@
               class="btn short-design-strip-action"
               id="design-shorts-btn"
               data-open-editor-target="choose-crop-btn">
-        Design Shorts
+        Edit Shorts
       </button>
     </div>
     {% endif %}
@@ -4542,7 +4554,7 @@
                 {% endfor %}
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-light generate-v2-tab-action"
+                  class="btn btn-sm generate-v2-tab-action generate-v2-tile"
                   id="clip-schedule-all-btn"
                   data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
                   data-instagram-connected="{{ '1' if instagram_connected else '0' }}"
@@ -4558,20 +4570,20 @@
                 <button
                   type="submit"
                   form="step2-form"
-                  class="btn btn-sm btn-outline-info generate-v2-tab-action"
+                  class="btn btn-sm generate-v2-tab-action generate-v2-tile"
                   id="ai-generate-btn"
                   {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <i class="bi bi-stars" aria-hidden="true"></i>
-                  <span class="btn-label">Find Moments</span>
+                  <span class="btn-label">AI Suggest</span>
                 </button>
                 <button
                   type="button"
-                  class="btn btn-sm btn-outline-info generate-v2-tab-action"
+                  class="btn btn-sm generate-v2-tab-action generate-v2-tile"
                   id="generate-v2-design-tile"
                   data-open-editor-target="choose-crop-btn">
                   <i class="bi bi-palette2" aria-hidden="true"></i>
-                  <span class="btn-label">Design Shorts</span>
+                  <span class="btn-label">Edit Shorts</span>
                 </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
@@ -5194,30 +5206,30 @@
                     </div>
                     {% endif %}
                     <div class="clip-card-media-actions d-flex gap-2 mt-2">
-                      {% if generate_v2 %}
                       <a
-                        class="btn btn-outline-light btn-sm d-flex align-items-center justify-content-center gap-1 generate-v2-download-btn"
-                        href="{{ row.video_url }}"
-                        target="_blank"
-                        rel="noreferrer"
-                        download>
-                        <i class="bi bi-download" aria-hidden="true"></i>
-                        <span>Download</span>
-                      </a>
-                      {% endif %}
-                      <a
-                        class="btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center"
+                        class="{% if generate_v2 %}btn btn-sm generate-v2-tile generate-v2-open-btn{% else %}btn btn-outline-secondary btn-sm p-2 d-flex align-items-center justify-content-center{% endif %}"
                         href="{{ row.video_url }}"
                         target="_blank"
                         rel="noreferrer"
                         title="Open video">
+                        {% if not generate_v2 %}
                         <span class="visually-hidden">Open video</span>
+                        {% endif %}
                         <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+                        {% if generate_v2 %}
+                        <span>Open</span>
+                        {% endif %}
                       </a>
                       {% if generate_v2 %}
+                      <a
+                        class="btn btn-sm generate-v2-tile generate-v2-download-btn"
+                        href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}">
+                        <i class="bi bi-download" aria-hidden="true"></i>
+                        <span>Download</span>
+                      </a>
                       <button
                         type="button"
-                        class="btn btn-outline-warning btn-sm d-flex align-items-center justify-content-center gap-1 generate-v2-regenerate-btn"
+                        class="btn btn-sm generate-v2-tile generate-v2-regenerate-btn"
                         data-plan-index="{{ row.plan_index }}"
                         data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                         {% if not row.render_settings_outdated %}hidden{% elif row.regenerate_locked %}disabled{% endif %}
@@ -5225,8 +5237,7 @@
                         <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
                         <span>Regenerate</span>
                       </button>
-                      {% endif %}
-                      {% if not generate_v2 %}
+                      {% else %}
 	                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
 	                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
 	                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
@@ -8671,10 +8682,10 @@ const arrangeGenerateV2PreviewCard = (card) => {
     if (scheduleBlock) {
       const scheduleBtn = scheduleBlock.querySelector(".send-to-youtube-btn");
       if (scheduleBtn && scheduleBtn.parentElement !== mediaActions) {
-        mediaActions.insertBefore(scheduleBtn, regenerateBtn || null);
+        mediaActions.insertBefore(scheduleBtn, mediaActions.firstElementChild || null);
       }
-      scheduleBtn?.classList.remove("btn-dark", "clip-card-mini-btn");
-      scheduleBtn?.classList.add("generate-v2-schedule-primary");
+      scheduleBtn?.classList.remove("btn-dark", "btn-outline-secondary", "clip-card-mini-btn");
+      scheduleBtn?.classList.add("generate-v2-tile", "generate-v2-schedule-primary");
     }
   }
   const actionBar = card.querySelector(".clip-card-action-bar");

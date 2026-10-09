@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from google.auth.exceptions import RefreshError
 
-from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 import requests
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
@@ -1379,6 +1379,13 @@ def _short_storage_key(filename: str) -> str:
 def _short_local_path(filename: str) -> Path:
     safe_name = Path(filename or "").name
     return (SHORTS_DIR / safe_name).resolve()
+
+
+def _download_filename_for_short(title: str, fallback_filename: str) -> str:
+    base_title = secure_filename(str(title or "").strip()) or Path(fallback_filename or "").stem or "short"
+    if not base_title.lower().endswith(".mp4"):
+        base_title = f"{base_title}.mp4"
+    return base_title
 
 
 def invalidate_short_cdn_cache(filename: str) -> None:
@@ -11404,6 +11411,70 @@ def delete_long_video_from_generate(video_pk: int):
             "message": "Long video deleted.",
             "long_videos": _list_generated_long_compilations(video_id, limit=12),
         }
+    )
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/download", methods=["GET"])
+def download_generated_clip(video_pk: int, plan_index: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        abort(401)
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row(conn, video_pk, "video_id, title")
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    video_id = str(row[0] or "").strip()
+    video_title = str(row[1] or "").strip()
+    target_entry = None
+    for entry in _load_plan_entries(video_id):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            entry_index = int(entry.get("plan_index"))
+        except Exception:
+            continue
+        if entry_index == int(plan_index):
+            target_entry = entry
+            break
+    if not target_entry:
+        abort(404)
+    clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "").strip()
+    if not clip_filename or not _short_exists(clip_filename):
+        abort(404)
+    download_name = _download_filename_for_short(
+        str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "").strip(),
+        clip_filename,
+    )
+    key = _short_storage_key(clip_filename)
+    storage = get_media_storage()
+    if getattr(storage, "backend_name", "local") == "s3":
+        client = getattr(storage, "client", None)
+        bucket_name = getattr(storage, "bucket_name", "")
+        if client is None or not bucket_name:
+            abort(404)
+        presigned_url = client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": bucket_name,
+                "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="{download_name}"',
+                "ResponseContentType": "video/mp4",
+            },
+            ExpiresIn=300,
+        )
+        return redirect(presigned_url, code=302)
+    local_path = _short_local_path(clip_filename)
+    if not local_path.exists() or not local_path.is_file():
+        abort(404)
+    return send_file(
+        local_path,
+        mimetype="video/mp4",
+        as_attachment=True,
+        download_name=download_name,
+        max_age=0,
     )
 
 
