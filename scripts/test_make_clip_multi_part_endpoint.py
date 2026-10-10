@@ -62,6 +62,61 @@ def _post(app, data):
     return status, flask_response.get_json()
 
 
+class _TranscriptConn:
+    def __init__(self, segments):
+        self.segments = segments
+        self.params = None
+        self.committed = False
+
+    def execute(self, sql, params):
+        self.params = params
+        return self
+
+    def commit(self):
+        self.committed = True
+
+    def close(self):
+        pass
+
+
+@contextmanager
+def _patched_word_edit():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "hello world",
+            "tr_text": "hello world",
+            "words": [
+                {"word": "hello", "start": 0.0, "end": 0.4},
+                {"word": "world", "start": 0.5, "end": 0.9},
+            ],
+        }
+    ]
+    conn = _TranscriptConn(segments)
+    originals = {
+        "get_db": generation.get_db,
+        "_ensure_transcript_schema": generation._ensure_transcript_schema,
+        "_fetch_scoped_video_row": generation._fetch_scoped_video_row,
+        "_fetch_transcript": generation._fetch_transcript,
+        "_active_editor_context": generation._active_editor_context,
+        "_load_plan_entries": generation._load_plan_entries,
+        "clear_done_job_cache_for_plan": generation.clear_done_job_cache_for_plan,
+    }
+    generation.get_db = lambda: conn
+    generation._ensure_transcript_schema = lambda db: None
+    generation._fetch_scoped_video_row = lambda db, video_pk, columns: ("video-1",)
+    generation._fetch_transcript = lambda db, video_id: ("hello world", segments)
+    generation._active_editor_context = lambda: {"owner_user_id": "user-1"}
+    generation._load_plan_entries = lambda video_id: []
+    generation.clear_done_job_cache_for_plan = lambda **kwargs: None
+    try:
+        yield conn
+    finally:
+        for name, value in originals.items():
+            setattr(generation, name, value)
+
+
 def main():
     app = create_app()
     app.config["TESTING"] = True
@@ -115,6 +170,25 @@ def main():
         )
         assert status == 400, payload
         assert "90 seconds" in payload["message"]
+
+    with app.app_context(), _patched_word_edit() as conn:
+        with app.test_request_context(
+            "/video_shorts/generate/1/segment_edit",
+            method="POST",
+            json={"word_index": 1, "text": "earth"},
+        ):
+            response = generation.edit_segment_text(1)
+        status = response.status_code
+        payload = response.get_json()
+        assert status == 200, payload
+        assert payload["word_text"] == "earth"
+        assert payload["segment_text"] == "hello earth"
+        assert conn.committed
+        updated_segments = json.loads(conn.params[1])
+        updated_word = updated_segments[0]["words"][1]
+        assert updated_word["word"] == "earth"
+        assert updated_word["start"] == 0.5
+        assert updated_word["end"] == 0.9
 
     print("MAKE_CLIP_MULTI_PART_ENDPOINT_OK")
 

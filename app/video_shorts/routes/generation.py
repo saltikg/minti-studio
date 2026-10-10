@@ -24740,11 +24740,24 @@ def edit_segment_text(video_pk):
         payload = request.form
 
     index_raw = payload.get("index")
+    word_index_raw = payload.get("word_index")
     new_text = (payload.get("text") or "").strip()
 
-    try:
-        segment_index = int(index_raw)
-    except (TypeError, ValueError):
+    segment_index: Optional[int] = None
+    if index_raw not in (None, ""):
+        try:
+            segment_index = int(index_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "Invalid segment index."}), 400
+
+    word_index: Optional[int] = None
+    if word_index_raw not in (None, ""):
+        try:
+            word_index = int(word_index_raw)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "Invalid word index."}), 400
+
+    if segment_index is None and word_index is None:
         return jsonify({"success": False, "message": "Invalid segment index."}), 400
 
     conn = get_db()
@@ -24760,7 +24773,38 @@ def edit_segment_text(video_pk):
         conn.close()
         return jsonify({"success": False, "message": "No transcript segments available."}), 400
 
-    if segment_index < 0 or segment_index >= len(segments):
+    target_word: Optional[Dict[str, Any]] = None
+    if word_index is not None:
+        word_refs: List[Tuple[float, float, int, Dict[str, Any]]] = []
+        for candidate_segment_index, candidate_segment in enumerate(segments):
+            segment_start_for_words = _to_float(candidate_segment.get("start")) or 0.0
+            for candidate_word in candidate_segment.get("words") or []:
+                if not isinstance(candidate_word, dict):
+                    continue
+                start = _to_float(candidate_word.get("start"))
+                end = _to_float(candidate_word.get("end"))
+                if start is None:
+                    continue
+                if end is None:
+                    end = start
+                if start < segment_start_for_words - 0.25 and segment_start_for_words > 0:
+                    start += segment_start_for_words
+                    end += segment_start_for_words
+                text_value = str(candidate_word.get("word") or candidate_word.get("text") or "").strip()
+                if not text_value:
+                    continue
+                word_refs.append((float(start), float(end), candidate_segment_index, candidate_word))
+        word_refs.sort(key=lambda item: (item[0], item[1]))
+        if word_index < 0 or word_index >= len(word_refs):
+            conn.close()
+            return jsonify({"success": False, "message": "Word index out of range."}), 400
+        _, _, resolved_segment_index, target_word = word_refs[word_index]
+        if segment_index is not None and segment_index != resolved_segment_index:
+            conn.close()
+            return jsonify({"success": False, "message": "Word index does not match segment."}), 400
+        segment_index = resolved_segment_index
+
+    if segment_index is None or segment_index < 0 or segment_index >= len(segments):
         conn.close()
         return jsonify({"success": False, "message": "Segment index out of range."}), 400
 
@@ -24781,13 +24825,37 @@ def edit_segment_text(video_pk):
         except Exception:
             duration = 0.0
         segment_end = segment_start + max(duration, 0.0)
-    seg["tr_text"] = new_text
-    seg["text"] = new_text
-    seg["words"] = []
-    if "word_tags" in seg:
-        seg["word_tags"] = []
+    response_payload: Dict[str, Any] = {"success": True}
+    if target_word is not None and word_index is not None:
+        if "word" in target_word or "text" not in target_word:
+            target_word["word"] = new_text
+        target_word["text"] = new_text
+        segment_text_parts = [
+            str(word.get("word") or word.get("text") or "").strip()
+            for word in (seg.get("words") or [])
+            if isinstance(word, dict) and str(word.get("word") or word.get("text") or "").strip()
+        ]
+        segment_text = " ".join(segment_text_parts).strip()
+        seg["tr_text"] = segment_text
+        seg["text"] = segment_text
+        response_payload.update(
+            {
+                "word_index": word_index,
+                "word_text": new_text,
+                "segment_index": segment_index,
+                "segment_text": segment_text,
+            }
+        )
+    else:
+        seg["tr_text"] = new_text
+        seg["text"] = new_text
+        seg["words"] = []
+        if "word_tags" in seg:
+            seg["word_tags"] = []
+        response_payload["segment_text"] = new_text
 
     updated_full_text = _joined_transcript_tr(segments)
+    response_payload["transcript"] = updated_full_text
     segments_json = json.dumps(segments, ensure_ascii=False)
     try:
         conn.execute(
@@ -24835,7 +24903,7 @@ def edit_segment_text(video_pk):
                 exc,
             )
 
-    return jsonify({"success": True, "transcript": updated_full_text, "segment_text": new_text})
+    return jsonify(response_payload)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/segment_non_speech", methods=["POST"])

@@ -2904,6 +2904,44 @@
     background: rgba(45, 212, 191, 0.18);
     color: #dffdf8;
   }
+  .generate-v2-text-word.is-editing {
+    background: rgba(45, 212, 191, 0.16);
+  }
+  .generate-v2-text-word-edit {
+    width: min(220px, 18ch);
+    min-width: 64px;
+    border: 1px solid rgba(45, 212, 191, 0.46);
+    border-radius: 8px;
+    background: rgba(8, 15, 26, 0.96);
+    color: #f8fafc;
+    font: inherit;
+    line-height: 1.35;
+    padding: 2px 7px;
+    outline: none;
+  }
+  .generate-v2-text-word-edit:focus {
+    border-color: #5eead4;
+    box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.16);
+  }
+  .generate-v2-text-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 1080;
+    transform: translateX(-50%);
+    border: 1px solid rgba(45, 212, 191, 0.34);
+    border-radius: 999px;
+    background: rgba(8, 15, 26, 0.96);
+    color: #ccfbf1;
+    font-size: 0.82rem;
+    font-weight: 800;
+    padding: 8px 12px;
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.32);
+  }
+  .generate-v2-text-toast.is-error {
+    border-color: rgba(248, 113, 113, 0.4);
+    color: #fecaca;
+  }
   .generate-v2-text-remove-part {
     display: inline-flex;
     align-items: center;
@@ -5754,6 +5792,7 @@
             <div class="trs-shell"
                  id="transcript-range-selector"
                  data-add-clip-url="{{ editor_url('add_clip_section', video_pk=video.id) }}"
+                 data-edit-url="{{ editor_url('edit_segment_text', video_pk=video.id) }}"
                  data-coachmark-hidden="{{ 'true' if hide_clip_coachmark else 'false' }}"
                  data-coachmark-preference-url="{{ clip_coachmark_preference_url }}">
               <script type="application/json" id="trs-segments-json">{{ segments_view|tojson }}</script>
@@ -11188,6 +11227,7 @@ window.initGenerateV2TextTranscript = () => {
   const prevBtn = document.getElementById("trs-match-prev");
   const nextBtn = document.getElementById("trs-match-next");
   const matchCount = document.getElementById("trs-match-count");
+  const editUrl = document.getElementById("transcript-range-selector")?.dataset.editUrl || "";
   const state = {
     selectedIndexes: [],
     parts: [],
@@ -11195,6 +11235,25 @@ window.initGenerateV2TextTranscript = () => {
     matches: [],
     currentMatchIndex: -1,
     query: "",
+  };
+  let toastTimer = null;
+  const showTextToast = (message, isError = false) => {
+    if (!message) return;
+    let toast = document.getElementById("generate-v2-text-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "generate-v2-text-toast";
+      toast.className = "generate-v2-text-toast";
+      toast.setAttribute("role", "status");
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.toggle("is-error", !!isError);
+    toast.hidden = false;
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+      toast.hidden = true;
+    }, 1800);
   };
   const hideToolbar = () => {
     toolbar?.classList.remove("is-visible");
@@ -11294,6 +11353,98 @@ window.initGenerateV2TextTranscript = () => {
     state.currentMatchIndex = (state.currentMatchIndex + delta + state.matches.length) % state.matches.length;
     renderSearch(true);
   };
+  const updateWordCacheScript = () => {
+    const script = document.getElementById("generate-v2-word-timestamps-json");
+    if (!script) return;
+    try {
+      script.textContent = JSON.stringify(words);
+    } catch (error) {
+      console.warn("Unable to update transcript word cache", error);
+    }
+  };
+  const resetWordSpan = (span, word) => {
+    span.classList.remove("is-editing");
+    span.textContent = `${word?.text || ""} `;
+  };
+  const startWordEdit = (span, word) => {
+    if (!editUrl || !span || !word) return;
+    const wordIndex = Number(word.index);
+    if (!Number.isFinite(wordIndex)) return;
+    documentEl.querySelectorAll(".generate-v2-text-word.is-editing").forEach((editingSpan) => {
+      const editingIndex = Number(editingSpan.dataset.wordIndex);
+      const editingWord = words.find((candidate) => Number(candidate.index) === editingIndex);
+      resetWordSpan(editingSpan, editingWord || { text: editingSpan.dataset.originalText || "" });
+    });
+    const originalText = String(word.text || "");
+    const previousScrollTop = documentEl.scrollTop;
+    span.dataset.originalText = originalText;
+    span.classList.add("is-editing");
+    span.textContent = "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "generate-v2-text-word-edit";
+    input.value = originalText;
+    input.setAttribute("aria-label", "Edit transcript word");
+    span.appendChild(input);
+    window.getSelection?.()?.removeAllRanges?.();
+    input.focus();
+    input.select();
+    const cancel = () => {
+      resetWordSpan(span, word);
+      documentEl.scrollTop = previousScrollTop;
+      renderSearch(false);
+    };
+    const save = async () => {
+      const nextText = input.value.trim();
+      if (!nextText) {
+        cancel();
+        return;
+      }
+      if (nextText === originalText) {
+        cancel();
+        return;
+      }
+      input.disabled = true;
+      try {
+        const response = await fetch(editUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({ word_index: wordIndex, text: nextText }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || "Could not save word.");
+        }
+        word.text = String(payload.word_text || nextText);
+        resetWordSpan(span, word);
+        updateWordCacheScript();
+        documentEl.scrollTop = previousScrollTop;
+        renderSearch(false);
+        showTextToast("Saved");
+      } catch (error) {
+        word.text = originalText;
+        resetWordSpan(span, word);
+        documentEl.scrollTop = previousScrollTop;
+        renderSearch(false);
+        showTextToast(error?.message || "Could not save word.", true);
+      }
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void save();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("mousedown", (event) => event.stopPropagation());
+    input.addEventListener("touchstart", (event) => event.stopPropagation(), { passive: true });
+  };
   const showToolbarForSelection = () => {
     const selected = normalizeWordSelectionFromEditor(documentEl);
     if (!selected.length) {
@@ -11343,6 +11494,11 @@ window.initGenerateV2TextTranscript = () => {
         }
         span.dataset.wordIndex = String(word.index);
         span.textContent = `${word.text || ""} `;
+        span.addEventListener("dblclick", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          startWordEdit(span, word);
+        });
         p.appendChild(span);
         if (partIndex >= 0) {
           const part = state.parts[partIndex];
@@ -11396,8 +11552,8 @@ window.initGenerateV2TextTranscript = () => {
     createBtn.disabled = true;
     try {
       await window.__generateV2CreateClipFromTranscript?.({
-        startTime: formatSeconds(ranges[0].start),
-        endTime: formatSeconds(ranges[ranges.length - 1].end),
+        startTime: String(Number(ranges[0].start || 0).toFixed(3)),
+        endTime: String(Number(ranges[ranges.length - 1].end || 0).toFixed(3)),
         keepRanges: ranges,
       });
       state.parts = [];
