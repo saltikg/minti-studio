@@ -2900,6 +2900,30 @@
     background: rgba(250, 204, 21, 0.42);
     color: #fff7ad;
   }
+  .generate-v2-text-word.is-added {
+    background: rgba(45, 212, 191, 0.18);
+    color: #dffdf8;
+  }
+  .generate-v2-text-remove-part {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin: 0 4px 0 1px;
+    border: 1px solid rgba(45, 212, 191, 0.32);
+    border-radius: 999px;
+    background: rgba(8, 15, 26, 0.86);
+    color: #99f6e4;
+    font-size: 0.68rem;
+    line-height: 1;
+    vertical-align: text-top;
+  }
+  .generate-v2-text-remove-part:hover,
+  .generate-v2-text-remove-part:focus-visible {
+    background: rgba(45, 212, 191, 0.22);
+    color: #fff;
+  }
   .generate-v2-text-toolbar {
     position: fixed;
     z-index: 1080;
@@ -2920,6 +2944,40 @@
     font-size: 0.76rem;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .generate-v2-text-parts-bar {
+    display: none;
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 8px;
+    border: 1px solid rgba(45, 212, 191, 0.2);
+    border-radius: 12px;
+    background: rgba(2, 6, 23, 0.95);
+    box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.24);
+  }
+  .generate-v2-text-parts-bar.is-visible {
+    display: flex;
+  }
+  .generate-v2-text-parts-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: rgba(226, 232, 240, 0.82);
+    font-size: 0.78rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .generate-v2-text-parts-warning {
+    color: #fbbf24;
+    font-size: 0.74rem;
+    font-weight: 800;
     white-space: nowrap;
   }
   #clip-workbench-shell[data-generate-v2="1"] .trs-hint,
@@ -5748,6 +5806,13 @@
                 <div class="generate-v2-text-toolbar" id="generate-v2-text-toolbar" role="toolbar" aria-label="Text selection actions">
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview>▶ Preview</button>
                   <span class="generate-v2-text-toolbar-duration" data-generate-v2-text-duration>0:00</span>
+                  <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-add>+ Add</button>
+                </div>
+                <div class="generate-v2-text-parts-bar" data-generate-v2-text-parts-bar aria-live="polite">
+                  <span class="generate-v2-text-parts-summary" data-generate-v2-text-parts-summary></span>
+                  <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-all>▶ Preview all</button>
+                  <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-clear-parts>Clear</button>
+                  <span class="generate-v2-text-parts-warning d-none" data-generate-v2-text-parts-warning>5–90s required</span>
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-create>Create clip</button>
                 </div>
               </div>
@@ -8022,18 +8087,23 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (_) {}
     root.dataset.trsMounted = "1";
     const editUrl = "{{ editor_url('edit_segment_text', video_pk=video.id) }}";
-    const createTranscriptClip = async ({ startTime, endTime }) => {
+    const createTranscriptClip = async ({ startTime, endTime, keepRanges = [] }) => {
+      const body = new URLSearchParams({
+        start_time: startTime,
+        end_time: endTime,
+        title: "",
+      });
+      const normalizedKeepRanges = normalizeClipKeepRanges?.(keepRanges) || [];
+      if (normalizedKeepRanges.length > 1) {
+        body.set("keep_ranges", JSON.stringify(normalizedKeepRanges));
+      }
       const response = await fetch(root.dataset.addClipUrl || "", {
         method: "POST",
         credentials: "same-origin",
         headers: {
           "X-Requested-With": "XMLHttpRequest",
         },
-        body: new URLSearchParams({
-          start_time: startTime,
-          end_time: endTime,
-          title: "",
-        }),
+        body,
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
@@ -11105,8 +11175,14 @@ window.initGenerateV2TextTranscript = () => {
   const words = getGenerateV2TranscriptWords();
   const toolbar = document.getElementById("generate-v2-text-toolbar");
   const previewBtn = toolbar?.querySelector("[data-generate-v2-text-preview]");
-  const createBtn = toolbar?.querySelector("[data-generate-v2-text-create]");
+  const addBtn = toolbar?.querySelector("[data-generate-v2-text-add]");
   const durationEl = toolbar?.querySelector("[data-generate-v2-text-duration]");
+  const partsBar = shell.querySelector("[data-generate-v2-text-parts-bar]");
+  const partsSummary = shell.querySelector("[data-generate-v2-text-parts-summary]");
+  const previewAllBtn = shell.querySelector("[data-generate-v2-text-preview-all]");
+  const clearPartsBtn = shell.querySelector("[data-generate-v2-text-clear-parts]");
+  const createBtn = shell.querySelector("[data-generate-v2-text-create]");
+  const partsWarning = shell.querySelector("[data-generate-v2-text-parts-warning]");
   const searchInput = document.getElementById("trs-search-input");
   const clearSearchBtn = document.getElementById("trs-search-clear");
   const prevBtn = document.getElementById("trs-match-prev");
@@ -11114,6 +11190,8 @@ window.initGenerateV2TextTranscript = () => {
   const matchCount = document.getElementById("trs-match-count");
   const state = {
     selectedIndexes: [],
+    parts: [],
+    previewRunId: 0,
     matches: [],
     currentMatchIndex: -1,
     query: "",
@@ -11129,6 +11207,57 @@ window.initGenerateV2TextTranscript = () => {
     const start = Math.max(0, Number(words[first]?.start || 0) - 0.04);
     const end = Number(words[last]?.end || words[last]?.start || start) + 0.08;
     return { first, last, start, end, duration: Math.max(0, end - start) };
+  };
+  const normalizeTranscriptParts = (parts) => normalizeClipKeepRanges(parts);
+  const partsDuration = () => clipKeepRangesDuration(state.parts);
+  const updatePartsBar = () => {
+    const normalizedParts = normalizeTranscriptParts(state.parts);
+    state.parts = normalizedParts;
+    const total = partsDuration();
+    const valid = total >= 5 && total <= 90;
+    partsBar?.classList.toggle("is-visible", normalizedParts.length > 0);
+    if (partsSummary) {
+      partsSummary.textContent = `${normalizedParts.length} part${normalizedParts.length === 1 ? "" : "s"} · ${formatClipDurationLabel(total)}`;
+    }
+    partsWarning?.classList.toggle("d-none", !normalizedParts.length || valid);
+    if (createBtn) {
+      createBtn.disabled = !normalizedParts.length || !valid;
+      createBtn.title = valid ? "Create clip" : "Total duration must be 5-90 seconds.";
+    }
+    if (previewAllBtn) {
+      previewAllBtn.disabled = !normalizedParts.length || state.previewRunId < 0;
+    }
+    if (clearPartsBtn) {
+      clearPartsBtn.disabled = !normalizedParts.length;
+    }
+  };
+  const addPart = (range) => {
+    if (!range) return;
+    state.parts = normalizeTranscriptParts([...state.parts, { start: range.start, end: range.end }]);
+    window.getSelection?.()?.removeAllRanges?.();
+    hideToolbar();
+    render();
+  };
+  const removePartAt = (index) => {
+    state.parts = normalizeTranscriptParts(state.parts.filter((_, partIndex) => partIndex !== index));
+    render();
+  };
+  const previewPartsSequentially = async () => {
+    const parts = normalizeTranscriptParts(state.parts);
+    if (!parts.length || state.previewRunId < 0) return;
+    const runId = state.previewRunId + 1;
+    state.previewRunId = runId;
+    if (previewAllBtn) previewAllBtn.disabled = true;
+    for (const part of parts) {
+      if (state.previewRunId !== runId) break;
+      window.__trsClipSelectorController?.previewRange?.(part.start, part.end);
+      const delayMs = Math.max(250, Math.min(90000, (part.end - part.start) * 1000)) + 160;
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+    }
+    if (state.previewRunId === runId) {
+      state.previewRunId = runId + 1;
+    }
+    updatePartsBar();
   };
   const renderSearch = (scroll = false) => {
     const query = String(searchInput?.value || "").trim().toLowerCase();
@@ -11174,19 +11303,18 @@ window.initGenerateV2TextTranscript = () => {
     state.selectedIndexes = selected;
     const range = selectionRange();
     if (!range || !toolbar) return;
-    const valid = range.duration >= 5 && range.duration <= 90;
     if (durationEl) {
       durationEl.textContent = formatClipDurationLabel(range.duration);
     }
-    if (createBtn) {
-      createBtn.disabled = !valid;
-      createBtn.title = valid ? "Create clip" : "Selection must be 5-90 seconds.";
+    if (addBtn) {
+      addBtn.disabled = range.duration <= 0;
+      addBtn.title = "Add part";
     }
     const selection = window.getSelection?.();
     const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null;
     if (rect) {
       toolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - 260, rect.left))}px`;
-      toolbar.style.top = `${Math.max(8, rect.top - 46)}px`;
+      toolbar.style.top = `${Math.max(8, rect.top - 60)}px`;
     }
     toolbar.classList.add("is-visible");
   };
@@ -11207,13 +11335,38 @@ window.initGenerateV2TextTranscript = () => {
       paragraph.forEach((word) => {
         const span = document.createElement("span");
         span.className = "generate-v2-text-word";
+        const wordStart = Number(word.start || 0);
+        const wordEnd = Number(word.end || wordStart);
+        const partIndex = state.parts.findIndex((part) => wordOverlapsRange(word, part.start, part.end));
+        if (partIndex >= 0) {
+          span.classList.add("is-added");
+        }
         span.dataset.wordIndex = String(word.index);
         span.textContent = `${word.text || ""} `;
         p.appendChild(span);
+        if (partIndex >= 0) {
+          const part = state.parts[partIndex];
+          const nextWord = words[Number(word.index) + 1];
+          const isPartEnd = !nextWord || !wordOverlapsRange(nextWord, part.start, part.end);
+          if (isPartEnd) {
+            const removeBtn = document.createElement("button");
+            removeBtn.type = "button";
+            removeBtn.className = "generate-v2-text-remove-part";
+            removeBtn.textContent = "×";
+            removeBtn.setAttribute("aria-label", "Remove part");
+            removeBtn.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              removePartAt(partIndex);
+            });
+            p.appendChild(removeBtn);
+          }
+        }
       });
       fragment.appendChild(p);
     });
     documentEl.replaceChildren(fragment);
+    updatePartsBar();
     renderSearch(false);
   };
   documentEl.addEventListener("mouseup", showToolbarForSelection);
@@ -11224,15 +11377,31 @@ window.initGenerateV2TextTranscript = () => {
       window.__trsClipSelectorController?.previewRange?.(range.start, range.end);
     }
   });
-  createBtn?.addEventListener("click", async () => {
+  addBtn?.addEventListener("click", () => {
     const range = selectionRange();
-    if (!range || createBtn.disabled) return;
+    if (!range || addBtn.disabled) return;
+    addPart(range);
+  });
+  previewAllBtn?.addEventListener("click", () => {
+    void previewPartsSequentially();
+  });
+  clearPartsBtn?.addEventListener("click", () => {
+    state.parts = [];
+    state.previewRunId += 1;
+    render();
+  });
+  createBtn?.addEventListener("click", async () => {
+    const ranges = normalizeTranscriptParts(state.parts);
+    if (!ranges.length || createBtn.disabled) return;
     createBtn.disabled = true;
     try {
       await window.__generateV2CreateClipFromTranscript?.({
-        startTime: formatSeconds(range.start),
-        endTime: formatSeconds(range.end),
+        startTime: formatSeconds(ranges[0].start),
+        endTime: formatSeconds(ranges[ranges.length - 1].end),
+        keepRanges: ranges,
       });
+      state.parts = [];
+      render();
       hideToolbar();
     } catch (error) {
       alert(error?.message || "Could not create clip.");

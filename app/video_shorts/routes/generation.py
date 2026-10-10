@@ -21549,6 +21549,30 @@ def add_clip_section(video_pk):
     end_time_raw = (request.form.get("end_time") or "").strip()
     title = (request.form.get("title") or "").strip()
 
+    requested_keep_ranges: List[Dict[str, float]] = []
+    keep_ranges_raw = str(request.form.get("keep_ranges") or request.form.get("parts") or "").strip()
+    parsed_keep_ranges: Any = None
+    if keep_ranges_raw:
+        try:
+            parsed_keep_ranges = json.loads(keep_ranges_raw)
+        except Exception:
+            parsed_keep_ranges = None
+    if parsed_keep_ranges is None:
+        raw_parts = request.form.getlist("parts[]")
+        if raw_parts:
+            parsed_parts: List[Any] = []
+            for raw_part in raw_parts:
+                try:
+                    parsed_parts.append(json.loads(raw_part))
+                except Exception:
+                    parsed_parts.append(raw_part)
+            parsed_keep_ranges = parsed_parts
+    if isinstance(parsed_keep_ranges, list):
+        requested_keep_ranges = _normalize_edit_keep_ranges(parsed_keep_ranges)
+    if requested_keep_ranges:
+        start_time_raw = str(requested_keep_ranges[0]["start"])
+        end_time_raw = str(requested_keep_ranges[-1]["end"])
+
     if not start_time_raw or not end_time_raw:
         return _respond("Start and End are required.", status=400, category="warning")
 
@@ -21586,6 +21610,15 @@ def add_clip_section(video_pk):
             return _respond("Start time exceeds video duration.", status=400, category="warning")
         if end_time > duration:
             return _respond("End time exceeds video duration.", status=400, category="warning")
+        for part in requested_keep_ranges:
+            if part["start"] < 0 or part["end"] > duration:
+                return _respond("Selected parts exceed video duration.", status=400, category="warning")
+    if requested_keep_ranges:
+        total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
+        if total_keep_duration < 5.0:
+            return _respond("Clip must be at least 5 seconds.", status=400, category="warning")
+        if total_keep_duration > 90.0:
+            return _respond("Clip must be 90 seconds or shorter.", status=400, category="warning")
 
     plan_entries = _load_plan_entries(video_id) or []
 
@@ -21606,12 +21639,23 @@ def add_clip_section(video_pk):
         conn_transcript = get_db_readonly()
         _, segments = _fetch_transcript(conn_transcript, video_id)
         if segments:
-            transcript_full = build_transcript_for_range(
-                segments,
-                start_time,
-                end_time,
-                prefer_tr=True,
-            ) or ""
+            if len(requested_keep_ranges) > 1:
+                remapped_segments = _remap_transcript_segments_to_keep_ranges(
+                    segments,
+                    requested_keep_ranges,
+                )
+                transcript_full = " ".join(
+                    str(segment.get("text") or "").strip()
+                    for segment in remapped_segments
+                    if str(segment.get("text") or "").strip()
+                ).strip()
+            else:
+                transcript_full = build_transcript_for_range(
+                    segments,
+                    start_time,
+                    end_time,
+                    prefer_tr=True,
+                ) or ""
     except Exception as exc:
         current_app.logger.warning(
             "Failed to build transcript for manual clip %s [%.3f, %.3f]: %s",
@@ -21647,6 +21691,12 @@ def add_clip_section(video_pk):
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
     }
+    if len(requested_keep_ranges) > 1:
+        new_entry["edit_keep_ranges"] = requested_keep_ranges
+        new_entry["edit_cut_count"] = max(0, len(requested_keep_ranges) - 1)
+        total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges)
+        if total_keep_duration is not None:
+            new_entry["duration"] = round(total_keep_duration, 3)
     if inferred_language:
         new_entry["language"] = inferred_language
     plan_entries.insert(0, new_entry)
@@ -21680,6 +21730,7 @@ def add_clip_section(video_pk):
             "title": clip_title,
             "transcript_full": transcript_full,
             "excerpt": transcript_full,
+            "edit_keep_ranges": requested_keep_ranges if len(requested_keep_ranges) > 1 else [],
         },
     )
 
