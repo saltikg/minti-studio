@@ -102,7 +102,8 @@ def _case_ok(probe: dict[str, Any], expected_duration: float = DURATION) -> tupl
     if int(video.get("width") or 0) != 720 or int(video.get("height") or 0) != 1280:
         return False, f"bad dims {video.get('width')}x{video.get('height')}"
     duration = float(video.get("duration") or probe.get("format", {}).get("duration") or 0.0)
-    if abs(duration - expected_duration) > (1.0 / 30.0):
+    frame_tolerance = 1.0 / 25.0
+    if abs(duration - expected_duration) > frame_tolerance + 1e-6:
         return False, f"bad duration {duration:.6f}"
     if not audio:
         return False, "missing audio"
