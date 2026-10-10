@@ -152,6 +152,7 @@ def _trim_source_to_keep_ranges(
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
         cmd.extend(["-map", "[a]"])
+    cmd.extend(["-t", f"{total_duration:.6f}"])
     cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
     if has_audio:
         cmd.extend(["-c:a", "aac"])
