@@ -217,6 +217,38 @@ def main() -> int:
             rows.append(("split_long_karaoke_events", "PASS" if ok else "FAIL", detail))
         except Exception as exc:
             rows.append(("split_long_karaoke_events", "FAIL", str(exc).splitlines()[-1][:240]))
+        output = temp / "twelve_segments_long_karaoke_events.mp4"
+        try:
+            compositor._compose_trimmed_with_background(
+                background,
+                source,
+                0.0,
+                DURATION,
+                "Demo title",
+                "",
+                output,
+                title_engine="pillow",
+                subtitle_overlay_video_path=caption_overlay,
+                subtitle_overlay_events=_build_caption_events(DURATION, LONG_KARAOKE_EVENT_COUNT),
+                show_title=True,
+                show_subtitle=True,
+                crop_aspect="portrait",
+                subscribe_overlay_enabled=SUBSCRIBE_OVERLAY_PATH.exists(),
+                subscribe_overlay_path=SUBSCRIBE_OVERLAY_PATH,
+                crop_settings={
+                    "crop_x_ratio": 0.0,
+                    "crop_y_ratio": 0.0,
+                    "crop_w_ratio": 1.0,
+                    "crop_h_ratio": 1.0,
+                    "layout_segments": _build_segments(
+                        ["fill", "fit", "split", "fill", "fit", "split", "fill", "fit", "split", "fill", "fit", "split"]
+                    ),
+                },
+            )
+            ok, detail = _case_ok(_probe(ffprobe, output))
+            rows.append(("twelve_segments_long_karaoke_events", "PASS" if ok else "FAIL", detail))
+        except Exception as exc:
+            rows.append(("twelve_segments_long_karaoke_events", "FAIL", str(exc).splitlines()[-1][:240]))
     print("case,status,detail")
     for name, status, detail in rows:
         print(f"{name},{status},{detail}")
