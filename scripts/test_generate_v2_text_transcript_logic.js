@@ -15,7 +15,7 @@ const groupParagraphs = (words, pauseSeconds = 1.2, targetWords = 60) => {
     current.push(word);
     const next = words[index + 1];
     const pause = next ? (Number(next.start || 0) - Number(word.end || word.start || 0)) : 0;
-    const sentenceEnded = /[.!?…]$/.test(String(word.text || "").trim());
+    const sentenceEnded = /[.!?\u2026]$/.test(String(word.text || "").trim());
     if (pause >= pauseSeconds || (current.length >= targetWords && sentenceEnded)) {
       push();
     }
