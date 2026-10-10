@@ -10278,26 +10278,34 @@ const normalizeWordSelection = (form) => {
   const editor = form.querySelector("[data-clip-text-trim-editor]");
   if (!editor) return [];
   const range = selection.getRangeAt(0);
-  return Array.from(editor.querySelectorAll("[data-word-index]"))
+  const selected = new Set();
+  const addClosestWord = (node) => {
+    const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const word = element?.closest?.("[data-word-index]");
+    if (word && editor.contains(word)) {
+      const index = Number(word.dataset.wordIndex);
+      if (Number.isFinite(index) && String(word.textContent || "").trim()) {
+        selected.add(index);
+      }
+    }
+  };
+  addClosestWord(selection.anchorNode);
+  addClosestWord(selection.focusNode);
+  Array.from(editor.querySelectorAll("[data-word-index]"))
     .filter((node) => {
       try {
-        const nodeRange = document.createRange();
-        nodeRange.selectNodeContents(node);
-        const startsBeforeNodeEnd = range.compareBoundaryPoints(Range.START_TO_END, nodeRange) < 0;
-        const endsAfterNodeStart = range.compareBoundaryPoints(Range.END_TO_START, nodeRange) > 0;
-        nodeRange.detach?.();
-        return startsBeforeNodeEnd && endsAfterNodeStart && String(node.textContent || "").trim();
+        return range.intersectsNode(node) && String(node.textContent || "").trim();
       } catch (_) {
-        try {
-          return range.intersectsNode(node) && String(node.textContent || "").trim();
-        } catch (__) {
-          return false;
-        }
+        return false;
       }
     })
-    .map((node) => Number(node.dataset.wordIndex))
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
+    .forEach((node) => {
+      const index = Number(node.dataset.wordIndex);
+      if (Number.isFinite(index)) {
+        selected.add(index);
+      }
+    });
+  return Array.from(selected).sort((a, b) => a - b);
 };
 
 const selectionToClipKeepRanges = (words, currentRanges, selectedIndexes, action) => {
