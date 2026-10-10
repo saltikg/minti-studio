@@ -2892,10 +2892,6 @@
     border-radius: 4px;
     padding: 1px 0;
   }
-  .generate-v2-text-word.is-in-existing-clip {
-    background: rgba(45, 212, 191, 0.13);
-    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.08);
-  }
   .generate-v2-text-word.is-search-match {
     background: rgba(250, 204, 21, 0.24);
     color: #fef9c3;
@@ -11094,14 +11090,6 @@ const groupGenerateV2TranscriptParagraphs = (words, pauseSeconds = 1.2, targetWo
   return groups;
 };
 
-const getGenerateV2ExistingClipRanges = () => Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"))
-  .map((item) => ({
-    planIndex: String(item.dataset.planIndex || "").trim(),
-    start: Number(item.dataset.start || 0),
-    end: Number(item.dataset.end || 0),
-  }))
-  .filter((range) => range.planIndex && Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start);
-
 window.initGenerateV2TextTranscript = () => {
   const root = getGenerateV2Root();
   const shell = document.querySelector("[data-generate-v2-text-transcript]");
@@ -11204,7 +11192,6 @@ window.initGenerateV2TextTranscript = () => {
   };
   const render = () => {
     const fragment = document.createDocumentFragment();
-    const existing = getGenerateV2ExistingClipRanges();
     groupGenerateV2TranscriptParagraphs(words).forEach((paragraph) => {
       if (!paragraph.length) return;
       const p = document.createElement("p");
@@ -11220,22 +11207,8 @@ window.initGenerateV2TextTranscript = () => {
       paragraph.forEach((word) => {
         const span = document.createElement("span");
         span.className = "generate-v2-text-word";
-        const wordStart = Number(word.start || 0);
-        const wordEnd = Number(word.end || wordStart);
-        const existingClip = existing.find((clip) => wordEnd > clip.start && wordStart < clip.end);
-        if (existingClip) {
-          span.classList.add("is-in-existing-clip");
-          span.dataset.existingPlanIndex = existingClip.planIndex;
-          span.title = "Already used in a clip";
-        }
         span.dataset.wordIndex = String(word.index);
         span.textContent = `${word.text || ""} `;
-        span.addEventListener("click", (event) => {
-          const planIndex = span.dataset.existingPlanIndex || "";
-          if (!planIndex || window.getSelection?.()?.toString?.().trim()) return;
-          event.preventDefault();
-          window.setGenerateV2ActiveTab?.("shorts", { selectedPlanIndex: planIndex });
-        });
         p.appendChild(span);
       });
       fragment.appendChild(p);
