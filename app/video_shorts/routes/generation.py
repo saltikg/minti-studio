@@ -3195,9 +3195,21 @@ def _ensure_preview_face_track(
             smooth_path.name,
         )
         return track_path if track_path.exists() else smooth_path
-    timestamps = _face_track_candidate_timestamps(start_seconds, end_seconds, duration_seconds)
-    if not timestamps:
+    start_val = _to_float(start_seconds)
+    end_val = _to_float(end_seconds)
+    duration_val = _to_float(duration_seconds)
+    if start_val is None:
+        start_val = 0.0
+    start_val = max(0.0, start_val)
+    if end_val is None or end_val <= start_val:
+        end_val = duration_val if duration_val is not None and duration_val > start_val else start_val
+    if duration_val is not None and duration_val > 0:
+        end_val = min(end_val, max(0.0, duration_val - 0.1))
+    clip_duration = max(0.0, end_val - start_val)
+    if clip_duration <= 0:
         return None
+    sample_sec = max(0.1, float(FACE_AWARE_SAMPLE_SEC or 0.5))
+    fps = 1.0 / sample_sec
     ffmpeg_bin = _resolve_ffmpeg()
     rows: list[dict[str, Any]] = []
     try:
@@ -3205,23 +3217,47 @@ def _ensure_preview_face_track(
 
         with tempfile.TemporaryDirectory(prefix=f"track_{video_id}_") as temp_dir:
             temp_dir_path = Path(temp_dir)
-            for index, timestamp in enumerate(timestamps):
-                candidate_path = temp_dir_path / f"{video_id}_track_{index}.jpg"
-                cmd = [
-                    ffmpeg_bin,
-                    "-y",
-                    "-ss",
-                    str(timestamp),
-                    "-i",
-                    str(source_path),
-                    "-frames:v",
-                    "1",
-                    "-vf",
-                    "scale=720:-1",
-                    "-q:v",
-                    "2",
-                    str(candidate_path),
-                ]
+            frame_pattern = temp_dir_path / f"{video_id}_track_%06d.jpg"
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-ss",
+                f"{start_val:.6f}",
+                "-t",
+                f"{clip_duration:.6f}",
+                "-i",
+                str(source_path),
+                "-vf",
+                f"fps={fps:.6f},scale=720:-1",
+                "-q:v",
+                "2",
+                str(frame_pattern),
+            ]
+            extract_started = time.monotonic()
+            extract_result = run_media_subprocess(
+                cmd,
+                operation="generate_preview_face_track",
+                context=f"video_id={video_id} start={start_val:.3f} end={end_val:.3f}",
+                check=True,
+                timeout=scale_media_timeout(
+                    FFMPEG_SHORT_TIMEOUT,
+                    duration_seconds=clip_duration,
+                    multiplier=0.6,
+                    extra_seconds=20,
+                ),
+                capture_output=True,
+                text=True,
+            )
+            frame_paths = sorted(temp_dir_path.glob(f"{video_id}_track_*.jpg"))
+            current_app.logger.info(
+                "Preview face track extraction completed video_id=%s samples=%s elapsed_ms=%s stderr_tail=%s",
+                video_id,
+                len(frame_paths),
+                int((time.monotonic() - extract_started) * 1000),
+                (extract_result.stderr or "")[-240:].replace("\n", " "),
+            )
+            for index, candidate_path in enumerate(frame_paths):
+                timestamp = round(min(end_val, start_val + (index * sample_sec)), 3)
                 row: dict[str, Any] = {
                     "t": timestamp,
                     "cx_ratio": None,
@@ -3230,14 +3266,6 @@ def _ensure_preview_face_track(
                     "h_ratio": None,
                     "found": False,
                 }
-                run_media_subprocess(
-                    cmd,
-                    operation="generate_preview_face_track",
-                    context=f"video_id={video_id} candidate={index} ts={timestamp} output={candidate_path.name}",
-                    output_paths=[candidate_path],
-                    check=True,
-                    timeout=FFMPEG_SHORT_TIMEOUT,
-                )
                 image = cv2.imread(str(candidate_path))
                 if image is not None:
                     frame_height, frame_width = image.shape[:2]

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import secrets
 import shutil
@@ -78,6 +79,17 @@ def _ffmpeg_escape(text: str) -> str:
         .replace("'", "\\'")
         .replace("\"", "\\\"")
     )
+
+
+def _ffmpeg_final_speed(stderr: str | None) -> str:
+    matches = re.findall(r"speed=\s*([^\s]+)", stderr or "")
+    return matches[-1] if matches else "unknown"
+
+
+def _format_loadavg(loadavg: tuple[float, float, float] | None) -> str:
+    if not loadavg:
+        return "unknown"
+    return ",".join(f"{value:.2f}" for value in loadavg)
 
 
 def _ffmpeg_filter_expr(expr: str) -> str:
@@ -2167,6 +2179,8 @@ def _compose_trimmed_with_background(
         trim_cmd = [
             resolved_ffmpeg,
             "-y",
+            "-stats_period",
+            "1",
             "-ss",
             str(start),
             "-i",
@@ -2192,6 +2206,8 @@ def _compose_trimmed_with_background(
         trim_cmd = [
             resolved_ffmpeg,
             "-y",
+            "-stats_period",
+            "1",
             "-loop",
             "1",
             "-i",
@@ -2239,6 +2255,7 @@ def _compose_trimmed_with_background(
         )
         current_app.logger.debug("Trim ffmpeg command: %s", " ".join(trim_cmd))
         try:
+            trim_load_start = os.getloadavg() if hasattr(os, "getloadavg") else None
             trim_started = time.monotonic()
             trim_result = run_media_subprocess(
                 trim_cmd,
@@ -2256,11 +2273,15 @@ def _compose_trimmed_with_background(
                 text=True,
             )
             trim_elapsed_ms = int((time.monotonic() - trim_started) * 1000)
+            trim_load_end = os.getloadavg() if hasattr(os, "getloadavg") else None
             current_app.logger.info(
-                "Trim pass completed output=%s duration=%.3f elapsed_ms=%s",
+                "Trim pass completed output=%s duration=%.3f elapsed_ms=%s ffmpeg_speed=%s load_start=%s load_end=%s",
                 trimmed.name,
                 duration,
                 trim_elapsed_ms,
+                _ffmpeg_final_speed(trim_result.stderr),
+                _format_loadavg(trim_load_start),
+                _format_loadavg(trim_load_end),
             )
             current_app.logger.debug("Trim stdout: %s", trim_result.stdout)
             current_app.logger.debug("Trim stderr: %s", trim_result.stderr)
@@ -3358,6 +3379,8 @@ def _compose_trimmed_with_background(
     cmd = [
         resolved_ffmpeg,
         "-y",
+        "-stats_period",
+        "1",
         "-loop",
         "1",
         "-i",
@@ -3417,6 +3440,8 @@ def _compose_trimmed_with_background(
         cmd = [
             resolved_ffmpeg,
             "-y",
+            "-stats_period",
+            "1",
             "-loop",
             "1",
             "-i",
@@ -3473,6 +3498,7 @@ def _compose_trimmed_with_background(
     current_app.logger.info("Compose ffmpeg command: %s", " ".join(cmd))
     current_app.logger.debug("Compose ffmpeg command (debug): %s", " ".join(cmd))
     try:
+        compose_load_start = os.getloadavg() if hasattr(os, "getloadavg") else None
         compose_started = time.monotonic()
         result = run_media_subprocess(
             cmd,
@@ -3490,11 +3516,15 @@ def _compose_trimmed_with_background(
             text=True,
         )
         compose_elapsed_ms = int((time.monotonic() - compose_started) * 1000)
+        compose_load_end = os.getloadavg() if hasattr(os, "getloadavg") else None
         current_app.logger.info(
-            "Compose pass completed output=%s duration=%.3f elapsed_ms=%s",
+            "Compose pass completed output=%s duration=%.3f elapsed_ms=%s ffmpeg_speed=%s load_start=%s load_end=%s",
             temp_out_path.name,
             duration,
             compose_elapsed_ms,
+            _ffmpeg_final_speed(result.stderr),
+            _format_loadavg(compose_load_start),
+            _format_loadavg(compose_load_end),
         )
         current_app.logger.debug("Compose stdout: %s", result.stdout)
         current_app.logger.debug("Compose stderr: %s", result.stderr)
