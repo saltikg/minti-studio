@@ -2306,6 +2306,66 @@
 	    );
 	    position: relative;
 	  }
+	  .clip-rail-kind-badge.is-ai.is-rendered {
+	    border-color: rgba(74, 222, 128, 0.46);
+	    background: rgba(20, 83, 45, 0.44);
+	    color: #bbf7d0;
+	  }
+	  .clip-rail-edit-form {
+	    display: none;
+	    grid-column: 1 / -1;
+	    gap: 10px;
+	    padding: 10px 12px 12px;
+	    border-top: 1px solid rgba(255, 255, 255, 0.08);
+	    background: rgba(8, 13, 21, 0.72);
+	  }
+	  .clip-rail-row.is-editing .clip-rail-edit-form {
+	    display: grid;
+	  }
+	  .clip-rail-edit-grid {
+	    display: grid;
+	    grid-template-columns: minmax(150px, 1fr) repeat(2, minmax(92px, 120px));
+	    gap: 8px;
+	  }
+	  .clip-rail-edit-field label {
+	    display: block;
+	    margin-bottom: 4px;
+	    color: rgba(226, 232, 240, 0.62);
+	    font-size: 0.72rem;
+	    font-weight: 700;
+	    text-transform: uppercase;
+	  }
+	  .clip-rail-edit-field input {
+	    width: 100%;
+	    min-height: 34px;
+	    border: 1px solid rgba(148, 163, 184, 0.24);
+	    border-radius: 8px;
+	    background: rgba(15, 23, 42, 0.86);
+	    color: #f8fafc;
+	    padding: 6px 8px;
+	    font-size: 0.84rem;
+	  }
+	  .clip-rail-time-nudges,
+	  .clip-rail-edit-actions {
+	    display: flex;
+	    flex-wrap: wrap;
+	    gap: 6px;
+	  }
+	  .clip-rail-time-nudges button,
+	  .clip-rail-edit-actions button {
+	    min-height: 30px;
+	    border-radius: 8px;
+	    font-size: 0.78rem;
+	  }
+	  .clip-rail-edit-error {
+	    color: #fca5a5;
+	    font-size: 0.8rem;
+	  }
+	  @media (max-width: 780px) {
+	    .clip-rail-edit-grid {
+	      grid-template-columns: 1fr;
+	    }
+	  }
   .generate-v2-media-column > video,
   .generate-v2-media-column > .clip-card-placeholder {
     min-width: 0;
@@ -5191,7 +5251,7 @@
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -5282,7 +5342,7 @@
                       {% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
                         <span class="clip-rail-state-chip">
                           <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                          Regenerating...
+                          {% if row.status == 'created' %}Updating...{% else %}Rendering...{% endif %}
                         </span>
                       {% endif %}
                       {% if not generate_v2 %}
@@ -5337,8 +5397,8 @@
                       {% endif %}
                     </span>
                     {% if generate_v2 %}
-                      {% if row.is_ai_suggestion %}
-                        <span class="clip-rail-kind-badge is-ai" data-bs-toggle="tooltip" data-bs-placement="top" title="AI score — how likely this moment works as a Short">
+                      {% if row.is_ai_clip %}
+                        <span class="clip-rail-kind-badge is-ai{% if row.status == 'created' %} is-rendered{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="AI score — how likely this moment works as a Short">
                           <span>{{ rail_score if rail_score is not none else '—' }}</span>
                         </span>
                       {% else %}
@@ -5361,6 +5421,14 @@
                       ⋯
                     </button>
                     <div class="dropdown-menu dropdown-menu-end clip-rail-delete-menu">
+                      <button
+                        type="button"
+                        class="dropdown-item"
+                        data-edit-title-time-btn
+                        data-plan-index="{{ row.plan_index }}"
+                        {% if row.regenerate_locked %}disabled title="{{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}"{% endif %}>
+                        {% if row.regenerate_locked %}Edit disabled — {{ row.regenerate_lock_reason or 'scheduled/published' }}{% else %}Edit title &amp; time{% endif %}
+                      </button>
                       {% if row.status == "created" and row.video_filename %}
                         <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
                           <input type="hidden" name="filename" value="{{ row.video_filename }}">
@@ -5396,6 +5464,37 @@
                     {% if rail_delete_locked %}disabled{% endif %}>
                     <i class="bi bi-trash3" aria-hidden="true"></i>
                   </button>
+                  {% endif %}
+                  {% if generate_v2 %}
+                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                    <div class="clip-rail-edit-grid">
+                      <div class="clip-rail-edit-field">
+                        <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
+                        <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off">
+                      </div>
+                      <div class="clip-rail-edit-field">
+                        <label for="clip-edit-start-{{ row.plan_index }}">Start</label>
+                        <input id="clip-edit-start-{{ row.plan_index }}" name="start" type="text" value="{{ row.start_label or clip_start_label }}" inputmode="decimal">
+                        <div class="clip-rail-time-nudges mt-1">
+                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="start" data-delta="-0.5">-0.5s</button>
+                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="start" data-delta="0.5">+0.5s</button>
+                        </div>
+                      </div>
+                      <div class="clip-rail-edit-field">
+                        <label for="clip-edit-end-{{ row.plan_index }}">End</label>
+                        <input id="clip-edit-end-{{ row.plan_index }}" name="end" type="text" value="{{ row.end_label or clip_end_label }}" inputmode="decimal">
+                        <div class="clip-rail-time-nudges mt-1">
+                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="end" data-delta="-0.5">-0.5s</button>
+                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="end" data-delta="0.5">+0.5s</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="clip-rail-edit-error d-none" data-edit-title-time-error></div>
+                    <div class="clip-rail-edit-actions">
+                      <button type="button" class="btn btn-outline-light btn-sm" data-edit-title-time-cancel>Cancel</button>
+                      <button type="submit" class="btn btn-primary btn-sm">Save &amp; regenerate</button>
+                    </div>
+                  </form>
                   {% endif %}
                   </div>
                 {% else %}
@@ -9840,9 +9939,10 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       });
     });
   });
-	  initGenerateV2LazyThumbnails(root);
-	  initGenerateV2AutoSuggestRefresh();
-	  if (window.__generateV2EditModeActive) {
+  initGenerateV2LazyThumbnails(root);
+  initGenerateV2AutoSuggestRefresh();
+  initGenerateV2ClipTitleTimeEditors();
+  if (window.__generateV2EditModeActive) {
     initGenerateV2RegenerateControls();
     return true;
   }
@@ -9875,6 +9975,129 @@ const initGenerateV2AutoSuggestRefresh = () => {
     }
     await refreshClipList(null, "list");
   }, 5000);
+};
+
+const parseClipEditTime = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return NaN;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+  const parts = raw.split(":").map((part) => part.trim());
+  if (parts.length === 2) {
+    return (Number(parts[0]) * 60) + Number(parts[1]);
+  }
+  if (parts.length === 3) {
+    return (Number(parts[0]) * 3600) + (Number(parts[1]) * 60) + Number(parts[2]);
+  }
+  return NaN;
+};
+
+const formatClipEditTime = (seconds) => {
+  const total = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(total / 60);
+  const secs = total - (minutes * 60);
+  return `${minutes}:${secs.toFixed(1).padStart(4, "0")}`;
+};
+
+const setClipEditError = (form, message = "") => {
+  const error = form?.querySelector("[data-edit-title-time-error]");
+  if (!error) return;
+  error.textContent = message;
+  error.classList.toggle("d-none", !message);
+};
+
+const closeClipEditForm = (row) => {
+  row?.classList.remove("is-editing");
+  const form = row?.querySelector("[data-edit-title-time-form]");
+  if (form) {
+    setClipEditError(form, "");
+  }
+};
+
+const initGenerateV2ClipTitleTimeEditors = () => {
+  const root = getGenerateV2Root();
+  if (!root) return;
+  document.querySelectorAll("[data-edit-title-time-btn]").forEach((button) => {
+    if (button.dataset.editBound === "1") return;
+    button.dataset.editBound = "1";
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      const row = button.closest(".clip-rail-row");
+      document.querySelectorAll(".clip-rail-row.is-editing").forEach((other) => {
+        if (other !== row) closeClipEditForm(other);
+      });
+      row?.classList.add("is-editing");
+      row?.querySelector("input[name='title']")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-edit-title-time-form]").forEach((form) => {
+    if (form.dataset.editFormBound === "1") return;
+    form.dataset.editFormBound = "1";
+    form.querySelectorAll("[data-time-nudge]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const fieldName = button.dataset.timeNudge || "";
+        const input = form.querySelector(`input[name='${fieldName}']`);
+        const current = parseClipEditTime(input?.value || "");
+        const delta = Number(button.dataset.delta || 0);
+        if (!input || !Number.isFinite(current)) return;
+        input.value = formatClipEditTime(current + delta);
+      });
+    });
+    form.querySelector("[data-edit-title-time-cancel]")?.addEventListener("click", () => {
+      closeClipEditForm(form.closest(".clip-rail-row"));
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const row = form.closest(".clip-rail-row");
+      const railItem = row?.querySelector(".clip-rail-item");
+      const editUrl = form.dataset.editUrl || railItem?.dataset.editUrl || "";
+      const planIndex = String(form.dataset.planIndex || railItem?.dataset.planIndex || "").trim();
+      if (!editUrl || !planIndex) return;
+      const submit = form.querySelector("button[type='submit']");
+      const body = new URLSearchParams(new FormData(form));
+      setClipEditError(form, "");
+      if (submit) {
+        submit.disabled = true;
+        submit.textContent = "Saving...";
+      }
+      try {
+        const response = await fetch(editUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          setClipEditError(form, payload.message || "Could not save this clip.");
+          return;
+        }
+        closeClipEditForm(row);
+        if (payload.job_id) {
+          const card = getClipCardByPlanIndex(planIndex);
+          if (card) {
+            renderClipJobProgressState(card, payload.status || "queued", payload.queue_position, { mode: "regenerate" });
+          }
+          void pollClipJobUntilDone(planIndex, payload.job_id, {
+            initialStatus: payload.status || "queued",
+            queuePosition: payload.queue_position,
+            mode: "regenerate",
+          });
+        } else {
+          await refreshClipList(planIndex, "list");
+        }
+      } catch (error) {
+        setClipEditError(form, "Could not save this clip.");
+      } finally {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = "Save & regenerate";
+        }
+      }
+    });
+  });
 };
 
 window.addEventListener("resize", syncGenerateV2WorkbenchHeight);
@@ -10935,7 +11158,7 @@ const setRegenerateFeedback = (planIndex, message, busy = false) => {
     }
     const label = button.querySelector("span:not(.spinner-border)");
     if (label) {
-      label.textContent = busy ? "Regenerating…" : "Regenerate";
+      label.textContent = busy ? "Updating…" : "Regenerate";
     }
   }
   setGenerateV2RenderOverlay(planIndex, { active: busy, failed: false });
@@ -10950,7 +11173,7 @@ const enqueueRegenerateClip = async (card, options = {}) => {
   if (!planIndex || !regenerateUrl) {
     return false;
   }
-  setRegenerateFeedback(planIndex, "Regenerating...", true);
+  setRegenerateFeedback(planIndex, "Updating...", true);
   const response = await fetch(regenerateUrl, {
     method: "POST",
     credentials: "same-origin",

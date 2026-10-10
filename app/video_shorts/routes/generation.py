@@ -5141,6 +5141,158 @@ def _clip_plan_existing_ranges_for_ai_suggestions(plan_entries: List[Dict[str, A
     return ranges
 
 
+def _word_text_has_sentence_end(text: Any) -> bool:
+    return bool(re.search(r"[.!?。！？]\s*$", str(text or "").strip()))
+
+
+def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    words: List[Dict[str, Any]] = []
+    for segment in segments or []:
+        segment_start = _to_float(segment.get("start")) or 0.0
+        for word in segment.get("words") or []:
+            if not isinstance(word, dict):
+                continue
+            start = _to_float(word.get("start"))
+            end = _to_float(word.get("end"))
+            if start is None:
+                continue
+            if end is None:
+                end = start
+            # Some transcript providers store word offsets relative to the segment.
+            if start < segment_start - 0.25 and segment_start > 0:
+                start += segment_start
+                end += segment_start
+            words.append({"start": float(start), "end": float(end), "text": str(word.get("word") or word.get("text") or "")})
+    return sorted(words, key=lambda item: (item["start"], item["end"]))
+
+
+def _sentence_boundaries_from_words(words: List[Dict[str, Any]]) -> Tuple[List[float], List[float]]:
+    if not words:
+        return [], []
+    starts = [float(words[0]["start"])]
+    ends: List[float] = []
+    for idx, word in enumerate(words):
+        end = float(word.get("end") or word.get("start") or 0.0)
+        next_word = words[idx + 1] if idx + 1 < len(words) else None
+        pause = (float(next_word["start"]) - end) if next_word else 0.0
+        boundary = _word_text_has_sentence_end(word.get("text")) or pause >= 0.6 or next_word is None
+        if boundary:
+            ends.append(end)
+            if next_word:
+                starts.append(float(next_word["start"]))
+    return starts, ends
+
+
+def _nearest_time_in_window(target: float, candidates: List[float], *, before: float, after: float) -> Optional[float]:
+    lower = target - before
+    upper = target + after
+    valid = [candidate for candidate in candidates if lower <= float(candidate) <= upper]
+    if not valid:
+        return None
+    return min(valid, key=lambda candidate: (abs(float(candidate) - target), float(candidate)))
+
+
+def snap_clip_entry_to_sentence_boundaries(
+    entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    *,
+    video_id: str = "",
+) -> Dict[str, Any]:
+    """Snap an AI suggestion to nearby sentence starts/ends using word timestamps."""
+    start = _to_float((entry or {}).get("start"))
+    end = _to_float((entry or {}).get("end"))
+    if start is None or end is None or end <= start:
+        return {"changed": False, "start": start, "end": end, "reason": "invalid_range"}
+    words = _flatten_transcript_words_for_snapping(segments)
+    sentence_starts, sentence_ends = _sentence_boundaries_from_words(words)
+    snapped_start = _nearest_time_in_window(start, sentence_starts, before=2.0, after=2.0)
+    snapped_end = _nearest_time_in_window(end, sentence_ends, before=2.0, after=3.0)
+    new_start = float(snapped_start) if snapped_start is not None else start
+    new_end = float(snapped_end) if snapped_end is not None else end
+    if new_end <= new_start:
+        return {"changed": False, "start": start, "end": end, "reason": "snapped_invalid"}
+    changed = abs(new_start - start) > 0.001 or abs(new_end - end) > 0.001
+    if changed:
+        entry["start"] = round(new_start, 3)
+        entry["end"] = round(new_end, 3)
+        entry["sentence_snap"] = {
+            "original_start": round(start, 3),
+            "original_end": round(end, 3),
+            "start": round(new_start, 3),
+            "end": round(new_end, 3),
+        }
+        current_app.logger.info(
+            "clip_plan_sentence_snap video_id=%s plan_index=%s start=%.3f->%.3f end=%.3f->%.3f",
+            video_id,
+            entry.get("plan_index"),
+            start,
+            new_start,
+            end,
+            new_end,
+        )
+    return {"changed": changed, "start": new_start, "end": new_end}
+
+
+def validate_clip_title_time_edit(
+    *,
+    title: Any,
+    start: Any,
+    end: Any,
+    video_duration: Any = None,
+    min_duration: float = 5.0,
+    max_duration: float = 90.0,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    clean_title = str(title or "").strip()
+    start_seconds = _parse_time_input(start)
+    end_seconds = _parse_time_input(end)
+    if not clean_title:
+        return False, "Title is required.", {}
+    if start_seconds is None:
+        return False, "Start time is invalid.", {}
+    if end_seconds is None:
+        return False, "End time is invalid.", {}
+    if start_seconds < 0:
+        return False, "Start time cannot be negative.", {}
+    if end_seconds <= start_seconds:
+        return False, "End time must be greater than start time.", {}
+    duration = end_seconds - start_seconds
+    if duration < min_duration:
+        return False, "Clip must be at least 5 seconds.", {}
+    if duration > max_duration:
+        return False, "Clip must be 90 seconds or shorter.", {}
+    video_duration_seconds = _to_float(video_duration)
+    if video_duration_seconds is not None and end_seconds > video_duration_seconds:
+        return False, "End time exceeds video duration.", {}
+    return True, "", {"title": clean_title, "start": round(start_seconds, 3), "end": round(end_seconds, 3), "duration": round(duration, 3)}
+
+
+def clip_entry_publish_lock_reason(entry: Dict[str, Any], generated_row: Optional[Any] = None, social_statuses: Optional[set[str]] = None) -> str:
+    publish_statuses = {
+        str((entry or {}).get("publish_status") or "").strip().lower(),
+    }
+    platform_ids: List[Any] = []
+    if generated_row:
+        try:
+            publish_statuses.add(str(generated_row[1] or "").strip().lower())
+            platform_ids = list(generated_row[2:6])
+        except Exception:
+            pass
+    if "published" in publish_statuses or any(str(value or "").strip() for value in platform_ids):
+        return "Already published."
+    if publish_statuses.intersection({"scheduled", "uploaded", "queued"}):
+        return "Unschedule first."
+    active_social = {
+        str(status or "").strip().lower()
+        for status in (social_statuses or set())
+        if str(status or "").strip().lower() not in {"", "canceled", "cancelled", "failed"}
+    }
+    if "published" in active_social:
+        return "Already published."
+    if active_social.intersection({"pending", "retry", "uploading", "queued", "scheduled"}):
+        return "Unschedule first."
+    return ""
+
+
 def _choose_plan_index(preferred: Optional[int], used: set[int], next_candidate: int) -> Tuple[int, int]:
     if preferred is not None and preferred > 0 and preferred not in used:
         used.add(preferred)
@@ -5164,7 +5316,7 @@ def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> Li
             continue
         item = dict(entry)
         origin = str(item.get("origin") or "").strip().lower()
-        origin = origin if origin in {"manual", "ai"} else "manual"
+        origin = origin if origin in {"manual", "ai", "auto"} else "manual"
         item["origin"] = origin
         stable_identity = _plan_entry_has_stable_identity(item)
         if stable_identity:
@@ -5265,6 +5417,14 @@ def _coerce_plan_score(entry: Dict[str, Any]) -> Optional[float]:
     if not math.isfinite(score):
         return None
     return score
+
+
+def _is_ai_origin(origin: Any) -> bool:
+    return str(origin or "").strip().lower() in {"ai", "auto"}
+
+
+def _is_ai_plan_entry(entry: Dict[str, Any]) -> bool:
+    return _is_ai_origin((entry or {}).get("origin"))
 
 
 def _select_lead_generation_entries(entries: List[Dict[str, Any]], *, min_score: float = 85.0, limit: int = 5) -> List[Dict[str, Any]]:
@@ -5690,7 +5850,7 @@ def _select_auto_render_entries(
     for position, entry in enumerate(entries or []):
         if not isinstance(entry, dict):
             continue
-        if str(entry.get("origin") or "").strip().lower() != "ai":
+        if not _is_ai_plan_entry(entry):
             continue
         status = str(entry.get("status") or "").strip().lower()
         if status in {"created", "done", "queued", "processing", "rendering"}:
@@ -10234,6 +10394,7 @@ def generate_short(video_pk):
             continue
         origin = str(entry.get("origin") or "manual").strip().lower() or "manual"
         is_ai_suggestion = _is_removable_ai_suggestion(entry)
+        is_ai_clip = _is_ai_plan_entry(entry)
         start = entry.get("start")
         end = entry.get("end")
         try:
@@ -10498,6 +10659,7 @@ def generate_short(video_pk):
             "plan_index": pi,
             "origin": origin,
             "is_ai_suggestion": is_ai_suggestion,
+            "is_ai_clip": is_ai_clip,
             "score": entry.get("score"),
             "score_breakdown": entry.get("score_breakdown"),
             "generated_video_id": generated_record.get("id"),
@@ -21341,6 +21503,140 @@ def adjust_clip_timing(video_pk):
     )
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/edit-title-time", methods=["POST"])
+def edit_clip_title_time(video_pk: int, plan_index: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Authentication required."), 401
+    current_brand = getattr(g, "vs_current_brand", None)
+    row = None
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row(conn, video_pk, "video_id, duration_seconds")
+    finally:
+        conn.close()
+    if not row:
+        return jsonify(success=False, message="Video not found."), 404
+    video_id, duration_seconds = row
+    plan_entries = _load_plan_entries(video_id) or []
+    plan_entry = None
+    for entry in plan_entries:
+        try:
+            if int(entry.get("plan_index") or 0) == int(plan_index):
+                plan_entry = entry
+                break
+        except Exception:
+            continue
+    if not plan_entry:
+        return jsonify(success=False, message="Selected clip was not found."), 404
+
+    clip_filename = str(plan_entry.get("clip_filename") or plan_entry.get("output_filename") or "").strip()
+    clip_exists = bool(clip_filename and _short_exists(clip_filename))
+    editor_context = _active_editor_context()
+    brand_id = editor_context["brand_id"]
+    generated_row = None
+    if clip_filename:
+        conn_generated = get_db_readonly()
+        try:
+            generated_columns = table_columns(conn_generated, "shorts_generated_videos")
+            if generated_columns:
+                generated_sql = """
+                    SELECT render_settings_hash, publish_status, youtube_video_id, instagram_media_id, facebook_video_id, tiktok_video_id
+                    FROM shorts_generated_videos
+                    WHERE CAST(source_video_id AS VARCHAR) = ?
+                      AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
+                      AND clip_filename = ?
+                """
+                generated_params: List[Any] = [video_id, clip_filename]
+                if brand_id:
+                    generated_sql += " AND brand_id = ?"
+                    generated_params.append(brand_id)
+                generated_sql += " LIMIT 1"
+                generated_row = conn_generated.execute(generated_sql, generated_params).fetchone()
+        finally:
+            conn_generated.close()
+    social_statuses: set[str] = set()
+    try:
+        social_queue_entries = []
+        social_queue_entries.extend(load_instagram_queue_map([video_id]).get((video_id, str(plan_index))) or [])
+        social_queue_entries.extend(load_tiktok_queue_map([video_id]).get((video_id, str(plan_index))) or [])
+        social_queue_entries.extend(load_facebook_queue_map([video_id]).get((video_id, str(plan_index))) or [])
+        social_statuses = {str(item.get("status") or "").strip().lower() for item in social_queue_entries}
+    except Exception:
+        social_statuses = set()
+    lock_reason = clip_entry_publish_lock_reason(plan_entry, generated_row, social_statuses)
+    if lock_reason:
+        return jsonify(success=False, message=lock_reason), 409
+
+    valid, message, cleaned = validate_clip_title_time_edit(
+        title=request.form.get("title"),
+        start=request.form.get("start"),
+        end=request.form.get("end"),
+        video_duration=duration_seconds,
+    )
+    if not valid:
+        return jsonify(success=False, message=message), 400
+
+    _mark_plan_entry_user_title_edit(plan_entry, cleaned["title"])
+    plan_entry["start"] = cleaned["start"]
+    plan_entry["end"] = cleaned["end"]
+    plan_entry.pop("render_error", None)
+    try:
+        conn_transcript = get_db_readonly()
+        try:
+            _, segments = _fetch_transcript(conn_transcript, video_id)
+        finally:
+            conn_transcript.close()
+        transcript_full = build_transcript_for_range(segments or [], cleaned["start"], cleaned["end"], prefer_tr=True)
+        if transcript_full:
+            plan_entry["transcript_full"] = transcript_full
+            plan_entry["excerpt"] = transcript_full
+    except Exception as exc:
+        current_app.logger.warning("Failed to rebuild transcript for edited clip video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
+    _write_plan_entries(video_id, plan_entries)
+
+    response_payload = {
+        "success": True,
+        "message": "Clip updated.",
+        "plan_index": int(plan_index),
+        "title": cleaned["title"],
+        "start": cleaned["start"],
+        "end": cleaned["end"],
+        "duration": cleaned["duration"],
+        "regenerated": False,
+    }
+    if clip_exists:
+        with current_app.test_request_context(
+            f"/video_shorts/generate/{int(video_pk)}/clip/{int(plan_index)}/regenerate",
+            method="POST",
+            data={"force": "1"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ):
+            g.vs_current_user = current_user
+            g.vs_current_brand = current_brand
+            regen_response = regenerate_clip_video(int(video_pk), int(plan_index))
+        status_code = 202
+        response_obj = regen_response
+        if isinstance(regen_response, tuple):
+            response_obj = regen_response[0]
+            if len(regen_response) > 1 and isinstance(regen_response[1], int):
+                status_code = regen_response[1]
+        regen_payload = response_obj.get_json(silent=True) if hasattr(response_obj, "get_json") else {}
+        if status_code >= 400 or not (regen_payload or {}).get("success"):
+            return jsonify(success=False, message=(regen_payload or {}).get("message") or "Clip saved, but regeneration could not start."), status_code
+        response_payload.update(
+            {
+                "message": "Clip updated. Regeneration queued.",
+                "regenerated": True,
+                "job_id": regen_payload.get("job_id"),
+                "status": regen_payload.get("status"),
+                "queue_position": regen_payload.get("queue_position"),
+            }
+        )
+        return jsonify(response_payload), 202
+    return jsonify(response_payload)
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/update_clip_title", methods=["POST"])
 def update_clip_title(video_pk):
     new_title = (request.form.get("title") or "").strip()
@@ -24263,6 +24559,7 @@ def _generate_clip_plan_for_video(
     _emit("prepare_plan", "Preparing plan entries.", clip_count=len(clip_plan))
     for idx, clip in enumerate(clip_plan):
         plan_entry = dict(clip, plan_index=idx + 1)
+        snap_clip_entry_to_sentence_boundaries(plan_entry, segments, video_id=vid)
         start = plan_entry.get("start")
         end = plan_entry.get("end")
         if segments and start is not None and end is not None and "transcript_full" not in plan_entry:

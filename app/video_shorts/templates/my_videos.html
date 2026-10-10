@@ -1422,9 +1422,6 @@
           <div class="mv-status-cell">
             {% if item.is_ready_for_editing %}
               <span class="mv-status-pill mv-status-pill--ready">Ready</span>
-              {% if item.ready_detail_label %}
-                <span class="mv-status-detail mv-status-detail--ready">{{ item.ready_detail_label }}</span>
-              {% endif %}
             {% elif item.is_failed %}
               <span class="mv-status-pill mv-status-pill--failed">Failed</span>
             {% else %}
@@ -2072,23 +2069,25 @@
     }
   };
 
-	  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-	  const uploadSessionPollIntervalMs = 2000;
-	  const uploadSessionTimeoutMs = 45 * 60 * 1000;
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const uploadSessionPollIntervalMs = 2000;
+  const uploadSessionTimeoutMs = 45 * 60 * 1000;
+  const generateUrlTemplate = {{ url_for('video_shorts_bp.generate_short', video_pk=0)|tojson }};
+  const generateUrlForVideo = (videoPk) => generateUrlTemplate.replace(/0$/, String(videoPk || ""));
 
-	  const activateAddTab = (name) => {
-	    addTabs.forEach((tab) => {
-	      const isActive = tab.dataset.mvTab === name;
-	      tab.classList.toggle('is-active', isActive);
-	      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
-	    });
-	    ['url', 'upload'].forEach((paneName) => {
-	      const pane = document.getElementById(`mv-pane-${paneName}`);
-	      const isActive = paneName === name;
-	      pane?.classList.toggle('is-active', isActive);
-	      if (pane) pane.hidden = !isActive;
-	    });
-	  };
+  const activateAddTab = (name) => {
+    addTabs.forEach((tab) => {
+      const isActive = tab.dataset.mvTab === name;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    ['url', 'upload'].forEach((paneName) => {
+      const pane = document.getElementById(`mv-pane-${paneName}`);
+      const isActive = paneName === name;
+      pane?.classList.toggle('is-active', isActive);
+      if (pane) pane.hidden = !isActive;
+    });
+  };
 
 	  const selectedStatusFilters = () => statusFilterButtons
 	    .filter((button) => button.classList.contains('is-active'))
@@ -2418,6 +2417,15 @@
     throw new Error('Preparing your video is taking longer than expected. Please refresh in a moment.');
   };
 
+  const redirectToGeneratedVideo = (session) => {
+    const videoPk = session?.video?.id || session?.video_pk;
+    if (videoPk) {
+      window.location.href = generateUrlForVideo(videoPk);
+      return true;
+    }
+    return false;
+  };
+
   const uploadViaMultipart = async (file) => {
     const startPayload = await startMultipartUpload(file);
     const completedParts = [];
@@ -2502,9 +2510,11 @@
         throw new Error('Upload finished, but we could not track server processing.');
       }
       setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
-      await waitForUploadSessionReady(uploadedSessionId);
+      const readySession = await waitForUploadSessionReady(uploadedSessionId);
       setCoachmarkState('uploaded');
-      window.setTimeout(() => window.location.reload(), 700);
+      window.setTimeout(() => {
+        if (!redirectToGeneratedVideo(readySession)) window.location.reload();
+      }, 700);
     } catch (error) {
       clearServerProcessingState();
       setCoachmarkState('');
@@ -2538,9 +2548,11 @@
         throw new Error('Video was added, but we could not track server processing.');
       }
       setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
-      await waitForUploadSessionReady(sessionId);
+      const readySession = await waitForUploadSessionReady(sessionId);
       setCoachmarkState('uploaded');
-      window.setTimeout(() => window.location.reload(), 700);
+      window.setTimeout(() => {
+        if (!redirectToGeneratedVideo(readySession)) window.location.reload();
+      }, 700);
     } catch (error) {
       clearServerProcessingState();
       setCoachmarkState('');
