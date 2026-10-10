@@ -1824,28 +1824,36 @@
     padding: 5px 8px;
     gap: 6px;
     flex-wrap: nowrap;
-    overflow: hidden;
+    overflow: visible;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-management-panel {
     position: relative;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-score-threshold-select {
     width: auto;
-    flex: 0 0 110px;
-    min-width: 110px;
-    max-width: 110px;
+    flex: 0 0 58px;
+    min-width: 58px;
+    max-width: 58px;
+    padding-left: 6px;
+    padding-right: 18px;
     color: #ccfbf1;
     border-color: rgba(45, 212, 191, 0.22);
     background-color: rgba(15, 23, 42, 0.88);
+  }
+  #clip-workbench-shell[data-generate-v2="1"] #clip-score-batch-create-btn {
+    flex: 0 0 auto;
+    min-width: 54px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
   .generate-v2-suggestion-copy {
     color: rgba(255, 255, 255, 0.82);
     font-size: 0.78rem;
     font-weight: 750;
     white-space: nowrap;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex: 0 0 auto;
+    overflow: visible;
+    text-overflow: clip;
   }
   .generate-v2-design-dialog {
     position: absolute;
@@ -2475,6 +2483,89 @@
       flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
+      min-height: 84px;
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      text-align: left;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion {
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-active,
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion.is-active {
+      border: 1px solid rgba(45, 212, 191, 0.72);
+      background: rgba(45, 212, 191, 0.11);
+      box-shadow: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-number {
+      display: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb {
+      width: 40px;
+      height: 64px;
+      border-radius: 10px;
+      align-self: center;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb img,
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy {
+      align-self: center;
+      display: flex;
+      min-width: 0;
+      flex-wrap: wrap;
+      gap: 4px 6px;
+      padding-top: 0;
+      text-align: left;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-title {
+      order: 1;
+      flex: 0 0 100%;
+      min-width: 0;
+      font-size: 0.88rem;
+      font-weight: 500;
+      line-height: 1.25;
+      white-space: normal;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-meta {
+      order: 2;
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      gap: 5px;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      color: rgba(255, 255, 255, 0.54);
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      gap: 4px;
+      margin-top: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms .gs-schedule-icon {
+      font-size: 16px;
     }
   }
   @media (max-width: 1199.98px) {
@@ -5520,11 +5611,11 @@
                   {% endif %}
                 {% endfor %}
                 {% if generate_v2 %}
-                <span class="generate-v2-suggestion-copy" id="clip-score-batch-banner-copy">✦ 0 more suggestions ≥ 70</span>
+                <span class="generate-v2-suggestion-copy" id="clip-score-batch-banner-copy">✦ 0 more suggestions</span>
                 <label class="visually-hidden" for="clip-score-threshold">Minimum score</label>
                 <select class="form-select form-select-sm clip-score-threshold-input clip-score-threshold-select" id="clip-score-threshold">
                   {% for threshold_option in [50, 60, 70, 80, 90] %}
-                    <option value="{{ threshold_option }}"{% if threshold_option == 70 %} selected{% endif %}>Min score {{ threshold_option }}</option>
+                    <option value="{{ threshold_option }}"{% if threshold_option == 70 %} selected{% endif %}>≥{{ threshold_option }}</option>
                   {% endfor %}
                 </select>
                 {% else %}
@@ -12410,7 +12501,7 @@ const updateScoreBatchControls = () => {
     wrapper.classList.toggle("d-none", count === 0);
   }
   if (bannerCopy) {
-    bannerCopy.textContent = `✦ ${count} more ${count === 1 ? "suggestion" : "suggestions"} ≥ ${threshold}`;
+    bannerCopy.textContent = `✦ ${count} more ${count === 1 ? "suggestion" : "suggestions"}`;
   }
   label.textContent = isV2
     ? "Create"
