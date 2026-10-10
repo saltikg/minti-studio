@@ -2324,7 +2324,7 @@
   }
   .clip-rail-edit-grid {
     display: grid;
-    grid-template-columns: minmax(150px, 1fr) repeat(2, minmax(92px, 120px));
+    grid-template-columns: minmax(150px, 1fr);
     gap: 8px;
   }
   .clip-rail-edit-field label {
@@ -2345,17 +2345,69 @@
     padding: 6px 8px;
     font-size: 0.84rem;
   }
-  .clip-rail-time-stepper {
-    display: grid;
-    grid-template-columns: 30px minmax(72px, 1fr) 30px;
-    align-items: center;
-    gap: 6px;
+  .clip-text-trim-editor {
+    position: relative;
+    max-height: 230px;
+    overflow: auto;
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.62);
+    color: rgba(226, 232, 240, 0.92);
+    font-size: 0.86rem;
+    line-height: 1.55;
   }
-  .clip-rail-time-stepper .btn {
-    min-width: 30px;
-    width: 30px;
-    height: 30px;
+  .clip-text-trim-word {
+    cursor: text;
+    user-select: text;
+  }
+  .clip-text-trim-word.is-muted {
+    color: rgba(148, 163, 184, 0.58);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .clip-text-trim-word.is-selected {
+    background: rgba(45, 212, 191, 0.2);
+    color: #e6fffb;
+  }
+  .clip-text-trim-more {
+    display: inline-flex;
+    margin: 0 0 6px;
+    border: 0;
+    background: transparent;
+    color: #5eead4;
+    font-size: 0.76rem;
+    font-weight: 700;
     padding: 0;
+  }
+  .clip-text-trim-duration {
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+  .clip-text-trim-warning,
+  .clip-text-trim-readonly {
+    color: #fbbf24;
+    font-size: 0.78rem;
+  }
+  .clip-text-trim-toolbar {
+    position: fixed;
+    z-index: 1080;
+    display: none;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 10px;
+    background: rgba(2, 6, 23, 0.94);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+  }
+  .clip-text-trim-toolbar.is-visible {
+    display: inline-flex;
+  }
+  .clip-text-trim-toolbar .btn {
+    min-height: 28px;
+    font-size: 0.76rem;
+    border-radius: 8px;
   }
   .clip-rail-edit-actions {
     display: flex;
@@ -4926,7 +4978,10 @@
 
   <div class="col-12">
     {% if has_transcript %}
-      <div id="clip-workbench-shell"
+    {% if generate_v2 %}
+    <script type="application/json" id="generate-v2-word-timestamps-json">{{ clip_edit_words|tojson }}</script>
+    {% endif %}
+    <div id="clip-workbench-shell"
            {% if generate_v2 %}
            data-generate-v2="1"
            data-video-id="{{ video.id }}"
@@ -5448,8 +5503,8 @@
                         class="dropdown-item"
                         data-edit-title-time-btn
                         data-plan-index="{{ row.plan_index }}"
-                        {% if row.regenerate_locked %}disabled title="{{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}"{% endif %}>
-                        {% if row.regenerate_locked %}Edit disabled — {{ row.regenerate_lock_reason or 'scheduled/published' }}{% else %}Edit title &amp; time{% endif %}
+                        {% if row.regenerate_locked %}title="{{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}"{% endif %}>
+                        Edit clip
                       </button>
                       {% if row.status == "created" and row.video_filename %}
                         <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
@@ -5488,34 +5543,29 @@
                   </button>
                   {% endif %}
                   {% if generate_v2 %}
-                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.regenerate_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}">
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
-                        <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off">
-                      </div>
-                      <div class="clip-rail-edit-field">
-                        <label for="clip-edit-start-{{ row.plan_index }}">Start</label>
-                        <div class="clip-rail-time-stepper">
-                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="start" data-delta="-0.5" aria-label="Move start earlier">−</button>
-                          <input id="clip-edit-start-{{ row.plan_index }}" name="start" type="text" value="{{ row.start_label or clip_start_label }}" inputmode="decimal">
-                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="start" data-delta="0.5" aria-label="Move start later">+</button>
-                        </div>
-                      </div>
-                      <div class="clip-rail-edit-field">
-                        <label for="clip-edit-end-{{ row.plan_index }}">End</label>
-                        <div class="clip-rail-time-stepper">
-                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="end" data-delta="-0.5" aria-label="Move end earlier">−</button>
-                          <input id="clip-edit-end-{{ row.plan_index }}" name="end" type="text" value="{{ row.end_label or clip_end_label }}" inputmode="decimal">
-                          <button type="button" class="btn btn-outline-light btn-sm" data-time-nudge="end" data-delta="0.5" aria-label="Move end later">+</button>
-                        </div>
+                        <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off"{% if row.regenerate_locked %} readonly{% endif %}>
                       </div>
                     </div>
+                    <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
+                    <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
+                    <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
+                    <div class="clip-text-trim-readonly{% if not row.regenerate_locked %} d-none{% endif %}">
+                      {{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}
+                    </div>
+                    <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="before">Show more above</button>
+                    <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
+                    <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="after">Show more below</button>
+                    <div class="clip-text-trim-duration" data-edit-duration-label>{{ rail_duration_label }}</div>
+                    <div class="clip-text-trim-warning d-none" data-edit-duration-warning></div>
                     <div class="clip-rail-edit-error d-none" data-edit-title-time-error></div>
                     <div class="clip-rail-edit-actions">
                       <button type="button" class="btn btn-outline-light btn-sm" data-edit-title-time-cancel>Cancel</button>
-                      <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save>Save</button>
-                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate>Save &amp; regenerate</button>
+                      <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save{% if row.regenerate_locked %} disabled{% endif %}>Save</button>
+                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if row.regenerate_locked %} disabled{% endif %}>Save &amp; regenerate</button>
                     </div>
                     <div class="clip-rail-edit-hint{% if not row.edit_requires_regenerate %} d-none{% endif %}" data-edit-title-time-hint>Edited — regenerate to apply</div>
                   </form>
@@ -10079,6 +10129,195 @@ const formatClipEditTime = (seconds) => {
   return `${minutes}:${secs.toFixed(1).padStart(4, "0")}`;
 };
 
+const getGenerateV2WordTimestamps = (() => {
+  let cache = null;
+  return () => {
+    if (cache) return cache;
+    const script = document.getElementById("generate-v2-word-timestamps-json");
+    if (!script) {
+      cache = [];
+      return cache;
+    }
+    try {
+      const parsed = JSON.parse(script.textContent || "[]");
+      cache = Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      cache = [];
+    }
+    return cache;
+  };
+})();
+
+const formatClipDurationLabel = (seconds) => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+};
+
+const wordOverlapsRange = (word, start, end) => {
+  const wordStart = Number(word?.start);
+  const wordEnd = Number(word?.end);
+  return Number.isFinite(wordStart) && Number.isFinite(wordEnd) && wordEnd > start && wordStart < end;
+};
+
+const indexesForRange = (words, start, end) => words
+  .map((word, index) => (wordOverlapsRange(word, start, end) ? index : -1))
+  .filter((index) => index >= 0);
+
+const normalizeWordSelection = (form) => {
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return [];
+  }
+  const editor = form.querySelector("[data-clip-text-trim-editor]");
+  if (!editor) return [];
+  const range = selection.getRangeAt(0);
+  return Array.from(editor.querySelectorAll("[data-word-index]"))
+    .filter((node) => {
+      try {
+        return range.intersectsNode(node);
+      } catch (_) {
+        return false;
+      }
+    })
+    .map((node) => Number(node.dataset.wordIndex))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+};
+
+const selectionToContiguousKeepRange = (words, currentRange, selectedIndexes, action) => {
+  if (!words.length || !selectedIndexes.length) {
+    return null;
+  }
+  const selectedFirst = Math.max(0, Math.min(...selectedIndexes));
+  const selectedLast = Math.min(words.length - 1, Math.max(...selectedIndexes));
+  const keptIndexes = indexesForRange(words, currentRange.start, currentRange.end);
+  let nextFirst = selectedFirst;
+  let nextLast = selectedLast;
+  if (action === "restore" && keptIndexes.length) {
+    nextFirst = Math.min(Math.min(...keptIndexes), selectedFirst);
+    nextLast = Math.max(Math.max(...keptIndexes), selectedLast);
+  }
+  const firstWord = words[nextFirst];
+  const lastWord = words[nextLast];
+  const start = Number(firstWord?.start);
+  const end = Number(lastWord?.end) + 0.1;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return null;
+  }
+  return {
+    start: Number(start.toFixed(3)),
+    end: Number(end.toFixed(3)),
+    ranges: [{ start: Number(start.toFixed(3)), end: Number(end.toFixed(3)) }],
+  };
+};
+
+const getClipTextTrimToolbar = () => {
+  let toolbar = document.getElementById("clip-text-trim-toolbar");
+  if (toolbar) return toolbar;
+  toolbar = document.createElement("div");
+  toolbar.id = "clip-text-trim-toolbar";
+  toolbar.className = "clip-text-trim-toolbar";
+  toolbar.innerHTML = `
+    <button type="button" class="btn btn-sm btn-outline-light" data-trim-action="restore">Restore</button>
+    <button type="button" class="btn btn-sm btn-primary" data-trim-action="keep-only">Keep only this</button>
+  `;
+  document.body.appendChild(toolbar);
+  return toolbar;
+};
+
+const hideClipTextTrimToolbar = () => {
+  const toolbar = document.getElementById("clip-text-trim-toolbar");
+  toolbar?.classList.remove("is-visible");
+  if (toolbar) {
+    toolbar.dataset.formPlanIndex = "";
+  }
+};
+
+const renderClipTextTrimEditor = (form) => {
+  const editor = form.querySelector("[data-clip-text-trim-editor]");
+  const startInput = form.querySelector("[data-edit-start-input]");
+  const endInput = form.querySelector("[data-edit-end-input]");
+  const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
+  if (!editor || !startInput || !endInput) return;
+  const words = getGenerateV2WordTimestamps();
+  const start = Number(startInput.value || form.dataset.initialStart || 0);
+  const end = Number(endInput.value || form.dataset.initialEnd || 0);
+  const keptIndexes = indexesForRange(words, start, end);
+  if (!keptIndexes.length) {
+    editor.textContent = "Word timestamps are not available for this clip.";
+    return;
+  }
+  const keptSentences = keptIndexes.map((index) => Number(words[index]?.sentence || 0));
+  const minSentence = Math.min(...keptSentences);
+  const maxSentence = Math.max(...keptSentences);
+  const beforeCount = Number(form.dataset.contextBefore || 3);
+  const afterCount = Number(form.dataset.contextAfter || 3);
+  const visibleMinSentence = minSentence - beforeCount;
+  const visibleMaxSentence = maxSentence + afterCount;
+  const fragment = document.createDocumentFragment();
+  words.forEach((word, index) => {
+    const sentence = Number(word.sentence || 0);
+    if (sentence < visibleMinSentence || sentence > visibleMaxSentence) return;
+    const span = document.createElement("span");
+    span.className = "clip-text-trim-word";
+    if (!keptIndexes.includes(index)) {
+      span.classList.add("is-muted");
+    }
+    span.dataset.wordIndex = String(index);
+    span.textContent = `${word.text || ""} `;
+    fragment.appendChild(span);
+  });
+  editor.replaceChildren(fragment);
+  form.querySelector("[data-trim-show-more='before']")?.classList.toggle("d-none", visibleMinSentence <= 0);
+  const maxSentenceIndex = words.reduce((max, word) => Math.max(max, Number(word.sentence || 0)), 0);
+  form.querySelector("[data-trim-show-more='after']")?.classList.toggle("d-none", visibleMaxSentence >= maxSentenceIndex);
+  if (keepRangesInput) {
+    keepRangesInput.value = JSON.stringify([{ start, end }]);
+  }
+  const duration = Math.max(0, end - start);
+  const durationLabel = form.querySelector("[data-edit-duration-label]");
+  const warning = form.querySelector("[data-edit-duration-warning]");
+  const saveButtons = form.querySelectorAll("[data-edit-title-time-save], [data-edit-title-time-regenerate]");
+  const readonly = form.dataset.readonly === "1";
+  if (durationLabel) {
+    durationLabel.textContent = `Duration ${formatClipDurationLabel(duration)}`;
+  }
+  const invalidMessage = duration < 5
+    ? "Clip must be at least 5 seconds."
+    : (duration > 90 ? "Clip must be 90 seconds or shorter." : "");
+  if (warning) {
+    warning.textContent = invalidMessage;
+    warning.classList.toggle("d-none", !invalidMessage);
+  }
+  saveButtons.forEach((button) => {
+    button.disabled = readonly || !!invalidMessage;
+  });
+};
+
+const applyClipTextTrimSelection = (form, action) => {
+  const words = getGenerateV2WordTimestamps();
+  const startInput = form.querySelector("[data-edit-start-input]");
+  const endInput = form.querySelector("[data-edit-end-input]");
+  const selectedIndexes = normalizeWordSelection(form);
+  const currentRange = {
+    start: Number(startInput?.value || form.dataset.initialStart || 0),
+    end: Number(endInput?.value || form.dataset.initialEnd || 0),
+  };
+  const nextRange = selectionToContiguousKeepRange(words, currentRange, selectedIndexes, action);
+  if (!nextRange || !startInput || !endInput) return;
+  startInput.value = String(nextRange.start);
+  endInput.value = String(nextRange.end);
+  const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
+  if (keepRangesInput) {
+    keepRangesInput.value = JSON.stringify(nextRange.ranges);
+  }
+  window.getSelection?.()?.removeAllRanges?.();
+  hideClipTextTrimToolbar();
+  renderClipTextTrimEditor(form);
+};
+
 const setClipEditError = (form, message = "") => {
   const error = form?.querySelector("[data-edit-title-time-error]");
   if (!error) return;
@@ -10107,21 +10346,53 @@ const initGenerateV2ClipTitleTimeEditors = () => {
         if (other !== row) closeClipEditForm(other);
       });
       row?.classList.add("is-editing");
+      const form = row?.querySelector("[data-edit-title-time-form]");
+      if (form) {
+        form.dataset.contextBefore = form.dataset.contextBefore || "3";
+        form.dataset.contextAfter = form.dataset.contextAfter || "3";
+        renderClipTextTrimEditor(form);
+      }
       row?.querySelector("input[name='title']")?.focus();
     });
   });
   document.querySelectorAll("[data-edit-title-time-form]").forEach((form) => {
     if (form.dataset.editFormBound === "1") return;
     form.dataset.editFormBound = "1";
-    form.querySelectorAll("[data-time-nudge]").forEach((button) => {
+    form.querySelectorAll("[data-trim-show-more]").forEach((button) => {
       button.addEventListener("click", () => {
-        const fieldName = button.dataset.timeNudge || "";
-        const input = form.querySelector(`input[name='${fieldName}']`);
-        const current = parseClipEditTime(input?.value || "");
-        const delta = Number(button.dataset.delta || 0);
-        if (!input || !Number.isFinite(current)) return;
-        input.value = formatClipEditTime(current + delta);
+        const direction = button.dataset.trimShowMore || "";
+        const key = direction === "before" ? "contextBefore" : "contextAfter";
+        form.dataset[key] = String((Number(form.dataset[key] || 3) || 3) + 3);
+        renderClipTextTrimEditor(form);
       });
+    });
+    const showSelectionToolbar = () => {
+      if (form.dataset.readonly === "1") return;
+      const selectedIndexes = normalizeWordSelection(form);
+      const toolbar = getClipTextTrimToolbar();
+      toolbar.querySelector("[data-trim-action='restore']")?.classList.add("d-none");
+      toolbar.querySelector("[data-trim-action='keep-only']")?.classList.add("d-none");
+      if (!selectedIndexes.length) {
+        hideClipTextTrimToolbar();
+        return;
+      }
+      const start = Number(form.querySelector("[data-edit-start-input]")?.value || 0);
+      const end = Number(form.querySelector("[data-edit-end-input]")?.value || 0);
+      const words = getGenerateV2WordTimestamps();
+      const includesMuted = selectedIndexes.some((index) => !wordOverlapsRange(words[index], start, end));
+      toolbar.querySelector(`[data-trim-action='${includesMuted ? "restore" : "keep-only"}']`)?.classList.remove("d-none");
+      toolbar.dataset.formPlanIndex = form.dataset.planIndex || "";
+      const selection = window.getSelection?.();
+      const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null;
+      if (rect) {
+        toolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - 180, rect.left))}px`;
+        toolbar.style.top = `${Math.max(8, rect.top - 44)}px`;
+      }
+      toolbar.classList.add("is-visible");
+    };
+    form.querySelector("[data-clip-text-trim-editor]")?.addEventListener("mouseup", showSelectionToolbar);
+    form.querySelector("[data-clip-text-trim-editor]")?.addEventListener("touchend", () => {
+      window.setTimeout(showSelectionToolbar, 0);
     });
     form.querySelector("[data-edit-title-time-cancel]")?.addEventListener("click", () => {
       closeClipEditForm(form.closest(".clip-rail-row"));
@@ -10189,6 +10460,24 @@ const initGenerateV2ClipTitleTimeEditors = () => {
     });
   });
 };
+
+document.addEventListener("click", (event) => {
+  const toolbar = document.getElementById("clip-text-trim-toolbar");
+  if (!toolbar?.classList.contains("is-visible")) return;
+  const actionButton = event.target.closest?.("[data-trim-action]");
+  if (actionButton && toolbar.contains(actionButton)) {
+    const planIndex = toolbar.dataset.formPlanIndex || "";
+    const escapedPlanIndex = window.CSS?.escape ? CSS.escape(planIndex) : String(planIndex).replace(/'/g, "\\'");
+    const form = document.querySelector(`[data-edit-title-time-form][data-plan-index='${escapedPlanIndex}']`);
+    if (form) {
+      applyClipTextTrimSelection(form, actionButton.dataset.trimAction || "");
+    }
+    return;
+  }
+  if (!event.target.closest?.("[data-clip-text-trim-editor]")) {
+    hideClipTextTrimToolbar();
+  }
+});
 
 window.addEventListener("resize", syncGenerateV2WorkbenchHeight);
 

@@ -5240,6 +5240,101 @@ def _sentence_boundaries_from_words(words: List[Dict[str, Any]]) -> Tuple[List[f
     return starts, ends
 
 
+def _transcript_words_with_sentence_indexes(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Flatten transcript words and assign stable sentence indexes for clip text editing."""
+    flattened = _flatten_transcript_words_for_snapping(segments)
+    words: List[Dict[str, Any]] = []
+    sentence_index = 0
+    for idx, word in enumerate(flattened):
+        start = _to_float(word.get("start"))
+        end = _to_float(word.get("end"))
+        if start is None:
+            continue
+        if end is None or end < start:
+            end = start
+        clean_text = str(word.get("text") or "").strip()
+        if not clean_text:
+            continue
+        words.append(
+            {
+                "index": len(words),
+                "sentence": sentence_index,
+                "start": round(float(start), 3),
+                "end": round(float(end), 3),
+                "text": clean_text,
+            }
+        )
+        next_word = flattened[idx + 1] if idx + 1 < len(flattened) else None
+        next_start = _to_float((next_word or {}).get("start"))
+        pause = (float(next_start) - float(end)) if next_start is not None else 0.0
+        if _word_text_has_sentence_end(clean_text) or pause >= 0.6:
+            sentence_index += 1
+    return words
+
+
+def derive_contiguous_clip_keep_range_from_word_selection(
+    words: List[Dict[str, Any]],
+    current_ranges: List[Dict[str, Any]],
+    selection_start_index: int,
+    selection_end_index: int,
+    action: str,
+    *,
+    end_padding: float = 0.1,
+) -> Dict[str, Any]:
+    """Return a phase-1 contiguous keep range from word indexes.
+
+    The shape intentionally uses a list of ranges so phase 2 can add middle removal
+    without changing callers that already serialize `ranges`.
+    """
+    if not words:
+        return {"ok": False, "message": "No word timestamps available.", "ranges": []}
+    first_selection = max(0, min(int(selection_start_index), int(selection_end_index)))
+    last_selection = min(len(words) - 1, max(int(selection_start_index), int(selection_end_index)))
+    if first_selection > last_selection:
+        return {"ok": False, "message": "Select clip text first.", "ranges": []}
+
+    current_first = None
+    current_last = None
+    if current_ranges:
+        range_start = _to_float(current_ranges[0].get("start"))
+        range_end = _to_float(current_ranges[0].get("end"))
+        if range_start is not None and range_end is not None:
+            kept_indexes = [
+                idx
+                for idx, word in enumerate(words)
+                if (_to_float(word.get("end")) or 0.0) > range_start and (_to_float(word.get("start")) or 0.0) < range_end
+            ]
+            if kept_indexes:
+                current_first = min(kept_indexes)
+                current_last = max(kept_indexes)
+
+    normalized_action = str(action or "").strip().lower().replace("_", "-")
+    if normalized_action == "keep-only":
+        new_first, new_last = first_selection, last_selection
+    elif normalized_action == "restore":
+        if current_first is None or current_last is None:
+            new_first, new_last = first_selection, last_selection
+        else:
+            new_first = min(current_first, first_selection)
+            new_last = max(current_last, last_selection)
+    else:
+        return {"ok": False, "message": "Unsupported edit action.", "ranges": []}
+
+    start = _to_float(words[new_first].get("start"))
+    end = _to_float(words[new_last].get("end"))
+    if start is None or end is None:
+        return {"ok": False, "message": "Selected words are missing timestamps.", "ranges": []}
+    end = round(float(end) + float(end_padding), 3)
+    start = round(float(start), 3)
+    return {
+        "ok": True,
+        "ranges": [{"start": start, "end": end, "first_word_index": new_first, "last_word_index": new_last}],
+        "start": start,
+        "end": end,
+        "duration": round(max(0.0, end - start), 3),
+    }
+
+
 def _nearest_time_in_window(target: float, candidates: List[float], *, before: float, after: float) -> Optional[float]:
     lower = target - before
     upper = target + after
@@ -10343,6 +10438,7 @@ def generate_short(video_pk):
 
     # Build unified clip rows (created + pending from plan)
     clip_rows = []
+    clip_edit_words = _transcript_words_with_sentence_indexes(segments) if generate_v2 else []
     current_user = getattr(g, "vs_current_user", None)
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     user_tz_label = TIMEZONE_LABELS.get(user_tz, user_tz)
@@ -11098,6 +11194,7 @@ def generate_short(video_pk):
         selected_video_overlay_offset=selected_video_overlay_offset,
         debug_info=debug_info,
         clip_rows=clip_rows,
+        clip_edit_words=clip_edit_words,
         ai_suggested_clip_count=ai_suggested_clip_count,
         plan_generation_block_reason=plan_generation_block_reason,
         plan_generation_block_message=plan_generation_block_message,
@@ -21661,6 +21758,24 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     _mark_plan_entry_user_title_edit(plan_entry, cleaned["title"])
     plan_entry["start"] = cleaned["start"]
     plan_entry["end"] = cleaned["end"]
+    keep_ranges_raw = str(request.form.get("keep_ranges") or "").strip()
+    if keep_ranges_raw:
+        try:
+            parsed_keep_ranges = json.loads(keep_ranges_raw)
+        except Exception:
+            parsed_keep_ranges = None
+        if isinstance(parsed_keep_ranges, list):
+            normalized_ranges: List[Dict[str, float]] = []
+            for range_item in parsed_keep_ranges[:1]:
+                if not isinstance(range_item, dict):
+                    continue
+                range_start = _to_float(range_item.get("start"))
+                range_end = _to_float(range_item.get("end"))
+                if range_start is None or range_end is None or range_end <= range_start:
+                    continue
+                normalized_ranges.append({"start": round(range_start, 3), "end": round(range_end, 3)})
+            if normalized_ranges:
+                plan_entry["edit_keep_ranges"] = normalized_ranges
     plan_entry.pop("render_error", None)
     should_regenerate = (request.form.get("regenerate") or "").strip().lower() in {"1", "true", "yes", "on"}
     if clip_exists and not should_regenerate:

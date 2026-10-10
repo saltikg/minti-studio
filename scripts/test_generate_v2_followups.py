@@ -78,7 +78,51 @@ def test_edit_validation_and_lock() -> None:
     _check("edit_published_refused", lock_reason == "Already published.", lock_reason)
 
 
+def test_text_trim_selection_ranges() -> None:
+    words = [
+        {"text": "Before", "start": 0.0, "end": 0.4},
+        {"text": "clip", "start": 0.5, "end": 0.9},
+        {"text": "starts", "start": 1.0, "end": 1.4},
+        {"text": "kept", "start": 1.5, "end": 2.0},
+        {"text": "middle", "start": 2.1, "end": 2.7},
+        {"text": "ends", "start": 2.8, "end": 3.2},
+        {"text": "after", "start": 3.3, "end": 3.7},
+    ]
+    current = [{"start": 1.5, "end": 3.3}]
+    result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 0, 1, "restore")
+    _check("text_trim_restore_before", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.3, str(result))
+    result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 6, 6, "restore")
+    _check("text_trim_restore_after", result["ok"] and result["ranges"][0]["start"] == 1.5 and result["ranges"][0]["end"] == 3.8, str(result))
+    result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 0, 6, "restore")
+    _check("text_trim_restore_gap", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.8, str(result))
+    result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 3, 4, "keep-only")
+    _check("text_trim_keep_only_inside", result["ok"] and result["ranges"][0]["start"] == 1.5 and result["ranges"][0]["end"] == 2.8, str(result))
+    ok, message, _ = generation.validate_clip_title_time_edit(title="Tiny", start=result["start"], end=result["end"], video_duration=20)
+    _check("text_trim_min_duration_refused", not ok and "at least 5" in message, message)
+    ok, message, _ = generation.validate_clip_title_time_edit(title="Huge", start=0, end=91, video_duration=120)
+    _check("text_trim_max_duration_refused", not ok and "90 seconds" in message, message)
+
+
+def test_word_time_mapping() -> None:
+    segments = [
+        {
+            "start": 10.0,
+            "end": 14.0,
+            "words": [
+                {"word": "Relative", "start": 0.0, "end": 0.3},
+                {"word": "word.", "start": 0.4, "end": 0.8},
+                {"word": "Next", "start": 11.0, "end": 11.4},
+            ],
+        }
+    ]
+    words = generation._transcript_words_with_sentence_indexes(segments)
+    _check("word_time_relative_start", abs(words[0]["start"] - 10.0) < 0.001, str(words))
+    _check("word_time_sentence_index", words[2]["sentence"] == 1, str(words))
+
+
 if __name__ == "__main__":
     test_auto_selection_two_eligible()
     test_sentence_snapping()
     test_edit_validation_and_lock()
+    test_text_trim_selection_ranges()
+    test_word_time_mapping()
