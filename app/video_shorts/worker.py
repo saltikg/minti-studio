@@ -63,6 +63,7 @@ from app.video_shorts.services.quick_short_flow import (
     update_session,
 )
 from app.video_shorts.services.render_jobs import (
+    JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
@@ -1117,6 +1118,24 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             duration_seconds=duration_seconds,
             bill_usage=bill_usage,
         )
+        try:
+            enqueue_auto_result = generation.enqueue_auto_suggest_render_job_after_transcript(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=video_id,
+                job_origin=job_origin,
+            )
+            if enqueue_auto_result:
+                app.logger.info(
+                    "auto_suggest_render_enqueue video_id=%s video_pk=%s kind=%s job_id=%s",
+                    video_id,
+                    video_pk,
+                    enqueue_auto_result.get("kind"),
+                    (enqueue_auto_result.get("job") or {}).get("id"),
+                )
+        except Exception as exc:
+            app.logger.warning("Failed to enqueue auto_suggest_render video_pk=%s: %s", video_pk, exc)
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
         enqueue_preview_frame_job(
             owner_user_id=owner_user_id,
@@ -1201,6 +1220,24 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             duration_seconds=duration_seconds,
             bill_usage=bill_usage,
         )
+        try:
+            enqueue_auto_result = generation.enqueue_auto_suggest_render_job_after_transcript(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=video_id,
+                job_origin=job_origin,
+            )
+            if enqueue_auto_result:
+                app.logger.info(
+                    "auto_suggest_render_enqueue video_id=%s video_pk=%s kind=%s job_id=%s",
+                    video_id,
+                    video_pk,
+                    enqueue_auto_result.get("kind"),
+                    (enqueue_auto_result.get("job") or {}).get("id"),
+                )
+        except Exception as exc:
+            app.logger.warning("Failed to enqueue auto_suggest_render video_pk=%s: %s", video_pk, exc)
         clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
         conn = get_db()
         try:
@@ -1736,6 +1773,8 @@ def process_next_job(
     try:
         if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
             result = _execute_ingest_youtube_job(app, job)
+        elif job.get("type") == JOB_TYPE_AUTO_SUGGEST_RENDER:
+            result = generation.execute_auto_suggest_render_job(job.get("payload") or {})
         elif job.get("type") == JOB_TYPE_ADMIN_PROXY_TRANSCRIPT:
             result = _execute_admin_proxy_transcript_job(app, job)
         elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:

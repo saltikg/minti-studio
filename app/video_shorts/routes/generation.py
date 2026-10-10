@@ -28,6 +28,11 @@ from werkzeug.utils import secure_filename
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import create_brand as create_brand_record, current_brand_id, ensure_brand_schema
 from app.video_shorts.config import (
+    AUTO_RENDER_COUNTS_QUOTA,
+    AUTO_RENDER_MIN_SCORE,
+    AUTO_RENDER_TOP_N,
+    AUTO_SUGGEST_RENDER_ENABLED,
+    AUTO_SUGGEST_RENDER_USER_IDS,
     BGCOVER_PATH,
     BACKGROUND_VISUAL_PRESETS,
     DEFAULT_SUB_FONT_KEY,
@@ -334,8 +339,11 @@ from app.video_shorts.services.youtube_oauth import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
+    AUTO_RENDER_JOB_ORIGIN,
+    AUTO_RENDER_JOB_PRIORITY,
     DISCOVERY_JOB_ORIGIN,
     DISCOVERY_JOB_PRIORITY,
+    JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_RENDER_SHORT,
@@ -4846,6 +4854,141 @@ def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _auto_suggest_render_meta_path(video_id: str) -> Path:
+    return SHORTS_DIR / f"{video_id}_auto_suggest_render.json"
+
+
+def _load_auto_suggest_render_meta(video_id: str) -> Dict[str, Any]:
+    path = _auto_suggest_render_meta_path(video_id)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_auto_suggest_render_meta(video_id: str, payload: Dict[str, Any]) -> None:
+    path = _auto_suggest_render_meta_path(video_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload or {}, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _auto_suggest_render_gate_matches(owner_user_id: Any) -> bool:
+    clean_owner = str(owner_user_id or "").strip()
+    return bool(AUTO_SUGGEST_RENDER_ENABLED and clean_owner and clean_owner in AUTO_SUGGEST_RENDER_USER_IDS)
+
+
+def _auto_suggest_render_input_hash(owner_user_id: Any, brand_id: Any, video_pk: Any, video_id: Any) -> str:
+    raw = f"auto-suggest-render:{owner_user_id}:{brand_id}:{video_pk}:{video_id}"
+    return sha256(raw.encode("utf-8")).hexdigest()
+
+
+def enqueue_auto_suggest_render_job_after_transcript(
+    *,
+    owner_user_id: Any,
+    brand_id: Any,
+    video_pk: Any,
+    video_id: Any,
+    job_origin: Any = "",
+) -> Optional[Dict[str, Any]]:
+    clean_owner = str(owner_user_id or "").strip()
+    clean_brand = str(brand_id or "").strip()
+    clean_video_id = str(video_id or "").strip()
+    try:
+        clean_video_pk = int(video_pk or 0)
+    except Exception:
+        clean_video_pk = 0
+    if not clean_owner or not clean_brand or not clean_video_pk or not clean_video_id:
+        return None
+    if not _auto_suggest_render_gate_matches(clean_owner):
+        return None
+    if str(job_origin or "").strip() == DISCOVERY_JOB_ORIGIN:
+        return None
+    if _is_discovery_demo_scope(clean_owner, clean_brand, clean_video_pk):
+        return None
+    return enqueue_worker_job(
+        user_id=clean_owner,
+        job_type=JOB_TYPE_AUTO_SUGGEST_RENDER,
+        payload={
+            "owner_user_id": clean_owner,
+            "brand_id": clean_brand,
+            "video_pk": clean_video_pk,
+            "video_id": clean_video_id,
+            "job_origin": AUTO_RENDER_JOB_ORIGIN,
+        },
+        input_hash=_auto_suggest_render_input_hash(clean_owner, clean_brand, clean_video_pk, clean_video_id),
+        max_attempts=1,
+        priority=AUTO_RENDER_JOB_PRIORITY,
+    )
+
+
+def _auto_suggest_render_state_for_video(
+    conn,
+    *,
+    owner_user_id: Any,
+    brand_id: Any,
+    video_pk: Any,
+    video_id: Any,
+) -> Dict[str, Any]:
+    meta = _load_auto_suggest_render_meta(str(video_id or "").strip())
+    state: Dict[str, Any] = {
+        "active": False,
+        "status": str(meta.get("status") or "").strip(),
+        "skip_reason": str(meta.get("skip_reason") or "").strip(),
+        "auto_run_at": meta.get("auto_run_at"),
+        "no_strong": False,
+    }
+    state["no_strong"] = bool(
+        state["skip_reason"].startswith("no_clips_above_")
+        or state["skip_reason"] == "no_strong_moments"
+    )
+    try:
+        clean_video_pk = int(video_pk or 0)
+    except Exception:
+        clean_video_pk = 0
+    clean_owner = str(owner_user_id or "").strip()
+    clean_brand = str(brand_id or "").strip()
+    if not clean_owner or not clean_brand or not clean_video_pk:
+        return state
+    try:
+        if getattr(conn, "backend_name", "") == "postgres":
+            row = conn.execute(
+                """
+                SELECT id, status
+                FROM shorts_render_jobs
+                WHERE type = ?
+                  AND user_id = ?
+                  AND status IN ('queued', 'processing')
+                  AND payload_json->>'video_pk' = ?
+                  AND payload_json->>'brand_id' = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [JOB_TYPE_AUTO_SUGGEST_RENDER, clean_owner, str(clean_video_pk), clean_brand],
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT id, status
+                FROM shorts_render_jobs
+                WHERE type = ?
+                  AND user_id = ?
+                  AND status IN ('queued', 'processing')
+                  AND payload_json LIKE ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [JOB_TYPE_AUTO_SUGGEST_RENDER, clean_owner, f'%"video_pk": {clean_video_pk}%'],
+            ).fetchone()
+        if row:
+            state.update({"active": True, "job_id": str(row[0] or ""), "status": str(row[1] or "")})
+    except Exception:
+        return state
+    return state
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -5535,6 +5678,31 @@ def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[D
             continue
         pending.append(entry)
     return pending
+
+
+def _select_auto_render_entries(
+    entries: List[Dict[str, Any]],
+    *,
+    min_score: float = AUTO_RENDER_MIN_SCORE,
+    limit: int = AUTO_RENDER_TOP_N,
+) -> List[Dict[str, Any]]:
+    candidates: List[Tuple[float, int, Dict[str, Any]]] = []
+    for position, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("origin") or "").strip().lower() != "ai":
+            continue
+        status = str(entry.get("status") or "").strip().lower()
+        if status in {"created", "done", "queued", "processing", "rendering"}:
+            continue
+        if str(entry.get("render_job_id") or "").strip():
+            continue
+        score = _coerce_plan_score(entry)
+        if score is None or score < float(min_score or 0):
+            continue
+        candidates.append((score, position, entry))
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [entry for _score, _position, entry in candidates[: max(0, int(limit or 0))]]
 
 
 def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
@@ -6302,6 +6470,288 @@ def _enqueue_selected_lead_render(
             "job_id": payload.get("job_id"),
             "message": payload.get("message"),
         }
+
+
+AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
+    "font": "title_font_key",
+    "sub_font": "subtitle_font_key",
+    "title_font_size": "title_font_size",
+    "sub_font_size": "subtitle_font_size",
+    "sub_margin": "subtitle_margin",
+    "subtitle_style": "subtitle_style",
+    "subtitle_preset": "subtitle_preset",
+    "title_margin": "title_margin",
+    "title_line_spacing": "title_line_spacing",
+    "title_bg_color": "title_bg_color",
+    "title_bg_alpha": "title_bg_alpha",
+    "title_text_color": "title_text_color",
+    "subtitle_text_color": "subtitle_text_color",
+    "subtitle_bg_color": "subtitle_bg_color",
+    "subtitle_bg_alpha": "subtitle_bg_alpha",
+    "subtitle_text_alpha": "subtitle_text_alpha",
+    "enable_subscribe_overlay": "subscribe_overlay_enabled",
+    "show_title": "show_title",
+    "show_subtitle": "show_subtitle",
+    "visual_mode": "visual_mode",
+    "video_overlay_offset": "video_overlay_offset",
+}
+
+
+def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id: str, video_pk: int) -> Dict[str, Any]:
+    conn = get_db()
+    try:
+        _ensure_video_crop_schema(conn)
+        columns = table_columns(conn, "youtube_videos")
+        selectable = [
+            column
+            for column in set(AUTO_RENDER_DESIGN_FIELD_MAP.values())
+            if column in columns
+        ]
+        if not selectable:
+            conn.commit()
+            return {"updated": False, "fields": []}
+        row = conn.execute(
+            f"SELECT {', '.join(selectable)} FROM youtube_videos WHERE id = ? AND owner_user_id = ? AND brand_id = ?",
+            [int(video_pk), owner_user_id, brand_id],
+        ).fetchone()
+        if not row:
+            conn.commit()
+            return {"updated": False, "fields": [], "reason": "video_not_found"}
+        current_by_column = dict(zip(selectable, row))
+        if not any(current_by_column.get(column) is None for column in selectable):
+            conn.commit()
+            return {"updated": False, "fields": []}
+        raw_values = {
+            default_name: current_by_column.get(column_name)
+            for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items()
+            if column_name in current_by_column
+        }
+        resolved = _apply_short_editor_defaults(raw_values, _load_short_editor_defaults(owner_user_id))
+        assignments: List[str] = []
+        params: List[Any] = []
+        updated_fields: List[str] = []
+        for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items():
+            if column_name not in current_by_column or current_by_column.get(column_name) is not None:
+                continue
+            if default_name not in resolved:
+                continue
+            assignments.append(f"{column_name} = COALESCE({column_name}, ?)")
+            params.append(resolved.get(default_name))
+            updated_fields.append(column_name)
+        if not assignments:
+            conn.commit()
+            return {"updated": False, "fields": []}
+        params.extend([int(video_pk), owner_user_id, brand_id])
+        conn.execute(
+            f"""
+            UPDATE youtube_videos
+            SET {', '.join(assignments)}
+            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+            """,
+            params,
+        )
+        conn.commit()
+        return {"updated": True, "fields": updated_fields}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _enqueue_auto_render_for_plan_entry(
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    plan_index: int,
+) -> Dict[str, Any]:
+    conn = get_db_readonly()
+    try:
+        user_row = conn.execute(
+            "SELECT id, email, role, plan_id FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not user_row:
+        return {"ok": False, "status_code": 404, "message": "Owner user not found."}
+    with current_app.test_request_context(
+        f"/video_shorts/generate/{int(video_pk)}/autoclip",
+        method="POST",
+        data={"plan_index": str(plan_index), "_auto_render_job": "1"},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    ):
+        g.vs_current_user = {
+            "id": str(user_row[0]),
+            "email": str(user_row[1] or ""),
+            "role": str(user_row[2] or ""),
+            "plan_id": user_row[3],
+        }
+        g.vs_current_brand = {"id": brand_id}
+        response = autoclip_video(int(video_pk))
+        status_code = getattr(response, "status_code", None)
+        response_obj = response
+        if isinstance(response, tuple):
+            response_obj = response[0]
+            if len(response) > 1 and isinstance(response[1], int):
+                status_code = response[1]
+        if status_code is None:
+            status_code = 200
+        payload: Dict[str, Any] = {}
+        if hasattr(response_obj, "get_json"):
+            try:
+                payload = response_obj.get_json(silent=True) or {}
+            except Exception:
+                payload = {}
+        return {
+            "ok": bool(payload.get("success")) and int(status_code) < 400,
+            "status_code": int(status_code),
+            "payload": payload,
+            "job_id": payload.get("job_id"),
+            "message": payload.get("message"),
+        }
+
+
+def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
+    started_at = time.monotonic()
+    owner_user_id = str((payload or {}).get("owner_user_id") or "").strip()
+    brand_id = str((payload or {}).get("brand_id") or "").strip()
+    video_id = str((payload or {}).get("video_id") or "").strip()
+    try:
+        video_pk = int((payload or {}).get("video_pk") or 0)
+    except Exception:
+        video_pk = 0
+    result: Dict[str, Any] = {
+        "video_pk": video_pk,
+        "video_id": video_id,
+        "selected": [],
+        "enqueued": [],
+        "skip_reason": "",
+    }
+    def finish(skip_reason: str = "") -> Dict[str, Any]:
+        if skip_reason:
+            result["skip_reason"] = skip_reason
+        result["duration_ms"] = int(round((time.monotonic() - started_at) * 1000))
+        meta = {
+            "auto_run_at": _utc_now_iso(),
+            "status": "skipped" if result.get("skip_reason") else "completed",
+            "skip_reason": result.get("skip_reason") or "",
+            "selected": result.get("selected") or [],
+            "enqueued": result.get("enqueued") or [],
+            "entries_generated": result.get("entries_generated"),
+            "planner": result.get("planner"),
+            "duration_ms": result.get("duration_ms"),
+        }
+        if video_id:
+            _write_auto_suggest_render_meta(video_id, meta)
+        current_app.logger.info(
+            "auto_suggest_render video_id=%s planner=%s entries_generated=%s selected=%s enqueued_job_ids=%s duration_ms=%s skip_reason=%s",
+            video_id,
+            result.get("planner") or "",
+            result.get("entries_generated"),
+            result.get("selected") or [],
+            [item.get("job_id") for item in (result.get("enqueued") or []) if isinstance(item, dict)],
+            result.get("duration_ms"),
+            result.get("skip_reason") or "",
+        )
+        return result
+
+    if not owner_user_id or not brand_id or not video_pk or not video_id:
+        return finish("missing_scope")
+    if not _auto_suggest_render_gate_matches(owner_user_id):
+        return finish("gate_disabled")
+    if _is_discovery_demo_scope(owner_user_id, brand_id, video_pk):
+        return finish("discovery_or_lead_video")
+    conn = get_db_readonly()
+    try:
+        video_row = _fetch_scoped_video_row_with_scope(
+            conn,
+            video_pk,
+            "id, video_id, title, duration_seconds, COALESCE(transcript_status, ''), COALESCE(download_status, '')",
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+        user_row = conn.execute(
+            "SELECT role FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not video_row:
+        return finish("video_not_found")
+    if str(video_row[4] or "").strip().lower() != "done":
+        return finish("transcript_not_ready")
+    meta = _load_auto_suggest_render_meta(video_id)
+    entries = _load_plan_entries(video_id) or []
+    if meta.get("auto_run_at"):
+        return finish("already_ran")
+    if any(isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai" for entry in entries):
+        _write_auto_suggest_render_meta(
+            video_id,
+            {
+                "auto_run_at": _utc_now_iso(),
+                "status": "skipped",
+                "skip_reason": "ai_entries_exist",
+                "selected": [],
+                "enqueued": [],
+            },
+        )
+        return finish("ai_entries_exist")
+
+    form_data = {
+        "_owner_user_id": owner_user_id,
+        "_brand_id": brand_id,
+        "_request_user_role": str((user_row[0] if user_row else "") or ""),
+    }
+    plan_result = _generate_clip_plan_for_video(
+        video_pk,
+        form_data,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    entries = _load_plan_entries(video_id) or []
+    generated_entries = [
+        entry for entry in entries
+        if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
+    ]
+    result["entries_generated"] = int(plan_result.get("clip_count") or len(generated_entries))
+    result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "")
+
+    defaults_result = apply_short_editor_defaults_to_video_if_null(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+    )
+    result["defaults"] = defaults_result
+
+    selected_entries = _select_auto_render_entries(
+        entries,
+        min_score=AUTO_RENDER_MIN_SCORE,
+        limit=AUTO_RENDER_TOP_N,
+    )
+    if not selected_entries:
+        result["selected"] = []
+        return finish(f"no_clips_above_{AUTO_RENDER_MIN_SCORE:g}")
+    enqueued: List[Dict[str, Any]] = []
+    selected_summary: List[Dict[str, Any]] = []
+    for entry in selected_entries:
+        try:
+            plan_index = int(entry.get("plan_index"))
+        except Exception:
+            continue
+        score = _coerce_plan_score(entry)
+        selected_summary.append({"plan_index": plan_index, "score": score})
+        enqueue_result = _enqueue_auto_render_for_plan_entry(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            plan_index=plan_index,
+        )
+        enqueued.append({"plan_index": plan_index, **enqueue_result})
+    result["selected"] = selected_summary
+    result["enqueued"] = enqueued
+    return finish()
 
 
 def _is_discovery_demo_scope(owner_user_id: str, brand_id: str, video_pk: Optional[int] = None) -> bool:
@@ -9573,6 +10023,13 @@ def generate_short(video_pk):
     plan_generation_block_reason = (plan_job_block or {}).get("reason") or ""
     plan_generation_block_message = (plan_job_block or {}).get("message") or ""
     plan_generation_run_count = int(plan_job_state.get("run_count") or 0)
+    auto_suggest_render_state = _auto_suggest_render_state_for_video(
+        conn,
+        owner_user_id=editor_owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+        video_id=video["video_id"],
+    )
     generated_clip_entries = []
     for entry in plan_entries:
         if entry.get("status") != "created":
@@ -10402,6 +10859,7 @@ def generate_short(video_pk):
         plan_generation_block_reason=plan_generation_block_reason,
         plan_generation_block_message=plan_generation_block_message,
         plan_generation_run_count=plan_generation_run_count,
+        auto_suggest_render_state=auto_suggest_render_state,
         focus_category_options=get_focus_category_options(transcript_language or "tr"),
         selected_focus_categories=selected_focus_categories,
         transcript_player_source=transcript_player_source,
@@ -24874,6 +25332,7 @@ def autoclip_video(video_pk):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
     regenerate_job = (request.form.get("_regenerate_job") or "").strip() in {"1", "true", "yes"}
+    auto_render_job = (request.form.get("_auto_render_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
@@ -25649,11 +26108,13 @@ def autoclip_video(video_pk):
             is_discovery_demo = _is_discovery_demo_scope(target_owner_user_id, brand_id, int(video_pk))
             if is_discovery_demo:
                 payload["job_origin"] = DISCOVERY_JOB_ORIGIN
+            elif auto_render_job:
+                payload["job_origin"] = AUTO_RENDER_JOB_ORIGIN
             enqueue_result = enqueue_render_job(
                 user_id=str(target_owner_user_id),
                 payload=payload,
                 input_hash=input_hash,
-                priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
+                priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else (AUTO_RENDER_JOB_PRIORITY if auto_render_job else None),
             )
             kind = enqueue_result.get("kind")
             job = enqueue_result.get("job") or {}
@@ -25667,7 +26128,7 @@ def autoclip_video(video_pk):
                         user_id=str(target_owner_user_id),
                         payload=payload,
                         input_hash=input_hash,
-                        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else None,
+                        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else (AUTO_RENDER_JOB_PRIORITY if auto_render_job else None),
                     )
                     kind = enqueue_result.get("kind")
                     job = enqueue_result.get("job") or {}
@@ -25722,7 +26183,9 @@ def autoclip_video(video_pk):
                 status="queued",
                 render_job_id=job.get("id"),
             )
-            reserve_result = reserve_export(target_owner_user_id)
+            reserve_result = {"allowed": True, "remaining": None}
+            if (not auto_render_job) or AUTO_RENDER_COUNTS_QUOTA:
+                reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
                 if job.get("id"):
                     try:

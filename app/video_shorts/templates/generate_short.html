@@ -2626,6 +2626,15 @@
       background: transparent;
       box-shadow: none;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-auto-empty {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 88px;
+      padding: 16px 14px;
+      color: rgba(230, 235, 242, 0.82);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+    }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item:focus {
       outline: none;
       box-shadow: none;
@@ -4839,7 +4848,9 @@
            {% if generate_v2 %}
            data-generate-v2="1"
            data-video-id="{{ video.id }}"
-           data-default-tab="{{ 'shorts' if clip_rows else 'transcript' }}"
+           data-default-tab="{{ 'shorts' if clip_rows or (auto_suggest_render_state and (auto_suggest_render_state.active or auto_suggest_render_state.no_strong)) else 'transcript' }}"
+           data-auto-suggest-active="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.active else '0' }}"
+           data-auto-suggest-no-strong="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.no_strong else '0' }}"
            {% endif %}>
       {% if generate_v2 %}
       <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>
@@ -5387,6 +5398,22 @@
                   </button>
                   {% endif %}
                   </div>
+                {% else %}
+                  {% if generate_v2 and auto_suggest_render_state and auto_suggest_render_state.active %}
+                    <div class="generate-v2-auto-empty" aria-live="polite">
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        <span class="clip-rail-copy">
+                          <span class="clip-rail-title">Finding the best moments…</span>
+                        </span>
+                    </div>
+                  {% elif generate_v2 and auto_suggest_render_state and auto_suggest_render_state.no_strong %}
+                    <div class="generate-v2-auto-empty">
+                        <span class="clip-rail-copy">
+                          <span class="clip-rail-title">No strong moments found automatically.</span>
+                          <span class="clip-rail-meta">Try AI Suggest or Make a Clip.</span>
+                        </span>
+                    </div>
+                  {% endif %}
                 {% endfor %}
               </div>
               {% if generate_v2 %}
@@ -9813,8 +9840,9 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       });
     });
   });
-  initGenerateV2LazyThumbnails(root);
-  if (window.__generateV2EditModeActive) {
+	  initGenerateV2LazyThumbnails(root);
+	  initGenerateV2AutoSuggestRefresh();
+	  if (window.__generateV2EditModeActive) {
     initGenerateV2RegenerateControls();
     return true;
   }
@@ -9827,6 +9855,26 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   });
   initGenerateV2RegenerateControls();
   return true;
+};
+
+const initGenerateV2AutoSuggestRefresh = () => {
+  const root = getGenerateV2Root();
+  if (!root || root.dataset.autoSuggestRefreshBound === "1") {
+    return;
+  }
+  root.dataset.autoSuggestRefreshBound = "1";
+  const timer = window.setInterval(async () => {
+    const activeRoot = getGenerateV2Root();
+    if (!activeRoot || activeRoot.dataset.autoSuggestActive !== "1") {
+      window.clearInterval(timer);
+      return;
+    }
+    if (document.querySelectorAll("#clip-rail-list .clip-rail-item[data-plan-index]").length > 0) {
+      window.clearInterval(timer);
+      return;
+    }
+    await refreshClipList(null, "list");
+  }, 5000);
 };
 
 window.addEventListener("resize", syncGenerateV2WorkbenchHeight);
@@ -9998,6 +10046,12 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const doc = parser.parseFromString(html, "text/html");
     const newClipPanel = doc.getElementById("clip-management-panel");
     if (getGenerateV2Root()) {
+      const currentRoot = getGenerateV2Root();
+      const newRoot = doc.querySelector("#clip-workbench-shell[data-generate-v2='1']");
+      if (currentRoot && newRoot) {
+        currentRoot.dataset.autoSuggestActive = newRoot.dataset.autoSuggestActive || "0";
+        currentRoot.dataset.autoSuggestNoStrong = newRoot.dataset.autoSuggestNoStrong || "0";
+      }
       const currentTabCount = document.querySelector(".generate-v2-tab-count");
       const newTabCount = doc.querySelector(".generate-v2-tab-count");
       if (currentTabCount && newTabCount) {
