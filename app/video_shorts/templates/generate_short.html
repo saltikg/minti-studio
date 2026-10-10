@@ -1944,7 +1944,7 @@
     min-height: 0;
     height: 100%;
     display: grid;
-    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    grid-template-columns: minmax(340px, 360px) minmax(0, 1fr);
     gap: 12px;
   }
   .generate-v2-clip-list-column,
@@ -2570,6 +2570,23 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-duration {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      max-width: calc(100% - 8px);
+      min-height: 16px;
+      padding: 1px 4px;
+      border-radius: 5px;
+      background: rgba(0, 0, 0, 0.74);
+      color: #fff;
+      font-size: 0.6rem;
+      font-weight: 800;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: clip;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy {
       align-self: center;
@@ -10849,6 +10866,44 @@ const getGenerateV2WordTimestamps = (() => {
   };
 })();
 
+const getGenerateV2SegmentFallbackWords = (() => {
+  let cache = null;
+  return () => {
+    if (cache) return cache;
+    const script = document.getElementById("trs-segments-json");
+    if (!script) {
+      cache = [];
+      return cache;
+    }
+    try {
+      const parsed = JSON.parse(script.textContent || "[]");
+      cache = Array.isArray(parsed)
+        ? parsed
+          .map((segment, index) => {
+            const start = Number(segment?.start ?? segment?.start_seconds ?? segment?.start_time ?? 0);
+            const end = Number(segment?.end ?? segment?.end_seconds ?? segment?.end_time ?? start);
+            const text = String(segment?.text ?? segment?.content ?? segment?.transcript ?? "").trim();
+            return {
+              index,
+              start: Number.isFinite(start) ? start : 0,
+              end: Number.isFinite(end) && end > start ? end : start + 0.5,
+              text,
+            };
+          })
+          .filter((word) => word.text)
+        : [];
+    } catch (_) {
+      cache = [];
+    }
+    return cache;
+  };
+})();
+
+const getGenerateV2TranscriptWords = () => {
+  const words = getGenerateV2WordTimestamps();
+  return words.length ? words : getGenerateV2SegmentFallbackWords();
+};
+
 const formatClipDurationLabel = (seconds) => {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));
   const minutes = Math.floor(total / 60);
@@ -11052,7 +11107,7 @@ window.initGenerateV2TextTranscript = () => {
     return;
   }
   shell.dataset.textTranscriptMounted = "1";
-  const words = getGenerateV2WordTimestamps();
+  const words = getGenerateV2TranscriptWords();
   const toolbar = document.getElementById("generate-v2-text-toolbar");
   const previewBtn = toolbar?.querySelector("[data-generate-v2-text-preview]");
   const createBtn = toolbar?.querySelector("[data-generate-v2-text-create]");
@@ -11150,7 +11205,7 @@ window.initGenerateV2TextTranscript = () => {
       const time = document.createElement("button");
       time.type = "button";
       time.className = "generate-v2-text-time";
-      time.textContent = formatSecondsCompact(Number(paragraph[0].start || 0));
+      time.textContent = formatClipDurationLabel(Number(paragraph[0].start || 0));
       time.addEventListener("click", () => {
         window.__trsClipSelectorController?.previewRange?.(Number(paragraph[0].start || 0), Number(paragraph[0].start || 0) + 0.5);
       });
