@@ -893,6 +893,75 @@
     background: #3ee0cc;
     color: #04211d;
   }
+  .mv-youtube-preview {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 14px;
+    background: rgba(8, 13, 21, 0.74);
+    color: rgba(226, 232, 240, 0.78);
+  }
+  .mv-youtube-preview.is-visible {
+    display: flex;
+  }
+  .mv-youtube-preview.is-error {
+    border-color: rgba(248, 113, 113, 0.28);
+    color: #fca5a5;
+  }
+  .mv-youtube-preview-thumb {
+    flex: 0 0 96px;
+    width: 96px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.96);
+  }
+  .mv-youtube-preview-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mv-youtube-preview-body {
+    min-width: 0;
+  }
+  .mv-youtube-preview-title {
+    overflow: hidden;
+    color: #f8fafc;
+    font-size: 0.94rem;
+    font-weight: 700;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mv-youtube-preview-meta {
+    margin-top: 4px;
+    color: rgba(226, 232, 240, 0.62);
+    font-size: 0.82rem;
+  }
+  .mv-youtube-preview-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(148, 163, 184, 0.28);
+    border-top-color: #2dd4bf;
+    border-radius: 999px;
+    animation: mv-spin 0.8s linear infinite;
+  }
+  @keyframes mv-spin {
+    to { transform: rotate(360deg); }
+  }
+  @media (max-width: 640px) {
+    .mv-youtube-preview {
+      align-items: flex-start;
+    }
+    .mv-youtube-preview-thumb {
+      flex-basis: 82px;
+      width: 82px;
+    }
+  }
   .mv-dropzone {
     min-height: 150px;
     align-items: center;
@@ -1180,6 +1249,7 @@
             </div>
             <button type="button" id="mv-youtube-submit" class="mv-youtube-submit">Add video</button>
           </div>
+          <div id="mv-youtube-preview" class="mv-youtube-preview" aria-live="polite"></div>
         </div>
         <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
           <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
@@ -1431,10 +1501,11 @@
   const uploadFeedback = document.getElementById('mv-upload-feedback');
   const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
-  const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
-	  const youtubeUrlInput = document.getElementById('mv-youtube-url');
-	  const youtubeSubmit = document.getElementById('mv-youtube-submit');
-	  const mobileNotice = document.getElementById('mv-mobile-notice');
+	  const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
+		  const youtubeUrlInput = document.getElementById('mv-youtube-url');
+		  const youtubeSubmit = document.getElementById('mv-youtube-submit');
+		  const youtubePreview = document.getElementById('mv-youtube-preview');
+		  const mobileNotice = document.getElementById('mv-mobile-notice');
 	  const addTabs = Array.from(document.querySelectorAll('[data-mv-tab]'));
 	  const videoRows = Array.from(document.querySelectorAll('[data-video-row]'));
 	  const statusFilterButtons = Array.from(document.querySelectorAll('[data-status-filter]'));
@@ -1450,7 +1521,10 @@
   const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
   const showAutopilotFraming = {{ show_autopilot_framing|tojson }};
   const canHoverShortPreviews = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-  let selectedFile = null;
+	  let selectedFile = null;
+	  let youtubePreviewTimer = null;
+	  let youtubePreviewController = null;
+	  let youtubePreviewRequestId = 0;
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
   let serviceModeModalOpen = Boolean(window.__vsServiceModeModalOpen);
@@ -2096,6 +2170,107 @@
     return payload;
   };
 
+  const setYoutubePreview = (state, payload = {}) => {
+    if (!youtubePreview) return;
+    youtubePreview.classList.toggle('is-visible', Boolean(state));
+    youtubePreview.classList.toggle('is-error', state === 'error');
+    if (!state) {
+      youtubePreview.innerHTML = '';
+      return;
+    }
+    if (state === 'loading') {
+      youtubePreview.innerHTML = `
+        <span class="mv-youtube-preview-spinner" aria-hidden="true"></span>
+        <span>Reading video details…</span>
+      `;
+      return;
+    }
+    if (state === 'error') {
+      youtubePreview.textContent = payload.message || 'We could not read that YouTube video yet.';
+      return;
+    }
+    const video = payload.video || {};
+    const title = String(video.title || 'YouTube video');
+    const thumbnailUrl = String(video.thumbnail_url || '');
+    const durationLabel = String(video.duration_label || '');
+    const channelTitle = String(video.channel_title || '');
+    const metaParts = [durationLabel, channelTitle].filter(Boolean);
+    youtubePreview.innerHTML = '';
+    const thumb = document.createElement('div');
+    thumb.className = 'mv-youtube-preview-thumb';
+    if (thumbnailUrl) {
+      const img = document.createElement('img');
+      img.src = thumbnailUrl;
+      img.alt = '';
+      thumb.appendChild(img);
+    }
+    const body = document.createElement('div');
+    body.className = 'mv-youtube-preview-body';
+    const titleNode = document.createElement('div');
+    titleNode.className = 'mv-youtube-preview-title';
+    titleNode.title = title;
+    titleNode.textContent = title;
+    const metaNode = document.createElement('div');
+    metaNode.className = 'mv-youtube-preview-meta';
+    metaNode.textContent = metaParts.join(' · ') || 'Video details ready';
+    body.append(titleNode, metaNode);
+    youtubePreview.append(thumb, body);
+  };
+
+  const loadYoutubePreview = async (videoUrl) => {
+    const requestId = youtubePreviewRequestId + 1;
+    youtubePreviewRequestId = requestId;
+    if (youtubePreviewController) {
+      youtubePreviewController.abort();
+    }
+    youtubePreviewController = new AbortController();
+    setYoutubePreview('loading');
+    try {
+      const response = await fetch('{{ url_for("video_shorts_bp.quick_short_youtube_metadata") }}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ video_url: videoUrl }),
+        signal: youtubePreviewController.signal,
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = {};
+      }
+      if (requestId !== youtubePreviewRequestId) return;
+      if (!response.ok || !payload.ok) {
+        setYoutubePreview('error', { message: payload.message || 'Enter a valid YouTube video URL.' });
+        return;
+      }
+      setYoutubePreview('ready', payload);
+    } catch (error) {
+      if (error?.name === 'AbortError' || requestId !== youtubePreviewRequestId) return;
+      setYoutubePreview('error', { message: 'We could not read that YouTube video yet.' });
+    }
+  };
+
+  const scheduleYoutubePreview = () => {
+    if (!youtubeUrlInput) return;
+    window.clearTimeout(youtubePreviewTimer);
+    const videoUrl = String(youtubeUrlInput.value || '').trim();
+    if (!videoUrl) {
+      youtubePreviewRequestId += 1;
+      if (youtubePreviewController) {
+        youtubePreviewController.abort();
+        youtubePreviewController = null;
+      }
+      setYoutubePreview('');
+      return;
+    }
+    youtubePreviewTimer = window.setTimeout(() => {
+      loadYoutubePreview(videoUrl);
+    }, 450);
+  };
+
   const uploadPart = (url, blob) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url, true);
@@ -2439,12 +2614,16 @@
 
 	  uploadSubmit?.addEventListener('click', uploadFile);
 	  youtubeSubmit?.addEventListener('click', ingestYoutubeUrl);
-  youtubeUrlInput?.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      ingestYoutubeUrl();
-    }
-  });
+	  youtubeUrlInput?.addEventListener('keydown', (event) => {
+	    if (event.key === 'Enter') {
+	      event.preventDefault();
+	      ingestYoutubeUrl();
+	    }
+	  });
+	  youtubeUrlInput?.addEventListener('input', scheduleYoutubePreview);
+	  youtubeUrlInput?.addEventListener('paste', () => {
+	    window.setTimeout(scheduleYoutubePreview, 0);
+	  });
   firstVideoAction?.addEventListener('click', () => {
     dismissCoachmarkForSession();
     setCoachmarkState('');

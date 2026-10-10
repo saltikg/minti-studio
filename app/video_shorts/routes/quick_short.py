@@ -1080,6 +1080,39 @@ def quick_short_session_api():
     return jsonify({"ok": True, "session": _build_session_payload(session)})
 
 
+@video_shorts_bp.route("/shorts/quick/api/youtube-metadata", methods=["POST"])
+def quick_short_youtube_metadata():
+    current_user, redirect_response = _require_quick_user()
+    if redirect_response:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) if request.is_json else request.form
+    video_url = str((data.get("video_url") if data else "") or "").strip()
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        return _json_error("Enter a valid YouTube video URL.")
+    try:
+        meta = fetch_video_metadata(video_id)
+    except YoutubeApiError as exc:
+        return _json_error(str(exc))
+    except Exception:
+        current_app.logger.exception("YouTube metadata preview failed video_id=%s", video_id)
+        return _json_error("We couldn't read that YouTube video right now.")
+    duration = meta.get("duration_seconds")
+    return jsonify(
+        {
+            "ok": True,
+            "video": {
+                "video_id": video_id,
+                "title": meta.get("title") or f"https://www.youtube.com/watch?v={video_id}",
+                "thumbnail_url": meta.get("thumbnail_url") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                "duration_seconds": duration,
+                "duration_label": _format_duration_observed(int(duration or 0)) if duration else "",
+                "channel_title": meta.get("channel_title") or "",
+            },
+        }
+    )
+
+
 @video_shorts_bp.route("/shorts/quick/api/ingest-youtube", methods=["POST"])
 def quick_short_ingest_youtube():
     current_user, redirect_response = _require_quick_user()
