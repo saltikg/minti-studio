@@ -1626,9 +1626,17 @@ def _render_word_highlight_caption_frame(
                 stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
             )
 
+    content_bbox = image.getbbox()
+    if content_bbox:
+        block_bbox = [int(content_bbox[0]), int(content_bbox[1]), int(content_bbox[2]), int(content_bbox[3])]
+    else:
+        block_bbox = [0, 0, 0, 0]
     image.save(out_path)
     return {
         "layout": layout,
+        "block_bbox": block_bbox,
+        "block_center_y": (block_bbox[1] + block_bbox[3]) / 2.0 if block_bbox[3] > block_bbox[1] else None,
+        "block_height": max(0, block_bbox[3] - block_bbox[1]),
         "active_word": active_word,
         "active_text_bbox": [int(active_bbox[0]), int(active_bbox[1]), int(active_bbox[2]), int(active_bbox[3])],
         "active_text_w": active_text_w,

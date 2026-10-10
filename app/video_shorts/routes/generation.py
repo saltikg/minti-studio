@@ -61,6 +61,7 @@ from app.video_shorts.config import (
     FACE_AWARE_MIN_SPLIT_SEC,
     FACE_AWARE_SAMPLE_SEC,
     FACE_AWARE_SCENE_THRESHOLD,
+    FACE_AWARE_SPLIT_TARGET_FACE_RATIO,
     FACE_AWARE_SNAP_WINDOW_SEC,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
@@ -3631,7 +3632,7 @@ def _face_aware_split_crop_rect(
     frame_height: float,
     region_min_x: float = 0.0,
     region_max_x: float = 1.0,
-    target_face_ratio: float = 0.40,
+    target_face_ratio: float = FACE_AWARE_SPLIT_TARGET_FACE_RATIO,
 ) -> Dict[str, float]:
     """Return a static 9:8 crop for one split half, constrained to that person's region."""
     safe_frame_width = max(1.0, float(frame_width or 1.0))
@@ -3654,7 +3655,8 @@ def _face_aware_split_crop_rect(
     cy = max(0.0, min(1.0, float(face.get("cy_ratio") or 0.5)))
     max_x = max(region_min, region_max - crop_w)
     crop_x = max(region_min, min(max_x, cx - (crop_w / 2.0)))
-    crop_y = max(0.0, min(max(0.0, 1.0 - crop_h), cy - (crop_h * 0.38)))
+    face_top = max(0.0, cy - (face_h / 2.0))
+    crop_y = max(0.0, min(max(0.0, 1.0 - crop_h), face_top - (crop_h * 0.12)))
     return {
         "x": round(crop_x, 6),
         "y": round(crop_y, 6),
@@ -25855,6 +25857,7 @@ def autoclip_video(video_pk):
     subscribe_overlay_path_is_temp = False
     subtitle_overlay_video_path = None
     subtitle_overlay_specs: List[Dict[str, Any]] = []
+    subtitle_overlay_events: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
     made = 0
     missing_outputs = 0
@@ -25891,6 +25894,7 @@ def autoclip_video(video_pk):
                             caption_language="",
                         )
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
+                        subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                         overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
                         if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
                             current_app.logger.info(
@@ -25952,6 +25956,7 @@ def autoclip_video(video_pk):
                         caption_language=plan_entry.get("language") or "",
                     )
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
+                    subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                     overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
                     if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
                         current_app.logger.info(
@@ -26321,6 +26326,7 @@ def autoclip_video(video_pk):
                 subtitle_srt,
                 subtitle_overlay_video_path=subtitle_overlay_video_path,
                 subtitle_overlay_specs=subtitle_overlay_specs,
+                subtitle_overlay_events=subtitle_overlay_events,
                 subtitle_font=sub_font_name,
                 title_font_size=title_font_size,
                 title_margin=title_margin,

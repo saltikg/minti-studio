@@ -817,6 +817,65 @@ def _face_aware_caption_block_height(subtitle_font_size: Optional[int]) -> float
     return max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
 
 
+def _face_aware_event_caption_block(metrics: Optional[Dict[str, Any]], *, fallback_top: float, fallback_height: float) -> Dict[str, float]:
+    metrics = metrics if isinstance(metrics, dict) else {}
+    bbox = metrics.get("block_bbox")
+    try:
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            top = float(bbox[1])
+            bottom = float(bbox[3])
+            if bottom > top:
+                return {
+                    "top": top,
+                    "height": bottom - top,
+                    "center_y": (top + bottom) / 2.0,
+                }
+    except Exception:
+        pass
+    try:
+        center_y = float(metrics.get("block_center_y"))
+        height = max(1.0, float(metrics.get("block_height") or fallback_height))
+        return {"top": center_y - (height / 2.0), "height": height, "center_y": center_y}
+    except Exception:
+        height = max(1.0, float(fallback_height or _face_aware_caption_block_height(None)))
+        top = float(fallback_top or 0.0)
+        return {"top": top, "height": height, "center_y": top + (height / 2.0)}
+
+
+def _face_aware_caption_top_for_block(
+    segment: Dict[str, Any],
+    *,
+    block_height: float,
+    target_width: int,
+    target_height: int,
+    subtitle_margin: Optional[int],
+) -> float:
+    mode = str(segment.get("mode") or "fill").strip().lower()
+    safe_block_height = max(1.0, float(block_height or _face_aware_caption_block_height(None)))
+    if mode == "split":
+        return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) / 2.0) - (safe_block_height / 2.0)))
+    if mode == "fit":
+        metrics = _face_aware_fit_position_metrics(
+            target_width=target_width,
+            target_height=target_height,
+            subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
+        )
+        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + 24.0))
+    if not _is_face_aware_default_subtitle_margin(subtitle_margin):
+        margin = _face_aware_fill_subtitle_margin(subtitle_margin)
+        return max(0.0, float(target_height) - float(margin) - safe_block_height)
+    try:
+        face_bottom = segment.get("caption_face_bottom")
+        if face_bottom is not None:
+            min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP
+            max_top = max(min_top, float(target_height) - FACE_AWARE_FILL_SUBSCRIBE_ROOM - safe_block_height)
+            return max(min_top, min(max_top, float(face_bottom) + FACE_AWARE_FILL_CAPTION_GAP))
+    except Exception:
+        pass
+    margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+    return max(0.0, float(target_height) - float(margin) - safe_block_height)
+
+
 def _is_face_aware_default_subtitle_margin(subtitle_margin: Optional[int]) -> bool:
     try:
         margin = int(round(float(subtitle_margin)))
@@ -1096,6 +1155,8 @@ def _build_face_aware_subtitle_path(
         for start, end, body in events:
             suffix = _face_aware_style_suffix_for_time(layout_segments, start)
             style = f"{suffix}Style" if suffix in {"Fit", "Split"} else f"FillStyle{suffix}"
+            if suffix == "Split":
+                body = r"{\an5\pos(360,640)}" + body
             ass_lines.append(
                 f"Dialogue: 0,{_format_face_aware_ass_time(start)},{_format_face_aware_ass_time(end)},{style},,0,0,0,,{body}"
             )
@@ -1161,6 +1222,8 @@ def _build_face_aware_subtitle_path(
             if len(parts) >= 10:
                 suffix = _face_aware_style_suffix_for_time(layout_segments, _ass_time_to_seconds(parts[1]))
                 parts[3] = f"{(parts[3].strip() or 'Default')}{suffix}"
+                if suffix == "Split":
+                    parts[9] = r"{\an5\pos(360,640)}" + parts[9]
                 output.append("Dialogue: " + ",".join(parts))
                 continue
         output.append(line)
@@ -1215,6 +1278,23 @@ def _normalize_subtitle_overlay_specs(
         except Exception:
             continue
         normalized.append({"path": path, "start": start, "end": end})
+    return normalized
+
+
+def _normalize_subtitle_overlay_events(
+    subtitle_overlay_events: Optional[list[Dict[str, Any]]],
+) -> list[Dict[str, Any]]:
+    normalized: list[Dict[str, Any]] = []
+    for event in subtitle_overlay_events or []:
+        if not isinstance(event, dict):
+            continue
+        try:
+            start = max(0.0, float(event.get("start") or 0.0))
+            end = max(start + 0.01, float(event.get("end") or 0.0))
+        except Exception:
+            continue
+        normalized.append({"start": start, "end": end, "metrics": event.get("metrics") or {}})
+    normalized.sort(key=lambda item: item["start"])
     return normalized
 
 
@@ -1636,6 +1716,7 @@ def _compose_trimmed_with_background(
     subtitle_path: Path = None,
     subtitle_overlay_video_path: Optional[Path] = None,
     subtitle_overlay_specs: Optional[list[Dict[str, Any]]] = None,
+    subtitle_overlay_events: Optional[list[Dict[str, Any]]] = None,
     subtitle_font: str = "DejaVu Sans",
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
@@ -2376,6 +2457,11 @@ def _compose_trimmed_with_background(
         if show_subtitle
         else []
     )
+    effective_subtitle_overlay_events = (
+        _normalize_subtitle_overlay_events(subtitle_overlay_events)
+        if show_subtitle
+        else []
+    )
     try:
         safe_title_line_spacing_main = int(title_line_spacing if title_line_spacing is not None else -4)
     except (TypeError, ValueError):
@@ -3078,40 +3164,68 @@ def _compose_trimmed_with_background(
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
         caption_overlay_y_expr = "0"
         if face_aware_layout_active:
-            try:
-                fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
-                fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
-                caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
-                split_caption_top = float(face_aware_split_metrics["caption_top"])
-                split_base_top = (
-                    float(target_height)
-                    - fill_margin
-                    - caption_block_height
-                )
-                fit_caption_y = fill_margin - fit_margin
-                split_caption_y = split_caption_top - split_base_top
-            except Exception:
-                fit_caption_y = 0.0
-                split_caption_y = 0.0
             caption_overlay_y_expr = "0"
-            for segment in reversed(layout_segments):
-                seg_start = float(segment.get("start") or 0.0)
-                seg_end = float(segment.get("end") or duration)
-                segment_mode = str(segment.get("mode") or "fill")
-                if segment_mode == "fit":
-                    segment_caption_y = fit_caption_y
-                elif segment_mode == "split":
-                    segment_caption_y = split_caption_y
-                else:
-                    try:
-                        segment_margin = float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
-                        segment_caption_y = fill_margin - segment_margin
-                    except Exception:
-                        segment_caption_y = 0.0
-                caption_overlay_y_expr = (
-                    f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
-                    f"{segment_caption_y:.2f},{caption_overlay_y_expr})"
-                )
+            if effective_subtitle_overlay_events:
+                fallback_height = _face_aware_caption_block_height(subtitle_font_size)
+                fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(subtitle_margin)) - fallback_height
+                for event in reversed(effective_subtitle_overlay_events):
+                    event_start = float(event["start"])
+                    event_end = min(float(duration), float(event["end"]))
+                    if event_end <= event_start:
+                        continue
+                    event_segment = _face_aware_segment_for_time(layout_segments, event_start)
+                    block = _face_aware_event_caption_block(
+                        event.get("metrics") or {},
+                        fallback_top=fallback_top,
+                        fallback_height=fallback_height,
+                    )
+                    desired_top = _face_aware_caption_top_for_block(
+                        event_segment,
+                        block_height=block["height"],
+                        target_width=target_width,
+                        target_height=target_height,
+                        subtitle_margin=subtitle_margin,
+                    )
+                    segment_caption_y = desired_top - block["top"]
+                    caption_overlay_y_expr = (
+                        f"if(between(t,{event_start:.6f},{event_end:.6f}),"
+                        f"{segment_caption_y:.2f},{caption_overlay_y_expr})"
+                    )
+            else:
+                try:
+                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
+                    fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
+                    caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
+                    split_caption_top = float(face_aware_split_metrics["caption_top"])
+                    split_base_top = (
+                        float(target_height)
+                        - fill_margin
+                        - caption_block_height
+                    )
+                    fit_caption_y = fill_margin - fit_margin
+                    split_caption_y = split_caption_top - split_base_top
+                except Exception:
+                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
+                    fit_caption_y = 0.0
+                    split_caption_y = 0.0
+                for segment in reversed(layout_segments):
+                    seg_start = float(segment.get("start") or 0.0)
+                    seg_end = float(segment.get("end") or duration)
+                    segment_mode = str(segment.get("mode") or "fill")
+                    if segment_mode == "fit":
+                        segment_caption_y = fit_caption_y
+                    elif segment_mode == "split":
+                        segment_caption_y = split_caption_y
+                    else:
+                        try:
+                            segment_margin = float(segment.get("caption_margin_v") or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
+                            segment_caption_y = fill_margin - segment_margin
+                        except Exception:
+                            segment_caption_y = 0.0
+                    caption_overlay_y_expr = (
+                        f"if(between(t,{seg_start:.6f},{seg_end:.6f}),"
+                        f"{segment_caption_y:.2f},{caption_overlay_y_expr})"
+                    )
             caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
         filter_parts.append(
             f"{final_label}[caption_src]overlay=0:{caption_overlay_y_expr}:shortest=1[caption_out]"
