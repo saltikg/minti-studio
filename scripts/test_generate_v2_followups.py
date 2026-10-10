@@ -14,6 +14,11 @@ from app import create_app
 from app.video_shorts.routes import generation
 
 
+class _FakeConnection:
+    def close(self) -> None:
+        pass
+
+
 def _check(name: str, condition: bool, detail: str = "") -> None:
     if not condition:
         raise AssertionError(f"{name} failed {detail}".strip())
@@ -120,9 +125,83 @@ def test_word_time_mapping() -> None:
     _check("word_time_sentence_index", words[2]["sentence"] == 1, str(words))
 
 
+def test_edit_endpoint_returns_job_id_for_render_and_regenerate() -> None:
+    app = create_app()
+    original = {
+        "_fetch_scoped_video_row": generation._fetch_scoped_video_row,
+        "_load_plan_entries": generation._load_plan_entries,
+        "_short_exists": generation._short_exists,
+        "_active_editor_context": generation._active_editor_context,
+        "get_db_readonly": generation.get_db_readonly,
+        "table_columns": generation.table_columns,
+        "load_instagram_queue_map": generation.load_instagram_queue_map,
+        "load_tiktok_queue_map": generation.load_tiktok_queue_map,
+        "load_facebook_queue_map": generation.load_facebook_queue_map,
+        "_write_plan_entries": generation._write_plan_entries,
+        "_fetch_transcript": generation._fetch_transcript,
+        "build_transcript_for_range": generation.build_transcript_for_range,
+        "regenerate_clip_video": generation.regenerate_clip_video,
+        "autoclip_video": generation.autoclip_video,
+    }
+    calls = []
+    try:
+        generation._fetch_scoped_video_row = lambda conn, video_pk, columns: ("unitVideo", 120.0)
+        generation._active_editor_context = lambda: {"owner_user_id": "user-1", "brand_id": "brand-1"}
+        generation.get_db_readonly = lambda: _FakeConnection()
+        generation.table_columns = lambda conn, table: []
+        generation.load_instagram_queue_map = lambda video_ids: {}
+        generation.load_tiktok_queue_map = lambda video_ids: {}
+        generation.load_facebook_queue_map = lambda video_ids: {}
+        generation._write_plan_entries = lambda video_id, entries: calls.append(("write", video_id, entries[0].get("title")))
+        generation._fetch_transcript = lambda conn, video_id: ("", [])
+        generation.build_transcript_for_range = lambda segments, start, end, prefer_tr=True: "edited transcript"
+
+        def _run(entry, exists):
+            generation._load_plan_entries = lambda video_id: [entry]
+            generation._short_exists = lambda filename: exists
+
+            def fake_regenerate(video_pk, plan_index):
+                calls.append(("regenerate", video_pk, plan_index))
+                from flask import jsonify
+
+                return jsonify(success=True, job_id="regen-job", status="queued", queue_position=1), 202
+
+            def fake_autoclip(video_pk):
+                calls.append(("autoclip", video_pk))
+                from flask import jsonify
+
+                return jsonify(success=True, job_id="render-job", status="queued", queue_position=2), 202
+
+            generation.regenerate_clip_video = fake_regenerate
+            generation.autoclip_video = fake_autoclip
+            with app.test_request_context(
+                "/video_shorts/generate/42/clip/3/edit-title-time",
+                method="POST",
+                data={"title": "Edited", "start": "10", "end": "20", "regenerate": "1"},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            ):
+                from flask import g
+
+                g.vs_current_user = {"id": "user-1"}
+                g.vs_current_brand = {"id": "brand-1"}
+                response = generation.edit_clip_title_time(42, 3)
+                response_obj = response[0] if isinstance(response, tuple) else response
+                return response_obj.get_json()
+
+        rendered_payload = _run({"plan_index": 3, "title": "Old", "start": 10, "end": 20, "clip_filename": "3_unitVideo.mp4"}, True)
+        _check("edit_endpoint_regenerate_job_id", rendered_payload["job_id"] == "regen-job" and rendered_payload["render_mode"] == "regenerate", str(rendered_payload))
+        unrendered_payload = _run({"plan_index": 3, "title": "Old", "start": 10, "end": 20, "status": "pending"}, False)
+        _check("edit_endpoint_create_job_id", unrendered_payload["job_id"] == "render-job" and unrendered_payload["render_mode"] == "render", str(unrendered_payload))
+        _check("edit_endpoint_paths_called", ("regenerate", 42, 3) in calls and ("autoclip", 42) in calls, str(calls))
+    finally:
+        for name, value in original.items():
+            setattr(generation, name, value)
+
+
 if __name__ == "__main__":
     test_auto_selection_two_eligible()
     test_sentence_snapping()
     test_edit_validation_and_lock()
     test_text_trim_selection_ranges()
     test_word_time_mapping()
+    test_edit_endpoint_returns_job_id_for_render_and_regenerate()

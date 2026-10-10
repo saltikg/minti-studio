@@ -21806,16 +21806,28 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         "duration": cleaned["duration"],
         "regenerated": False,
     }
-    if clip_exists and should_regenerate:
+    if should_regenerate:
+        if clip_exists:
+            render_path = f"/video_shorts/generate/{int(video_pk)}/clip/{int(plan_index)}/regenerate"
+            render_data = {"force": "1"}
+            render_mode = "regenerate"
+            queued_message = "Clip updated. Regeneration queued."
+            render_callable = regenerate_clip_video
+        else:
+            render_path = f"/video_shorts/generate/{int(video_pk)}/autoclip"
+            render_data = {"plan_index": str(int(plan_index)), "title": cleaned["title"]}
+            render_mode = "render"
+            queued_message = "Clip updated. Render queued."
+            render_callable = autoclip_video
         with current_app.test_request_context(
-            f"/video_shorts/generate/{int(video_pk)}/clip/{int(plan_index)}/regenerate",
+            render_path,
             method="POST",
-            data={"force": "1"},
+            data=render_data,
             headers={"X-Requested-With": "XMLHttpRequest"},
         ):
             g.vs_current_user = current_user
             g.vs_current_brand = current_brand or ({"id": brand_id} if brand_id else None)
-            regen_response = regenerate_clip_video(int(video_pk), int(plan_index))
+            regen_response = render_callable(int(video_pk), int(plan_index)) if clip_exists else render_callable(int(video_pk))
         status_code = 202
         response_obj = regen_response
         if isinstance(regen_response, tuple):
@@ -21824,14 +21836,17 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
                 status_code = regen_response[1]
         regen_payload = response_obj.get_json(silent=True) if hasattr(response_obj, "get_json") else {}
         if status_code >= 400 or not (regen_payload or {}).get("success"):
-            return jsonify(success=False, message=(regen_payload or {}).get("message") or "Clip saved, but regeneration could not start."), status_code
+            return jsonify(success=False, message=(regen_payload or {}).get("message") or "Clip saved, but rendering could not start."), status_code
         response_payload.update(
             {
-                "message": "Clip updated. Regeneration queued.",
-                "regenerated": True,
+                "message": queued_message,
+                "regenerated": clip_exists,
+                "render_mode": render_mode,
                 "job_id": regen_payload.get("job_id"),
                 "status": regen_payload.get("status"),
                 "queue_position": regen_payload.get("queue_position"),
+                "cached": regen_payload.get("cached"),
+                "result": regen_payload.get("result"),
             }
         )
         return jsonify(response_payload), 202

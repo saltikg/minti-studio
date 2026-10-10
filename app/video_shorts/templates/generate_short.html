@@ -5565,7 +5565,7 @@
                     <div class="clip-rail-edit-actions">
                       <button type="button" class="btn btn-outline-light btn-sm" data-edit-title-time-cancel>Cancel</button>
                       <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save{% if row.regenerate_locked %} disabled{% endif %}>Save</button>
-                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if row.regenerate_locked %} disabled{% endif %}>Save &amp; regenerate</button>
+                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if row.regenerate_locked %} disabled{% endif %}>{% if row.status == "created" and row.video_filename %}Save &amp; regenerate{% else %}Save &amp; create{% endif %}</button>
                     </div>
                     <div class="clip-rail-edit-hint{% if not row.edit_requires_regenerate %} d-none{% endif %}" data-edit-title-time-hint>Edited — regenerate to apply</div>
                   </form>
@@ -10434,13 +10434,15 @@ const initGenerateV2ClipTitleTimeEditors = () => {
         closeClipEditForm(row);
         if (payload.job_id) {
           const card = getClipCardByPlanIndex(planIndex);
+          const renderMode = payload.render_mode || (payload.regenerated ? "regenerate" : "render");
           if (card) {
-            renderClipJobProgressState(card, payload.status || "queued", payload.queue_position, { mode: "regenerate" });
+            renderClipJobProgressState(card, payload.status || "queued", payload.queue_position, { mode: renderMode });
           }
           void pollClipJobUntilDone(planIndex, payload.job_id, {
             initialStatus: payload.status || "queued",
-            queuePosition: payload.queue_position,
-            mode: "regenerate",
+            initialQueuePosition: payload.queue_position,
+            startedAt: Date.now(),
+            mode: renderMode,
           });
         } else {
           const hint = row?.querySelector("[data-edit-title-time-hint]");
