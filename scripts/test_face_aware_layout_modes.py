@@ -32,7 +32,7 @@ CASES: list[tuple[str, list[str]]] = [
     ("fill_split_fit_fill", ["fill", "split", "fit", "fill"]),
 ]
 
-DURATION = 6.0
+DURATION = 12.0
 LONG_KARAOKE_EVENT_COUNT = 120
 
 
