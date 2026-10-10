@@ -12,10 +12,44 @@ if str(ROOT) not in sys.path:
 
 from app import create_app
 from app.video_shorts.routes import generation
+from app.video_shorts import worker
 
 
 class _FakeConnection:
     def close(self) -> None:
+        pass
+
+
+class _FakeLogger:
+    def __init__(self) -> None:
+        self.records = []
+
+    def warning(self, *args, **kwargs) -> None:
+        self.records.append(("warning", args))
+
+    def exception(self, *args, **kwargs) -> None:
+        self.records.append(("exception", args))
+
+
+class _FakeApp:
+    def __init__(self) -> None:
+        self.logger = _FakeLogger()
+
+
+class _FakeRowsConnection:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, *args, **kwargs):
+        return self
+
+    def fetchall(self):
+        return self.rows
+
+    def commit(self):
+        pass
+
+    def close(self):
         pass
 
 
@@ -198,6 +232,76 @@ def test_edit_endpoint_returns_job_id_for_render_and_regenerate() -> None:
             setattr(generation, name, value)
 
 
+def test_worker_finalize_exception_does_not_leave_processing() -> None:
+    original = {
+        "claim_next_job": worker.claim_next_job,
+        "_worker_should_wait_before_claim": worker._worker_should_wait_before_claim,
+        "_update_plan_status": worker._update_plan_status,
+        "_execute_render_job": worker._execute_render_job,
+        "mark_job_done": worker.mark_job_done,
+        "finalize_job_success": worker.finalize_job_success,
+    }
+    calls = []
+    try:
+        worker._worker_should_wait_before_claim = lambda app: False
+        worker.claim_next_job = lambda worker_id, customer_only=False, discovery_only=False: {
+            "id": "job-1",
+            "type": worker.JOB_TYPE_RENDER_SHORT,
+            "payload": {},
+            "user_id": "user-1",
+        }
+        worker._update_plan_status = lambda job, status: calls.append(("plan", status))
+        worker._execute_render_job = lambda app, job: {"success": True}
+        worker.mark_job_done = lambda job_id, result: calls.append(("done", job_id, result))
+
+        def _raise_finalize(job_id):
+            calls.append(("finalize", job_id))
+            raise RuntimeError("finalize boom")
+
+        worker.finalize_job_success = _raise_finalize
+        processed = worker.process_next_job(_FakeApp(), "worker-1", customer_only=True)
+        _check("worker_finalize_exception_returns_true", processed is True, str(calls))
+        _check("worker_finalize_exception_marked_done_first", calls[1][0] == "done" and calls[2][0] == "finalize", str(calls))
+    finally:
+        for name, value in original.items():
+            setattr(worker, name, value)
+
+
+def test_stuck_render_recovery_marks_completed_output_done() -> None:
+    original = {
+        "get_db": worker.get_db,
+        "get_job": worker.get_job,
+        "mark_job_done": worker.mark_job_done,
+        "finalize_job_success": worker.finalize_job_success,
+        "_load_plan_entries": generation._load_plan_entries,
+        "_short_exists": generation._short_exists,
+    }
+    calls = []
+    try:
+        worker.get_db = lambda: _FakeRowsConnection([("job-2",)])
+        worker.get_job = lambda job_id: {
+            "id": job_id,
+            "type": worker.JOB_TYPE_RENDER_SHORT,
+            "status": "processing",
+            "attempts": 1,
+            "max_attempts": 3,
+            "payload": {"source_video_id": "unitVideo", "plan_index": 4},
+            "user_id": "user-1",
+        }
+        generation._load_plan_entries = lambda video_id: [
+            {"plan_index": 4, "status": "created", "clip_filename": "4_unitVideo.mp4"}
+        ]
+        generation._short_exists = lambda clip_filename: clip_filename == "4_unitVideo.mp4"
+        worker.mark_job_done = lambda job_id, result: calls.append(("done", job_id, result.get("clip_filename")))
+        worker.finalize_job_success = lambda job_id: calls.append(("finalize", job_id))
+        result = worker.recover_stuck_render_jobs(_FakeApp(), stale_seconds=900)
+        _check("stuck_recovery_count", result == {"recovered": 1, "requeued": 0, "failed": 0}, str(result))
+        _check("stuck_recovery_done_finalize", calls == [("done", "job-2", "4_unitVideo.mp4"), ("finalize", "job-2")], str(calls))
+    finally:
+        for name, value in original.items():
+            setattr(worker, name, value)
+
+
 if __name__ == "__main__":
     test_auto_selection_two_eligible()
     test_sentence_snapping()
@@ -205,3 +309,5 @@ if __name__ == "__main__":
     test_text_trim_selection_ranges()
     test_word_time_mapping()
     test_edit_endpoint_returns_job_id_for_render_and_regenerate()
+    test_worker_finalize_exception_does_not_leave_processing()
+    test_stuck_render_recovery_marks_completed_output_done()

@@ -4,6 +4,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -2166,10 +2167,10 @@ def _compose_trimmed_with_background(
         trim_cmd = [
             resolved_ffmpeg,
             "-y",
-            "-i",
-            str(src_path),
             "-ss",
             str(start),
+            "-i",
+            str(src_path),
             "-t",
             str(duration),
             "-avoid_negative_ts",
@@ -2238,6 +2239,7 @@ def _compose_trimmed_with_background(
         )
         current_app.logger.debug("Trim ffmpeg command: %s", " ".join(trim_cmd))
         try:
+            trim_started = time.monotonic()
             trim_result = run_media_subprocess(
                 trim_cmd,
                 operation="trim_clip",
@@ -2252,6 +2254,13 @@ def _compose_trimmed_with_background(
                 ),
                 capture_output=True,
                 text=True,
+            )
+            trim_elapsed_ms = int((time.monotonic() - trim_started) * 1000)
+            current_app.logger.info(
+                "Trim pass completed output=%s duration=%.3f elapsed_ms=%s",
+                trimmed.name,
+                duration,
+                trim_elapsed_ms,
             )
             current_app.logger.debug("Trim stdout: %s", trim_result.stdout)
             current_app.logger.debug("Trim stderr: %s", trim_result.stderr)
@@ -3464,6 +3473,7 @@ def _compose_trimmed_with_background(
     current_app.logger.info("Compose ffmpeg command: %s", " ".join(cmd))
     current_app.logger.debug("Compose ffmpeg command (debug): %s", " ".join(cmd))
     try:
+        compose_started = time.monotonic()
         result = run_media_subprocess(
             cmd,
             operation="compose_trimmed_with_background",
@@ -3478,6 +3488,13 @@ def _compose_trimmed_with_background(
             ),
             capture_output=True,
             text=True,
+        )
+        compose_elapsed_ms = int((time.monotonic() - compose_started) * 1000)
+        current_app.logger.info(
+            "Compose pass completed output=%s duration=%.3f elapsed_ms=%s",
+            temp_out_path.name,
+            duration,
+            compose_elapsed_ms,
         )
         current_app.logger.debug("Compose stdout: %s", result.stdout)
         current_app.logger.debug("Compose stderr: %s", result.stderr)

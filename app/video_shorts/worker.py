@@ -1793,9 +1793,16 @@ def process_next_job(
             result = enrich_autopilot_discovery_email_batch(job.get("payload") or {})
         else:
             result = _execute_render_job(app, job)
-        mark_job_done(job["id"], result)
+        try:
+            mark_job_done(job["id"], result)
+        except Exception:
+            app.logger.exception("Failed to mark job done job_id=%s type=%s", job.get("id"), job.get("type"))
+            raise
         if job.get("type") == JOB_TYPE_RENDER_SHORT:
-            finalize_job_success(job["id"])
+            try:
+                finalize_job_success(job["id"])
+            except Exception:
+                app.logger.exception("Render job finalize failed after done job_id=%s", job.get("id"))
             quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
             if quick_session_id:
                 _set_quick_session_state(
@@ -1848,6 +1855,101 @@ def process_next_job(
         return True
 
 
+def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    payload = job.get("payload") or {}
+    source_video_id = str(payload.get("source_video_id") or "").strip()
+    if not source_video_id:
+        return None
+    try:
+        plan_index = int(payload.get("plan_index"))
+    except Exception:
+        return None
+    try:
+        entries = generation._load_plan_entries(source_video_id) or []
+    except Exception:
+        logger.exception("Could not load plan entries for stuck render recovery job_id=%s", job.get("id"))
+        return None
+    for entry in entries:
+        try:
+            entry_index = int((entry or {}).get("plan_index") or 0)
+        except Exception:
+            continue
+        if entry_index != plan_index:
+            continue
+        status = str((entry or {}).get("status") or "").strip().lower()
+        clip_filename = str((entry or {}).get("clip_filename") or (entry or {}).get("output_filename") or "").strip()
+        if status != "created" or not clip_filename:
+            return None
+        try:
+            if not generation._short_exists(clip_filename):
+                return None
+        except Exception:
+            logger.exception("Could not verify short output for stuck render recovery job_id=%s clip=%s", job.get("id"), clip_filename)
+            return None
+        return {
+            "success": True,
+            "message": f"Recovered completed render for plan index {plan_index}.",
+            "plan_index": plan_index,
+            "clip_filename": clip_filename,
+            "status": "created",
+            "recovered_stuck_processing": True,
+        }
+    return None
+
+
+def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str, int]:
+    """Terminalize stale render jobs whose worker stopped making progress.
+
+    If the plan entry already points at an existing rendered short, mark the job done.
+    Otherwise release the stuck processing slot by requeueing while attempts remain, or
+    failing once retries are exhausted.
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=max(60, int(stale_seconds or 0)))
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id
+            FROM shorts_render_jobs
+            WHERE type = ?
+              AND status = 'processing'
+              AND COALESCE(updated_at, started_at, created_at) < ?
+            ORDER BY COALESCE(updated_at, started_at, created_at) ASC
+            """,
+            [JOB_TYPE_RENDER_SHORT, cutoff],
+        ).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+    recovered = 0
+    requeued = 0
+    failed = 0
+    for row in rows:
+        job_id = str(row[0] or "").strip()
+        job = get_job(job_id)
+        if not job or str(job.get("status") or "").strip().lower() != "processing":
+            continue
+        completion = _render_job_completion_from_plan(job)
+        if completion:
+            try:
+                mark_job_done(job_id, completion)
+                finalize_job_success(job_id)
+                recovered += 1
+                app.logger.warning("Recovered stuck completed render job_id=%s result=%s", job_id, completion)
+            except Exception:
+                app.logger.exception("Failed to recover stuck completed render job_id=%s", job_id)
+            continue
+        if int(job.get("attempts") or 0) >= int(job.get("max_attempts") or 1):
+            mark_job_failed(job_id, "Stuck render job recovered without completed output; retries exhausted.")
+            failed += 1
+            app.logger.warning("Failed stuck render job without output job_id=%s", job_id)
+        else:
+            requeue_job(job_id, "Stuck render job recovered without completed output; requeued automatically.")
+            requeued += 1
+            app.logger.warning("Requeued stuck render job without output job_id=%s", job_id)
+    return {"recovered": recovered, "requeued": requeued, "failed": failed}
+
+
 def run_worker_loop() -> None:
     worker_id = _worker_id()
     mode = _worker_mode()
@@ -1872,6 +1974,12 @@ def run_worker_loop() -> None:
                 except Exception:
                     app.logger.exception("Discovery temp janitor failed")
             requeue_dead_local_worker_jobs()
+            try:
+                recovered_stuck = recover_stuck_render_jobs(app, stale_seconds=15 * 60)
+                if any(recovered_stuck.values()):
+                    app.logger.warning("Recovered stuck render jobs: %s", recovered_stuck)
+            except Exception:
+                app.logger.exception("Stuck render job recovery failed")
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
             if mode in {"all", "customer"}:

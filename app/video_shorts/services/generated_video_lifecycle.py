@@ -433,6 +433,11 @@ def upsert_generated_video_record(
         return
     conn = get_db()
     try:
+        if getattr(conn, "backend_name", "") == "postgres":
+            # Lifecycle sync is non-critical compared with returning the render job.
+            # Avoid leaving the worker stuck forever behind an unexpected row lock.
+            conn.execute("SET LOCAL lock_timeout = '5s'")
+            conn.execute("SET LOCAL statement_timeout = '15000ms'")
         ensure_generated_videos_schema(conn)
         prefer_publish_binding = _has_publish_target_binding(
             publish_status=publish_status,
