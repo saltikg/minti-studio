@@ -123,7 +123,7 @@ from app.video_shorts.services.clip_planner_v10 import propose_clips_v10
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
-from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay
+from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
@@ -5300,20 +5300,75 @@ def _transcript_words_with_sentence_indexes(segments: List[Dict[str, Any]]) -> L
     return words
 
 
-def derive_contiguous_clip_keep_range_from_word_selection(
+def _normalize_edit_keep_ranges(
+    ranges: Any,
+    *,
+    min_fragment_seconds: float = 0.4,
+    merge_gap_seconds: float = 0.15,
+    max_ranges: int = 20,
+) -> List[Dict[str, float]]:
+    cleaned: List[Dict[str, float]] = []
+    for item in ranges or []:
+        if not isinstance(item, dict):
+            continue
+        start = _to_float(item.get("start"))
+        end = _to_float(item.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        cleaned.append({"start": round(max(0.0, float(start)), 3), "end": round(max(0.0, float(end)), 3)})
+    cleaned.sort(key=lambda item: (item["start"], item["end"]))
+    merged: List[Dict[str, float]] = []
+    for item in cleaned:
+        if not merged:
+            merged.append(dict(item))
+            continue
+        gap = item["start"] - merged[-1]["end"]
+        if gap < merge_gap_seconds:
+            merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+        else:
+            merged.append(dict(item))
+    normalized: List[Dict[str, float]] = []
+    for item in merged:
+        if item["end"] - item["start"] >= min_fragment_seconds:
+            normalized.append({"start": round(item["start"], 3), "end": round(item["end"], 3)})
+        if len(normalized) >= max_ranges:
+            break
+    for index in range(1, len(normalized)):
+        if normalized[index]["start"] < normalized[index - 1]["end"]:
+            normalized[index]["start"] = normalized[index - 1]["end"]
+    return [item for item in normalized if item["end"] > item["start"]]
+
+
+def _edit_keep_ranges_duration(ranges: Any) -> Optional[float]:
+    normalized = _normalize_edit_keep_ranges(ranges)
+    if not normalized:
+        return None
+    return round(sum(max(0.0, item["end"] - item["start"]) for item in normalized), 3)
+
+
+def _range_word_indexes(words: List[Dict[str, Any]], ranges: List[Dict[str, float]]) -> set[int]:
+    kept: set[int] = set()
+    for idx, word in enumerate(words):
+        word_start = _to_float(word.get("start"))
+        word_end = _to_float(word.get("end"))
+        if word_start is None or word_end is None:
+            continue
+        if any(word_end > item["start"] and word_start < item["end"] for item in ranges):
+            kept.add(idx)
+    return kept
+
+
+def derive_clip_keep_ranges_from_word_selection(
     words: List[Dict[str, Any]],
     current_ranges: List[Dict[str, Any]],
     selection_start_index: int,
     selection_end_index: int,
     action: str,
     *,
-    end_padding: float = 0.1,
+    start_padding: float = 0.04,
+    end_padding: float = 0.08,
 ) -> Dict[str, Any]:
-    """Return a phase-1 contiguous keep range from word indexes.
-
-    The shape intentionally uses a list of ranges so phase 2 can add middle removal
-    without changing callers that already serialize `ranges`.
-    """
+    """Return normalized keep ranges after a text-trim selection action."""
     if not words:
         return {"ok": False, "message": "No word timestamps available.", "ranges": []}
     first_selection = max(0, min(int(selection_start_index), int(selection_end_index)))
@@ -5321,46 +5376,127 @@ def derive_contiguous_clip_keep_range_from_word_selection(
     if first_selection > last_selection:
         return {"ok": False, "message": "Select clip text first.", "ranges": []}
 
-    current_first = None
-    current_last = None
-    if current_ranges:
-        range_start = _to_float(current_ranges[0].get("start"))
-        range_end = _to_float(current_ranges[0].get("end"))
-        if range_start is not None and range_end is not None:
-            kept_indexes = [
-                idx
-                for idx, word in enumerate(words)
-                if (_to_float(word.get("end")) or 0.0) > range_start and (_to_float(word.get("start")) or 0.0) < range_end
-            ]
-            if kept_indexes:
-                current_first = min(kept_indexes)
-                current_last = max(kept_indexes)
-
+    normalized_current = _normalize_edit_keep_ranges(current_ranges)
+    kept_indexes = _range_word_indexes(words, normalized_current)
     normalized_action = str(action or "").strip().lower().replace("_", "-")
     if normalized_action == "keep-only":
-        new_first, new_last = first_selection, last_selection
+        selected_ranges = [_range_from_word_indexes(words, first_selection, last_selection, start_padding=start_padding, end_padding=end_padding)]
     elif normalized_action == "restore":
-        if current_first is None or current_last is None:
-            new_first, new_last = first_selection, last_selection
+        selected_indexes = set(range(first_selection, last_selection + 1))
+        all_indexes = kept_indexes | selected_indexes
+        if not all_indexes:
+            all_indexes = selected_indexes
         else:
-            new_first = min(current_first, first_selection)
-            new_last = max(current_last, last_selection)
+            all_indexes = set(range(min(all_indexes), max(all_indexes) + 1))
+        selected_ranges = _ranges_from_word_index_set(words, all_indexes, start_padding=start_padding, end_padding=end_padding)
+    elif normalized_action == "remove":
+        selected_indexes = set(range(first_selection, last_selection + 1))
+        all_indexes = kept_indexes - selected_indexes
+        selected_ranges = _ranges_from_word_index_set(words, all_indexes, start_padding=start_padding, end_padding=end_padding)
     else:
         return {"ok": False, "message": "Unsupported edit action.", "ranges": []}
 
-    start = _to_float(words[new_first].get("start"))
-    end = _to_float(words[new_last].get("end"))
-    if start is None or end is None:
+    ranges = _normalize_edit_keep_ranges(selected_ranges)
+    if not ranges:
         return {"ok": False, "message": "Selected words are missing timestamps.", "ranges": []}
-    end = round(float(end) + float(end_padding), 3)
-    start = round(float(start), 3)
+    start = ranges[0]["start"]
+    end = ranges[-1]["end"]
+    duration = _edit_keep_ranges_duration(ranges) or 0.0
     return {
         "ok": True,
-        "ranges": [{"start": start, "end": end, "first_word_index": new_first, "last_word_index": new_last}],
+        "ranges": ranges,
         "start": start,
         "end": end,
-        "duration": round(max(0.0, end - start), 3),
+        "duration": round(duration, 3),
     }
+
+
+def _range_from_word_indexes(
+    words: List[Dict[str, Any]],
+    first_index: int,
+    last_index: int,
+    *,
+    start_padding: float,
+    end_padding: float,
+) -> Dict[str, float]:
+    start = _to_float(words[first_index].get("start"))
+    end = _to_float(words[last_index].get("end"))
+    if start is None or end is None:
+        return {"start": 0.0, "end": 0.0}
+    return {
+        "start": round(max(0.0, float(start) - start_padding), 3),
+        "end": round(float(end) + end_padding, 3),
+    }
+
+
+def _ranges_from_word_index_set(
+    words: List[Dict[str, Any]],
+    kept_indexes: set[int],
+    *,
+    start_padding: float,
+    end_padding: float,
+) -> List[Dict[str, float]]:
+    if not kept_indexes:
+        return []
+    ranges: List[Dict[str, float]] = []
+    sorted_indexes = sorted(kept_indexes)
+    run_start = sorted_indexes[0]
+    previous = sorted_indexes[0]
+    for index in sorted_indexes[1:]:
+        if index == previous + 1:
+            previous = index
+            continue
+        ranges.append(_range_from_word_indexes(words, run_start, previous, start_padding=start_padding, end_padding=end_padding))
+        run_start = index
+        previous = index
+    ranges.append(_range_from_word_indexes(words, run_start, previous, start_padding=start_padding, end_padding=end_padding))
+    return ranges
+
+
+derive_contiguous_clip_keep_range_from_word_selection = derive_clip_keep_ranges_from_word_selection
+
+
+def _remap_transcript_segments_to_keep_ranges(
+    segments: List[Dict[str, Any]],
+    keep_ranges: List[Dict[str, float]],
+) -> List[Dict[str, Any]]:
+    ranges = _normalize_edit_keep_ranges(keep_ranges)
+    if not ranges:
+        return segments
+    remapped: List[Dict[str, Any]] = []
+    output_offset = 0.0
+    for range_item in ranges:
+        range_start = float(range_item["start"])
+        range_end = float(range_item["end"])
+        segment_words: List[Dict[str, Any]] = []
+        segment_text_parts: List[str] = []
+        for word in _transcript_words_with_sentence_indexes(segments):
+            word_start = _to_float(word.get("start"))
+            word_end = _to_float(word.get("end"))
+            if word_start is None or word_end is None:
+                continue
+            if word_end <= range_start or word_start >= range_end:
+                continue
+            text = str(word.get("text") or "").strip()
+            if not text:
+                continue
+            new_start = max(0.0, float(word_start) - range_start) + output_offset
+            new_end = max(new_start + 0.01, min(float(word_end), range_end) - range_start + output_offset)
+            segment_words.append({"word": text, "start": round(new_start, 3), "end": round(new_end, 3)})
+            segment_text_parts.append(text)
+        if segment_words:
+            seg_start = output_offset
+            seg_end = output_offset + max(0.0, range_end - range_start)
+            remapped.append(
+                {
+                    "start": round(seg_start, 3),
+                    "end": round(seg_end, 3),
+                    "text": " ".join(segment_text_parts),
+                    "words": segment_words,
+                }
+            )
+        output_offset += max(0.0, range_end - range_start)
+    return remapped
 
 
 def _nearest_time_in_window(target: float, candidates: List[float], *, before: float, after: float) -> Optional[float]:
@@ -10605,6 +10741,9 @@ def generate_short(video_pk):
             duration_val = max(0.0, float(end) - float(start)) if start is not None and end is not None else None
         except Exception:
             duration_val = None
+        edit_keep_duration = _edit_keep_ranges_duration(entry.get("edit_keep_ranges"))
+        if edit_keep_duration is not None:
+            duration_val = edit_keep_duration
         display_timings = _build_display_timing(start, end, entry.get("start"), entry.get("end"))
         custom_transcript = entry.get("transcript_full_custom")
         transcript_full = custom_transcript or entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
@@ -10888,6 +11027,7 @@ def generate_short(video_pk):
             "render_job_status": render_job_status,
             "render_error": (render_job or {}).get("error") or entry.get("render_error") or "",
             "edit_requires_regenerate": bool(entry.get("edit_requires_regenerate")),
+            "edit_keep_ranges": _normalize_edit_keep_ranges(entry.get("edit_keep_ranges")),
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,
@@ -21778,18 +21918,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     if lock_reason:
         return jsonify(success=False, message=lock_reason), 409
 
-    valid, message, cleaned = validate_clip_title_time_edit(
-        title=request.form.get("title"),
-        start=request.form.get("start"),
-        end=request.form.get("end"),
-        video_duration=duration_seconds,
-    )
-    if not valid:
-        return jsonify(success=False, message=message), 400
-
-    _mark_plan_entry_user_title_edit(plan_entry, cleaned["title"])
-    plan_entry["start"] = cleaned["start"]
-    plan_entry["end"] = cleaned["end"]
+    requested_keep_ranges: List[Dict[str, float]] = []
     keep_ranges_raw = str(request.form.get("keep_ranges") or "").strip()
     if keep_ranges_raw:
         try:
@@ -21797,17 +21926,46 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         except Exception:
             parsed_keep_ranges = None
         if isinstance(parsed_keep_ranges, list):
-            normalized_ranges: List[Dict[str, float]] = []
-            for range_item in parsed_keep_ranges[:1]:
-                if not isinstance(range_item, dict):
-                    continue
-                range_start = _to_float(range_item.get("start"))
-                range_end = _to_float(range_item.get("end"))
-                if range_start is None or range_end is None or range_end <= range_start:
-                    continue
-                normalized_ranges.append({"start": round(range_start, 3), "end": round(range_end, 3)})
-            if normalized_ranges:
-                plan_entry["edit_keep_ranges"] = normalized_ranges
+            requested_keep_ranges = _normalize_edit_keep_ranges(parsed_keep_ranges)
+
+    validation_start = request.form.get("start")
+    validation_end = request.form.get("end")
+    validation_max_duration = 90.0
+    if requested_keep_ranges:
+        validation_start = requested_keep_ranges[0]["start"]
+        validation_end = requested_keep_ranges[-1]["end"]
+        validation_max_duration = max(90.0, float(validation_end) - float(validation_start))
+
+    valid, message, cleaned = validate_clip_title_time_edit(
+        title=request.form.get("title"),
+        start=validation_start,
+        end=validation_end,
+        video_duration=duration_seconds,
+        max_duration=validation_max_duration,
+    )
+    if not valid:
+        return jsonify(success=False, message=message), 400
+    if requested_keep_ranges:
+        total_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
+        if total_duration < 5.0:
+            return jsonify(success=False, message="Clip must be at least 5 seconds."), 400
+        if total_duration > 90.0:
+            return jsonify(success=False, message="Clip must be 90 seconds or shorter."), 400
+
+    _mark_plan_entry_user_title_edit(plan_entry, cleaned["title"])
+    plan_entry["start"] = cleaned["start"]
+    plan_entry["end"] = cleaned["end"]
+    if requested_keep_ranges:
+        plan_entry["edit_keep_ranges"] = requested_keep_ranges
+        plan_entry["edit_cut_count"] = max(0, len(requested_keep_ranges) - 1)
+        cleaned["start"] = requested_keep_ranges[0]["start"]
+        cleaned["end"] = requested_keep_ranges[-1]["end"]
+        cleaned["duration"] = _edit_keep_ranges_duration(requested_keep_ranges) or cleaned["duration"]
+        plan_entry["start"] = cleaned["start"]
+        plan_entry["end"] = cleaned["end"]
+    elif keep_ranges_raw:
+        plan_entry.pop("edit_keep_ranges", None)
+        plan_entry.pop("edit_cut_count", None)
     plan_entry.pop("render_error", None)
     should_regenerate = (request.form.get("regenerate") or "").strip().lower() in {"1", "true", "yes", "on"}
     if clip_exists and not should_regenerate:
@@ -21820,7 +21978,11 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
             _, segments = _fetch_transcript(conn_transcript, video_id)
         finally:
             conn_transcript.close()
-        transcript_full = build_transcript_for_range(segments or [], cleaned["start"], cleaned["end"], prefer_tr=True)
+        if requested_keep_ranges:
+            remapped_segments = _remap_transcript_segments_to_keep_ranges(segments or [], requested_keep_ranges)
+            transcript_full = " ".join(str(segment.get("text") or "").strip() for segment in remapped_segments).strip()
+        else:
+            transcript_full = build_transcript_for_range(segments or [], cleaned["start"], cleaned["end"], prefer_tr=True)
         if transcript_full:
             plan_entry["transcript_full"] = transcript_full
             plan_entry["excerpt"] = transcript_full
@@ -26586,9 +26748,17 @@ def autoclip_video(video_pk):
     src_path_is_temp = False
     if not queued_job:
         try:
+            edit_keep_ranges_for_job = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
             effective_subtitle_text = (
                 (plan_entry.get("transcript_full_custom") or "").strip()
-                or build_transcript_for_range(segments, start, end, prefer_tr=True)
+                or (
+                    " ".join(
+                        str(segment.get("text") or "").strip()
+                        for segment in _remap_transcript_segments_to_keep_ranges(segments, edit_keep_ranges_for_job)
+                    ).strip()
+                    if edit_keep_ranges_for_job
+                    else build_transcript_for_range(segments, start, end, prefer_tr=True)
+                )
                 or ""
             )
             job_options = _build_render_job_options(
@@ -26632,6 +26802,8 @@ def autoclip_video(video_pk):
                 video_overlay_offset=video_overlay_offset,
                 subtitle_text=effective_subtitle_text,
             )
+            if edit_keep_ranges_for_job:
+                job_options["edit_keep_ranges"] = edit_keep_ranges_for_job
             render_settings_hash = _render_settings_hash_from_options(job_options)
             input_hash = build_input_hash(
                 source_id=vid,
@@ -26650,6 +26822,8 @@ def autoclip_video(video_pk):
                 "options": job_options,
                 "render_settings_hash": render_settings_hash,
             }
+            if edit_keep_ranges_for_job:
+                payload["edit_keep_ranges"] = edit_keep_ranges_for_job
             is_discovery_demo = _is_discovery_demo_scope(target_owner_user_id, brand_id, int(video_pk))
             if is_discovery_demo:
                 payload["job_origin"] = DISCOVERY_JOB_ORIGIN
@@ -26794,6 +26968,8 @@ def autoclip_video(video_pk):
             status=404,
             category="danger",
         )
+    original_src_path = src_path
+    original_src_path_is_temp = src_path_is_temp
     try:
         record_lead_pipeline_event_for_scope(
             owner_user_id=target_owner_user_id,
@@ -26867,6 +27043,7 @@ def autoclip_video(video_pk):
     subtitle_overlay_specs: List[Dict[str, Any]] = []
     subtitle_overlay_events: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
+    multi_range_source_path: Optional[Path] = None
     made = 0
     missing_outputs = 0
     clip_filename = plan_entry.get("clip_filename") or f"{plan_index}_{vid}.mp4"
@@ -26879,6 +27056,26 @@ def autoclip_video(video_pk):
         adj_end = end + END_PAD
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
+        edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+        if len(edit_keep_ranges) > 1 and not podcast_audio_path:
+            multi_range_source_path = Path(tempfile.gettempdir()) / f"short_edit_ranges_{vid}_{plan_index}_{secrets.token_hex(5)}.mp4"
+            multi_range_duration = _trim_source_to_keep_ranges(src_path, edit_keep_ranges, multi_range_source_path)
+            if multi_range_duration > 0 and multi_range_source_path.exists():
+                segments = _remap_transcript_segments_to_keep_ranges(segments or [], edit_keep_ranges)
+                src_path = multi_range_source_path
+                src_path_is_temp = True
+                start = 0.0
+                end = float(multi_range_duration)
+                adj_start = 0.0
+                adj_end = float(multi_range_duration)
+                current_app.logger.info(
+                    "Multi-range clip timeline enabled video_id=%s plan_index=%s ranges=%s duration=%.3f source=%s",
+                    vid,
+                    plan_index,
+                    len(edit_keep_ranges),
+                    multi_range_duration,
+                    multi_range_source_path,
+                )
         custom_transcript = str(plan_entry.get("transcript_full_custom") or "").strip()
         subtitle_srt = None
         subtitle_text = ""
@@ -27776,6 +27973,8 @@ def autoclip_video(video_pk):
         for overlay_source in podcast_overlay_video_sources:
             _cleanup_video_shorts_temp_path(overlay_source)
         _cleanup_resolved_source_video(src_path, src_path_is_temp)
+        if original_src_path != src_path:
+            _cleanup_resolved_source_video(original_src_path, original_src_path_is_temp)
 
     if missing_outputs:
         summary = f"{missing_outputs} clip(s) reported missing output files; check ffmpeg logs."

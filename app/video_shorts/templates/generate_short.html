@@ -5543,7 +5543,7 @@
                   </button>
                   {% endif %}
                   {% if generate_v2 %}
-                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.regenerate_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}">
+                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.regenerate_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
@@ -10165,6 +10165,94 @@ const indexesForRange = (words, start, end) => words
   .map((word, index) => (wordOverlapsRange(word, start, end) ? index : -1))
   .filter((index) => index >= 0);
 
+const normalizeClipKeepRanges = (ranges) => {
+  const cleaned = (Array.isArray(ranges) ? ranges : [])
+    .map((range) => ({
+      start: Math.max(0, Number(range?.start)),
+      end: Math.max(0, Number(range?.end)),
+    }))
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+    .sort((a, b) => (a.start - b.start) || (a.end - b.end));
+  const merged = [];
+  cleaned.forEach((range) => {
+    const last = merged[merged.length - 1];
+    if (last && (range.start - last.end) < 0.15) {
+      last.end = Math.max(last.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  });
+  return merged
+    .filter((range) => (range.end - range.start) >= 0.4)
+    .slice(0, 20)
+    .map((range) => ({ start: Number(range.start.toFixed(3)), end: Number(range.end.toFixed(3)) }));
+};
+
+const getClipKeepRangesFromForm = (form, words = getGenerateV2WordTimestamps()) => {
+  const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
+  if (keepRangesInput?.value) {
+    try {
+      const parsed = JSON.parse(keepRangesInput.value || "[]");
+      const normalized = normalizeClipKeepRanges(parsed);
+      if (normalized.length) return normalized;
+    } catch (_) {}
+  }
+  try {
+    const parsedInitial = JSON.parse(form.dataset.initialKeepRanges || "[]");
+    const normalizedInitial = normalizeClipKeepRanges(parsedInitial);
+    if (normalizedInitial.length) return normalizedInitial;
+  } catch (_) {}
+  const start = Number(form.querySelector("[data-edit-start-input]")?.value || form.dataset.initialStart || 0);
+  const end = Number(form.querySelector("[data-edit-end-input]")?.value || form.dataset.initialEnd || 0);
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+    return normalizeClipKeepRanges([{ start, end }]);
+  }
+  if (words.length) {
+    return normalizeClipKeepRanges([{ start: Number(words[0].start || 0), end: Number(words[words.length - 1].end || 0) }]);
+  }
+  return [];
+};
+
+const wordIndexInRanges = (word, ranges) => ranges.some((range) => wordOverlapsRange(word, range.start, range.end));
+
+const rangesToWordIndexSet = (words, ranges) => {
+  const indexes = new Set();
+  words.forEach((word, index) => {
+    if (wordIndexInRanges(word, ranges)) indexes.add(index);
+  });
+  return indexes;
+};
+
+const rangesFromWordIndexes = (words, indexes) => {
+  const sorted = Array.from(indexes).filter((index) => Number.isInteger(index) && index >= 0 && index < words.length).sort((a, b) => a - b);
+  if (!sorted.length) return [];
+  const ranges = [];
+  let runStart = sorted[0];
+  let previous = sorted[0];
+  const pushRun = () => {
+    const first = words[runStart];
+    const last = words[previous];
+    ranges.push({
+      start: Math.max(0, Number(first?.start || 0) - 0.04),
+      end: Number(last?.end || 0) + 0.08,
+    });
+  };
+  sorted.slice(1).forEach((index) => {
+    if (index === previous + 1) {
+      previous = index;
+      return;
+    }
+    pushRun();
+    runStart = index;
+    previous = index;
+  });
+  pushRun();
+  return normalizeClipKeepRanges(ranges);
+};
+
+const clipKeepRangesDuration = (ranges) => normalizeClipKeepRanges(ranges)
+  .reduce((total, range) => total + Math.max(0, range.end - range.start), 0);
+
 const normalizeWordSelection = (form) => {
   const selection = window.getSelection?.();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
@@ -10186,30 +10274,40 @@ const normalizeWordSelection = (form) => {
     .sort((a, b) => a - b);
 };
 
-const selectionToContiguousKeepRange = (words, currentRange, selectedIndexes, action) => {
+const selectionToClipKeepRanges = (words, currentRanges, selectedIndexes, action) => {
   if (!words.length || !selectedIndexes.length) {
     return null;
   }
   const selectedFirst = Math.max(0, Math.min(...selectedIndexes));
   const selectedLast = Math.min(words.length - 1, Math.max(...selectedIndexes));
-  const keptIndexes = indexesForRange(words, currentRange.start, currentRange.end);
-  let nextFirst = selectedFirst;
-  let nextLast = selectedLast;
-  if (action === "restore" && keptIndexes.length) {
-    nextFirst = Math.min(Math.min(...keptIndexes), selectedFirst);
-    nextLast = Math.max(Math.max(...keptIndexes), selectedLast);
+  const currentKept = rangesToWordIndexSet(words, currentRanges);
+  const selectedSet = new Set();
+  for (let index = selectedFirst; index <= selectedLast; index += 1) {
+    selectedSet.add(index);
   }
-  const firstWord = words[nextFirst];
-  const lastWord = words[nextLast];
-  const start = Number(firstWord?.start);
-  const end = Number(lastWord?.end) + 0.1;
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+  let nextIndexes = new Set(selectedSet);
+  if (action === "restore") {
+    nextIndexes = new Set([...currentKept, ...selectedSet]);
+    const bounds = Array.from(nextIndexes).sort((a, b) => a - b);
+    if (bounds.length) {
+      nextIndexes = new Set();
+      for (let index = bounds[0]; index <= bounds[bounds.length - 1]; index += 1) {
+        nextIndexes.add(index);
+      }
+    }
+  } else if (action === "remove") {
+    nextIndexes = new Set([...currentKept].filter((index) => !selectedSet.has(index)));
+  } else if (action !== "keep-only") {
+    return null;
+  }
+  const ranges = rangesFromWordIndexes(words, nextIndexes);
+  if (!ranges.length) {
     return null;
   }
   return {
-    start: Number(start.toFixed(3)),
-    end: Number(end.toFixed(3)),
-    ranges: [{ start: Number(start.toFixed(3)), end: Number(end.toFixed(3)) }],
+    start: ranges[0].start,
+    end: ranges[ranges.length - 1].end,
+    ranges,
   };
 };
 
@@ -10221,6 +10319,7 @@ const getClipTextTrimToolbar = () => {
   toolbar.className = "clip-text-trim-toolbar";
   toolbar.innerHTML = `
     <button type="button" class="btn btn-sm btn-outline-light" data-trim-action="restore">Restore</button>
+    <button type="button" class="btn btn-sm btn-outline-light" data-trim-action="remove">Remove</button>
     <button type="button" class="btn btn-sm btn-primary" data-trim-action="keep-only">Keep only this</button>
   `;
   document.body.appendChild(toolbar);
@@ -10242,9 +10341,10 @@ const renderClipTextTrimEditor = (form) => {
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
   if (!editor || !startInput || !endInput) return;
   const words = getGenerateV2WordTimestamps();
-  const start = Number(startInput.value || form.dataset.initialStart || 0);
-  const end = Number(endInput.value || form.dataset.initialEnd || 0);
-  const keptIndexes = indexesForRange(words, start, end);
+  const keepRanges = getClipKeepRangesFromForm(form, words);
+  const start = keepRanges[0]?.start ?? Number(startInput.value || form.dataset.initialStart || 0);
+  const end = keepRanges[keepRanges.length - 1]?.end ?? Number(endInput.value || form.dataset.initialEnd || 0);
+  const keptIndexes = Array.from(rangesToWordIndexSet(words, keepRanges));
   if (!keptIndexes.length) {
     editor.textContent = "Word timestamps are not available for this clip.";
     return;
@@ -10274,15 +10374,16 @@ const renderClipTextTrimEditor = (form) => {
   const maxSentenceIndex = words.reduce((max, word) => Math.max(max, Number(word.sentence || 0)), 0);
   form.querySelector("[data-trim-show-more='after']")?.classList.toggle("d-none", visibleMaxSentence >= maxSentenceIndex);
   if (keepRangesInput) {
-    keepRangesInput.value = JSON.stringify([{ start, end }]);
+    keepRangesInput.value = JSON.stringify(keepRanges);
   }
-  const duration = Math.max(0, end - start);
+  const duration = clipKeepRangesDuration(keepRanges);
+  const cuts = Math.max(0, keepRanges.length - 1);
   const durationLabel = form.querySelector("[data-edit-duration-label]");
   const warning = form.querySelector("[data-edit-duration-warning]");
   const saveButtons = form.querySelectorAll("[data-edit-title-time-save], [data-edit-title-time-regenerate]");
   const readonly = form.dataset.readonly === "1";
   if (durationLabel) {
-    durationLabel.textContent = `Duration ${formatClipDurationLabel(duration)}`;
+    durationLabel.textContent = `Duration ${formatClipDurationLabel(duration)}${cuts > 0 ? ` · ${cuts} cut${cuts === 1 ? "" : "s"}` : ""}`;
   }
   const invalidMessage = duration < 5
     ? "Clip must be at least 5 seconds."
@@ -10301,11 +10402,8 @@ const applyClipTextTrimSelection = (form, action) => {
   const startInput = form.querySelector("[data-edit-start-input]");
   const endInput = form.querySelector("[data-edit-end-input]");
   const selectedIndexes = normalizeWordSelection(form);
-  const currentRange = {
-    start: Number(startInput?.value || form.dataset.initialStart || 0),
-    end: Number(endInput?.value || form.dataset.initialEnd || 0),
-  };
-  const nextRange = selectionToContiguousKeepRange(words, currentRange, selectedIndexes, action);
+  const currentRanges = getClipKeepRangesFromForm(form, words);
+  const nextRange = selectionToClipKeepRanges(words, currentRanges, selectedIndexes, action);
   if (!nextRange || !startInput || !endInput) return;
   startInput.value = String(nextRange.start);
   endInput.value = String(nextRange.end);
@@ -10371,16 +10469,21 @@ const initGenerateV2ClipTitleTimeEditors = () => {
       const selectedIndexes = normalizeWordSelection(form);
       const toolbar = getClipTextTrimToolbar();
       toolbar.querySelector("[data-trim-action='restore']")?.classList.add("d-none");
+      toolbar.querySelector("[data-trim-action='remove']")?.classList.add("d-none");
       toolbar.querySelector("[data-trim-action='keep-only']")?.classList.add("d-none");
       if (!selectedIndexes.length) {
         hideClipTextTrimToolbar();
         return;
       }
-      const start = Number(form.querySelector("[data-edit-start-input]")?.value || 0);
-      const end = Number(form.querySelector("[data-edit-end-input]")?.value || 0);
       const words = getGenerateV2WordTimestamps();
-      const includesMuted = selectedIndexes.some((index) => !wordOverlapsRange(words[index], start, end));
-      toolbar.querySelector(`[data-trim-action='${includesMuted ? "restore" : "keep-only"}']`)?.classList.remove("d-none");
+      const currentRanges = getClipKeepRangesFromForm(form, words);
+      const includesRemoved = selectedIndexes.some((index) => !wordIndexInRanges(words[index], currentRanges));
+      if (includesRemoved) {
+        toolbar.querySelector("[data-trim-action='restore']")?.classList.remove("d-none");
+      } else {
+        toolbar.querySelector("[data-trim-action='remove']")?.classList.remove("d-none");
+        toolbar.querySelector("[data-trim-action='keep-only']")?.classList.remove("d-none");
+      }
       toolbar.dataset.formPlanIndex = form.dataset.planIndex || "";
       const selection = window.getSelection?.();
       const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null;

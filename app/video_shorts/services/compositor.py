@@ -92,6 +92,102 @@ def _format_loadavg(loadavg: tuple[float, float, float] | None) -> str:
     return ",".join(f"{value:.2f}" for value in loadavg)
 
 
+def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]]) -> list[dict[str, float]]:
+    ranges: list[dict[str, float]] = []
+    for item in keep_ranges or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+        except Exception:
+            continue
+        if start < 0 or end <= start:
+            continue
+        ranges.append({"start": round(start, 6), "end": round(end, 6)})
+    ranges.sort(key=lambda item: (item["start"], item["end"]))
+    return ranges
+
+
+def _trim_source_to_keep_ranges(
+    src_path: Path,
+    keep_ranges: list[Dict[str, Any]],
+    out_path: Path,
+) -> float:
+    """Create one clip from multiple source ranges using a single ffmpeg process.
+
+    The returned duration is the sum of kept range durations. Callers use the output
+    file as a new zero-based timeline for captions, face-aware layout and compose.
+    """
+    ranges = _normalize_keep_ranges_for_trim(keep_ranges)
+    if len(ranges) <= 1:
+        return max(0.0, (ranges[0]["end"] - ranges[0]["start"]) if ranges else 0.0)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source video not found: {src_path}")
+    resolved_ffmpeg = _resolve_ffmpeg()
+    has_audio = _has_audio_stream(src_path)
+    cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
+    filter_parts: list[str] = []
+    concat_inputs: list[str] = []
+    total_duration = 0.0
+    for index, item in enumerate(ranges):
+        start = float(item["start"])
+        end = float(item["end"])
+        duration = max(0.001, end - start)
+        total_duration += duration
+        cmd.extend(["-ss", f"{start:.6f}", "-t", f"{duration:.6f}", "-i", str(src_path)])
+        filter_parts.append(f"[{index}:v]setpts=PTS-STARTPTS[v{index}]")
+        concat_inputs.append(f"[v{index}]")
+        if has_audio:
+            fade_out_start = max(0.0, duration - 0.02)
+            filter_parts.append(
+                f"[{index}:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
+                f"afade=t=in:st=0:d=0.02,afade=t=out:st={fade_out_start:.6f}:d=0.02[a{index}]"
+            )
+            concat_inputs.append(f"[a{index}]")
+    if has_audio:
+        filter_parts.append("".join(concat_inputs) + f"concat=n={len(ranges)}:v=1:a=1[v][a]")
+    else:
+        filter_parts.append("".join(concat_inputs) + f"concat=n={len(ranges)}:v=1:a=0[v]")
+    cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
+    if has_audio:
+        cmd.extend(["-map", "[a]"])
+    cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
+    if has_audio:
+        cmd.extend(["-c:a", "aac"])
+    cmd.extend(["-movflags", "+faststart", str(out_path)])
+    current_app.logger.info("Multi-range trim ffmpeg command: %s", " ".join(cmd))
+    load_start = os.getloadavg() if hasattr(os, "getloadavg") else None
+    started = time.monotonic()
+    result = run_media_subprocess(
+        cmd,
+        operation="multi_range_trim",
+        context=f"src={src_path.name} output={out_path.name} ranges={len(ranges)}",
+        output_paths=[out_path],
+        check=True,
+        timeout=scale_media_timeout(
+            FFMPEG_RENDER_TIMEOUT,
+            duration_seconds=total_duration,
+            multiplier=2.0,
+            extra_seconds=120,
+        ),
+        capture_output=True,
+        text=True,
+    )
+    load_end = os.getloadavg() if hasattr(os, "getloadavg") else None
+    current_app.logger.info(
+        "Multi-range trim completed output=%s ranges=%s duration=%.3f elapsed_ms=%s ffmpeg_speed=%s load_start=%s load_end=%s",
+        out_path.name,
+        len(ranges),
+        total_duration,
+        int((time.monotonic() - started) * 1000),
+        _ffmpeg_final_speed(result.stderr),
+        _format_loadavg(load_start),
+        _format_loadavg(load_end),
+    )
+    return total_duration
+
+
 def _ffmpeg_filter_expr(expr: str) -> str:
     return str(expr or "").replace("\\", "\\\\").replace(",", "\\,")
 

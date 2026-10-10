@@ -93,7 +93,7 @@ def _probe(ffprobe: str, path: Path) -> dict[str, Any]:
     return json.loads(raw)
 
 
-def _case_ok(probe: dict[str, Any]) -> tuple[bool, str]:
+def _case_ok(probe: dict[str, Any], expected_duration: float = DURATION) -> tuple[bool, str]:
     streams = probe.get("streams") or []
     video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
@@ -102,7 +102,7 @@ def _case_ok(probe: dict[str, Any]) -> tuple[bool, str]:
     if int(video.get("width") or 0) != 720 or int(video.get("height") or 0) != 1280:
         return False, f"bad dims {video.get('width')}x{video.get('height')}"
     duration = float(video.get("duration") or probe.get("format", {}).get("duration") or 0.0)
-    if abs(duration - DURATION) > (1.0 / 30.0):
+    if abs(duration - expected_duration) > (1.0 / 30.0):
         return False, f"bad duration {duration:.6f}"
     if not audio:
         return False, "missing audio"
@@ -249,6 +249,42 @@ def main() -> int:
             rows.append(("twelve_segments_long_karaoke_events", "PASS" if ok else "FAIL", detail))
         except Exception as exc:
             rows.append(("twelve_segments_long_karaoke_events", "FAIL", str(exc).splitlines()[-1][:240]))
+        output = temp / "multi_range_trim_compose.mp4"
+        multi_trimmed = temp / "multi_range_source.mp4"
+        ranges = [{"start": 0.0, "end": 2.0}, {"start": 4.0, "end": 6.0}, {"start": 9.0, "end": 12.0}]
+        expected_multi_duration = sum(item["end"] - item["start"] for item in ranges)
+        try:
+            compositor._trim_source_to_keep_ranges(source, ranges, multi_trimmed)
+            compositor._compose_trimmed_with_background(
+                background,
+                multi_trimmed,
+                0.0,
+                expected_multi_duration,
+                "Demo title",
+                "",
+                output,
+                title_engine="pillow",
+                subtitle_overlay_video_path=caption_overlay,
+                show_title=True,
+                show_subtitle=True,
+                crop_aspect="portrait",
+                subscribe_overlay_enabled=SUBSCRIBE_OVERLAY_PATH.exists(),
+                subscribe_overlay_path=SUBSCRIBE_OVERLAY_PATH,
+                crop_settings={
+                    "crop_x_ratio": 0.0,
+                    "crop_y_ratio": 0.0,
+                    "crop_w_ratio": 1.0,
+                    "crop_h_ratio": 1.0,
+                    "layout_segments": [
+                        {"start": 0.0, "end": 3.0, "mode": "fill", "zoom": 1.0},
+                        {"start": 3.0, "end": expected_multi_duration, "mode": "fit", "zoom": 1.0},
+                    ],
+                },
+            )
+            ok, detail = _case_ok(_probe(ffprobe, output), expected_duration=expected_multi_duration)
+            rows.append(("multi_range_trim_compose", "PASS" if ok else "FAIL", detail))
+        except Exception as exc:
+            rows.append(("multi_range_trim_compose", "FAIL", str(exc).splitlines()[-1][:240]))
     print("case,status,detail")
     for name, status, detail in rows:
         print(f"{name},{status},{detail}")

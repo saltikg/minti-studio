@@ -129,13 +129,27 @@ def test_text_trim_selection_ranges() -> None:
     ]
     current = [{"start": 1.5, "end": 3.3}]
     result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 0, 1, "restore")
-    _check("text_trim_restore_before", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.3, str(result))
+    _check("text_trim_restore_before", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.28, str(result))
     result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 6, 6, "restore")
-    _check("text_trim_restore_after", result["ok"] and result["ranges"][0]["start"] == 1.5 and result["ranges"][0]["end"] == 3.8, str(result))
+    _check("text_trim_restore_after", result["ok"] and result["ranges"][0]["start"] == 1.46 and result["ranges"][0]["end"] == 3.78, str(result))
     result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 0, 6, "restore")
-    _check("text_trim_restore_gap", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.8, str(result))
+    _check("text_trim_restore_gap", result["ok"] and result["ranges"][0]["start"] == 0.0 and result["ranges"][0]["end"] == 3.78, str(result))
     result = generation.derive_contiguous_clip_keep_range_from_word_selection(words, current, 3, 4, "keep-only")
-    _check("text_trim_keep_only_inside", result["ok"] and result["ranges"][0]["start"] == 1.5 and result["ranges"][0]["end"] == 2.8, str(result))
+    _check("text_trim_keep_only_inside", result["ok"] and result["ranges"][0]["start"] == 1.46 and result["ranges"][0]["end"] == 2.78, str(result))
+    result = generation.derive_clip_keep_ranges_from_word_selection(words, current, 4, 4, "remove")
+    _check(
+        "text_trim_remove_middle",
+        result["ok"] and len(result["ranges"]) == 2 and result["ranges"][0]["end"] <= result["ranges"][1]["start"],
+        str(result),
+    )
+    result = generation.derive_clip_keep_ranges_from_word_selection(words, result["ranges"], 4, 4, "restore")
+    _check("text_trim_restore_removed", result["ok"] and len(result["ranges"]) == 1, str(result))
+    normalized = generation._normalize_edit_keep_ranges([
+        {"start": 0.0, "end": 0.2},
+        {"start": 1.0, "end": 1.5},
+        {"start": 1.55, "end": 2.0},
+    ])
+    _check("text_trim_normalize_merge_drop", normalized == [{"start": 1.0, "end": 2.0}], str(normalized))
     ok, message, _ = generation.validate_clip_title_time_edit(title="Tiny", start=result["start"], end=result["end"], video_duration=20)
     _check("text_trim_min_duration_refused", not ok and "at least 5" in message, message)
     ok, message, _ = generation.validate_clip_title_time_edit(title="Huge", start=0, end=91, video_duration=120)
@@ -157,6 +171,12 @@ def test_word_time_mapping() -> None:
     words = generation._transcript_words_with_sentence_indexes(segments)
     _check("word_time_relative_start", abs(words[0]["start"] - 10.0) < 0.001, str(words))
     _check("word_time_sentence_index", words[2]["sentence"] == 1, str(words))
+    remapped = generation._remap_transcript_segments_to_keep_ranges(
+        segments,
+        [{"start": 10.0, "end": 10.8}, {"start": 11.0, "end": 11.4}],
+    )
+    flat = generation._transcript_words_with_sentence_indexes(remapped)
+    _check("word_time_multirange_remap", len(flat) == 3 and abs(flat[-1]["start"] - 0.8) < 0.001, str(flat))
 
 
 def test_edit_endpoint_returns_job_id_for_render_and_regenerate() -> None:
