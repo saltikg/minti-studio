@@ -28,6 +28,8 @@ def test_auto_selection_two_eligible() -> None:
     ]
     selected = generation._select_auto_render_entries(entries, min_score=70, limit=3)
     _check("auto_selection_78_82_65", [entry["plan_index"] for entry in selected] == [2, 1])
+    selected_min50 = generation._select_auto_render_entries(entries, min_score=50, limit=3)
+    _check("auto_selection_min50_includes_65", [entry["plan_index"] for entry in selected_min50] == [2, 1, 3])
 
 
 def test_sentence_snapping() -> None:

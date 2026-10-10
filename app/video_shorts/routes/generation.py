@@ -4989,6 +4989,63 @@ def _auto_suggest_render_state_for_video(
     return state
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/auto-suggest-render-status", methods=["GET"])
+def auto_suggest_render_status(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Authentication required."), 401
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row(
+            conn,
+            video_pk,
+            "id, video_id, transcript_status, download_status, owner_user_id, brand_id",
+        )
+        if not row:
+            return jsonify(success=False, message="Video not found."), 404
+        _id, video_id, transcript_status, download_status, owner_user_id, brand_id = row
+        state = _auto_suggest_render_state_for_video(
+            conn,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            video_id=video_id,
+        )
+    finally:
+        conn.close()
+    plan_entries = _load_plan_entries(video_id) or []
+    clip_count = len(plan_entries)
+    active_render_count = sum(
+        1
+        for entry in plan_entries
+        if str((entry or {}).get("render_job_id") or "").strip()
+        or str((entry or {}).get("status") or "").strip().lower() in {"queued", "processing", "rendering"}
+    )
+    transcript_pending = str(transcript_status or "").strip().lower() not in {"done", "ready", "complete", "completed"}
+    ingest_pending = str(download_status or "").strip().lower() in {
+        "queued",
+        "downloading",
+        "transcribing",
+        "audio_transcribing",
+        "processing",
+    }
+    gated = _auto_suggest_render_gate_matches(owner_user_id)
+    pending = bool(gated and (transcript_pending or ingest_pending) and not clip_count and not state.get("no_strong"))
+    active = bool(state.get("active") or pending)
+    return jsonify(
+        success=True,
+        active=active,
+        pending=pending,
+        status=state.get("status") or ("transcript_pending" if pending else ""),
+        no_strong=bool(state.get("no_strong")),
+        skip_reason=state.get("skip_reason") or "",
+        job_id=state.get("job_id") or "",
+        clip_count=clip_count,
+        active_render_count=active_render_count,
+        should_refresh=bool(active or state.get("no_strong") or clip_count or active_render_count),
+    )
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -10190,6 +10247,29 @@ def generate_short(video_pk):
         video_pk=video_pk,
         video_id=video["video_id"],
     )
+    if generate_v2 and _auto_suggest_render_gate_matches(editor_owner_user_id) and not plan_entries:
+        transcript_pending_for_auto = str(video.get("transcript_status") or "").strip().lower() not in {
+            "done",
+            "ready",
+            "complete",
+            "completed",
+        }
+        ingest_pending_for_auto = str(video.get("download_status") or "").strip().lower() in {
+            "queued",
+            "downloading",
+            "transcribing",
+            "audio_transcribing",
+            "processing",
+            "pending",
+        }
+        if (transcript_pending_for_auto or ingest_pending_for_auto) and not auto_suggest_render_state.get("no_strong"):
+            auto_suggest_render_state.update(
+                {
+                    "active": True,
+                    "pending": True,
+                    "status": auto_suggest_render_state.get("status") or "transcript_pending",
+                }
+            )
     generated_clip_entries = []
     for entry in plan_entries:
         if entry.get("status") != "created":
@@ -10683,6 +10763,7 @@ def generate_short(video_pk):
             "render_job_id": render_job_id,
             "render_job_status": render_job_status,
             "render_error": (render_job or {}).get("error") or entry.get("render_error") or "",
+            "edit_requires_regenerate": bool(entry.get("edit_requires_regenerate")),
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,
@@ -21581,6 +21662,11 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     plan_entry["start"] = cleaned["start"]
     plan_entry["end"] = cleaned["end"]
     plan_entry.pop("render_error", None)
+    should_regenerate = (request.form.get("regenerate") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if clip_exists and not should_regenerate:
+        plan_entry["edit_requires_regenerate"] = True
+    else:
+        plan_entry.pop("edit_requires_regenerate", None)
     try:
         conn_transcript = get_db_readonly()
         try:
@@ -21605,7 +21691,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         "duration": cleaned["duration"],
         "regenerated": False,
     }
-    if clip_exists:
+    if clip_exists and should_regenerate:
         with current_app.test_request_context(
             f"/video_shorts/generate/{int(video_pk)}/clip/{int(plan_index)}/regenerate",
             method="POST",
@@ -21613,7 +21699,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
             headers={"X-Requested-With": "XMLHttpRequest"},
         ):
             g.vs_current_user = current_user
-            g.vs_current_brand = current_brand
+            g.vs_current_brand = current_brand or ({"id": brand_id} if brand_id else None)
             regen_response = regenerate_clip_video(int(video_pk), int(plan_index))
         status_code = 202
         response_obj = regen_response
