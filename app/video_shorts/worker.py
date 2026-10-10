@@ -741,7 +741,11 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
-        "format": "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo*+bestaudio/best",
+        "format": (
+            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/"
+            "bestvideo*+bestaudio/best"
+        ),
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,

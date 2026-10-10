@@ -13501,6 +13501,10 @@ def download_video(video_pk):
                 )
 
         formats_to_try = [
+            (
+                "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
+                "bestvideo[vcodec^=avc1][height<=1080]+bestaudio"
+            ),
             "bestvideo*+bestaudio/best",
             "best",  # most permissive fallback
         ]

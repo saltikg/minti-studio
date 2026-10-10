@@ -87,7 +87,11 @@ def _download_video(video_url: str, video_id: str, out_dir: Path) -> Path:
     opts = {
         "outtmpl": str(out_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
-        "format": "bestvideo*+bestaudio/best",
+        "format": (
+            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/"
+            "bestvideo*+bestaudio/best"
+        ),
         "quiet": True,
         "noprogress": True,
     }
