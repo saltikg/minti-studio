@@ -1667,7 +1667,7 @@
     display: none;
   }
   .generate-v2-workbench {
-    align-items: start;
+    align-items: stretch;
   }
   #clip-workbench-shell[data-generate-v2="1"] {
     --generate-v2-workbench-height: auto;
@@ -1681,8 +1681,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     margin: 0 0 14px;
+    min-width: 0;
   }
   .generate-v2-tabbar {
     display: flex;
@@ -1741,6 +1742,7 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
+    flex: 1 1 auto;
   }
   #clip-workbench-shell[data-active-tab="transcript"] .generate-v2-tab-actions,
   #clip-workbench-shell[data-active-tab="edit"] .generate-v2-tab-actions {
@@ -1766,6 +1768,28 @@
     gap: 5px;
     white-space: nowrap;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  @media (max-width: 1500px) {
+    .generate-v2-tab-action {
+      width: 56px;
+      min-width: 56px;
+      padding: 8px;
+    }
+    .generate-v2-tab-action .btn-label,
+    .generate-v2-tab-action:not(#ai-generate-btn) {
+      font-size: 0;
+    }
+    .generate-v2-tab-action .bi {
+      font-size: 21px;
+    }
+    #ai-generate-btn .btn-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+    }
   }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tile {
     border: 1px solid #2A3954 !important;
@@ -1851,6 +1875,79 @@
   .generate-v2-panel.is-active,
   .generate-v2-right-panel.is-active {
     display: block;
+  }
+  .generate-v2-shorts-grid {
+    min-height: 0;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    gap: 12px;
+  }
+  .generate-v2-clip-list-column,
+  .generate-v2-clip-editor-column {
+    min-height: 0;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 16px;
+    background: rgba(8, 13, 21, 0.58);
+    overflow: hidden;
+  }
+  .generate-v2-clip-list-column {
+    display: flex;
+    flex-direction: column;
+  }
+  .generate-v2-clip-editor-column {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+  }
+  .generate-v2-clip-editor-empty {
+    min-height: 100%;
+    display: grid;
+    place-items: center;
+    color: rgba(226, 232, 240, 0.54);
+    font-size: 0.88rem;
+    text-align: center;
+  }
+  .generate-v2-clip-editor-mount {
+    min-height: 0;
+    height: 100%;
+  }
+  .generate-v2-clip-editor-header {
+    display: grid;
+    gap: 5px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  }
+  .generate-v2-clip-editor-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+  .generate-v2-clip-editor-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgba(248, 250, 252, 0.94);
+    font-size: 1rem;
+    font-weight: 760;
+  }
+  .generate-v2-clip-editor-status {
+    flex: 0 0 auto;
+    border: 1px solid rgba(45, 212, 191, 0.24);
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: rgba(45, 212, 191, 0.1);
+    color: #ccfbf1;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+  .generate-v2-clip-editor-meta {
+    color: rgba(226, 232, 240, 0.58);
+    font-size: 0.78rem;
+    font-weight: 650;
   }
   .generate-v2-panel > .gs-card,
   .generate-v2-panel > .clip-management-panel,
@@ -2306,6 +2403,87 @@
     );
     position: relative;
   }
+  @media (min-width: 1200px) {
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench {
+      display: grid;
+      grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(320px, 360px);
+      grid-template-rows: auto minmax(0, 1fr);
+      height: var(--generate-v2-workbench-height);
+      min-height: 0;
+      gap: 12px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-col,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-col,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-left-card {
+      display: contents;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-tabs-row {
+      grid-column: 1 / 4;
+      grid-row: 1;
+      margin: 0;
+      min-width: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel {
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel[data-generate-v2-panel="shorts"].is-active,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel[data-generate-v2-panel="transcript"].is-active,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-editor-shell {
+      grid-column: 1 / 3;
+      grid-row: 2;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel[data-generate-v2-panel="transcript"].is-active {
+      display: block;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-panel.is-active {
+      grid-column: 3;
+      grid-row: 2;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-card {
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-selected-mount {
+      min-height: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-management-panel,
+    #clip-workbench-shell[data-generate-v2="1"] #clip-pane-list {
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] #clip-rail-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+    }
+  }
+  @media (max-width: 1199.98px) {
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-shorts-grid {
+      grid-template-columns: 88px minmax(0, 1fr);
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item {
+      grid-template-columns: 54px 1fr;
+      padding: 10px 8px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-number,
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-copy,
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-platforms {
+      display: none !important;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge {
+      width: 44px;
+      min-width: 44px;
+      height: 38px;
+    }
+  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-ai.is-rendered {
     border-color: rgba(74, 222, 128, 0.46);
     background: rgba(20, 83, 45, 0.44);
@@ -2318,6 +2496,53 @@
     padding: 10px 12px 12px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(8, 13, 21, 0.72);
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-form {
+    display: grid;
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-grid {
+    flex: 0 0 auto;
+  }
+  .generate-v2-clip-editor-mount .clip-text-trim-editor {
+    max-height: none;
+    min-height: 0;
+    height: 100%;
+  }
+  .generate-v2-clip-editor-mount [data-edit-title-time-cancel] {
+    display: none;
+  }
+  .generate-v2-clip-editor-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(148, 163, 184, 0.14);
+  }
+  .generate-v2-clip-editor-footer-left,
+  .generate-v2-clip-editor-footer-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .generate-v2-editor-delete-clip-btn {
+    border-color: rgba(248, 113, 113, 0.62);
+    color: #fecaca;
+    background: transparent;
+  }
+  .generate-v2-editor-delete-clip-btn:hover,
+  .generate-v2-editor-delete-clip-btn:focus-visible {
+    border-color: #ef4444;
+    background: rgba(127, 29, 29, 0.42);
+    color: #fff;
   }
   .clip-rail-row.is-editing .clip-rail-edit-form {
     display: grid;
@@ -2611,6 +2836,9 @@
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu {
     position: relative;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu {
+    display: none !important;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-menu-btn {
     width: 30px;
     height: 30px;
@@ -2640,7 +2868,7 @@
     color: rgba(255, 255, 255, 0.42);
     white-space: normal;
   }
-  @media (min-width: 1024px) {
+  @media (min-width: 1024px) and (max-width: 1199.98px) {
     .gs-header.generate-v2-header {
       padding-top: 12px;
       padding-bottom: 12px;
@@ -2778,12 +3006,12 @@
       outline-offset: 2px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-active {
-      border: 0;
+      border: 1px solid rgba(45, 212, 191, 0.72);
       background: rgba(45, 212, 191, 0.11);
       box-shadow: none;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion.is-active {
-      border: 0;
+      border: 1px solid rgba(45, 212, 191, 0.72);
       background: rgba(45, 212, 191, 0.11);
       box-shadow: none;
     }
@@ -5123,7 +5351,15 @@
                 </div>
               </div>
             </div>
-            <div class="generate-v2-panel" data-generate-v2-panel="shorts"></div>
+            <div class="generate-v2-panel" data-generate-v2-panel="shorts">
+              <div class="generate-v2-shorts-grid" data-generate-v2-three-column>
+                <div class="generate-v2-clip-list-column" id="generate-v2-clip-list-column"></div>
+                <div class="generate-v2-clip-editor-column" id="generate-v2-clip-editor-column">
+                  <div class="generate-v2-clip-editor-empty" id="generate-v2-clip-editor-empty">Select a clip to edit.</div>
+                  <div class="generate-v2-clip-editor-mount" id="generate-v2-clip-editor-mount"></div>
+                </div>
+              </div>
+            </div>
             <div class="generate-v2-panel" data-generate-v2-panel="transcript"></div>
           </div>
         </div>
@@ -5329,7 +5565,7 @@
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -5488,47 +5724,17 @@
                     {% endif %}
                   </button>
                   {% if generate_v2 %}
-                  <div class="dropdown clip-rail-menu">
-                    <button
-                      type="button"
-                      class="clip-rail-menu-btn"
-                      data-bs-toggle="dropdown"
-                      aria-expanded="false"
-                      aria-label="Clip actions">
-                      ⋯
-                    </button>
-                    <div class="dropdown-menu dropdown-menu-end clip-rail-delete-menu">
-                      <button
-                        type="button"
-                        class="dropdown-item"
-                        data-edit-title-time-btn
-                        data-plan-index="{{ row.plan_index }}"
-                        {% if row.regenerate_locked %}title="{{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}"{% endif %}>
-                        Edit clip
-                      </button>
-                      {% if row.status == "created" and row.video_filename %}
-                        <form method="post" action="{{ editor_url('delete_clip', video_pk=video.id) }}" class="mb-0">
-                          <input type="hidden" name="filename" value="{{ row.video_filename }}">
-                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                          <button
-                            type="submit"
-                            class="dropdown-item"
-                            data-confirm-message="Are you sure you want to delete this rendered video and keep the clip?">
-                            Delete video only
-                          </button>
-                        </form>
-                      {% endif %}
-                      <button
-                        type="button"
-                        class="dropdown-item"
-                        data-delete-clip-btn
-                        data-plan-index="{{ row.plan_index }}"
-                        data-delete-url="{{ editor_url('delete_clip_plan_entry', video_pk=video.id, plan_index=row.plan_index) }}"
-                        {% if rail_delete_locked %}disabled title="Scheduled or published clips cannot be deleted here."{% endif %}>
-                        {% if rail_delete_locked %}Delete disabled — scheduled/published{% else %}Delete{% endif %}
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    class="d-none"
+                    data-delete-clip-btn
+                    data-plan-index="{{ row.plan_index }}"
+                    data-delete-url="{{ editor_url('delete_clip_plan_entry', video_pk=video.id, plan_index=row.plan_index) }}"
+                    aria-label="Delete clip"
+                    title="{{ 'Scheduled or published clips cannot be deleted here.' if rail_delete_locked else 'Delete clip' }}"
+                    {% if rail_delete_locked %}disabled{% endif %}>
+                    Delete
+                  </button>
                   {% else %}
                   <button
                     type="button"
@@ -9270,6 +9476,87 @@ const restoreGenerateV2MountedClip = () => {
   });
 };
 
+const generateV2ClipEditState = {
+  form: null,
+  parent: null,
+  next: null,
+  snapshot: null,
+  planIndex: "",
+};
+
+const snapshotGenerateV2ClipEditForm = (form) => {
+  if (!form) return [];
+  return Array.from(form.querySelectorAll("input, textarea, select")).map((field) => ({
+    field,
+    value: field.value,
+    checked: field.checked,
+    selectedIndex: field.selectedIndex,
+  }));
+};
+
+const restoreGenerateV2ClipEditSnapshot = (snapshot) => {
+  (snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
+    if (!field) return;
+    if (field.type === "checkbox" || field.type === "radio") {
+      field.checked = !!checked;
+    } else {
+      field.value = value;
+      if (field.tagName === "SELECT" && Number.isInteger(selectedIndex)) {
+        field.selectedIndex = selectedIndex;
+      }
+    }
+  });
+};
+
+const isGenerateV2ClipEditDirty = () => {
+  const snapshot = generateV2ClipEditState.snapshot || [];
+  return snapshot.some(({ field, value, checked, selectedIndex }) => {
+    if (!field) return false;
+    if (field.type === "checkbox" || field.type === "radio") {
+      return field.checked !== !!checked;
+    }
+    if (field.tagName === "SELECT" && Number.isInteger(selectedIndex) && field.selectedIndex !== selectedIndex) {
+      return true;
+    }
+    return String(field.value ?? "") !== String(value ?? "");
+  });
+};
+
+const restoreGenerateV2ClipEditForm = ({ discard = false } = {}) => {
+  const form = generateV2ClipEditState.form;
+  if (!form) return;
+  if (discard) {
+    restoreGenerateV2ClipEditSnapshot(generateV2ClipEditState.snapshot);
+  }
+  form.classList.remove("is-mounted-in-v2-editor");
+  const footer = form.querySelector("[data-generate-v2-clip-editor-footer]");
+  const duration = footer?.querySelector("[data-edit-duration-label]");
+  const actions = footer?.querySelector("[data-generate-v2-original-actions]");
+  if (duration) {
+    form.insertBefore(duration, form.querySelector("[data-edit-duration-warning]") || footer);
+  }
+  if (actions) {
+    form.appendChild(actions);
+    actions.classList.remove("generate-v2-editor-actions-inline");
+  }
+  footer?.remove();
+  form.querySelector("[data-generate-v2-clip-editor-header]")?.remove();
+  const { parent, next } = generateV2ClipEditState;
+  if (parent) {
+    if (next && next.parentNode === parent) {
+      parent.insertBefore(form, next);
+    } else {
+      parent.appendChild(form);
+    }
+  }
+  form.closest(".clip-rail-row")?.classList.remove("is-editing");
+  generateV2ClipEditState.form = null;
+  generateV2ClipEditState.parent = null;
+  generateV2ClipEditState.next = null;
+  generateV2ClipEditState.snapshot = null;
+  generateV2ClipEditState.planIndex = "";
+};
+
 const generateV2EditState = {
   active: false,
   moved: [],
@@ -9767,6 +10054,100 @@ const arrangeGenerateV2PreviewCard = (card) => {
   }
 };
 
+const getGenerateV2ClipStatusLabel = (railItem) => {
+  const status = String(railItem?.dataset.status || "").toLowerCase();
+  const jobStatus = String(railItem?.dataset.renderJobStatus || "").toLowerCase();
+  if (["queued", "processing", "running"].includes(jobStatus)) return "Rendering…";
+  if (status === "created" && String(railItem?.dataset.filename || "").trim()) return "Rendered";
+  return "Not created yet";
+};
+
+const mountGenerateV2ClipEditor = (planIndex = "") => {
+  const mount = document.getElementById("generate-v2-clip-editor-mount");
+  const empty = document.getElementById("generate-v2-clip-editor-empty");
+  if (!mount) return;
+  restoreGenerateV2ClipEditForm();
+  const normalized = String(planIndex || "").trim();
+  const escaped = window.CSS?.escape ? CSS.escape(normalized) : normalized.replace(/'/g, "\\'");
+  const row = normalized ? document.querySelector(`.clip-rail-row[data-plan-index='${escaped}']`) : null;
+  const railItem = row?.querySelector(".clip-rail-item");
+  const form = row?.querySelector("[data-edit-title-time-form]");
+  if (!form || !railItem) {
+    empty?.classList.remove("d-none");
+    mount.replaceChildren();
+    return;
+  }
+  empty?.classList.add("d-none");
+  generateV2ClipEditState.form = form;
+  generateV2ClipEditState.parent = form.parentNode;
+  generateV2ClipEditState.next = form.nextSibling;
+  generateV2ClipEditState.planIndex = normalized;
+  form.classList.add("is-mounted-in-v2-editor");
+  form.dataset.contextBefore = form.dataset.contextBefore || "3";
+  form.dataset.contextAfter = form.dataset.contextAfter || "3";
+
+  let header = form.querySelector("[data-generate-v2-clip-editor-header]");
+  if (!header) {
+    header = document.createElement("div");
+    header.className = "generate-v2-clip-editor-header";
+    header.setAttribute("data-generate-v2-clip-editor-header", "1");
+    form.prepend(header);
+  }
+  const title = railItem.querySelector(".clip-rail-title")?.textContent?.trim() || "Clip";
+  const meta = railItem.querySelector(".clip-rail-meta")?.textContent?.replace(/\s+/g, " ").trim() || "";
+  header.innerHTML = `
+    <div class="generate-v2-clip-editor-heading">
+      <span class="generate-v2-clip-editor-title">${escapeHtml(title)}</span>
+      <span class="generate-v2-clip-editor-status">${escapeHtml(getGenerateV2ClipStatusLabel(railItem))}</span>
+    </div>
+    <div class="generate-v2-clip-editor-meta">${escapeHtml(meta)}</div>
+  `;
+
+  let footer = form.querySelector("[data-generate-v2-clip-editor-footer]");
+  if (!footer) {
+    footer = document.createElement("div");
+    footer.className = "generate-v2-clip-editor-footer";
+    footer.setAttribute("data-generate-v2-clip-editor-footer", "1");
+    footer.innerHTML = `
+      <div class="generate-v2-clip-editor-footer-left">
+        <button type="button" class="btn btn-sm generate-v2-editor-delete-clip-btn" data-generate-v2-editor-delete>Delete</button>
+      </div>
+      <div class="generate-v2-clip-editor-footer-right"></div>
+    `;
+    form.appendChild(footer);
+  }
+  const footerLeft = footer.querySelector(".generate-v2-clip-editor-footer-left");
+  const footerRight = footer.querySelector(".generate-v2-clip-editor-footer-right");
+  const duration = form.querySelector("[data-edit-duration-label]");
+  if (duration && footerLeft && duration.parentElement !== footerLeft) {
+    footerLeft.appendChild(duration);
+  }
+  const actions = form.querySelector(".clip-rail-edit-actions");
+  if (actions && footerRight && actions.parentElement !== footerRight) {
+    actions.setAttribute("data-generate-v2-original-actions", "1");
+    actions.classList.add("generate-v2-editor-actions-inline");
+    footerRight.appendChild(actions);
+  }
+  const deleteButton = footer.querySelector("[data-generate-v2-editor-delete]");
+  const sourceDelete = row.querySelector("[data-delete-clip-btn]");
+  if (deleteButton && sourceDelete) {
+    deleteButton.disabled = sourceDelete.disabled;
+    deleteButton.title = sourceDelete.title || "Delete clip";
+    deleteButton.onclick = () => sourceDelete.click();
+  }
+  mount.replaceChildren(form);
+  row.classList.add("is-editing");
+  renderClipTextTrimEditor(form);
+  generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+};
+
+const confirmGenerateV2ClipSwitch = async (anchor = null) => {
+  if (!generateV2ClipEditState.form || !isGenerateV2ClipEditDirty()) {
+    return true;
+  }
+  return requestGenerateV2DiscardConfirm(anchor);
+};
+
 const getGenerateV2DownloadFrame = () => {
   let frame = document.getElementById("generate-v2-download-frame");
   if (!frame) {
@@ -9925,6 +10306,7 @@ const selectGenerateV2Clip = (planIndex = "") => {
     arrangeGenerateV2PreviewCard(activeCard);
     mount.appendChild(activeCard);
   }
+  mountGenerateV2ClipEditor(normalized);
   mount.classList.toggle("d-none", !activeCard);
   empty?.classList.toggle("d-none", !!activeCard);
 };
@@ -9987,9 +10369,12 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   const sourcePlayerCard = root.querySelector("[data-generate-v2-source-player-card]");
   const clipPanel = document.getElementById("clip-management-panel");
   const shortsPanel = root.querySelector("[data-generate-v2-panel='shorts']");
+  const clipListColumn = document.getElementById("generate-v2-clip-list-column");
   const transcriptPanel = root.querySelector("[data-generate-v2-panel='transcript']");
   const transcriptRight = root.querySelector("[data-generate-v2-right='transcript']");
-  if (shortsPanel && clipPanel && clipPanel.parentElement !== shortsPanel) {
+  if (clipListColumn && clipPanel && clipPanel.parentElement !== clipListColumn) {
+    clipListColumn.appendChild(clipPanel);
+  } else if (shortsPanel && clipPanel && !clipListColumn && clipPanel.parentElement !== shortsPanel) {
     shortsPanel.appendChild(clipPanel);
   }
   if (transcriptPanel && transcriptCard && transcriptCard.parentElement !== transcriptPanel) {
@@ -10027,9 +10412,17 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
         event.preventDefault();
       }
     });
-    item.addEventListener("click", () => {
+    item.addEventListener("click", async () => {
+      const nextPlanIndex = item.dataset.planIndex || "";
+      if (String(nextPlanIndex || "") !== String(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "")) {
+        const canSwitch = await confirmGenerateV2ClipSwitch(item);
+        if (!canSwitch) {
+          return;
+        }
+        restoreGenerateV2ClipEditForm({ discard: true });
+      }
       window.setGenerateV2ActiveTab("shorts", {
-        selectedPlanIndex: item.dataset.planIndex || "",
+        selectedPlanIndex: nextPlanIndex,
       });
     });
   });
@@ -10545,6 +10938,13 @@ const initGenerateV2ClipTitleTimeEditors = () => {
       window.setTimeout(showSelectionToolbar, 0);
     });
     form.querySelector("[data-edit-title-time-cancel]")?.addEventListener("click", () => {
+      if (form.classList.contains("is-mounted-in-v2-editor")) {
+        restoreGenerateV2ClipEditSnapshot(generateV2ClipEditState.snapshot);
+        renderClipTextTrimEditor(form);
+        setClipEditError(form, "");
+        generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+        return;
+      }
       closeClipEditForm(form.closest(".clip-rail-row"));
     });
     form.addEventListener("submit", async (event) => {
@@ -10582,6 +10982,9 @@ const initGenerateV2ClipTitleTimeEditors = () => {
           return;
         }
         closeClipEditForm(row);
+        if (form.classList.contains("is-mounted-in-v2-editor")) {
+          generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+        }
         if (payload.job_id) {
           const card = getClipCardByPlanIndex(planIndex);
           const renderMode = payload.render_mode || (payload.regenerated ? "regenerate" : "render");
@@ -10772,6 +11175,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   const currentModalEl = document.getElementById("clip-detail-modal");
   pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+  restoreGenerateV2ClipEditForm();
   if (!window.__generateV2EditModeActive) {
     restoreGenerateV2MountedClip();
   }
@@ -12693,6 +13097,10 @@ const initClipDeleteButtons = () => {
         row?.remove();
         const card = getClipCardByPlanIndex(planIndex);
         card?.remove();
+        if (getGenerateV2Root() && String(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "") === planIndex) {
+          restoreGenerateV2ClipEditForm();
+          selectGenerateV2Clip(getGenerateV2FallbackPlanIndex());
+        }
         updateScoreBatchControls();
         updateScheduleAllButtonState();
         setScoreBatchFeedback(payload.message || "Clip deleted.", "text-success");
