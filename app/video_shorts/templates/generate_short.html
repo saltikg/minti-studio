@@ -10176,7 +10176,7 @@ const normalizeClipKeepRanges = (ranges) => {
   const merged = [];
   cleaned.forEach((range) => {
     const last = merged[merged.length - 1];
-    if (last && (range.start - last.end) < 0.15) {
+    if (last && (range.start - last.end) <= 0) {
       last.end = Math.max(last.end, range.end);
     } else {
       merged.push({ ...range });
@@ -10232,9 +10232,23 @@ const rangesFromWordIndexes = (words, indexes) => {
   const pushRun = () => {
     const first = words[runStart];
     const last = words[previous];
+    let start = Math.max(0, Number(first?.start || 0) - 0.04);
+    let end = Number(last?.end || 0) + 0.08;
+    if (runStart > 0 && !indexes.has(runStart - 1)) {
+      const previousWordEnd = Number(words[runStart - 1]?.end);
+      if (Number.isFinite(previousWordEnd)) {
+        start = Math.max(start, previousWordEnd);
+      }
+    }
+    if (previous + 1 < words.length && !indexes.has(previous + 1)) {
+      const nextWordStart = Number(words[previous + 1]?.start);
+      if (Number.isFinite(nextWordStart)) {
+        end = Math.min(end, nextWordStart);
+      }
+    }
     ranges.push({
-      start: Math.max(0, Number(first?.start || 0) - 0.04),
-      end: Number(last?.end || 0) + 0.08,
+      start,
+      end: Math.max(start, end),
     });
   };
   sorted.slice(1).forEach((index) => {
@@ -10258,15 +10272,27 @@ const normalizeWordSelection = (form) => {
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
     return [];
   }
+  if (!String(selection.toString() || "").trim()) {
+    return [];
+  }
   const editor = form.querySelector("[data-clip-text-trim-editor]");
   if (!editor) return [];
   const range = selection.getRangeAt(0);
   return Array.from(editor.querySelectorAll("[data-word-index]"))
     .filter((node) => {
       try {
-        return range.intersectsNode(node);
+        const nodeRange = document.createRange();
+        nodeRange.selectNodeContents(node);
+        const startsBeforeNodeEnd = range.compareBoundaryPoints(Range.START_TO_END, nodeRange) < 0;
+        const endsAfterNodeStart = range.compareBoundaryPoints(Range.END_TO_START, nodeRange) > 0;
+        nodeRange.detach?.();
+        return startsBeforeNodeEnd && endsAfterNodeStart && String(node.textContent || "").trim();
       } catch (_) {
-        return false;
+        try {
+          return range.intersectsNode(node) && String(node.textContent || "").trim();
+        } catch (__) {
+          return false;
+        }
       }
     })
     .map((node) => Number(node.dataset.wordIndex))
@@ -10404,7 +10430,20 @@ const applyClipTextTrimSelection = (form, action) => {
   const selectedIndexes = normalizeWordSelection(form);
   const currentRanges = getClipKeepRangesFromForm(form, words);
   const nextRange = selectionToClipKeepRanges(words, currentRanges, selectedIndexes, action);
-  if (!nextRange || !startInput || !endInput) return;
+  if (!selectedIndexes.length) {
+    setClipEditError(form, "Select clip text first.");
+    return;
+  }
+  if (!nextRange || !startInput || !endInput) {
+    setClipEditError(form, "That edit could not be applied.");
+    return;
+  }
+  const duration = clipKeepRangesDuration(nextRange.ranges);
+  if (duration < 5 || duration > 90) {
+    setClipEditError(form, duration < 5 ? "Clip must be at least 5 seconds." : "Clip must be 90 seconds or shorter.");
+    return;
+  }
+  setClipEditError(form, "");
   startInput.value = String(nextRange.start);
   endInput.value = String(nextRange.end);
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");

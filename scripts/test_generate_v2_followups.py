@@ -149,7 +149,34 @@ def test_text_trim_selection_ranges() -> None:
         {"start": 1.0, "end": 1.5},
         {"start": 1.55, "end": 2.0},
     ])
-    _check("text_trim_normalize_merge_drop", normalized == [{"start": 1.0, "end": 2.0}], str(normalized))
+    _check("text_trim_normalize_preserve_explicit_gap", normalized == [{"start": 1.0, "end": 1.5}, {"start": 1.55, "end": 2.0}], str(normalized))
+    normalized_overlap = generation._normalize_edit_keep_ranges([
+        {"start": 1.0, "end": 1.55},
+        {"start": 1.5, "end": 2.0},
+    ])
+    _check("text_trim_normalize_merge_padding_overlap", normalized_overlap == [{"start": 1.0, "end": 2.0}], str(normalized_overlap))
+    short_words = [
+        {"text": "one", "start": 0.0, "end": 1.0},
+        {"text": "cut", "start": 1.04, "end": 1.16},
+        {"text": "two", "start": 1.20, "end": 2.2},
+    ]
+    result = generation.derive_clip_keep_ranges_from_word_selection(short_words, [{"start": 0.0, "end": 2.28}], 1, 1, "remove")
+    _check(
+        "text_trim_short_word_stays_removed",
+        result["ok"] and len(result["ranges"]) == 2 and result["ranges"][0]["end"] <= 1.04 and result["ranges"][1]["start"] >= 1.16,
+        str(result),
+    )
+    _check(
+        "text_trim_padding_clamp",
+        result["ranges"][0]["end"] == 1.04 and result["ranges"][1]["start"] == 1.16,
+        str(result),
+    )
+    result = generation.derive_clip_keep_ranges_from_word_selection(words, current, 3, 3, "keep-only")
+    _check("text_trim_single_word_keep_only", result["ok"] and result["ranges"][0]["start"] == 1.46 and result["ranges"][0]["end"] == 2.08, str(result))
+    result = generation.derive_clip_keep_ranges_from_word_selection(words, current, 4, 4, "remove")
+    _check("text_trim_single_word_remove", result["ok"] and len(result["ranges"]) == 2, str(result))
+    result = generation.derive_clip_keep_ranges_from_word_selection(words, result["ranges"], 4, 4, "restore")
+    _check("text_trim_single_word_restore", result["ok"] and len(result["ranges"]) == 1, str(result))
     ok, message, _ = generation.validate_clip_title_time_edit(title="Tiny", start=result["start"], end=result["end"], video_duration=20)
     _check("text_trim_min_duration_refused", not ok and "at least 5" in message, message)
     ok, message, _ = generation.validate_clip_title_time_edit(title="Huge", start=0, end=91, video_duration=120)

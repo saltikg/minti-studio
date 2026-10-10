@@ -5304,7 +5304,7 @@ def _normalize_edit_keep_ranges(
     ranges: Any,
     *,
     min_fragment_seconds: float = 0.4,
-    merge_gap_seconds: float = 0.15,
+    merge_gap_seconds: float = 0.0,
     max_ranges: int = 20,
 ) -> List[Dict[str, float]]:
     cleaned: List[Dict[str, float]] = []
@@ -5323,7 +5323,7 @@ def _normalize_edit_keep_ranges(
             merged.append(dict(item))
             continue
         gap = item["start"] - merged[-1]["end"]
-        if gap < merge_gap_seconds:
+        if gap <= merge_gap_seconds:
             merged[-1]["end"] = max(merged[-1]["end"], item["end"])
         else:
             merged.append(dict(item))
@@ -5418,14 +5418,28 @@ def _range_from_word_indexes(
     *,
     start_padding: float,
     end_padding: float,
+    kept_indexes: Optional[set[int]] = None,
 ) -> Dict[str, float]:
     start = _to_float(words[first_index].get("start"))
     end = _to_float(words[last_index].get("end"))
     if start is None or end is None:
         return {"start": 0.0, "end": 0.0}
+    padded_start = max(0.0, float(start) - start_padding)
+    padded_end = float(end) + end_padding
+    if kept_indexes is not None:
+        previous_index = first_index - 1
+        next_index = last_index + 1
+        if previous_index >= 0 and previous_index not in kept_indexes:
+            previous_end = _to_float(words[previous_index].get("end"))
+            if previous_end is not None:
+                padded_start = max(padded_start, float(previous_end))
+        if next_index < len(words) and next_index not in kept_indexes:
+            next_start = _to_float(words[next_index].get("start"))
+            if next_start is not None:
+                padded_end = min(padded_end, float(next_start))
     return {
-        "start": round(max(0.0, float(start) - start_padding), 3),
-        "end": round(float(end) + end_padding, 3),
+        "start": round(padded_start, 3),
+        "end": round(max(padded_start, padded_end), 3),
     }
 
 
@@ -5446,10 +5460,28 @@ def _ranges_from_word_index_set(
         if index == previous + 1:
             previous = index
             continue
-        ranges.append(_range_from_word_indexes(words, run_start, previous, start_padding=start_padding, end_padding=end_padding))
+        ranges.append(
+            _range_from_word_indexes(
+                words,
+                run_start,
+                previous,
+                start_padding=start_padding,
+                end_padding=end_padding,
+                kept_indexes=kept_indexes,
+            )
+        )
         run_start = index
         previous = index
-    ranges.append(_range_from_word_indexes(words, run_start, previous, start_padding=start_padding, end_padding=end_padding))
+    ranges.append(
+        _range_from_word_indexes(
+            words,
+            run_start,
+            previous,
+            start_padding=start_padding,
+            end_padding=end_padding,
+            kept_indexes=kept_indexes,
+        )
+    )
     return ranges
 
 
