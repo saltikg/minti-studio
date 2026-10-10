@@ -10682,7 +10682,7 @@ def generate_short(video_pk):
             "status": status,
             "render_job_id": render_job_id,
             "render_job_status": render_job_status,
-            "render_error": entry.get("render_error") or "",
+            "render_error": (render_job or {}).get("error") or entry.get("render_error") or "",
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,

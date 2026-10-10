@@ -33,6 +33,7 @@ CASES: list[tuple[str, list[str]]] = [
 ]
 
 DURATION = 6.0
+LONG_KARAOKE_EVENT_COUNT = 120
 
 
 def _run(cmd: list[str]) -> None:
@@ -53,6 +54,26 @@ def _build_segments(modes: list[str]) -> list[dict[str, Any]]:
             }
         segments.append(segment)
     return segments
+
+
+def _build_caption_events(duration: float, count: int) -> list[dict[str, Any]]:
+    step = duration / max(1, count)
+    events: list[dict[str, Any]] = []
+    for idx in range(count):
+        start = round(idx * step, 6)
+        end = round(min(duration, start + max(0.01, step * 0.72)), 6)
+        block_height = 68.0 if idx % 5 else 96.0
+        block_top = 858.0 if idx % 7 else 826.0
+        events.append(
+            {
+                "start": start,
+                "end": end,
+                "metrics": {
+                    "block_bbox": [70.0, block_top, 650.0, block_top + block_height],
+                },
+            }
+        )
+    return events
 
 
 def _probe(ffprobe: str, path: Path) -> dict[str, Any]:
@@ -166,6 +187,36 @@ def main() -> int:
                 rows.append((name, "PASS" if ok else "FAIL", detail))
             except Exception as exc:
                 rows.append((name, "FAIL", str(exc).splitlines()[-1][:240]))
+        output = temp / "split_long_karaoke_events.mp4"
+        try:
+            compositor._compose_trimmed_with_background(
+                background,
+                source,
+                0.0,
+                DURATION,
+                "Demo title",
+                "",
+                output,
+                title_engine="pillow",
+                subtitle_overlay_video_path=caption_overlay,
+                subtitle_overlay_events=_build_caption_events(DURATION, LONG_KARAOKE_EVENT_COUNT),
+                show_title=True,
+                show_subtitle=True,
+                crop_aspect="portrait",
+                subscribe_overlay_enabled=SUBSCRIBE_OVERLAY_PATH.exists(),
+                subscribe_overlay_path=SUBSCRIBE_OVERLAY_PATH,
+                crop_settings={
+                    "crop_x_ratio": 0.0,
+                    "crop_y_ratio": 0.0,
+                    "crop_w_ratio": 1.0,
+                    "crop_h_ratio": 1.0,
+                    "layout_segments": _build_segments(["split"]),
+                },
+            )
+            ok, detail = _case_ok(_probe(ffprobe, output))
+            rows.append(("split_long_karaoke_events", "PASS" if ok else "FAIL", detail))
+        except Exception as exc:
+            rows.append(("split_long_karaoke_events", "FAIL", str(exc).splitlines()[-1][:240]))
     print("case,status,detail")
     for name, status, detail in rows:
         print(f"{name},{status},{detail}")

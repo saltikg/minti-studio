@@ -1298,6 +1298,44 @@ def _normalize_subtitle_overlay_events(
     return normalized
 
 
+def _piecewise_constant_overlay_y_expr(
+    intervals: list[tuple[float, float, float]],
+    *,
+    duration: float,
+    default_y: float = 0.0,
+) -> str:
+    """Build a flat ffmpeg expression for per-time overlay y offsets.
+
+    A deeply nested if(between(...), y, next) chain hits ffmpeg's expression
+    parser limit for long karaoke overlays. A sum of non-overlapping
+    between(t,start,end)*y terms preserves the same piecewise constants without
+    parser recursion.
+    """
+    cleaned: list[tuple[float, float, float]] = []
+    for raw_start, raw_end, raw_y in sorted(intervals, key=lambda item: (item[0], item[1])):
+        try:
+            start = max(0.0, float(raw_start))
+            end = min(float(duration), float(raw_end))
+            y_value = round(float(raw_y), 2)
+        except Exception:
+            continue
+        if end <= start:
+            continue
+        if cleaned and abs(cleaned[-1][2] - y_value) < 0.01 and start <= cleaned[-1][1] + 0.05:
+            prev_start, _prev_end, prev_y = cleaned[-1]
+            cleaned[-1] = (prev_start, end, prev_y)
+        else:
+            cleaned.append((start, end, y_value))
+    if not cleaned:
+        return f"{float(default_y):.2f}"
+    if len(cleaned) == 1 and cleaned[0][0] <= 0.01 and cleaned[0][1] >= float(duration) - 0.01:
+        return f"{cleaned[0][2]:.2f}"
+    parts = [f"{float(default_y):.2f}"]
+    for start, end, y_value in cleaned:
+        parts.append(f"(between(t,{start:.6f},{end:.6f})*{y_value:.2f})")
+    return "+".join(parts)
+
+
 def _append_timed_subtitle_overlay_filters(
     filter_parts: list[str],
     final_label: str,
@@ -3168,7 +3206,8 @@ def _compose_trimmed_with_background(
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
                 fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(subtitle_margin)) - fallback_height
-                for event in reversed(effective_subtitle_overlay_events):
+                caption_y_intervals: list[tuple[float, float, float]] = []
+                for event in effective_subtitle_overlay_events:
                     event_start = float(event["start"])
                     event_end = min(float(duration), float(event["end"]))
                     if event_end <= event_start:
@@ -3187,10 +3226,8 @@ def _compose_trimmed_with_background(
                         subtitle_margin=subtitle_margin,
                     )
                     segment_caption_y = desired_top - block["top"]
-                    caption_overlay_y_expr = (
-                        f"if(between(t,{event_start:.6f},{event_end:.6f}),"
-                        f"{segment_caption_y:.2f},{caption_overlay_y_expr})"
-                    )
+                    caption_y_intervals.append((event_start, event_end, segment_caption_y))
+                caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
             else:
                 try:
                     fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))

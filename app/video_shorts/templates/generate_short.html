@@ -2388,6 +2388,11 @@
     background: rgba(245, 158, 11, 0.16);
     border: 1px solid rgba(245, 158, 11, 0.24);
   }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip.is-failed {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(248, 113, 113, 0.22);
+  }
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-schedule-row,
   #clip-workbench-shell[data-generate-v2="1"] .generate-v2-primary-actions {
     width: 100%;
@@ -5344,6 +5349,10 @@
                           <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                           {% if row.status == 'created' %}Updating...{% else %}Rendering...{% endif %}
                         </span>
+                      {% elif generate_v2 and row.render_job_status in ['failed', 'error', 'cancelled', 'canceled'] %}
+                        <span class="clip-rail-state-chip is-failed">
+                          Couldn't render
+                        </span>
                       {% endif %}
                       {% if not generate_v2 %}
                       <span class="clip-rail-platforms">
@@ -5778,19 +5787,39 @@
                   {% else %}
                     {% if generate_v2 %}
                     <div class="generate-v2-media-shell">
+                      <div class="generate-v2-media-column{% if row.render_job_status in ['failed', 'error', 'cancelled', 'canceled'] %} is-render-failed{% endif %}">
                     {% endif %}
                       <div class="clip-card-placeholder d-flex flex-column align-items-center justify-content-center gap-2">
-                        <form class="generate-clip-form" method="post" action="{{ editor_url('autoclip_video', video_pk=video.id) }}">
-                          <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
-                          <input type="hidden" name="title" class="generate-clip-hidden-title" value="{{ row.title or '' }}">
-                          <button type="submit" class="btn btn-primary clip-generate-btn">
-                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                            <span class="btn-label">Generate Short Clip</span>
-                          </button>
-                        </form>
-                        <div class="clip-card-generate-feedback small mt-1 d-none" aria-live="polite" aria-atomic="true"></div>
+                        {% if generate_v2 and row.render_job_status in ['failed', 'error', 'cancelled', 'canceled'] %}
+                          <div class="text-danger fw-bold d-flex align-items-center gap-2">
+                            <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+                            <span>Couldn't render</span>
+                          </div>
+                          <button type="button" class="btn btn-outline-light btn-sm generate-v2-render-retry">Retry</button>
+                          <form class="generate-clip-form d-none" method="post" action="{{ editor_url('autoclip_video', video_pk=video.id) }}">
+                            <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                            <input type="hidden" name="title" class="generate-clip-hidden-title" value="{{ row.title or '' }}">
+                            <button type="submit" class="btn btn-primary clip-generate-btn">
+                              <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                              <span class="btn-label">Generate Short Clip</span>
+                            </button>
+                          </form>
+                        {% else %}
+                          <form class="generate-clip-form" method="post" action="{{ editor_url('autoclip_video', video_pk=video.id) }}">
+                            <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
+                            <input type="hidden" name="title" class="generate-clip-hidden-title" value="{{ row.title or '' }}">
+                            <button type="submit" class="btn btn-primary clip-generate-btn">
+                              <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                              <span class="btn-label">Generate Short Clip</span>
+                            </button>
+                          </form>
+                        {% endif %}
+                        <div class="clip-card-generate-feedback small mt-1{% if not (generate_v2 and row.render_job_status in ['failed', 'error', 'cancelled', 'canceled']) %} d-none{% endif %}" aria-live="polite" aria-atomic="true">
+                          {% if generate_v2 and row.render_job_status in ['failed', 'error', 'cancelled', 'canceled'] %}{{ row.render_error or 'This clip could not be rendered.' }}{% endif %}
+                        </div>
                       </div>
                     {% if generate_v2 %}
+                      </div>
                     </div>
                     {% endif %}
                   {% endif %}
@@ -9621,6 +9650,7 @@ const arrangeGenerateV2PreviewCard = (card) => {
   const scheduleRow = card.querySelector(".generate-v2-schedule-row");
   const scheduleBlock = card.querySelector(".clip-card-action-primary");
   const regenerateBtn = card.querySelector(".generate-v2-regenerate-btn");
+  bindGenerateV2RenderRetry(card);
   if (mediaActions) {
     mediaActions.classList.add("generate-v2-primary-actions");
     if (scheduleBlock) {
@@ -9645,10 +9675,9 @@ const arrangeGenerateV2PreviewCard = (card) => {
     };
     syncActionWidth();
     setTimeout(syncActionWidth, 0);
-	    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
-	    bindGenerateV2DownloadTile(card);
-	    bindGenerateV2RenderRetry(card);
-	  }
+    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
+    bindGenerateV2DownloadTile(card);
+  }
   const actionBar = card.querySelector(".clip-card-action-bar");
   if (!actionBar || actionBar.querySelector(".generate-v2-share-stats")) {
     return;
@@ -10828,9 +10857,14 @@ const bindGenerateV2RenderRetry = (card) => {
   retry.dataset.retryBound = "1";
   retry.addEventListener("click", () => {
     const targetCard = retry.closest(".clip-card");
-    if (targetCard) {
-      void enqueueRegenerateClip(targetCard, { force: true });
+    if (!targetCard) {
+      return;
     }
+    if (targetCard.querySelector("video")) {
+      void enqueueRegenerateClip(targetCard, { force: true });
+      return;
+    }
+    triggerGenerateForClipCard(targetCard);
   });
 };
 
