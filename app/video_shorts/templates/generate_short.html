@@ -9990,14 +9990,21 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
     initGenerateV2RegenerateControls();
     return true;
   }
-  const autoSuggestActive = root.dataset.autoSuggestActive === "1";
-  const storedTab = readGenerateV2StoredTab(root);
-  const defaultTab = root.dataset.defaultTab === "shorts" ? "shorts" : "transcript";
-  const activeTab = autoSuggestActive ? "shorts" : (storedTab === "shorts" || storedTab === "transcript" ? storedTab : defaultTab);
-  window.setGenerateV2ActiveTab(activeTab, {
-    persist: false,
-    selectedPlanIndex: preferredPlanIndex || "",
-  });
+  if (root.dataset.generateV2InitialTabSet !== "1") {
+    root.dataset.generateV2InitialTabSet = "1";
+    const autoSuggestActive = root.dataset.autoSuggestActive === "1";
+    const storedTab = readGenerateV2StoredTab(root);
+    const defaultTab = root.dataset.defaultTab === "shorts" ? "shorts" : "transcript";
+    const activeTab = autoSuggestActive
+      ? "shorts"
+      : (storedTab === "shorts" || storedTab === "transcript" ? storedTab : defaultTab);
+    window.setGenerateV2ActiveTab(activeTab, {
+      persist: false,
+      selectedPlanIndex: preferredPlanIndex || "",
+    });
+  } else if ((root.dataset.activeTab || "") === "shorts") {
+    selectGenerateV2Clip(preferredPlanIndex || "");
+  }
   initGenerateV2RegenerateControls();
   return true;
 };
@@ -10031,7 +10038,6 @@ const initGenerateV2AutoSuggestRefresh = () => {
       activeRoot.dataset.autoSuggestActive = payload.active ? "1" : "0";
       activeRoot.dataset.autoSuggestNoStrong = payload.no_strong ? "1" : "0";
       if (payload.active) {
-        await window.setGenerateV2ActiveTab?.("shorts", { persist: false });
         await refreshClipList(null, "list");
         return;
       }
@@ -10046,7 +10052,6 @@ const initGenerateV2AutoSuggestRefresh = () => {
     }
   }, 5000);
   if (root.dataset.autoSuggestActive === "1") {
-    window.setGenerateV2ActiveTab?.("shorts", { persist: false });
     window.setTimeout(() => {
       void refreshClipList(null, "list");
     }, 250);
