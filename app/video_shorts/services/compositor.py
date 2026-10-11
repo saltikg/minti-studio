@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -286,6 +287,8 @@ def _trim_source_to_keep_ranges(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     resolved_ffmpeg = _resolve_ffmpeg()
     has_audio = _has_audio_stream(src_path)
+    source_fps = _probe_video_frame_rate(src_path) or 30.0
+    frame_step = 1.0 / max(1.0, float(source_fps))
     if has_audio:
         ranges = _snap_keep_range_boundaries_to_audio(src_path, ranges)
         for index, item in enumerate(ranges):
@@ -305,9 +308,12 @@ def _trim_source_to_keep_ranges(
         end = float(item["end"])
         local_start = max(0.0, start - seek_offset)
         local_end = max(local_start + 0.001, end - seek_offset)
-        duration = max(0.001, end - start)
+        local_start = math.ceil((local_start * source_fps) - 1e-6) / source_fps
+        local_end = math.ceil((local_end * source_fps) - 1e-6) / source_fps
+        local_end = max(local_start + frame_step, local_end)
+        duration = max(0.001, local_end - local_start)
         total_duration += duration
-        select_terms.append(f"between(t\\,{local_start:.6f}\\,{local_end:.6f})")
+        select_terms.append(f"(gte(t\\,{local_start:.6f})*lt(t\\,{local_end:.6f}))")
     select_expr = "+".join(select_terms)
     filter_parts = [
         f"[0:v]select='{select_expr}',setpts=N/FRAME_RATE/TB[v]",
@@ -352,6 +358,50 @@ def _trim_source_to_keep_ranges(
         _format_loadavg(load_end),
     )
     return total_duration
+
+
+def _probe_video_frame_rate(source: Path) -> Optional[float]:
+    ffprobe_cmd = [
+        _resolve_ffprobe(),
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=avg_frame_rate,r_frame_rate",
+        "-of",
+        "json",
+        str(source),
+    ]
+    try:
+        result = run_media_subprocess(
+            ffprobe_cmd,
+            operation="probe_video_frame_rate",
+            context=f"source={source.name}",
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
+        data = json.loads(result.stdout or "{}")
+        streams = data.get("streams") or []
+        if not streams:
+            return None
+        stream = streams[0] or {}
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            raw = str(stream.get(key) or "").strip()
+            if not raw or raw == "0/0":
+                continue
+            if "/" in raw:
+                numerator, denominator = raw.split("/", 1)
+                value = float(numerator) / max(1.0, float(denominator))
+            else:
+                value = float(raw)
+            if value > 0:
+                return value
+    except Exception as exc:
+        current_app.logger.warning("FFprobe frame-rate check failed for %s: %s", source, exc)
+    return None
 
 
 def _ffmpeg_filter_expr(expr: str) -> str:
