@@ -115,7 +115,7 @@ def _build_flash_beep_source(tmp: Path) -> Path:
     return source_path
 
 
-def _group_event_times(times: list[float], *, max_gap: float = 0.08) -> list[float]:
+def _group_event_times(times: list[float], *, max_gap: float = 0.08, mode: str = "center") -> list[float]:
     if not times:
         return []
     groups: list[list[float]] = [[times[0]]]
@@ -124,6 +124,8 @@ def _group_event_times(times: list[float], *, max_gap: float = 0.08) -> list[flo
             groups[-1].append(value)
         else:
             groups.append([value])
+    if mode == "first":
+        return [float(group[0]) for group in groups]
     return [float(sum(group) / len(group)) for group in groups]
 
 
@@ -150,7 +152,7 @@ def _detect_flash_times(path: Path, *, fps: int = 25, width: int = 160, height: 
     if frame_count <= 0:
         return []
     frames = np.frombuffer(raw[: frame_count * frame_size], dtype=np.uint8).reshape((frame_count, frame_size))
-    candidates = [index / float(fps) for index, mean in enumerate(frames.mean(axis=1)) if float(mean) > 180.0]
+    candidates = [(index + 0.5) / float(fps) for index, mean in enumerate(frames.mean(axis=1)) if float(mean) > 180.0]
     return _group_event_times(candidates, max_gap=(2.0 / float(fps)))
 
 
@@ -180,7 +182,7 @@ def _detect_beep_times(path: Path, *, sample_rate: int = 48000) -> list[float]:
         rms = float(np.sqrt(np.mean(np.square(frame)))) if frame.size else 0.0
         if rms > 0.08:
             hits.append((offset + frame_size / 2.0) / float(sample_rate))
-    return _group_event_times(hits, max_gap=0.08)
+    return _group_event_times(hits, max_gap=0.08, mode="first")
 
 
 def _check_multi_range_av_sync(tmp: Path) -> None:
