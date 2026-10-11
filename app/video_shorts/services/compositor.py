@@ -316,10 +316,12 @@ def _trim_source_to_keep_ranges(
         select_terms.append(f"(gte(t\\,{local_start:.6f})*lt(t\\,{local_end:.6f}))")
     select_expr = "+".join(select_terms)
     filter_parts = [
-        f"[0:v]select='{select_expr}',setpts=N/FRAME_RATE/TB[v]",
+        f"[0:v]setpts=PTS-STARTPTS,select='{select_expr}',setpts=N/FRAME_RATE/TB[v]",
     ]
     if has_audio:
-        filter_parts.append(f"[0:a]aselect='{select_expr}',asetpts=N/SR/TB,aresample=async=1:first_pts=0[a]")
+        filter_parts.append(
+            f"[0:a]asetpts=PTS-STARTPTS,aselect='{select_expr}',asetpts=N/SR/TB,aresample=async=1:first_pts=0[a]"
+        )
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
         cmd.extend(["-map", "[a]"])

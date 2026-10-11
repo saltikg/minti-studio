@@ -115,6 +115,47 @@ def _build_flash_beep_source(tmp: Path) -> Path:
     return source_path
 
 
+def _build_vfr_flash_beep_source(tmp: Path) -> Path:
+    ffmpeg = compositor._resolve_ffmpeg()
+    audio_path = tmp / "vfr_beeps.wav"
+    source_path = tmp / "vfr_flash_beep_source.mp4"
+    _write_beep_track(audio_path, 8.0)
+    video_filter = (
+        "color=c=black:s=160x90:r=25:d=8,"
+        "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='lt(mod(t,1),0.04)'"
+    )
+    _run([
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        video_filter,
+        "-i",
+        str(audio_path),
+        "-vf",
+        "mpdecimate",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-fps_mode",
+        "vfr",
+        "-c:a",
+        "aac",
+        "-shortest",
+        str(source_path),
+    ])
+    return source_path
+
+
 def _build_late_source(tmp: Path) -> Path:
     ffmpeg = compositor._resolve_ffmpeg()
     source_path = tmp / "late_source.mp4"
@@ -154,6 +195,35 @@ def _probe_duration(path: Path) -> float:
         str(path),
     ])
     return float(raw.decode("utf-8").strip())
+
+
+def _probe_stream_av_delta(path: Path) -> tuple[float, float]:
+    ffprobe = compositor._resolve_ffprobe()
+    raw = _run([
+        ffprobe,
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,start_time,duration",
+        "-of",
+        "json",
+        str(path),
+    ])
+    import json
+
+    data = json.loads(raw.decode("utf-8") or "{}")
+    streams: dict[str, dict[str, float]] = {}
+    for stream in data.get("streams") or []:
+        codec_type = str(stream.get("codec_type") or "")
+        if codec_type not in {"video", "audio"}:
+            continue
+        streams[codec_type] = {
+            "start": float(stream.get("start_time") or 0.0),
+            "duration": float(stream.get("duration") or 0.0),
+        }
+    video = streams.get("video", {"start": 0.0, "duration": 0.0})
+    audio = streams.get("audio", {"start": 0.0, "duration": 0.0})
+    return audio["start"] - video["start"], audio["duration"] - video["duration"]
 
 
 def _group_event_times(times: list[float], *, max_gap: float = 0.08, mode: str = "center") -> list[float]:
@@ -249,6 +319,79 @@ def _check_multi_range_av_sync(tmp: Path) -> None:
     )
 
 
+def _compose_sync_output(tmp: Path, trimmed: Path, duration: float, name: str) -> Path:
+    ffmpeg = compositor._resolve_ffmpeg()
+    bg = tmp / f"{name}_bg.png"
+    output = tmp / f"{name}_composed.mp4"
+    _run([
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=720x1280",
+        "-frames:v",
+        "1",
+        str(bg),
+    ])
+    compositor._compose_trimmed_with_background(
+        bg,
+        trimmed,
+        0.0,
+        duration,
+        "",
+        "",
+        output,
+        show_title=False,
+        show_subtitle=False,
+        crop_aspect="portrait",
+        crop_settings={
+            "crop_locked": True,
+            "crop_x_ratio": 0.0,
+            "crop_y_ratio": 0.0,
+            "crop_w_ratio": 1.0,
+            "crop_h_ratio": 1.0,
+            "split_enabled": False,
+        },
+    )
+    return output
+
+
+def _check_multi_range_full_compose_av_sync(tmp: Path, *, vfr: bool = False) -> None:
+    source = _build_vfr_flash_beep_source(tmp) if vfr else _build_flash_beep_source(tmp)
+    trimmed = tmp / ("vfr_flash_beep_trimmed.mp4" if vfr else "flash_beep_trimmed_for_compose.mp4")
+    ranges = [
+        {"start": 0.73, "end": 1.23},
+        {"start": 1.64, "end": 2.22},
+        {"start": 2.67, "end": 3.18},
+        {"start": 3.71, "end": 4.28},
+        {"start": 4.63, "end": 5.26},
+        {"start": 5.79, "end": 6.31},
+    ]
+    duration = compositor._trim_source_to_keep_ranges(source, ranges, trimmed)
+    output = _compose_sync_output(tmp, trimmed, duration, "vfr_full_compose" if vfr else "full_compose")
+    if vfr:
+        start_delta, duration_delta = _probe_stream_av_delta(output)
+        _check(
+            "multi_range_full_compose_vfr_sync",
+            abs(start_delta) <= 0.04 and abs(duration_delta) <= 0.04,
+            f"start_delta={start_delta:.4f} duration_delta={duration_delta:.4f}",
+        )
+        return
+    flash_times = _detect_flash_times(output, width=720, height=1280)
+    beep_times = _detect_beep_times(output)
+    pair_count = min(len(flash_times), len(beep_times))
+    max_delta = max((abs(flash_times[index] - beep_times[index]) for index in range(pair_count)), default=999.0)
+    _check(
+        "multi_range_full_compose_vfr_sync" if vfr else "multi_range_full_compose_sync",
+        pair_count >= 6 and len(flash_times) == len(beep_times) and max_delta <= 0.04,
+        f"flashes={flash_times} beeps={beep_times} max_delta={max_delta:.4f}",
+    )
+
+
 def _check_late_multi_range_seek(tmp: Path) -> None:
     source = _build_late_source(tmp)
     output = tmp / "late_trimmed.mp4"
@@ -292,6 +435,8 @@ def main() -> None:
             str(no_silence_adjusted),
         )
         _check_multi_range_av_sync(tmp)
+        _check_multi_range_full_compose_av_sync(tmp)
+        _check_multi_range_full_compose_av_sync(tmp, vfr=True)
         _check_late_multi_range_seek(tmp)
     print("MULTI_RANGE_AUDIO_SNAP_OK")
 
