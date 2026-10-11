@@ -10068,6 +10068,61 @@ const restoreGenerateV2MountedClip = () => {
   });
 };
 
+const cssEscapeValue = (value) => (
+  window.CSS?.escape
+    ? CSS.escape(String(value || ""))
+    : String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'")
+);
+
+const clipCardPlanIndex = (card) => (
+  String(card?.dataset?.planIndex || card?.querySelector?.("input[name='plan_index']")?.value || "").trim()
+);
+
+const getGenerateV2ClipRefreshSignature = (scope = document, planIndex = "") => {
+  const normalized = String(planIndex || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const escaped = cssEscapeValue(normalized);
+  const railItem = scope.querySelector?.(`#clip-rail-list .clip-rail-item[data-plan-index='${escaped}']`);
+  const card = Array.from(scope.querySelectorAll?.(".clip-card") || []).find((item) => clipCardPlanIndex(item) === normalized);
+  const form = scope.querySelector?.(`[data-edit-title-time-form][data-plan-index='${escaped}']`);
+  const video = card?.querySelector?.(".generate-v2-media-column video, .clip-card-media video");
+  const source = video?.getAttribute("src") || video?.querySelector?.("source")?.getAttribute("src") || video?.dataset?.lazyShortThumb || "";
+  return JSON.stringify({
+    rail: {
+      status: railItem?.dataset?.status || "",
+      renderJobStatus: railItem?.dataset?.renderJobStatus || "",
+      filename: railItem?.dataset?.filename || "",
+      mediaVersion: railItem?.dataset?.mediaVersion || "",
+      publishStatus: railItem?.dataset?.publishStatus || "",
+      dbPublishStatus: railItem?.dataset?.dbPublishStatus || "",
+      publishAt: railItem?.dataset?.publishAt || "",
+      title: railItem?.dataset?.title || "",
+      start: railItem?.dataset?.start || "",
+      end: railItem?.dataset?.end || "",
+    },
+    card: {
+      status: card?.dataset?.status || "",
+      renderJobId: card?.dataset?.renderJobId || "",
+      renderJobStatus: card?.dataset?.renderJobStatus || "",
+      mediaVersion: card?.dataset?.mediaVersion || "",
+      outdated: card?.dataset?.outdated || "",
+      regenerateLocked: card?.dataset?.regenerateLocked || "",
+      publish: card?.dataset?.publish || "",
+      media: source,
+      poster: video?.getAttribute("poster") || "",
+    },
+    form: {
+      title: form?.querySelector?.("input[name='title']")?.value || "",
+      start: form?.querySelector?.("[data-edit-start-input]")?.value || "",
+      end: form?.querySelector?.("[data-edit-end-input]")?.value || "",
+      keepRanges: form?.dataset?.initialKeepRanges || "",
+      readonly: form?.dataset?.readonly || "",
+    },
+  });
+};
+
 const generateV2ClipEditState = {
   form: null,
   parent: null,
@@ -10816,21 +10871,36 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
   const mount = document.getElementById("generate-v2-clip-editor-mount");
   const empty = document.getElementById("generate-v2-clip-editor-empty");
   if (!mount) return;
-  restoreGenerateV2ClipEditForm();
   const normalized = String(planIndex || "").trim();
-  const escaped = window.CSS?.escape ? CSS.escape(normalized) : normalized.replace(/'/g, "\\'");
+  const preserveSelected = String(window.__generateV2PreserveSelectedPlanIndex || "") === normalized;
+  const mountedForm = generateV2ClipEditState.form;
+  const keepMountedForm = Boolean(
+    preserveSelected &&
+    mountedForm &&
+    String(mountedForm.dataset.planIndex || "") === normalized &&
+    mountedForm.parentElement === mount
+  );
+  if (!keepMountedForm) {
+    restoreGenerateV2ClipEditForm();
+  }
+  const escaped = cssEscapeValue(normalized);
   const row = normalized ? document.querySelector(`.clip-rail-row[data-plan-index='${escaped}']`) : null;
   const railItem = row?.querySelector(".clip-rail-item");
-  const form = row?.querySelector("[data-edit-title-time-form]");
+  const form = keepMountedForm ? mountedForm : row?.querySelector("[data-edit-title-time-form]");
   if (!form || !railItem) {
     empty?.classList.remove("d-none");
-    mount.replaceChildren();
+    if (!keepMountedForm) {
+      mount.replaceChildren();
+    }
     return;
   }
   empty?.classList.add("d-none");
+  if (keepMountedForm) {
+    row?.querySelector("[data-edit-title-time-form]")?.remove();
+  }
   generateV2ClipEditState.form = form;
-  generateV2ClipEditState.parent = form.parentNode;
-  generateV2ClipEditState.next = form.nextSibling;
+  generateV2ClipEditState.parent = row || form.parentNode;
+  generateV2ClipEditState.next = null;
   generateV2ClipEditState.planIndex = normalized;
   form.classList.add("is-mounted-in-v2-editor");
   form.dataset.contextBefore = form.dataset.contextBefore || "3";
@@ -10874,10 +10944,14 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
     deleteButton.onclick = () => sourceDelete.click();
   }
   bindGenerateV2UnscheduleButton(form, normalized);
-  mount.replaceChildren(form);
+  if (form.parentElement !== mount || mount.children.length !== 1) {
+    mount.replaceChildren(form);
+  }
   row.classList.add("is-editing");
-  renderClipTextTrimEditor(form);
-  generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+  if (!keepMountedForm) {
+    renderClipTextTrimEditor(form);
+    generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+  }
 };
 
 const confirmGenerateV2ClipSwitch = async (anchor = null) => {
@@ -11030,20 +11104,38 @@ const selectGenerateV2Clip = (planIndex = "") => {
   }
   const fallbackPlanIndex = getGenerateV2FallbackPlanIndex();
   const normalized = String(planIndex || panel.dataset.activePlanIndex || fallbackPlanIndex || "").trim();
+  const preserveSelected = String(window.__generateV2PreserveSelectedPlanIndex || "") === normalized;
+  const mountedCard = mount.querySelector(".clip-card");
+  const keepMountedCard = Boolean(
+    preserveSelected &&
+    mountedCard &&
+    clipCardPlanIndex(mountedCard) === normalized
+  );
   pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: false });
-  restoreGenerateV2MountedClip();
+  if (!keepMountedCard) {
+    restoreGenerateV2MountedClip();
+  }
   panel.dataset.activePlanIndex = normalized;
   const railItems = Array.from(document.querySelectorAll("#clip-rail-list .clip-rail-item"));
   railItems.forEach((item) => {
     item.classList.toggle("is-active", String(item.dataset.planIndex || "").trim() === normalized);
   });
-  const activeCard = normalized ? getClipCardByPlanIndex(normalized) : null;
+  if (keepMountedCard) {
+    Array.from(repository.querySelectorAll(".clip-card")).forEach((card) => {
+      if (clipCardPlanIndex(card) === normalized) {
+        card.remove();
+      }
+    });
+  }
+  const activeCard = keepMountedCard ? mountedCard : (normalized ? getClipCardByPlanIndex(normalized) : null);
   Array.from(document.querySelectorAll(".clip-card")).forEach((card) => {
     card.classList.toggle("is-active", card === activeCard);
   });
   if (activeCard) {
     arrangeGenerateV2PreviewCard(activeCard);
-    mount.appendChild(activeCard);
+    if (activeCard.parentElement !== mount) {
+      mount.appendChild(activeCard);
+    }
   }
   mountGenerateV2ClipEditor(normalized);
   mount.classList.toggle("d-none", !activeCard);
@@ -12356,10 +12448,17 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
   const activePlanIndex = preferredPlanIndex || clipPanel.dataset.activePlanIndex || "";
   const activeViewMode = preferredViewMode || clipPanel.dataset.viewMode || "list";
   const currentModalEl = document.getElementById("clip-detail-modal");
-  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
-  restoreGenerateV2ClipEditForm();
-  if (!window.__generateV2EditModeActive) {
-    restoreGenerateV2MountedClip();
+  const isGenerateV2 = Boolean(getGenerateV2Root());
+  const selectedSignatureBefore = isGenerateV2
+    ? getGenerateV2ClipRefreshSignature(document, activePlanIndex)
+    : "";
+  const selectedEditorDirty = isGenerateV2 && isGenerateV2ClipEditDirty();
+  if (!isGenerateV2) {
+    pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+    restoreGenerateV2ClipEditForm();
+    if (!window.__generateV2EditModeActive) {
+      restoreGenerateV2MountedClip();
+    }
   }
   if (currentModalEl?.classList.contains("show")) {
     document.getElementById("clip-card-repository")?.append(...Array.from(document.querySelectorAll("#clip-detail-modal-mount > .clip-card")));
@@ -12385,6 +12484,17 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
     const newClipPanel = doc.getElementById("clip-management-panel");
+    const selectedSignatureAfter = isGenerateV2
+      ? getGenerateV2ClipRefreshSignature(doc, activePlanIndex)
+      : "";
+    const preserveSelectedPanel = Boolean(
+      isGenerateV2 &&
+      activePlanIndex &&
+      selectedSignatureBefore &&
+      (selectedEditorDirty || selectedSignatureBefore === selectedSignatureAfter) &&
+      !window.__generateV2EditModeActive
+    );
+    window.__generateV2PreserveSelectedPlanIndex = preserveSelectedPanel ? String(activePlanIndex) : "";
     if (getGenerateV2Root()) {
       const currentRoot = getGenerateV2Root();
       const newRoot = doc.querySelector("#clip-workbench-shell[data-generate-v2='1']");
@@ -12413,6 +12523,13 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       }
     }
     if (newClipPanel) {
+      if (!preserveSelectedPanel) {
+        pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+        restoreGenerateV2ClipEditForm();
+        if (!window.__generateV2EditModeActive) {
+          restoreGenerateV2MountedClip();
+        }
+      }
       clipPanel.replaceWith(newClipPanel);
       if (window.__generateV2EditModeActive) {
         newClipPanel.dataset.activePlanIndex = activePlanIndex;
@@ -12440,14 +12557,17 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       initSendToYoutubeButtons();
       window.initGenerateV2TextTranscript?.();
       resumeQueuedClipJobs();
+      window.__generateV2PreserveSelectedPlanIndex = "";
     }
     const latestInfo = document.getElementById("youtube-latest-scheduled");
     const newLatest = doc.getElementById("youtube-latest-scheduled");
     if (latestInfo && newLatest) {
       latestInfo.textContent = newLatest.textContent;
     }
+    window.__generateV2PreserveSelectedPlanIndex = "";
     return true;
   } catch (err) {
+    window.__generateV2PreserveSelectedPlanIndex = "";
     console.error("Failed to refresh clip list", err);
     return false;
   }
