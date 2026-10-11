@@ -2713,6 +2713,37 @@
     background: rgba(15, 23, 42, 0.58);
     box-shadow: none;
   }
+  .generate-v2-clip-editor-mount .clip-rail-edit-form[data-readonly="1"] .clip-rail-edit-grid,
+  .generate-v2-clip-editor-mount .clip-rail-edit-form[data-readonly="1"] .clip-text-trim-editor {
+    opacity: 0.6;
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-form[data-readonly="1"] [data-edit-title-time-save],
+  .generate-v2-clip-editor-mount .clip-rail-edit-form[data-readonly="1"] [data-edit-title-time-regenerate] {
+    display: none;
+  }
+  .generate-v2-schedule-lock-box {
+    order: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(96, 165, 250, 0.28);
+    border-radius: 12px;
+    background: rgba(59, 130, 246, 0.1);
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+  .generate-v2-schedule-lock-copy {
+    min-width: 0;
+  }
+  .generate-v2-schedule-lock-button {
+    flex: 0 0 auto;
+    border-color: rgba(148, 163, 184, 0.28);
+    color: rgba(248, 250, 252, 0.92);
+    white-space: nowrap;
+  }
   .generate-v2-clip-editor-mount .clip-rail-edit-title-pencil {
     position: absolute;
     right: 4px;
@@ -6230,12 +6261,22 @@
                   </button>
                   {% endif %}
                   {% if generate_v2 %}
-                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.regenerate_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
+                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
+                    {% if row.edit_locked %}
+                    <div class="generate-v2-schedule-lock-box" data-edit-schedule-lock-box>
+                      <div class="generate-v2-schedule-lock-copy">
+                        📅 Scheduled for {{ (row.edit_lock_platforms or [])|join(', ') }}{% if row.edit_lock_display %} · {{ row.edit_lock_display }}{% endif %}. To edit this clip, unschedule it first.
+                      </div>
+                      <button type="button" class="btn btn-sm btn-outline-light generate-v2-schedule-lock-button" data-unschedule-clip-btn>
+                        Unschedule
+                      </button>
+                    </div>
+                    {% endif %}
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
                         <div class="clip-rail-edit-title-wrap" title="Edit title">
-                          <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off" title="Edit title" aria-label="Edit title"{% if row.regenerate_locked %} readonly{% endif %}>
+                          <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off" title="Edit title" aria-label="Edit title"{% if row.edit_locked %} readonly{% endif %}>
                           <label class="clip-rail-edit-title-pencil" for="clip-edit-title-{{ row.plan_index }}" title="Edit title" aria-label="Edit title">
                             <span class="material-symbols-outlined" aria-hidden="true">edit</span>
                           </label>
@@ -6245,8 +6286,8 @@
                     <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
                     <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
                     <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
-                    <div class="clip-text-trim-readonly{% if not row.regenerate_locked %} d-none{% endif %}">
-                      {{ row.regenerate_lock_reason or 'Scheduled or published clips cannot be edited here.' }}
+                    <div class="clip-text-trim-readonly{% if not row.edit_locked %} d-none{% endif %}">
+                      To edit this clip, unschedule it first.
                     </div>
                     <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="before">Show more above</button>
                     <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
@@ -6256,8 +6297,8 @@
                     <div class="clip-rail-edit-error d-none" data-edit-title-time-error></div>
                     <div class="clip-rail-edit-actions">
                       <button type="button" class="btn btn-outline-light btn-sm" data-edit-title-time-cancel>Cancel</button>
-                      <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save{% if row.regenerate_locked %} disabled{% endif %}>Save</button>
-                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if row.regenerate_locked %} disabled{% endif %}>{% if row.status == "created" and row.video_filename %}Save &amp; regenerate{% else %}Save &amp; create{% endif %}</button>
+                      <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save{% if row.edit_locked %} disabled{% endif %}>Save</button>
+                      <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if row.edit_locked %} disabled{% endif %}>{% if row.status == "created" and row.video_filename %}Save &amp; regenerate{% else %}Save &amp; create{% endif %}</button>
                     </div>
                     <div class="clip-rail-edit-hint{% if not row.edit_requires_regenerate %} d-none{% endif %}" data-edit-title-time-hint>Edited — regenerate to apply</div>
                   </form>
@@ -10569,6 +10610,62 @@ const getGenerateV2ClipStatusLabel = (railItem) => {
   return "Not created yet";
 };
 
+const unlockGenerateV2ClipEditorForm = (form) => {
+  if (!form) return;
+  form.dataset.readonly = "0";
+  form.querySelector("[data-edit-schedule-lock-box]")?.remove();
+  form.querySelector(".clip-text-trim-readonly")?.classList.add("d-none");
+  form.querySelector("input[name='title']")?.removeAttribute("readonly");
+  form.querySelectorAll("[data-edit-title-time-save], [data-edit-title-time-regenerate]").forEach((button) => {
+    button.disabled = false;
+  });
+  renderClipTextTrimEditor(form);
+};
+
+const bindGenerateV2UnscheduleButton = (form, planIndex = "") => {
+  const button = form?.querySelector("[data-unschedule-clip-btn]");
+  if (!button || button.dataset.unscheduleBound === "1") {
+    return;
+  }
+  button.dataset.unscheduleBound = "1";
+  button.addEventListener("click", async () => {
+    if (button.disabled || !window.confirm("Cancel scheduled posts for this clip?")) {
+      return;
+    }
+    const url = String(form.dataset.unscheduleUrl || "").trim();
+    if (!url) {
+      setClipEditError(form, "Unschedule endpoint is not available.");
+      return;
+    }
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Unscheduling...";
+    setClipEditError(form, "");
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.message || "Could not unschedule this clip.");
+      }
+      unlockGenerateV2ClipEditorForm(form);
+      const refreshed = await refreshClipList(planIndex || form.dataset.planIndex || "", "list");
+      if (!refreshed) {
+        selectGenerateV2Clip(planIndex || form.dataset.planIndex || "");
+      }
+    } catch (error) {
+      setClipEditError(form, error?.message || "Could not unschedule this clip.");
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  });
+};
+
 const mountGenerateV2ClipEditor = (planIndex = "") => {
   const mount = document.getElementById("generate-v2-clip-editor-mount");
   const empty = document.getElementById("generate-v2-clip-editor-empty");
@@ -10640,6 +10737,7 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
     deleteButton.title = sourceDelete.title || "Delete clip";
     deleteButton.onclick = () => sourceDelete.click();
   }
+  bindGenerateV2UnscheduleButton(form, normalized);
   mount.replaceChildren(form);
   row.classList.add("is-editing");
   renderClipTextTrimEditor(form);
