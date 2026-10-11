@@ -288,6 +288,11 @@ def _trim_source_to_keep_ranges(
     has_audio = _has_audio_stream(src_path)
     if has_audio:
         ranges = _snap_keep_range_boundaries_to_audio(src_path, ranges)
+        for index, item in enumerate(ranges):
+            if index >= len(keep_ranges) or not isinstance(keep_ranges[index], dict):
+                continue
+            keep_ranges[index]["start"] = item["start"]
+            keep_ranges[index]["end"] = item["end"]
     cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
     filter_parts: list[str] = []
     concat_inputs: list[str] = []

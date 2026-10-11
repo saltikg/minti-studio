@@ -255,7 +255,7 @@ def main() -> int:
         ranges = [{"start": 0.0, "end": 2.0}, {"start": 4.0, "end": 6.0}, {"start": 9.0, "end": 12.0}]
         expected_multi_duration = sum(item["end"] - item["start"] for item in ranges)
         try:
-            compositor._trim_source_to_keep_ranges(source, ranges, multi_trimmed)
+            expected_multi_duration = compositor._trim_source_to_keep_ranges(source, ranges, multi_trimmed)
             compositor._compose_trimmed_with_background(
                 background,
                 multi_trimmed,
