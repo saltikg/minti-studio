@@ -2121,6 +2121,37 @@
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.03);
   }
+  .generate-v2-source-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .generate-v2-source-preview.d-none {
+    display: none !important;
+  }
+  .generate-v2-source-preview [data-generate-v2-source-player-slot] > .clip-source-player-card {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .generate-v2-source-preview [data-generate-v2-source-player-slot] .trs-player-frame {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+  .generate-v2-source-preview-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .generate-v2-source-preview-actions .btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
   .generate-v2-editor-shell,
   .generate-v2-preview-mount {
     display: none;
@@ -5983,6 +6014,14 @@
                 </div>
               </div>
               <div id="generate-v2-selected-clip-mount" class="generate-v2-selected-mount"></div>
+              <div id="generate-v2-unrendered-source-preview" class="generate-v2-source-preview d-none" data-generate-v2-unrendered-source-preview aria-hidden="true">
+                <div data-generate-v2-source-player-slot></div>
+                <div class="generate-v2-source-preview-actions">
+                  <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-preview-selected-ranges>▶ Preview clip</button>
+                  <button type="button" class="btn btn-sm btn-primary" data-generate-v2-create-selected-clip>Create clip</button>
+                </div>
+                <div class="small text-warning d-none" data-generate-v2-source-preview-warning></div>
+              </div>
               <div id="generate-v2-empty-preview" class="generate-v2-empty-preview d-none">Select a Short to preview it here.</div>
             </div>
           </div>
@@ -10752,6 +10791,176 @@ const arrangeGenerateV2PreviewCard = (card) => {
   }
 };
 
+const generateV2SourcePreviewState = { runId: 0 };
+
+const getGenerateV2SourcePlayerCard = () => document.querySelector("[data-generate-v2-source-player-card]");
+
+const getGenerateV2TranscriptRightPanel = () => getGenerateV2Root()?.querySelector("[data-generate-v2-right='transcript']");
+
+const restoreGenerateV2SourcePlayerToTranscript = () => {
+  const sourcePlayerCard = getGenerateV2SourcePlayerCard();
+  const transcriptRight = getGenerateV2TranscriptRightPanel();
+  if (sourcePlayerCard && transcriptRight && sourcePlayerCard.parentElement !== transcriptRight) {
+    transcriptRight.appendChild(sourcePlayerCard);
+  }
+};
+
+const isGenerateV2RenderedClipCard = (card) => {
+  const status = String(card?.dataset?.status || "").trim().toLowerCase();
+  return status === "created" && !!card?.querySelector?.(".generate-v2-media-column > video, .clip-card-media video");
+};
+
+const getGenerateV2MountedClipForm = (planIndex = "") => {
+  const normalized = String(planIndex || document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "").trim();
+  const mounted = generateV2ClipEditState.form;
+  if (mounted && (!normalized || String(mounted.dataset.planIndex || "") === normalized)) {
+    return mounted;
+  }
+  if (!normalized) {
+    return null;
+  }
+  const escaped = cssEscapeValue(normalized);
+  return document.querySelector(`[data-edit-title-time-form][data-plan-index='${escaped}']`);
+};
+
+const getGenerateV2PreviewRangesForSelectedClip = () => {
+  const form = getGenerateV2MountedClipForm();
+  if (!form) {
+    return [];
+  }
+  return getClipKeepRangesFromForm(form, getGenerateV2WordTimestamps());
+};
+
+const setGenerateV2SourcePreviewWarning = (message = "") => {
+  const warning = document.querySelector("[data-generate-v2-source-preview-warning]");
+  if (!warning) {
+    return;
+  }
+  warning.textContent = message || "";
+  warning.classList.toggle("d-none", !message);
+};
+
+const updateGenerateV2UnrenderedPreviewActions = () => {
+  const preview = document.getElementById("generate-v2-unrendered-source-preview");
+  if (!preview || preview.classList.contains("d-none")) {
+    return;
+  }
+  const ranges = getGenerateV2PreviewRangesForSelectedClip();
+  const duration = clipKeepRangesDuration(ranges);
+  const valid = duration >= 5 && duration <= 90;
+  const previewButton = preview.querySelector("[data-generate-v2-preview-selected-ranges]");
+  const createButton = preview.querySelector("[data-generate-v2-create-selected-clip]");
+  if (previewButton) {
+    previewButton.disabled = !ranges.length;
+  }
+  if (createButton) {
+    createButton.disabled = !valid;
+    createButton.title = valid ? "Create clip" : "Total duration must be 5-90 seconds.";
+  }
+  setGenerateV2SourcePreviewWarning(ranges.length && !valid ? "5–90s required" : "");
+};
+
+const cueGenerateV2SourcePlayerToSelectedClip = () => {
+  const ranges = getGenerateV2PreviewRangesForSelectedClip();
+  const start = Number(ranges[0]?.start);
+  if (!Number.isFinite(start)) {
+    return;
+  }
+  window.__trsClipSelectorController?.restorePlayerState?.({
+    currentTime: Math.max(0, start),
+    playing: false,
+  });
+};
+
+const previewGenerateV2SelectedClipRanges = async (button = null) => {
+  const ranges = normalizeClipKeepRanges(getGenerateV2PreviewRangesForSelectedClip());
+  if (!ranges.length) {
+    return;
+  }
+  const nextRunId = generateV2SourcePreviewState.runId + 1;
+  const wasPlaying = button?.dataset.previewPlaying === "1";
+  generateV2SourcePreviewState.runId = nextRunId;
+  if (wasPlaying) {
+    button.dataset.previewPlaying = "0";
+    button.textContent = "▶ Preview clip";
+    window.__trsClipSelectorController?.pausePlayer?.();
+    return;
+  }
+  if (button) {
+    button.dataset.previewPlaying = "1";
+    button.textContent = "❚❚ Pause";
+  }
+  for (const range of ranges) {
+    if (generateV2SourcePreviewState.runId !== nextRunId) {
+      break;
+    }
+    window.__trsClipSelectorController?.previewRange?.(range.start, range.end);
+    const delayMs = Math.max(250, Math.min(90000, (range.end - range.start) * 1000)) + 160;
+    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  }
+  if (generateV2SourcePreviewState.runId === nextRunId && button) {
+    button.dataset.previewPlaying = "0";
+    button.textContent = "▶ Preview clip";
+  }
+};
+
+const setupGenerateV2UnrenderedSourcePreview = (card) => {
+  const preview = document.getElementById("generate-v2-unrendered-source-preview");
+  const slot = preview?.querySelector("[data-generate-v2-source-player-slot]");
+  const sourcePlayerCard = getGenerateV2SourcePlayerCard();
+  if (!preview || !slot || !sourcePlayerCard || !card) {
+    return false;
+  }
+  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+  if (sourcePlayerCard.parentElement !== slot) {
+    slot.appendChild(sourcePlayerCard);
+  }
+  preview.classList.remove("d-none");
+  preview.setAttribute("aria-hidden", "false");
+  const previewButton = preview.querySelector("[data-generate-v2-preview-selected-ranges]");
+  const createButton = preview.querySelector("[data-generate-v2-create-selected-clip]");
+  if (previewButton && previewButton.dataset.sourcePreviewBound !== "1") {
+    previewButton.dataset.sourcePreviewBound = "1";
+    previewButton.addEventListener("click", () => {
+      void previewGenerateV2SelectedClipRanges(previewButton);
+    });
+  }
+  if (createButton && createButton.dataset.sourceCreateBound !== "1") {
+    createButton.dataset.sourceCreateBound = "1";
+    createButton.addEventListener("click", () => {
+      const form = getGenerateV2MountedClipForm();
+      const submit = form?.querySelector("[data-edit-title-time-regenerate]");
+      if (submit) {
+        submit.click();
+        return;
+      }
+      triggerGenerateForClipCard(card);
+    });
+  }
+  updateGenerateV2UnrenderedPreviewActions();
+  window.setTimeout(cueGenerateV2SourcePlayerToSelectedClip, 0);
+  return true;
+};
+
+const hideGenerateV2UnrenderedSourcePreview = ({ restoreSource = true } = {}) => {
+  const preview = document.getElementById("generate-v2-unrendered-source-preview");
+  if (!preview) {
+    return;
+  }
+  generateV2SourcePreviewState.runId += 1;
+  const previewButton = preview.querySelector("[data-generate-v2-preview-selected-ranges]");
+  if (previewButton) {
+    previewButton.dataset.previewPlaying = "0";
+    previewButton.textContent = "▶ Preview clip";
+  }
+  preview.classList.add("d-none");
+  preview.setAttribute("aria-hidden", "true");
+  setGenerateV2SourcePreviewWarning("");
+  if (restoreSource) {
+    restoreGenerateV2SourcePlayerToTranscript();
+  }
+};
+
 const getGenerateV2ClipStatusLabel = (railItem) => {
   const status = String(railItem?.dataset.status || "").toLowerCase();
   const jobStatus = String(railItem?.dataset.renderJobStatus || "").toLowerCase();
@@ -11187,7 +11396,13 @@ const selectGenerateV2Clip = (planIndex = "") => {
     }
   }
   mountGenerateV2ClipEditor(normalized);
-  mount.classList.toggle("d-none", !activeCard);
+  const isRendered = isGenerateV2RenderedClipCard(activeCard);
+  if (activeCard && !isRendered) {
+    setupGenerateV2UnrenderedSourcePreview(activeCard);
+  } else {
+    hideGenerateV2UnrenderedSourcePreview({ restoreSource: true });
+  }
+  mount.classList.toggle("d-none", !activeCard || !isRendered);
   empty?.classList.toggle("d-none", !!activeCard);
 };
 
@@ -11213,6 +11428,9 @@ window.setGenerateV2ActiveTab = async (tab, { persist = true, selectedPlanIndex 
   pauseGenerateV2WorkbenchVideos({
     pauseSourcePlayer: (previousTab === "transcript" && normalized !== "transcript") || normalized === "edit",
   });
+  if (normalized !== "shorts") {
+    hideGenerateV2UnrenderedSourcePreview({ restoreSource: true });
+  }
   root.dataset.activeTab = normalized;
   if (persist) {
     writeGenerateV2StoredTab(root, normalized);
@@ -12145,6 +12363,10 @@ const renderClipTextTrimEditor = (form) => {
   saveButtons.forEach((button) => {
     button.disabled = readonly || !!invalidMessage;
   });
+  if (form.classList.contains("is-mounted-in-v2-editor")) {
+    updateGenerateV2UnrenderedPreviewActions();
+    cueGenerateV2SourcePlayerToSelectedClip();
+  }
 };
 
 const applyClipTextTrimSelection = (form, action) => {
