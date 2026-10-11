@@ -1490,11 +1490,32 @@ def _short_poster_storage_key(filename: str) -> str:
     return f"shorts/posters/{safe_name}.jpg"
 
 
-def _short_poster_public_url(filename: str) -> str:
-    safe_name = Path(filename or "").name
+def _short_poster_storage_key_for_poster(poster_filename: str) -> str:
+    safe_name = Path(poster_filename or "").name
     if not safe_name:
         return ""
-    key = _short_poster_storage_key(safe_name)
+    if not safe_name.lower().endswith((".jpg", ".jpeg")):
+        safe_name = f"{safe_name}.jpg"
+    return f"shorts/posters/{safe_name}"
+
+
+def _short_poster_filename_for_render(clip_filename: str, version: Optional[str] = None) -> str:
+    safe_name = Path(clip_filename or "").name
+    if not safe_name:
+        return ""
+    stem = Path(safe_name).stem or safe_name
+    clean_version = re.sub(r"[^A-Za-z0-9_-]+", "", str(version or "").strip())[:24]
+    if not clean_version:
+        clean_version = str(int(time.time()))
+    return f"{stem}-{clean_version}.jpg"
+
+
+def _short_poster_public_url(filename: str, poster_filename: Optional[str] = None) -> str:
+    safe_name = Path(filename or "").name
+    safe_poster_name = Path(poster_filename or "").name
+    if not safe_name and not safe_poster_name:
+        return ""
+    key = _short_poster_storage_key_for_poster(safe_poster_name) if safe_poster_name else _short_poster_storage_key(safe_name)
     storage = get_media_storage()
     if getattr(storage, "backend_name", "local") == "s3":
         try:
@@ -1526,11 +1547,13 @@ def _ensure_shared_short_poster(
     input_path: Optional[Path] = None,
     duration_seconds: Optional[float] = None,
     overwrite: bool = False,
+    poster_filename: Optional[str] = None,
 ) -> bool:
     safe_name = Path(filename or "").name
     if not safe_name:
         return False
-    poster_key = _short_poster_storage_key(safe_name)
+    safe_poster_name = Path(poster_filename or "").name
+    poster_key = _short_poster_storage_key_for_poster(safe_poster_name) if safe_poster_name else _short_poster_storage_key(safe_name)
     if not poster_key:
         return False
     storage = get_media_storage()
@@ -6376,7 +6399,8 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, str]:
     finally:
         conn.close()
     video_url = _versioned_media_url(_short_public_url(clip_filename), media_version)
-    poster_url = _versioned_media_url(_short_poster_public_url(clip_filename), media_version)
+    poster_filename = str((target_entry or {}).get("poster_filename") or "").strip()
+    poster_url = _short_poster_public_url(clip_filename, poster_filename=poster_filename)
     download_url = ""
     try:
         video_pk = int(payload.get("video_pk"))
@@ -11044,7 +11068,8 @@ def generate_short(video_pk):
         clip_filename = entry.get("clip_filename") or entry.get("output_filename")
         clip_exists = _short_exists(clip_filename) if clip_filename else False
         video_url = _short_public_url(clip_filename) if clip_exists and clip_filename else ""
-        poster_url = _short_poster_public_url(clip_filename) if clip_exists and clip_filename else ""
+        poster_filename = str(entry.get("poster_filename") or "").strip()
+        poster_url = _short_poster_public_url(clip_filename, poster_filename=poster_filename) if clip_exists and clip_filename else ""
         status = "created" if clip_exists else (entry.get("status") or "pending")
         video_filename = clip_filename if clip_exists else None
         yt_id = entry.get("yt_video_id")
@@ -11429,7 +11454,7 @@ def generate_short(video_pk):
             "transcript_full": transcript_full,
             "video_filename": video_filename,
             "video_url": _versioned_media_url(video_url, media_version),
-            "poster_url": _versioned_media_url(poster_url, media_version),
+            "poster_url": poster_url,
             "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
@@ -28389,14 +28414,24 @@ def autoclip_video(video_pk):
                     f"short:{clip_filename}",
                 )
             try:
+                poster_filename = _short_poster_filename_for_render(
+                    clip_filename,
+                    queued_render_settings_hash or str(int(time.time())),
+                )
                 poster_created = _ensure_shared_short_poster(
                     clip_filename,
                     input_path=final_file,
                     duration_seconds=max(0.0, float(end) - float(start)) if end is not None and start is not None else None,
                     overwrite=True,
+                    poster_filename=poster_filename,
                 )
                 if poster_created:
-                    current_app.logger.info("short poster generated clip_filename=%s", clip_filename)
+                    plan_entry["poster_filename"] = poster_filename
+                    current_app.logger.info(
+                        "short poster generated clip_filename=%s poster_filename=%s",
+                        clip_filename,
+                        poster_filename,
+                    )
             except Exception as exc:
                 current_app.logger.warning("Short poster generation skipped clip_filename=%s: %s", clip_filename, exc)
             if getattr(storage, "backend_name", "local") == "s3" and final_file.exists():
