@@ -298,31 +298,22 @@ def _trim_source_to_keep_ranges(
     if seek_offset > 0:
         cmd.extend(["-ss", f"{seek_offset:.6f}"])
     cmd.extend(["-i", str(src_path)])
-    filter_parts: list[str] = []
-    concat_inputs: list[str] = []
+    select_terms: list[str] = []
     total_duration = 0.0
-    for index, item in enumerate(ranges):
+    for item in ranges:
         start = float(item["start"])
         end = float(item["end"])
         local_start = max(0.0, start - seek_offset)
         local_end = max(local_start + 0.001, end - seek_offset)
         duration = max(0.001, end - start)
         total_duration += duration
-        filter_parts.append(
-            f"[0:v]trim=start={local_start:.6f}:end={local_end:.6f},setpts=PTS-STARTPTS[v{index}]"
-        )
-        concat_inputs.append(f"[v{index}]")
-        if has_audio:
-            fade_out_start = max(0.0, duration - 0.02)
-            filter_parts.append(
-                f"[0:a]atrim=start={local_start:.6f}:end={local_end:.6f},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
-                f"afade=t=in:st=0:d=0.02,afade=t=out:st={fade_out_start:.6f}:d=0.02[a{index}]"
-            )
-            concat_inputs.append(f"[a{index}]")
+        select_terms.append(f"between(t\\,{local_start:.6f}\\,{local_end:.6f})")
+    select_expr = "+".join(select_terms)
+    filter_parts = [
+        f"[0:v]select='{select_expr}',setpts=N/FRAME_RATE/TB[v]",
+    ]
     if has_audio:
-        filter_parts.append("".join(concat_inputs) + f"concat=n={len(ranges)}:v=1:a=1[v][a]")
-    else:
-        filter_parts.append("".join(concat_inputs) + f"concat=n={len(ranges)}:v=1:a=0[v]")
+        filter_parts.append(f"[0:a]aselect='{select_expr}',asetpts=N/SR/TB,aresample=async=1:first_pts=0[a]")
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
         cmd.extend(["-map", "[a]"])
