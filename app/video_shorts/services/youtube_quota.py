@@ -22,6 +22,7 @@ YOUTUBE_DATA_API_UNIT_COSTS = {
     "search.list": 100,
     "videos.insert": 1600,
     "videos.list": 1,
+    "videos.delete": 50,
     "videos.update": 50,
 }
 

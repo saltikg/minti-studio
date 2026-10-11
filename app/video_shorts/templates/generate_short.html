@@ -6262,14 +6262,22 @@
                   {% endif %}
                   {% if generate_v2 %}
                   <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
-                    {% if row.edit_locked %}
+                    {% if row.edit_has_pending_posts or row.edit_locked %}
                     <div class="generate-v2-schedule-lock-box" data-edit-schedule-lock-box>
                       <div class="generate-v2-schedule-lock-copy">
-                        📅 Scheduled for {{ (row.edit_lock_platforms or [])|join(', ') }}{% if row.edit_lock_display %} · {{ row.edit_lock_display }}{% endif %}. To edit this clip, unschedule it first.
+                        {% if row.edit_locked_soon %}
+                          📅 Publishing soon — editing is locked.
+                        {% elif row.edit_locked %}
+                          📅 Already published.
+                        {% else %}
+                          📅 Scheduled · {{ (row.edit_lock_platforms or [])|join(', ') }}{% if row.edit_lock_display %} · {{ row.edit_lock_display }}{% endif %}. Saving &amp; regenerating will update the scheduled posts.
+                        {% endif %}
                       </div>
+                      {% if row.edit_locked and row.edit_has_pending_posts %}
                       <button type="button" class="btn btn-sm btn-outline-light generate-v2-schedule-lock-button" data-unschedule-clip-btn>
                         Unschedule
                       </button>
+                      {% endif %}
                     </div>
                     {% endif %}
                     <div class="clip-rail-edit-grid">
@@ -6287,7 +6295,7 @@
                     <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
                     <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
                     <div class="clip-text-trim-readonly{% if not row.edit_locked %} d-none{% endif %}">
-                      To edit this clip, unschedule it first.
+                      Publishing soon — editing is locked.
                     </div>
                     <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="before">Show more above</button>
                     <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
@@ -10629,7 +10637,7 @@ const bindGenerateV2UnscheduleButton = (form, planIndex = "") => {
   }
   button.dataset.unscheduleBound = "1";
   button.addEventListener("click", async () => {
-    if (button.disabled || !window.confirm("Cancel scheduled posts for this clip?")) {
+    if (button.disabled || !window.confirm("Cancel scheduled posts for this clip? The unpublished YouTube upload will be deleted.")) {
       return;
     }
     const url = String(form.dataset.unscheduleUrl || "").trim();

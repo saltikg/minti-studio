@@ -533,6 +533,7 @@ def upload_video_with_refresh_token(
     privacy_status: str = "private",
     user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
+    tags: Optional[List[str]] = None,
 ):
     youtube = build_authenticated_youtube(refresh_token, user_id=user_id, brand_id=brand_id)
     if not youtube:
@@ -549,6 +550,9 @@ def upload_video_with_refresh_token(
     }
     if publish_at:
         body["status"]["publishAt"] = publish_at
+    clean_tags = [str(tag or "").strip() for tag in (tags or []) if str(tag or "").strip()]
+    if clean_tags:
+        body["snippet"]["tags"] = clean_tags[:500]
 
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -565,6 +569,7 @@ def update_video_with_refresh_token(
     privacy_status: str = "private",
     user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
+    tags: Optional[List[str]] = None,
 ):
     youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
     if not youtube:
@@ -582,6 +587,9 @@ def update_video_with_refresh_token(
     }
     if publish_at:
         body["status"]["publishAt"] = publish_at
+    clean_tags = [str(tag or "").strip() for tag in (tags or []) if str(tag or "").strip()]
+    if clean_tags:
+        body["snippet"]["tags"] = clean_tags[:500]
 
     request = youtube.videos().update(part="snippet,status", body=body)
     response = request.execute()
@@ -655,6 +663,104 @@ def get_access_token(
     if not creds:
         return None
     return creds.token
+
+
+def _parse_youtube_publish_at(value: Optional[str]) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def delete_youtube_video_if_safe(
+    *,
+    video_id: str,
+    expected_video_ids: List[str],
+    scheduled_publish_at: Optional[str] = None,
+    allow_unpublished_private: bool = False,
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Delete a YouTube video only after verifying it is our private, unpublished upload."""
+    clean_video_id = str(video_id or "").strip()
+    expected_ids = {str(item or "").strip() for item in expected_video_ids or [] if str(item or "").strip()}
+    if not clean_video_id or clean_video_id not in expected_ids:
+        current_app.logger.warning(
+            "YouTube safe delete blocked reason=id_not_in_db video_id=%s expected=%s context=%s",
+            clean_video_id,
+            sorted(expected_ids),
+            reason,
+        )
+        return {"deleted": False, "blocked": True, "reason": "id_not_in_db"}
+
+    youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
+    if not youtube:
+        current_app.logger.warning("YouTube safe delete blocked reason=no_token video_id=%s context=%s", clean_video_id, reason)
+        return {"deleted": False, "blocked": True, "reason": "no_token"}
+
+    try:
+        response = youtube.videos().list(part="status", id=clean_video_id).execute()
+        record_youtube_data_api_call(feature="publish", method="videos.list")
+    except Exception as exc:
+        current_app.logger.warning(
+            "YouTube safe delete blocked reason=list_error video_id=%s context=%s error=%s",
+            clean_video_id,
+            reason,
+            exc,
+        )
+        return {"deleted": False, "blocked": True, "reason": "list_error", "error": str(exc)}
+
+    items = response.get("items") or []
+    if not items:
+        current_app.logger.warning("YouTube safe delete blocked reason=not_found video_id=%s context=%s", clean_video_id, reason)
+        return {"deleted": False, "blocked": True, "reason": "not_found"}
+
+    status = (items[0] or {}).get("status") or {}
+    privacy_status = str(status.get("privacyStatus") or "").strip().lower()
+    if privacy_status != "private":
+        current_app.logger.warning(
+            "YouTube safe delete blocked reason=not_private video_id=%s privacy=%s context=%s",
+            clean_video_id,
+            privacy_status,
+            reason,
+        )
+        return {"deleted": False, "blocked": True, "reason": "not_private", "privacy_status": privacy_status}
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    api_publish_at = _parse_youtube_publish_at(status.get("publishAt"))
+    db_publish_at = _parse_youtube_publish_at(scheduled_publish_at)
+    future_publish_at = api_publish_at or db_publish_at
+    is_future_scheduled = bool(future_publish_at and future_publish_at > now_utc)
+    if not is_future_scheduled and not allow_unpublished_private:
+        current_app.logger.warning(
+            "YouTube safe delete blocked reason=not_future_scheduled video_id=%s api_publish_at=%s db_publish_at=%s context=%s",
+            clean_video_id,
+            status.get("publishAt"),
+            scheduled_publish_at,
+            reason,
+        )
+        return {"deleted": False, "blocked": True, "reason": "not_future_scheduled"}
+
+    try:
+        youtube.videos().delete(id=clean_video_id).execute()
+        record_youtube_data_api_call(feature="publish", method="videos.delete")
+    except Exception as exc:
+        current_app.logger.warning(
+            "YouTube safe delete failed video_id=%s context=%s error=%s",
+            clean_video_id,
+            reason,
+            exc,
+        )
+        return {"deleted": False, "blocked": True, "reason": "delete_error", "error": str(exc)}
+
+    current_app.logger.info("YouTube safe delete success video_id=%s context=%s", clean_video_id, reason)
+    return {"deleted": True, "blocked": False, "reason": "deleted", "privacy_status": privacy_status}
 
 
 def fetch_video_statuses(

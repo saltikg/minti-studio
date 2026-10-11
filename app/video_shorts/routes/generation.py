@@ -330,6 +330,7 @@ from app.video_shorts.services.discovery_promote_queue import (
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     clear_refresh_token,
+    delete_youtube_video_if_safe,
     fetch_video_statuses,
     get_connected_channel_info,
     has_refresh_token,
@@ -5625,13 +5626,11 @@ def clip_entry_publish_lock_reason(entry: Dict[str, Any], generated_row: Optiona
     if generated_row:
         try:
             publish_statuses.add(str(generated_row[1] or "").strip().lower())
-            platform_ids = list(generated_row[2:6])
+            platform_ids = list(generated_row[3:6])
         except Exception:
             pass
     if "published" in publish_statuses or any(str(value or "").strip() for value in platform_ids):
         return "Already published."
-    if publish_statuses.intersection({"scheduled", "uploaded", "queued"}):
-        return "Unschedule first."
     active_social = {
         str(status or "").strip().lower()
         for status in (social_statuses or set())
@@ -5639,36 +5638,57 @@ def clip_entry_publish_lock_reason(entry: Dict[str, Any], generated_row: Optiona
     }
     if "published" in active_social:
         return "Already published."
-    if active_social.intersection({"pending", "retry", "uploading", "queued", "scheduled"}):
-        return "Unschedule first."
     return ""
 
 
 PENDING_PUBLISH_STATUSES = {"scheduled", "queued", "pending", "retry", "uploading"}
 PUBLISHED_PUBLISH_STATUSES = {"published"}
+PUBLISH_EDIT_LOCK_WINDOW_SECONDS = 10 * 60
+
+
+def _publish_time_within_lock_window(value: Any, *, now: Optional[datetime] = None) -> bool:
+    publish_dt = _parse_to_utc(value)
+    if not publish_dt:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    delta = (publish_dt - now_dt.astimezone(timezone.utc)).total_seconds()
+    return 0 <= delta <= PUBLISH_EDIT_LOCK_WINDOW_SECONDS
+
+
+def _pending_publish_items_within_lock_window(items: List[Dict[str, str]], *, now: Optional[datetime] = None) -> bool:
+    for item in items or []:
+        if _publish_time_within_lock_window(item.get("publish_at"), now=now):
+            return True
+    return False
 
 
 def _pending_publish_summary_items(
     *,
     youtube_status: Optional[str] = None,
     youtube_display: Optional[str] = None,
+    youtube_publish_at: Optional[str] = None,
     instagram_status: Optional[str] = None,
     instagram_display: Optional[str] = None,
+    instagram_publish_at: Optional[str] = None,
     tiktok_status: Optional[str] = None,
     tiktok_display: Optional[str] = None,
+    tiktok_publish_at: Optional[str] = None,
     facebook_status: Optional[str] = None,
     facebook_display: Optional[str] = None,
+    facebook_publish_at: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
-    for platform, status, display in (
-        ("YouTube", youtube_status, youtube_display),
-        ("Instagram", instagram_status, instagram_display),
-        ("TikTok", tiktok_status, tiktok_display),
-        ("Facebook", facebook_status, facebook_display),
+    for platform, status, display, publish_at in (
+        ("YouTube", youtube_status, youtube_display, youtube_publish_at),
+        ("Instagram", instagram_status, instagram_display, instagram_publish_at),
+        ("TikTok", tiktok_status, tiktok_display, tiktok_publish_at),
+        ("Facebook", facebook_status, facebook_display, facebook_publish_at),
     ):
         normalized = str(status or "").strip().lower()
         if normalized in PENDING_PUBLISH_STATUSES:
-            items.append({"platform": platform, "display": str(display or "").strip()})
+            items.append({"platform": platform, "display": str(display or "").strip(), "publish_at": str(publish_at or "").strip()})
     return items
 
 
@@ -11066,14 +11086,19 @@ def generate_short(video_pk):
         pending_publish_items = _pending_publish_summary_items(
             youtube_status=youtube_pending_status,
             youtube_display=db_publish_display or publish_display,
+            youtube_publish_at=db_publish_value or publish_value,
             instagram_status=ig_status,
             instagram_display=ig_display,
+            instagram_publish_at=ig_publish_at,
             tiktok_status=tt_status,
             tiktok_display=tt_display,
+            tiktok_publish_at=tt_publish_at,
             facebook_status=fb_status,
             facebook_display=fb_display,
+            facebook_publish_at=fb_publish_at,
         )
         any_platform_pending = bool(pending_publish_items)
+        publishing_soon = _pending_publish_items_within_lock_window(pending_publish_items)
         any_platform_scheduled = (
             str(entry.get("publish_status") or "").strip().lower() in {"scheduled", "uploaded", "published"}
             or db_publish_status in {"scheduled", "uploaded", "published"}
@@ -11147,9 +11172,11 @@ def generate_short(video_pk):
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,
-            "regenerate_locked": any_platform_scheduled,
-            "regenerate_lock_reason": "Already published" if any_platform_published else ("Unschedule first" if any_platform_scheduled else ""),
-            "edit_locked": any_platform_pending,
+            "regenerate_locked": any_platform_published or publishing_soon,
+            "regenerate_lock_reason": "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
+            "edit_locked": any_platform_published or publishing_soon,
+            "edit_locked_soon": publishing_soon,
+            "edit_has_pending_posts": any_platform_pending,
             "edit_lock_platforms": [item["platform"] for item in pending_publish_items],
             "edit_lock_display": next((item["display"] for item in pending_publish_items if item.get("display")), ""),
             "publish_status": entry.get("publish_status") or ("ready" if yt_description else "not_ready"),
@@ -22076,8 +22103,8 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         finally:
             conn_generated.close()
     social_statuses: set[str] = set()
+    social_queue_entries = []
     try:
-        social_queue_entries = []
         social_queue_entries.extend(load_instagram_queue_map([video_id]).get((video_id, str(plan_index))) or [])
         social_queue_entries.extend(load_tiktok_queue_map([video_id]).get((video_id, str(plan_index))) or [])
         social_queue_entries.extend(load_facebook_queue_map([video_id]).get((video_id, str(plan_index))) or [])
@@ -22087,6 +22114,15 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     lock_reason = clip_entry_publish_lock_reason(plan_entry, generated_row, social_statuses)
     if lock_reason:
         return jsonify(success=False, message=lock_reason), 409
+    pending_times = [plan_entry.get("publish_at_iso") or plan_entry.get("publish_at")]
+    for item in social_queue_entries:
+        item_status = str(item.get("status") or "").strip().lower()
+        if item_status in PENDING_PUBLISH_STATUSES:
+            pending_times.append(item.get("publish_at"))
+            if not item.get("publish_at"):
+                return jsonify(success=False, message="Publishing soon — editing is locked."), 409
+    if any(_publish_time_within_lock_window(value) for value in pending_times):
+        return jsonify(success=False, message="Publishing soon — editing is locked."), 409
 
     requested_keep_ranges: List[Dict[str, float]] = []
     keep_ranges_raw = str(request.form.get("keep_ranges") or "").strip()
@@ -23834,31 +23870,52 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
         return jsonify(success=False, message="Already published."), 409
 
     canceled_counts = {"youtube": 0, "instagram": 0, "tiktok": 0, "facebook": 0}
+    youtube_deleted = False
+    youtube_delete_result: Dict[str, Any] = {}
     if youtube_pending:
         if youtube_id:
-            try:
-                update_video_with_refresh_token(
-                    video_id=youtube_id,
-                    title=str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "Short").strip(),
-                    description=str(target_entry.get("yt_description") or target_entry.get("description") or "").strip(),
-                    publish_at=None,
-                    privacy_status="private",
-                    user_id=current_user.get("id"),
-                    brand_id=brand_id,
-                )
-            except Exception as exc:
-                current_app.logger.exception(
-                    "Failed to unschedule YouTube clip video_pk=%s plan_index=%s youtube_id=%s",
+            youtube_delete_result = delete_youtube_video_if_safe(
+                video_id=youtube_id,
+                expected_video_ids=[target_entry.get("yt_video_id"), (generated_guard_row or {}).get("youtube_video_id")],
+                scheduled_publish_at=target_entry.get("publish_at_iso") or (generated_guard_row or {}).get("planned_publish_at") or target_entry.get("publish_at"),
+                user_id=current_user.get("id"),
+                brand_id=brand_id,
+                reason=f"unschedule video_pk={video_pk} plan_index={plan_index}",
+            )
+            youtube_deleted = bool(youtube_delete_result.get("deleted"))
+            if not youtube_deleted:
+                current_app.logger.warning(
+                    "YouTube unschedule delete skipped video_pk=%s plan_index=%s youtube_id=%s reason=%s; falling back to private update",
                     video_pk,
                     plan_index,
                     youtube_id,
+                    youtube_delete_result.get("reason"),
                 )
-                return jsonify(success=False, message=f"YouTube schedule could not be canceled: {exc}"), 502
+                try:
+                    update_video_with_refresh_token(
+                        video_id=youtube_id,
+                        title=str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "Short").strip(),
+                        description=str(target_entry.get("yt_description") or target_entry.get("description") or "").strip(),
+                        publish_at=None,
+                        privacy_status="private",
+                        user_id=current_user.get("id"),
+                        brand_id=brand_id,
+                    )
+                except Exception as exc:
+                    current_app.logger.exception(
+                        "Failed to unschedule YouTube clip video_pk=%s plan_index=%s youtube_id=%s",
+                        video_pk,
+                        plan_index,
+                        youtube_id,
+                    )
+                    return jsonify(success=False, message=f"YouTube schedule could not be canceled: {exc}"), 502
         target_entry.pop("publish_at", None)
         target_entry.pop("publish_at_iso", None)
-        target_entry["publish_status"] = "uploaded" if youtube_id else "not_ready"
+        target_entry["publish_status"] = "not_ready" if youtube_deleted else ("uploaded" if youtube_id else "not_ready")
         target_entry["yt_status"] = target_entry["publish_status"]
-        if youtube_id:
+        if youtube_deleted:
+            target_entry.pop("yt_video_id", None)
+        elif youtube_id:
             target_entry["yt_video_id"] = youtube_id
         canceled_counts["youtube"] = 1
         _write_plan_entries(source_video_id, entries)
@@ -23893,9 +23950,11 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                 params: List[Any] = []
                 if "publish_status" in generated_columns:
                     assignments.append("publish_status = ?")
-                    params.append("uploaded" if youtube_id else None)
+                    params.append(None if youtube_deleted else ("uploaded" if youtube_id else None))
                 if "planned_publish_at" in generated_columns:
                     assignments.append("planned_publish_at = NULL")
+                if youtube_deleted and "youtube_video_id" in generated_columns:
+                    assignments.append("youtube_video_id = NULL")
                 if "updated_at" in generated_columns:
                     assignments.append("updated_at = CURRENT_TIMESTAMP")
                 if assignments:
@@ -23914,7 +23973,7 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     finally:
         conn.close()
 
-    return jsonify(success=True, canceled=canceled_counts)
+    return jsonify(success=True, canceled=canceled_counts, youtube_deleted=youtube_deleted, youtube_delete_result=youtube_delete_result)
 
 
 @video_shorts_bp.route("/youtube/upload_clip", methods=["POST"])
@@ -28456,11 +28515,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         str(plan_entry.get("publish_status") or "").strip().lower(),
         str((generated_row[1] if generated_row else "") or "").strip().lower(),
     }
-    platform_ids = generated_row[2:6] if generated_row else []
+    platform_ids = generated_row[3:6] if generated_row else []
     if "published" in publish_statuses:
         return jsonify(success=False, message="Already published."), 409
-    if publish_statuses.intersection({"scheduled", "uploaded", "queued"}):
-        return jsonify(success=False, message="Unschedule first."), 409
     if any(str(value or "").strip() for value in platform_ids):
         return jsonify(success=False, message="Already published."), 409
     social_queue_entries = []
@@ -28477,8 +28534,15 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     }
     if "published" in social_statuses:
         return jsonify(success=False, message="Already published."), 409
-    if social_statuses.intersection({"pending", "retry", "uploading", "queued", "scheduled"}):
-        return jsonify(success=False, message="Unschedule first."), 409
+    pending_times = [plan_entry.get("publish_at_iso") or plan_entry.get("publish_at")]
+    for item in social_queue_entries:
+        item_status = str(item.get("status") or "").strip().lower()
+        if item_status in PENDING_PUBLISH_STATUSES:
+            pending_times.append(item.get("publish_at"))
+            if not item.get("publish_at"):
+                return jsonify(success=False, message="Publishing soon — editing is locked."), 409
+    if any(_publish_time_within_lock_window(value) for value in pending_times):
+        return jsonify(success=False, message="Publishing soon — editing is locked."), 409
     if not stored_hash:
         return jsonify(success=False, message="This Short needs one fresh render before it can be regenerated."), 409
     current_hash = _compute_render_settings_hash_for_plan_entry(
@@ -28519,6 +28583,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "end": end,
         "regenerate": True,
         "render_settings_hash": current_hash,
+        "scheduled_replace": bool(publish_statuses.intersection(PENDING_PUBLISH_STATUSES) or social_statuses.intersection(PENDING_PUBLISH_STATUSES)),
+        "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
+        "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),
     }
     enqueue_result = enqueue_render_job(
         user_id=str(target_owner_user_id),
