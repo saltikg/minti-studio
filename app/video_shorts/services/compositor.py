@@ -293,21 +293,29 @@ def _trim_source_to_keep_ranges(
                 continue
             keep_ranges[index]["start"] = item["start"]
             keep_ranges[index]["end"] = item["end"]
-    cmd = [resolved_ffmpeg, "-y", "-stats_period", "1", "-i", str(src_path)]
+    seek_offset = max(0.0, float(ranges[0].get("start") or 0.0) - 2.0)
+    cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
+    if seek_offset > 0:
+        cmd.extend(["-ss", f"{seek_offset:.6f}"])
+    cmd.extend(["-i", str(src_path)])
     filter_parts: list[str] = []
     concat_inputs: list[str] = []
     total_duration = 0.0
     for index, item in enumerate(ranges):
         start = float(item["start"])
         end = float(item["end"])
+        local_start = max(0.0, start - seek_offset)
+        local_end = max(local_start + 0.001, end - seek_offset)
         duration = max(0.001, end - start)
         total_duration += duration
-        filter_parts.append(f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=PTS-STARTPTS[v{index}]")
+        filter_parts.append(
+            f"[0:v]trim=start={local_start:.6f}:end={local_end:.6f},setpts=PTS-STARTPTS[v{index}]"
+        )
         concat_inputs.append(f"[v{index}]")
         if has_audio:
             fade_out_start = max(0.0, duration - 0.02)
             filter_parts.append(
-                f"[0:a]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
+                f"[0:a]atrim=start={local_start:.6f}:end={local_end:.6f},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
                 f"afade=t=in:st=0:d=0.02,afade=t=out:st={fade_out_start:.6f}:d=0.02[a{index}]"
             )
             concat_inputs.append(f"[a{index}]")

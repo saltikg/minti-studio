@@ -115,6 +115,47 @@ def _build_flash_beep_source(tmp: Path) -> Path:
     return source_path
 
 
+def _build_late_source(tmp: Path) -> Path:
+    ffmpeg = compositor._resolve_ffmpeg()
+    source_path = tmp / "late_source.mp4"
+    _run([
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=32x32:rate=5:duration=1810",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        str(source_path),
+    ])
+    return source_path
+
+
+def _probe_duration(path: Path) -> float:
+    ffprobe = compositor._resolve_ffprobe()
+    raw = _run([
+        ffprobe,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ])
+    return float(raw.decode("utf-8").strip())
+
+
 def _group_event_times(times: list[float], *, max_gap: float = 0.08, mode: str = "center") -> list[float]:
     if not times:
         return []
@@ -208,6 +249,24 @@ def _check_multi_range_av_sync(tmp: Path) -> None:
     )
 
 
+def _check_late_multi_range_seek(tmp: Path) -> None:
+    source = _build_late_source(tmp)
+    output = tmp / "late_trimmed.mp4"
+    ranges = [
+        {"start": 1800.40, "end": 1801.20},
+        {"start": 1802.75, "end": 1803.65},
+        {"start": 1806.10, "end": 1807.40},
+    ]
+    expected = sum(item["end"] - item["start"] for item in ranges)
+    actual = compositor._trim_source_to_keep_ranges(source, ranges, output)
+    probed = _probe_duration(output)
+    _check(
+        "late_multi_range_seek",
+        abs(actual - expected) <= 0.001 and abs(probed - expected) <= 0.25,
+        f"expected={expected:.3f} actual={actual:.3f} probed={probed:.3f}",
+    )
+
+
 def main() -> None:
     app = create_app()
     with app.app_context(), tempfile.TemporaryDirectory() as tmp_raw:
@@ -233,6 +292,7 @@ def main() -> None:
             str(no_silence_adjusted),
         )
         _check_multi_range_av_sync(tmp)
+        _check_late_multi_range_seek(tmp)
     print("MULTI_RANGE_AUDIO_SNAP_OK")
 
 
